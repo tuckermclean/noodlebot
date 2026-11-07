@@ -1,0 +1,8 @@
+# Fixture for ready.test.sh: A01 -> (A02, A03) -> A04, in this order.
+apiVersion: themonolith/v1
+kind: DependencyGraph
+nodes:
+  - {id: A01, name: first-node, deps: []}
+  - {id: A02, name: second-node, deps: [A01]}
+  - {id: A03, name: third-node, deps: [A01]}
+  - {id: A04, name: fourth-node, deps: [A02, A03]}

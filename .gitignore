@@ -1,0 +1,4 @@
+# Runtime state, never committed: clones, node worktrees, logs and markers.
+repos/
+worktrees/
+state/
