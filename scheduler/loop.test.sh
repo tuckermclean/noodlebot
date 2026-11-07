@@ -9,6 +9,7 @@ set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 tmp=$(mktemp -d)
 pids=()
+# shellcheck disable=SC2154 # p is the trap's own loop variable
 trap 'for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done; pkill -f "$tmp/" 2>/dev/null; rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }
@@ -109,7 +110,7 @@ ok "the heartbeat is fresh" test "$(($(date +%s) - $(cat "$state/heartbeat" 2>/d
 ok "the OAuth token is in no state file" sh -c "! grep -rq fake-oauth '$state'"
 
 touch "$HOME/STOP"
-ok "~/STOP ends the loop within seconds" timeout 3 sh -c "while kill -0 $loop2 2>/dev/null; do sleep 0.1; done"
+ok "the STOP file ends the loop within seconds" timeout 3 sh -c "while kill -0 $loop2 2>/dev/null; do sleep 0.1; done"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"

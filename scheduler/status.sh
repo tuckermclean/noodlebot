@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-screen status of the node scheduler. Keep it open next to htop:
-#   watch -n 30 -c ~/gitrepos/noodlebot/scheduler/status.sh
+#   watch -n 10 -c ~/gitrepos/noodlebot/scheduler/status.sh
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P)
 repo=tuckermclean/themonolith
@@ -8,17 +8,25 @@ state=$nb/state/${repo#*/}
 wtroot=$nb/worktrees/${repo#*/}
 
 echo "== $(date '+%F %T %Z')"
-if pid=$(pgrep -f 'scheduler/loop.sh' | head -n 1); [ -n "$pid" ]; then echo "loop:    running (pid $pid); stop with: touch ~/STOP"
-else echo "loop:    NOT running"; fi
-[ -e ~/STOP ] && echo "         ~/STOP exists: the loop exits at its next tick"
-echo "last tick: $(tail -n 1 "$state/status.log" 2>/dev/null | cut -c1-150)"
+if ! flock -n "$state/loop.lock" true 2>/dev/null; then echo "loop:    running; stop with: touch ~/STOP"
+else echo "loop:    NOT running; start with: tmux new -d -s sched $nb/scheduler/loop.sh"; fi
+[ -e ~/STOP ] && echo "         ~/STOP exists: the loop exits within seconds"
+hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
+if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi
+echo "last change: $(tail -n 1 "$state/status.log" 2>/dev/null | cut -c1-150)"
 
-spid=$(pgrep -f 'claude -p /node' | head -n 1)
-node=$(sed -n 's/.*started \([A-Z][0-9][0-9]\) .*/\1/p' "$state/status.log" 2>/dev/null | tail -n 1)
+# The session: a node whose session.pid names a live session process.
+spid='' node=''
+for f in "$state"/node/*/session.pid; do
+	[ -e "$f" ] || continue
+	p=$(cat "$f") id=$(basename "$(dirname "$f")")
+	if tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $id( |\$)|claude -p /node $id( |\$)"; then spid=$p node=$id; fi
+done
+[ -n "$node" ] || node=$(sed -n 's/.*started \([A-Z][0-9][0-9]\) .*/\1/p' "$state/status.log" 2>/dev/null | tail -n 1)
 if [ -n "$spid" ]; then
 	echo "session: $node RUNNING (pid $spid, for $(ps -o etime= -p "$spid" | tr -d ' '))"
 elif [ -n "$node" ]; then
-	echo "session: $node not running"
+	echo "session: none running (last: $node)"
 fi
 if [ -n "$node" ]; then
 	log=$state/node/$node/session.jsonl
