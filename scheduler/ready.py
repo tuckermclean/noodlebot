@@ -1,10 +1,17 @@
 """Prints "<ID> <name>" for the first node in graph order that the scheduler may start, or nothing.
 
     python3 -I ready.py --graph docs/graph.yaml --markers out/node \
-        [--merged ID]... [--open ID]... [--subjects FILE]
+        [--merged ID]... [--open ID]... [--subjects FILE] [--merged-prs FILE]
 
-A node is ready when it is not merged, every dep is merged, it has no open PR, and
-<markers>/<ID>/ holds neither QUESTION.md nor FAILED. A node counts as merged when it is passed
+A node is ready when it is not merged, every dep is merged, and its markers in <markers>/<ID>/
+allow it:
+- FAILED holds it.
+- QUESTION.md holds it until the owner writes ANSWER.md next to it.
+- WAITING-PR (a bare PR number, written by a session that opened a spec PR) holds it until that
+  number is listed in --merged-prs (one merged PR number per line).
+With no markers, a node with an open PR is not ready (it waits for the owner). An answered question
+or a merged WAITING-PR makes it ready even with its PR open, so the session can resume.
+A node counts as merged when it is passed
 with --merged (a merged node/<ID>-* PR) or when a line of --subjects (`git log --format=%s
 origin/main`) starts with "<ID> <name>:", the squash subject of its PR. The second source exists
 because GitHub hides the PRs of a suspended author. Any error exits non-zero and prints no node.
@@ -16,6 +23,25 @@ import sys
 import yaml
 
 
+def markers(d: str, merged_prs: set) -> str:
+    """'hold', 'resume' (an answer or a merged spec PR to act on) or 'none'."""
+    has = lambda m: os.path.exists(os.path.join(d, m))  # noqa: E731
+    if has("FAILED"):
+        return "hold"
+    resume = False
+    if has("QUESTION.md"):
+        if not has("ANSWER.md"):
+            return "hold"
+        resume = True
+    if has("WAITING-PR"):
+        with open(os.path.join(d, "WAITING-PR"), encoding="utf-8") as f:
+            num = f.read().strip()
+        if not num.isdigit() or num not in merged_prs:
+            return "hold"
+        resume = True
+    return "resume" if resume else "none"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--graph", required=True)
@@ -23,6 +49,7 @@ def main() -> int:
     ap.add_argument("--merged", action="append", default=[])
     ap.add_argument("--open", action="append", default=[])
     ap.add_argument("--subjects")
+    ap.add_argument("--merged-prs")
     a = ap.parse_args()
 
     with open(a.graph, encoding="utf-8") as f:
@@ -35,14 +62,19 @@ def main() -> int:
             if any(s.startswith(f"{n['id']} {n['name']}:") for s in subjects):
                 merged.add(n["id"])
     opened = set(a.open)
+    merged_prs = set()
+    if a.merged_prs:
+        with open(a.merged_prs, encoding="utf-8") as f:
+            merged_prs = {line.strip() for line in f if line.strip()}
 
     for n in nodes:
         nid = n["id"]
-        if nid in merged or nid in opened:
+        if nid in merged:
             continue
         if not all(d in merged for d in n.get("deps") or []):
             continue
-        if any(os.path.exists(os.path.join(a.markers, nid, m)) for m in ("QUESTION.md", "FAILED")):
+        state = markers(os.path.join(a.markers, nid), merged_prs)
+        if state == "hold" or (state == "none" and nid in opened):
             continue
         print(f"{nid} {n['name']}")
         return 0

@@ -6,7 +6,9 @@
 # Layout under ~/gitrepos/noodlebot (all ignored by git):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
-#   state/<name>/            status.log; node/<ID>/{session.jsonl,session.stderr,unattended.md,QUESTION.md,FAILED}
+#   state/<name>/            status.log; node/<ID>/{session.jsonl,session.stderr,unattended.md}
+#                            and the markers ready.py reads: QUESTION.md, ANSWER.md (the owner's),
+#                            WAITING-PR, FAILED; answered/ keeps released questions and spec PRs
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, given to the session only). SCHED_TICK overrides the 600 s tick (tests).
 set -u -o pipefail
@@ -32,10 +34,13 @@ tick() {
 	local tok merged open
 	tok=$(~/.config/noodlebot/token) || { say "no GitHub App token; nothing started"; return; }
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
-	if ! merged=$(GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json headRefName -q '.[].headRefName' | ids) ||
+	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
+			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
 		! open=$(GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' | ids); then
 		say "gh pr list failed; nothing started"; return
 	fi
+	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
+	cut -d' ' -f1 "$state/merged-prs.tsv" >"$state/merged-prs.txt"
 	local saw="open=[${open% }] merged-prs=[${merged% }]"
 
 	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -44,8 +49,9 @@ tick() {
 	fi
 	if [ -n "$pid" ]; then
 		wait "$pid"; local rc=$?
-		if [[ " $open $merged " == *" $node "* ]]; then say "$saw; session $node ended (rc $rc) with a PR"
-		elif [ -e "$state/node/$node/QUESTION.md" ]; then say "$saw; session $node ended (rc $rc) with QUESTION.md"
+		if [ -e "$state/node/$node/QUESTION.md" ]; then say "$saw; session $node ended (rc $rc) with QUESTION.md"
+		elif [ -e "$state/node/$node/WAITING-PR" ]; then say "$saw; session $node ended (rc $rc) waiting for spec PR #$(cat "$state/node/$node/WAITING-PR")"
+		elif [[ " $open $merged " == *" $node "* ]]; then say "$saw; session $node ended (rc $rc) with a PR"
 		elif [ "${starts[$node]}" -ge 2 ]; then
 			echo "$(date -u +%FT%TZ) second exit (rc $rc) with no PR and no QUESTION.md" >"$state/node/$node/FAILED"
 			say "$saw; session $node ended (rc $rc), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
@@ -60,9 +66,13 @@ tick() {
 	for id in $merged; do args+=(--merged "$id"); done
 	for id in $open; do args+=(--open "$id"); done
 	next=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
-		--subjects "$state/subjects.txt" "${args[@]}") || { say "$saw; ready.py failed; nothing started"; return; }
+		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" "${args[@]}") || { say "$saw; ready.py failed; nothing started"; return; }
 	[ -n "$next" ] || { say "$saw; nothing ready"; return; }
 	id=${next%% *} name=${next#* }
+	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
+	local released
+	released=$(sh "$here/release-markers.sh" "$state/node/$id") || { say "$saw; releasing $id's markers failed"; return; }
+	if [ -n "$released" ]; then starts[$id]=0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
 	[ "${starts[$id]:-0}" -lt 2 ] || { say "$saw; $id ready but has used 2 starts; nothing started"; return; }
 
 	wt=$wtroot/$id

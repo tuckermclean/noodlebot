@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2015 # pass only echoes, so "A && pass || fail" never runs both
 # Tests scheduler/release-markers.sh: it archives an answered question and a merged WAITING-PR.
 #   sh scheduler/release-markers.test.sh   (make test)
 set -u

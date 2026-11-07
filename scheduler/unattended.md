@@ -4,8 +4,37 @@ UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) starte
 - At a /node step 7 stop, write the question, your proposed amendment and what is blocked to
   @STATE@/node/@ID@/QUESTION.md, then end the run. Never continue on a guess. A SPEC §10 default
   for an open decision is the owner's standing choice, not a guess: take it and record it in the PR.
-- You are in the worktree @WT@ on branch node/@ID@-@NAME@, made from origin/main. Your brief and
-  logs go in this worktree's out/node/@ID@/. The scheduler's own files are under @STATE@/.
+  Number the questions (Q1, Q2, ...) and give your recommendation for each, so the owner can answer
+  in a line. End the file with: "To answer: write ANSWER.md next to this file."
+- You are in the worktree @WT@ on branch node/@ID@-@NAME@. Your brief and logs go in this
+  worktree's out/node/@ID@/. The scheduler's own files are under @STATE@/.
+- First, bring the branch up to date: git fetch origin && git merge --no-edit origin/main. On a
+  conflict, git merge --abort, write QUESTION.md and end the run.
+- RESUMING. If @STATE@/node/@ID@/answered/ exists, an earlier run of this node stopped. Read every
+  file in it, oldest first (the names start with a UTC timestamp): <ts>-QUESTION.md is what a run
+  asked, <ts>-ANSWER.md is the owner's answer, <ts>-SPEC-PR holds the number of a spec PR the owner
+  has merged. Read out/node/@ID@/ (brief, logs) and the commits on this branch too. Continue from
+  where the last run stopped; do not redo slices that are already committed and reviewed.
+  - ANSWER.md is the owner's decision, written by the owner. An approval in it is the explicit owner
+    approval /node asks for, including for changing a frozen test line. Quote the answer in the
+    brief and in the PR (Deviations / open questions) wherever you act on it.
+  - "Recommended", "your recommendation" or "as proposed" means the recommendation in the matching
+    question.
+  - If the answer does not settle a blocking question, or contradicts itself, write a new
+    QUESTION.md that says exactly what is still open, and end the run.
+- SPEC CHANGES. When an answer approves a change to SPEC.md, a node spec, docs/graph.yaml,
+  docs/migration.tsv or anything else /node step 7 says is a spec change, do not put it on the node
+  branch. Instead:
+  1. git worktree add -b spec/@ID@-<short-topic> @WT@-spec origin/main (pick a new topic name if
+     the branch exists), and make exactly the approved change there.
+  2. python3 -I .claude/skills/node/check-spec.py must report PROBLEMS 0.
+  3. Commit (subject "Spec: ..."), push the branch, open the PR with gh pr create. The body says
+     what changes and quotes the question and the owner's answer it carries out.
+  4. Remove the spec worktree (git worktree remove @WT@-spec). Write only the PR number to
+     @STATE@/node/@ID@/WAITING-PR, and end the run. The scheduler starts this node again after the
+     owner merges that PR.
+  Approvals that need no spec change (a frozen test line, a deviation to record) apply straight away
+  on the node branch. If the answers include both, first open the spec PR and stop; do the rest after.
 - GitHub: the gh CLI's stored account is suspended. Authenticate every gh call with the GitHub App:
   GH_TOKEN=$(~/.config/noodlebot/token) gh ... --repo tuckermclean/themonolith
   Push with: GIT_TOKEN=$(~/.config/noodlebot/token) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD
@@ -16,4 +45,4 @@ UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) starte
   is now pulled from GHCR, so rare), and an intermittent perl segfault in rc1's uefi boot test. Re-run
   a failed job once (gh run rerun <id> --failed) before treating it as real.
 - When the PR is open, CI is green and the fresh reviewer's comment is on it (/node step 6), or
-  you have written QUESTION.md, end the run.
+  you have written QUESTION.md or WAITING-PR, end the run.

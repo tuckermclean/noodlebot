@@ -47,12 +47,21 @@ fi
 
 echo "-- waiting on you:"
 found=0
-for f in "$state"/node/*/QUESTION.md "$state"/node/*/FAILED; do
-	[ -e "$f" ] || continue
-	found=1
-	id=$(basename "$(dirname "$f")")
-	echo "   $id $(basename "$f"): $(grep -m1 -v '^\s*$' "$f" | sed 's/^# *//' | cut -c1-100)"
-	echo "      read it: less $f"
+for d in "$state"/node/*/; do
+	id=$(basename "$d") d=${d%/}
+	head1() { grep -m1 -v '^\s*$' "$1" | sed 's/^# *//' | cut -c1-100; }
+	if [ -e "$d/FAILED" ]; then
+		found=1; echo "   $id FAILED: $(head1 "$d/FAILED")"
+		echo "      to retry: rm $d/FAILED"
+	elif [ -e "$d/QUESTION.md" ] && [ -e "$d/ANSWER.md" ]; then
+		found=1; echo "   $id answered: restarts at the next tick"
+	elif [ -e "$d/QUESTION.md" ]; then
+		found=1; echo "   $id QUESTION: $(head1 "$d/QUESTION.md")"
+		echo "      read it: less $d/QUESTION.md"
+		echo "      answer:  write $d/ANSWER.md (it restarts at the next tick)"
+	elif [ -e "$d/WAITING-PR" ]; then
+		found=1; echo "   $id waits for you to merge spec PR #$(cat "$d/WAITING-PR"); restarts at the tick after"
+	fi
 done
 [ $found = 0 ] && echo "   nothing"
 
