@@ -39,6 +39,8 @@ setup() {
 	nb=$sc/nb
 	HOME=$sc/home TMUXLOG=$sc/tmux.log
 	export HOME TMUXLOG
+	# the older scenarios keep state under the noodlebot root: point the runtime root there
+	NOODLEBOT_DATA=$nb; export NOODLEBOT_DATA
 	mkdir -p "$HOME/.config/noodlebot" "$nb/scheduler"
 	[ -e "$src/loops.sh" ] && cp "$src/loops.sh" "$nb/scheduler/"
 	[ "${2:-}" = nolist ] || printf 'o/alpha\no/beta\n' >"$HOME/.config/noodlebot/repos"
