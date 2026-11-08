@@ -138,5 +138,62 @@ done
 ok Risk:no-tmux-call-without-list sh -c "[ \"\$(cat '$sc/rc')\" = 0 ] && [ ! -e '$TMUXLOG' ]"
 ok Risk:nothing-stopped-without-list sh -c "[ \"\$(cat '$sc/rc')\" = 0 ] && ! ls '$HOME'/STOP* 2>/dev/null | grep -q ."
 
+echo "# M01-AC-3: status (sessions and waiting fields told apart)"
+setup ac3b
+start_loop alpha
+start_session alpha A01
+mkdir -p "$nb/state/alpha/node/A03" "$nb/state/alpha/node/A04" "$nb/state/beta/node/B02" "$nb/state/beta/node/B05" "$nb/state/beta/node/B06"
+sh -c : &
+stalepid=$!
+wait "$stalepid"
+echo "$stalepid" >"$nb/state/alpha/node/A04/session.pid"
+echo 77 >"$nb/state/alpha/node/A03/WAITING-PR"
+echo "# Which colour?" >"$nb/state/beta/node/B02/QUESTION.md"
+echo boom >"$nb/state/beta/node/B05/FAILED"
+run status
+aline=$(grep 'alpha' "$sc/out" | head -n 1)
+bline=$(grep 'beta' "$sc/out" | head -n 1)
+asess=$(echo "$aline" | sed 's/.*sessions: *//; s/;.*//')
+await=$(echo "$aline" | sed 's/.*waiting[^:]*: *//')
+bsess=$(echo "$bline" | sed 's/.*sessions: *//; s/;.*//')
+bwait=$(echo "$bline" | sed 's/.*waiting[^:]*: *//')
+ok M01-AC-3:A01-in-sessions-field sh -c "echo '$asess' | grep -q 'A01'"
+ok M01-AC-3:A01-not-in-waiting-field sh -c "[ -n '$await' ] && ! echo '$await' | grep -q 'A01'"
+no M01-AC-3:stale-pid-A04-appears-nowhere grep -q A04 "$sc/out"
+no M01-AC-3:no-marker-B06-appears-nowhere grep -q B06 "$sc/out"
+ok M01-AC-3:A03-waiting-with-WAITING-PR sh -c "echo '$await' | grep -q 'A03 WAITING-PR'"
+ok M01-AC-3:B02-waiting-with-QUESTION sh -c "echo '$bwait' | grep -q 'B02 QUESTION'"
+ok M01-AC-3:B05-waiting-with-FAILED sh -c "echo '$bwait' | grep -q 'B05 FAILED'"
+ok M01-AC-3:beta-sessions-field-none sh -c "[ '$bsess' = none ]"
+ok M01-AC-3:A03-not-in-sessions-field sh -c "[ -n '$asess' ] && ! echo '$asess' | grep -q 'A03'"
+
+echo "# M01-AC-1: start with a STOP file present"
+setup ac1s
+touch "$HOME/STOP"
+run start
+no M01-AC-1:global-STOP-start-exits-nonzero sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok M01-AC-1:global-STOP-output-mentions-STOP sh -c "grep -q 'STOP' '$sc/out'"
+ok M01-AC-1:global-STOP-no-tmux-call sh -c "[ \"\$(cat '$sc/rc')\" != '' ] && [ ! -e '$TMUXLOG' ]"
+ok M01-AC-1:global-STOP-owners-file-kept sh -c "[ -e '$HOME/STOP' ]"
+setup ac1t
+touch "$HOME/STOP-beta"
+run start
+ok M01-AC-1:stale-STOP-beta-removed sh -c "[ ! -e '$HOME/STOP-beta' ]"
+ok M01-AC-1:stale-STOP-alpha-loop-lock-held sh -c "sleep 0.7; [ -e '$nb/state/alpha/loop.lock' ] && ! flock -n '$nb/state/alpha/loop.lock' true"
+ok M01-AC-1:stale-STOP-beta-loop-lock-held sh -c "[ -e '$nb/state/beta/loop.lock' ] && ! flock -n '$nb/state/beta/loop.lock' true"
+ok M01-AC-1:stale-STOP-start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+
+echo "# Purpose: the list"
+setup nonl
+printf 'o/alpha\no/beta' >"$HOME/.config/noodlebot/repos"
+run start
+ok Purpose:no-trailing-newline-alpha-started sh -c "grep -q 'sched-alpha' '$TMUXLOG'"
+ok Purpose:no-trailing-newline-beta-started sh -c "grep -q 'sched-beta' '$TMUXLOG'"
+ok Purpose:no-trailing-newline-both-locks-held sh -c "sleep 0.7; [ -e '$nb/state/alpha/loop.lock' ] && [ -e '$nb/state/beta/loop.lock' ] && ! flock -n '$nb/state/alpha/loop.lock' true && ! flock -n '$nb/state/beta/loop.lock' true"
+setup cmt
+printf '# a comment\no/alpha\n\no/beta\n' >"$HOME/.config/noodlebot/repos"
+run status
+ok Purpose:comment-and-blank-lines-ignored-two-lines sh -c "[ \$(grep -c . '$sc/out') = 2 ] && [ \$(wc -l <'$sc/out') = 2 ]"
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
