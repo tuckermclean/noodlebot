@@ -4,8 +4,9 @@
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P)
 repo=${1:-tuckermclean/themonolith}
-state=$nb/state/${repo#*/}
-wtroot=$nb/worktrees/${repo#*/}
+root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
+state=$root/state/${repo#*/}
+wtroot=$root/worktrees/${repo#*/}
 
 echo "== $(date '+%F %T %Z')"
 if ! flock -n "$state/loop.lock" true 2>/dev/null; then echo "loop:    running; stop with: touch ~/STOP"

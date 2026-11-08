@@ -11,7 +11,7 @@
 # (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time (state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
-# Layout under ~/gitrepos/noodlebot (all ignored by git):
+# Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
@@ -25,12 +25,22 @@ repo=${1:-tuckermclean/themonolith}
 case $repo in */*) ;; *) echo "loop.sh: the argument is owner/name, not $repo" >&2; exit 2 ;; esac
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
 here=$nb/scheduler
-clone=$nb/repos/${repo#*/}
-wtroot=$nb/worktrees/${repo#*/}
-state=$nb/state/${repo#*/}
+root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
+clone=$root/repos/${repo#*/}
+wtroot=$root/worktrees/${repo#*/}
+state=$root/state/${repo#*/}
 oauth=$HOME/.config/noodlebot/oauth-token
 log=$state/status.log
 tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600
+# The runtime root must not lie inside a Git working tree (sessions would load its CLAUDE.md and
+# AGENTS.md). The root may not exist yet: ask from its nearest existing ancestor.
+probe=$root
+while [ ! -d "$probe" ] && [ "$probe" != / ] && [ "$probe" != . ]; do probe=$(dirname "$probe"); done
+if top=$(git -C "$probe" rev-parse --show-toplevel 2>/dev/null); then
+	echo "loop.sh: the runtime root $root is inside the Git working tree $top; set NOODLEBOT_DATA to a folder outside it" >&2
+	exit 2
+fi
+mkdir -p "$root" || exit 2
 mkdir -p "$state/node" "$state/issue" "$wtroot"
 pid='' node='' last_note='' last_note_t=0
 
@@ -121,7 +131,7 @@ start_triage() {
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return 1; }
 	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return 1; }
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
-		"$here/unattended-triage.md" >"$d/unattended.md"
+		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
@@ -166,7 +176,7 @@ start_node() {
 			git -C "$clone" worktree add -q "$wt" "node/$id-$name" || { note "$saw; worktree for $id failed"; return 1; }
 	fi
 	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
-		"$here/unattended.md" >"$d/unattended.md"
+		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended.md" >"$d/unattended.md"
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
 	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
 	launch "$wt" "$d" "$skill $id"

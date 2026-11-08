@@ -317,8 +317,9 @@ def main():
     a = p.parse_args()
     a.answered = False
     a.owner = a.owner or a.repo.split("/")[0]
-    a.worktrees = a.worktrees or os.path.join(os.path.dirname(os.path.dirname(a.state)), "worktrees",
-                                              a.repo.split("/")[1])
+    a.worktrees = a.worktrees or os.path.join(
+        os.environ.get("NOODLEBOT_DATA") or os.path.join(os.path.expanduser("~"), ".local", "share", "noodlebot"),
+        "worktrees", a.repo.split("/")[1])
     path = os.path.join(a.state, "report.json")
     try:
         rs = json.load(open(path))
