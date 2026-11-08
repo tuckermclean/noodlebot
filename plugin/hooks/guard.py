@@ -102,8 +102,13 @@ class Repo:
     def match(self, key, rel):
         return any(glob_re(g).fullmatch(rel) for g in self.cfg()[key])
 
-    def check(self, role, p, strict_outside):
-        """Raise Block if role may not write p. strict_outside: outside the repo is a violation."""
+    def hit(self, key, rel, dirs):
+        """rel matches; with dirs, a directory also counts for what lies under it."""
+        return self.match(key, rel) or (dirs and self.match(key, rel.rstrip("/") + "/x"))
+
+    def check(self, role, p, strict_outside, dirs=False):
+        """Raise Block if role may not write p. strict_outside: outside the repo is a violation.
+        dirs: p may be a directory, so writing it writes everything under it."""
         rel = self.rel(p)
         if role == "reviewer":
             if rel is not None or strict_outside:
@@ -114,15 +119,24 @@ class Repo:
                 raise Block(f"the tester may write only test paths; {p} is outside the repository")
             return
         if role == "tester":
-            if not self.match("tests", rel):
+            if not self.hit("tests", rel, dirs):
                 raise Block(f"the tester may write only test and fixture paths; {rel} is not one")
-        elif self.match("tests", rel) or self.match("specs", rel):
+        elif self.hit("tests", rel, dirs) or self.hit("specs", rel, dirs):
             raise Block(f"the implementer may not write test, fixture or spec paths; {rel} is one")
 
     def staged(self):
         try:
             r = subprocess.run(["git", "-C", self.root, "diff", "--cached", "--name-only", "-z"],
                                capture_output=True, timeout=20)
+        except Exception:
+            return []
+        if r.returncode != 0:
+            return []
+        return [x for x in r.stdout.decode("utf-8", "replace").split("\0") if x]
+
+    def git_list(self, *args):
+        try:
+            r = subprocess.run(["git", "-C", self.root, *args, "-z"], capture_output=True, timeout=20)
         except Exception:
             return []
         if r.returncode != 0:
@@ -141,10 +155,15 @@ def tokens(cmd):
 
 def commands(cmd):
     """Split a shell line into (words, redirect-targets) per simple command."""
-    cur, redirs, out, want = [], [], [], False
-    for t in tokens(cmd) + [";"]:
-        if want:
-            redirs.append(t)
+    cur, redirs, out, want, skip = [], [], [], False, False
+    toks = tokens(cmd) + [";"]
+    for k, t in enumerate(toks):
+        nxt = toks[k + 1] if k + 1 < len(toks) else ""
+        if skip:
+            skip = False
+        elif want:
+            if not t.startswith("&"):
+                redirs.append(t)
             want = False
         elif t in (">", ">>", ">|", "&>", "&>>"):
             want = True
@@ -154,7 +173,11 @@ def commands(cmd):
             cur, redirs = [], []
         elif t.startswith(">") and len(t) > 1 and not t.startswith(">&"):
             redirs.append(t.lstrip(">"))
+        elif t in (">&", "<&"):
+            skip = True  # the fd after >& is not a path
         elif re.fullmatch(r"\d*>&?\d*-?|>&\d*", t):
+            pass
+        elif re.fullmatch(r"\d+", t) and nxt.startswith(">"):
             pass
         else:
             cur.append(t)
@@ -177,13 +200,28 @@ def bash_writes(words):
     pos, opt = opts_split(a)
     if c == "tee":
         return pos
+    tdir = []
+    for j, x in enumerate(a):
+        if x in ("-t", "--target-directory") and j + 1 < len(a):
+            tdir = [a[j + 1]]
+        elif x.startswith("--target-directory="):
+            tdir = [x.split("=", 1)[1]]
+    if tdir:
+        pos = [x for x in pos if x not in tdir]
+    if c in ("cp", "install", "ln", "mv") and tdir:
+        return tdir + (pos if c == "mv" else [])
     if c in ("rm", "touch", "mkdir", "rmdir", "truncate", "mv", "unlink", "shred"):
         return pos
     if c in ("cp", "install", "ln"):
         return pos[-1:]
     if c == "sed" and any(o.startswith("-i") or o == "--in-place" or (o[:2] == "-" + o[1:2] and not o.startswith("--") and "i" in o[1:])
                           for o in opt):
-        return pos if any(o in ("-e", "-f") for o in opt) else pos[1:]
+        has_script = any(o in ("-e", "-f") or o.startswith(("--expression", "--file")) for o in opt)
+        if has_script:
+            # the argument after -e/-f is a script, not a path
+            skip = {j + 1 for j, x in enumerate(a) if x in ("-e", "-f", "--expression", "--file")}
+            return [x for j, x in enumerate(a) if not x.startswith("-") and j not in skip]
+        return pos[1:]
     return []
 
 
@@ -199,12 +237,13 @@ def decide(role, repo, tool, tin):
     if tool != "Bash":
         return
     cmd = tin.get("command") or ""
+    pending = []  # paths a git add/rm earlier in this call will put in the index
     for words, redirs in commands(cmd):
         for p in redirs:
             if not p.startswith("/dev/"):
                 repo.check(role, p, False)
         for p in bash_writes(words):
-            repo.check(role, p, False)
+            repo.check(role, p, False, True)
         w = list(words)
         while w and (re.fullmatch(r"\w+=.*", w[0]) or w[0] in ("sudo", "env")):
             w = w[1:]
@@ -219,10 +258,34 @@ def decide(role, repo, tool, tin):
             if sub in REVIEWER_GIT or (sub in ("checkout", "switch") and any(
                     x in ("-b", "-B", "-c", "-C") for x in rest)):
                 raise Block(f"the reviewer role is read-only: 'git {sub}' changes the repository")
+        elif sub in ("add", "rm"):
+            ops = [x for x in rest if not x.startswith("-")]
+            if sub == "add" and (any(x in ("-A", "--all", "-u", "--update") for x in rest) or "." in ops):
+                pending += repo.git_list("ls-files", "-m", "-o", "--exclude-standard")
+                ops = [x for x in ops if x != "."]
+            pending += [os.path.join(repo.root, x) if not os.path.isabs(x) else x for x in ops]
         elif sub == "commit":
-            for rel in repo.staged():
+            extra = list(pending)
+            if any(x in ("-a", "--all") or (re.fullmatch(r"-[a-zA-Z]+", x) and "a" in x[1:]) for x in rest):
+                extra += repo.git_list("diff", "--name-only")
+            j = 0
+            while j < len(rest):
+                x = rest[j]
+                if x == "--":
+                    extra += rest[j + 1:]
+                    break
+                if x.startswith("--"):
+                    j += 2 if x in ("--message", "--file", "--author", "--date", "--template",
+                                    "--reuse-message", "--reedit-message", "--fixup", "--squash", "--cleanup") else 1
+                elif x.startswith("-") and len(x) > 1:
+                    # a short option cluster ending in m, F, C or c takes the next word
+                    j += 2 if x[-1] in "mFCc" else 1
+                else:
+                    extra.append(x)
+                    j += 1
+            for rel in repo.staged() + extra:
                 try:
-                    repo.check(role, os.path.join(repo.root, rel), True)
+                    repo.check(role, os.path.join(repo.root, rel), True, True)
                 except Block as b:
                     raise Block(f"git commit would commit a path this role may not write: {b}")
 
