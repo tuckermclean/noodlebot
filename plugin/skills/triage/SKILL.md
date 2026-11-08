@@ -51,6 +51,10 @@ in the helper's output); a short kebab-case `name`; minimal `deps` (only what it
 `track` by the repository's rule; a one-sentence `summary`; a full spec from the template; and add it
 to the deps of any node that must not pass without it. Size it honestly.
 
+Every node you create or amend gets the issue on a **Resolves:** line in its spec, right after the
+**Owns:** line: `**Resolves:** #<issue>` (append `, #<issue>` if the line exists). The session that
+builds the node puts `Fixes #<issue>` in its PR for each one, so merging the node closes the issue.
+
 Criteria state observable outcomes, each testable as the template requires. When the cause is not
 known yet (an intermittent failure, say), the criteria are the outcome (e.g. "passes N consecutive
 CI runs, recorded") plus a diagnosis criterion with a recorded run; do not guess the fix.

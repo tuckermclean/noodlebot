@@ -47,5 +47,8 @@ UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) starte
 - CI flakes seen so far: snapshot.debian.org outages while building the toolbox (the toolbox image
   is now pulled from GHCR, so rare), and an intermittent perl segfault in rc1's uefi boot test. Re-run
   a failed job once (gh run rerun <id> --failed) before treating it as real.
+- If the node's spec has a **Resolves:** line (issues it was created or amended for), the PR body
+  says "Fixes #N" for each issue on it, so GitHub closes them when the PR merges. If an issue turns
+  out not to be resolved by this node, say so in the PR and write "Refs #N" instead.
 - When the PR is open, CI is green and the fresh reviewer's comment is on it (/node step 6), or
   you have written QUESTION.md or WAITING-PR, end the run.
