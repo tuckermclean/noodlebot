@@ -82,6 +82,7 @@ refused() {
 f=$tmp/f3; fixture "$f"
 ( exec 8>"$f/co/state/proj/loop.lock"; flock -n 8 && exec sleep 60 ) &
 bg="$bg $!"
+hp=$!; i=0; while ! grep -q "sleep" "/proc/$hp/cmdline" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 i=0; while flock -n "$f/co/state/proj/loop.lock" true 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 refused "a held loop.lock" "$f" 'loop\.lock'
 [ -d "$f/co/state" ] && empty "$f/data" && pass "D02-AC-6 a held loop.lock: the root gained nothing" || fail "D02-AC-6 a held loop.lock: root has $(ls "$f/data")"
