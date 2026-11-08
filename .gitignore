@@ -1,4 +1,4 @@
-# Runtime state, never committed: clones, node worktrees, logs and markers.
+# The pre-D02 runtime layout (now under $NOODLEBOT_DATA), kept for installations not yet moved.
 repos/
 worktrees/
 state/

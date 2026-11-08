@@ -5,7 +5,7 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
 - `scheduler/`: the node scheduler, one loop per repository:
   `tmux new -d -s sched-<name> ~/gitrepos/noodlebot/scheduler/loop.sh <owner/name>` (default
   tuckermclean/themonolith, in tmux session `sched`). Each repository has its own lock, state
-  (`state/<name>/`), clone, worktrees and status issue; `touch ~/STOP` stops every loop,
+  (`$NOODLEBOT_DATA/state/<name>/`), clone, worktrees and status issue; `touch ~/STOP` stops every loop,
   `touch ~/STOP-<name>` one. `scheduler/status.sh [owner/name]` shows one repository.
 - `plugin/`: the bot's Claude Code skills, generic over repositories in the graph regime
   (`docs/graph.yaml` + `nodes/<ID>-<name>.md`); load with `claude --plugin-dir ~/gitrepos/noodlebot/plugin`.
@@ -48,4 +48,8 @@ and starts it again. The session reads every answer in `answered/` and carries o
 If your answer approves a spec change, the session opens a `spec/<ID>-*` PR, writes its number to
 `WAITING-PR` and ends. Merge that PR; within a minute the node starts again on the new spec.
 `scheduler/status.sh` shows which of these each node is waiting for.
-- `repos/`, `worktrees/` and `state/` are runtime directories and are ignored by git.
+- `repos/`, `worktrees/` and `state/` are runtime directories under the runtime root `$NOODLEBOT_DATA`
+  (default `~/.local/share/noodlebot`), outside any checkout. Every loop, `status.sh` and
+  `move-runtime.sh` must see the same `NOODLEBOT_DATA`.
+- One-time move of an older installation (runtime folders inside the checkout): `touch ~/STOP`, wait
+  until no session runs, run `scheduler/move-runtime.sh ~/gitrepos/noodlebot`, start the loops again.
