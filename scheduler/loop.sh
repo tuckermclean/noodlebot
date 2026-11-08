@@ -20,6 +20,7 @@
 #                            answered/ keeps released questions and spec PRs
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
+# At start, once, it makes sure the labels noodlebot, noodlebot-triaged and noodlebot-status exist (labels.py).
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
 set -u -o pipefail
@@ -64,6 +65,19 @@ set_starts() { echo "$2" >"$1/starts"; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
 [ -d "$clone/.git" ] || git clone -q "https://github.com/$repo" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
+
+# The label step, once per loop start (never on a tick): the labels the bot relies on exist in the
+# repository. A failure is logged and the loop goes on.
+ensure_labels() {
+	local tok out
+	tok=$(~/.config/noodlebot/token "$repo") || { say "label step: no GitHub App token; labels not checked"; return; }
+	if out=$(GH_TOKEN=$tok python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
+		[ -z "$out" ] || say "label step: $(echo "$out" | sed 's/^created label //' | paste -sd' ' | sed 's/^/created labels: /')"
+	else
+		say "label step failed (see report.log); carrying on"
+	fi
+}
+ensure_labels
 
 # alive <pid> <key>: the process exists and is that task's session, whose prompt ends in <key>
 # (a node ID or an issue number); guards against pid reuse.
