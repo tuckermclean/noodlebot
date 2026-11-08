@@ -40,6 +40,9 @@ UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) starte
   Push with: GIT_TOKEN=$(~/.config/noodlebot/token) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD
   Edit a PR body with gh api -X PATCH repos/tuckermclean/themonolith/pulls/N -F body=@file.
   Never print, echo or log a token.
+  App tokens expire after 1 hour. A wait or poll loop calls ~/.config/noodlebot/token inside the loop,
+  on every poll, never once before it, and treats a failed gh call as an error it reports, not as "not
+  done yet": a loop that caches the token spins forever once it expires and never sees the run end.
 - Never merge, approve, push to main, or change branch protection or repository settings.
 - CI flakes seen so far: snapshot.debian.org outages while building the toolbox (the toolbox image
   is now pulled from GHCR, so rare), and an intermittent perl segfault in rc1's uefi boot test. Re-run
