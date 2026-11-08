@@ -22,7 +22,6 @@ cooperative agents, not a sandbox. Exit 2 with the reason on stderr blocks; exit
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 
@@ -144,62 +143,171 @@ class Repo:
         return [x for x in r.stdout.decode("utf-8", "replace").split("\0") if x]
 
 
-HEREDOC = re.compile(r"<<-?\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][\w.-]*))")
+OPS = ["&>>", "<<<", "<<-", "&&", "||", ";;", "|&", "&>", ">>", ">|", ">&", "<&", "<>", "<<",
+       ";", "|", "&", "(", ")", "<", ">"]
+REDIR = re.compile(r"\d*(?:&>>|&>|<<<|<<-|<<|>>|>\||>&|<&|<>|>|<)")
+WRITE_REDIR = {">", ">>", ">|", "&>", "&>>", "<>", ">&"}
+PREFIX = {"sudo", "env", "command", "exec", "nohup", "builtin", "time", "!", "if", "then", "else",
+          "elif", "do", "while", "until", "{"}
 
 
-def strip_heredocs(cmd):
-    """Drop heredoc bodies (data, not shell) and their markers; join lines with ';'."""
-    out, pending = [], []
-    for line in cmd.split("\n"):
-        if pending:
-            word, dash = pending[0]
-            if (line.lstrip("\t") if dash else line) == word:
-                pending.pop(0)
-            continue
-        for m in HEREDOC.finditer(line):
-            pending.append((m.group(1) or m.group(2) or m.group(3), m.group(0).startswith("<<-")))
-        out.append(HEREDOC.sub("", line))
-    return " ; ".join(out)
+class Word:
+    """A shell word: its text with quotes removed (expansions kept as written, so a `$` or a
+    backquote in it marks it unknowable) and the command lists of its $( … ) and ` … `."""
+
+    def __init__(self):
+        self.text, self.quoted, self.subs = "", False, []
 
 
-def tokens(cmd):
-    try:
-        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        return list(lex)
-    except ValueError:
-        return cmd.split()
+class Lexer:
+    """A small shell lexer. Words come out as Word, unquoted operators as strings (a
+    redirection carries its fd number, e.g. '2>&'), newlines as '\\n'. Quoting is kept
+    visible, backslash-newline joins lines and heredoc bodies are skipped as data."""
 
+    def __init__(self, s):
+        self.s, self.i = s, 0
 
-def commands(cmd):
-    """Split a shell line into (words, redirect-targets) per simple command."""
-    cur, redirs, out, want, skip = [], [], [], False, False
-    toks = tokens(strip_heredocs(cmd)) + [";"]
-    for k, t in enumerate(toks):
-        nxt = toks[k + 1] if k + 1 < len(toks) else ""
-        if skip:
-            skip = False
-        elif want:
-            if not t.startswith("&"):
-                redirs.append(t)
-            want = False
-        elif t in (">", ">>", ">|", "&>", "&>>"):
-            want = True
-        elif re.fullmatch(r"[;|&()]+", t) or t == "\n":
-            if cur or redirs:
-                out.append((cur, redirs))
-            cur, redirs = [], []
-        elif t.startswith(">") and len(t) > 1 and not t.startswith(">&"):
-            redirs.append(t.lstrip(">"))
-        elif t in (">&", "<&"):
-            skip = True  # the fd after >& is not a path
-        elif re.fullmatch(r"\d*>&?\d*-?|>&\d*", t):
-            pass
-        elif re.fullmatch(r"\d+", t) and nxt.startswith(">"):
-            pass
+    def _match(self, j, open_, close):
+        """Index after the bracket that closes the one opened just before j."""
+        depth, s = 1, self.s
+        while j < len(s) and depth:
+            if s[j] == "\\":
+                j += 1
+            elif s[j] == open_:
+                depth += 1
+            elif s[j] == close:
+                depth -= 1
+            j += 1
+        return j
+
+    def _dollar(self, w):
+        s, i = self.s, self.i
+        if s.startswith("$((", i):
+            self.i = self._match(i + 3, "(", ")") + 1
+            w.text += s[i:self.i]
+        elif s.startswith("$(", i):
+            self.i = i + 2
+            w.subs.append(self.tokens(close=True))
+            w.text += s[i:self.i]
+        elif s.startswith("${", i):
+            self.i = self._match(i + 2, "{", "}")
+            w.text += s[i:self.i]
         else:
-            cur.append(t)
-    return out
+            w.text += "$"
+            self.i += 1
+
+    def _backquote(self, w):
+        s, j = self.s, self.i + 1
+        while j < len(s) and s[j] != "`":
+            j += 2 if s[j] == "\\" else 1
+        w.subs.append(Lexer(s[self.i + 1:j].replace("\\`", "`")).tokens())
+        w.text += s[self.i:j + 1]
+        self.i = j + 1
+
+    def _double(self, w):
+        s = self.s
+        self.i += 1
+        while self.i < len(s) and s[self.i] != '"':
+            c = s[self.i]
+            if c == "\\" and self.i + 1 < len(s) and s[self.i + 1] in '$`"\\\n':
+                if s[self.i + 1] != "\n":
+                    w.text += s[self.i + 1]
+                self.i += 2
+            elif c == "$":
+                self._dollar(w)
+            elif c == "`":
+                self._backquote(w)
+            else:
+                w.text += c
+                self.i += 1
+        self.i += 1
+
+    def _body(self, delim, dash):
+        s, j = self.s, self.i
+        while j < len(s):
+            k = s.find("\n", j)
+            line = s[j:] if k < 0 else s[j:k]
+            j = len(s) if k < 0 else k + 1
+            if (line.lstrip("\t") if dash else line) == delim:
+                break
+        self.i = j
+
+    def tokens(self, close=False):
+        """Tokens up to the end, or with close, up to the ')' that ends a $( (consumed)."""
+        s, out, pending, depth = self.s, [], [], 0
+        word, delim = None, None
+
+        def flush():
+            nonlocal word, delim
+            if word is not None:
+                out.append(word)
+                if delim is not None:
+                    pending.append((word.text, delim))
+                    delim = None
+            word = None
+
+        while self.i < len(s):
+            c = s[self.i]
+            if s.startswith("\\\n", self.i):
+                self.i += 2
+            elif c in " \t":
+                flush()
+                self.i += 1
+            elif c == "#" and word is None:
+                while self.i < len(s) and s[self.i] != "\n":
+                    self.i += 1
+            elif c == "\n":
+                flush()
+                out.append("\n")
+                self.i += 1
+                for d, dash in pending:
+                    self._body(d, dash)
+                pending = []
+            elif c in "|&;()<>":
+                fd = ""
+                if c in "<>" and word is not None and not word.quoted and word.text.isdigit() and not word.subs:
+                    fd, word = word.text, None
+                flush()
+                op = next(o for o in OPS if s.startswith(o, self.i))
+                self.i += len(op)
+                if op == "(":
+                    depth += 1
+                elif op == ")":
+                    if depth == 0 and close:
+                        return out
+                    depth = max(depth - 1, 0)
+                if op in ("<<", "<<-"):
+                    delim = op == "<<-"
+                out.append(fd + op)
+            else:
+                if word is None:
+                    word = Word()
+                if c == "'":
+                    k = s.find("'", self.i + 1)
+                    k = len(s) if k < 0 else k
+                    word.text += s[self.i + 1:k]
+                    word.quoted, self.i = True, k + 1
+                elif c == '"':
+                    word.quoted = True
+                    self._double(word)
+                elif c == "\\":
+                    word.text += s[self.i + 1:self.i + 2]
+                    word.quoted, self.i = True, self.i + 2
+                elif c == "$":
+                    self._dollar(word)
+                elif c == "`":
+                    self._backquote(word)
+                else:
+                    word.text += c
+                    self.i += 1
+        flush()
+        return out
+
+
+def strip_prefix(words):
+    while words and (re.fullmatch(r"\w+=.*", words[0], re.S) or words[0] in PREFIX):
+        words = words[1:]
+    return words
 
 
 def opts_split(args):
@@ -208,10 +316,7 @@ def opts_split(args):
 
 def bash_writes(words):
     """Repository-changing paths a simple command writes, by heuristic."""
-    while words and re.fullmatch(r"\w+=.*", words[0]):
-        words = words[1:]
-    while words and words[0] in ("sudo", "env", "command", "exec", "nohup"):
-        words = words[1:]
+    words = strip_prefix(words)
     if not words:
         return []
     c, a = os.path.basename(words[0]), words[1:]
@@ -243,6 +348,123 @@ def bash_writes(words):
     return []
 
 
+def resolve(base, d):
+    """Directory d taken from base (None: unknown); None when it cannot be known."""
+    if re.search(r"[$`]", d) or d == "-":
+        return None
+    d = os.path.expanduser(d)
+    if os.path.isabs(d):
+        return os.path.normpath(d)
+    return os.path.normpath(os.path.join(base, d)) if base else None
+
+
+class Bash:
+    """Walks one Bash call's tokens, tracking the working directory per subshell."""
+
+    def __init__(self, role, repo):
+        self.role, self.repo = role, repo
+        self.pending = []  # paths a git add/rm earlier in this call will put in the index
+
+    def run(self, toks, cwd):
+        stack, cur, redirs, k = [], [], [], 0
+        while k < len(toks):
+            t = toks[k]
+            if isinstance(t, Word):
+                cur.append(t)
+                k += 1
+            elif REDIR.fullmatch(t):
+                nxt = toks[k + 1] if k + 1 < len(toks) and isinstance(toks[k + 1], Word) else None
+                if nxt is not None:
+                    redirs.append((t.lstrip("0123456789"), nxt))
+                k += 2 if nxt is not None else 1
+            else:
+                cwd = self.simple(cur, redirs, cwd)
+                cur, redirs = [], []
+                if t == "(":
+                    stack.append(cwd)
+                elif t == ")" and stack:
+                    cwd = stack.pop()
+                k += 1
+        self.simple(cur, redirs, cwd)
+
+    def simple(self, words, redirs, cwd):
+        """Judge one simple command; return the working directory after it."""
+        role, repo = self.role, self.repo
+        for w in words + [x for _, x in redirs]:
+            for sub in w.subs:
+                self.run(sub, cwd)
+
+        def at(p, base=cwd):
+            if os.path.isabs(p) or p.startswith(("~", "$", "`")):
+                return p
+            return os.path.join(base, p) if base else "$unknown/" + p
+
+        for op, w in redirs:
+            p = w.text
+            if op not in WRITE_REDIR or p.startswith("/dev/") or (op == ">&" and re.fullmatch(r"\d*-?", p)):
+                continue
+            repo.check(role, at(p), False)
+        texts = [w.text for w in words]
+        for p in bash_writes(texts):
+            repo.check(role, at(p), False, True)
+        w = strip_prefix(texts)
+        if w and w[0] in ("cd", "pushd", "popd"):
+            args = [x for x in w[1:] if not x.startswith("-") or x == "-"]
+            if w[0] == "popd" or not args:
+                return None
+            return resolve(cwd, args[0])
+        if len(w) < 2 or os.path.basename(w[0]) != "git":
+            return cwd
+        i, gdir = 1, cwd
+        while i < len(w) and w[i].startswith("-"):
+            if w[i] == "-C" and i + 1 < len(w):
+                gdir = resolve(gdir, w[i + 1]) if w[i + 1] else gdir
+                i += 2
+            else:
+                i += 2 if w[i] in ("-c", "--git-dir", "--work-tree", "--namespace") else 1
+        if gdir is None or repo.rel(gdir) is None:
+            return cwd  # another repository (or one that cannot be known): not judged
+        sub = w[i] if i < len(w) else ""
+        rest = w[i + 1:]
+        if role == "reviewer":
+            if sub == "stash" and [x for x in rest if not x.startswith("-")][:1] in (["list"], ["show"]):
+                return cwd
+            if sub in REVIEWER_GIT or (sub in ("checkout", "switch") and any(
+                    x in ("-b", "-B", "-c", "-C") for x in rest)):
+                raise Block(f"the reviewer role is read-only: 'git {sub}' changes the repository")
+        elif sub in ("add", "rm"):
+            ops = [x for x in rest if not x.startswith("-")]
+            if sub == "add" and (any(x in ("-A", "--all", "-u", "--update") for x in rest) or "." in ops):
+                self.pending += repo.git_list("ls-files", "-m", "-o", "--exclude-standard")
+                ops = [x for x in ops if x != "."]
+            self.pending += [at(x, gdir) for x in ops]
+        elif sub == "commit":
+            extra = list(self.pending)
+            if any(x in ("-a", "--all") or (re.fullmatch(r"-[a-zA-Z]+", x) and "a" in x[1:]) for x in rest):
+                extra += repo.git_list("diff", "--name-only")
+            j = 0
+            while j < len(rest):
+                x = rest[j]
+                if x == "--":
+                    extra += [at(y, gdir) for y in rest[j + 1:]]
+                    break
+                if x.startswith("--"):
+                    j += 2 if x in ("--message", "--file", "--author", "--date", "--template",
+                                    "--reuse-message", "--reedit-message", "--fixup", "--squash", "--cleanup") else 1
+                elif x.startswith("-") and len(x) > 1:
+                    # a short option cluster ending in m, F, C or c takes the next word
+                    j += 2 if x[-1] in "mFCc" else 1
+                else:
+                    extra.append(at(x, gdir))
+                    j += 1
+            for rel in repo.staged() + extra:
+                try:
+                    repo.check(role, os.path.join(repo.root, rel), True, True)
+                except Block as b:
+                    raise Block(f"git commit would commit a path this role may not write: {b}")
+        return cwd
+
+
 def decide(role, repo, tool, tin):
     if tool in ("Edit", "Write", "NotebookEdit"):
         p = tin.get("file_path") or tin.get("notebook_path")
@@ -254,75 +476,7 @@ def decide(role, repo, tool, tin):
         return
     if tool != "Bash":
         return
-    cmd = tin.get("command") or ""
-    cwd = repo.root  # None once a cd target cannot be known
-
-    def at(p):
-        if os.path.isabs(p) or p.startswith(("~", "$", "`")):
-            return p
-        return os.path.join(cwd, p) if cwd else "$unknown/" + p
-
-    pending = []  # paths a git add/rm earlier in this call will put in the index
-    for words, redirs in commands(cmd):
-        for p in redirs:
-            if not p.startswith("/dev/"):
-                repo.check(role, at(p), False)
-        for p in bash_writes(words):
-            repo.check(role, at(p), False, True)
-        w = list(words)
-        while w and (re.fullmatch(r"\w+=.*", w[0]) or w[0] in ("sudo", "env")):
-            w = w[1:]
-        if w and w[0] in ("cd", "pushd", "popd"):
-            args = [x for x in w[1:] if not x.startswith("-") or x == "-"]
-            if w[0] == "popd" or not args or re.search(r"[$`]|^-$", args[0]):
-                cwd = None
-            else:
-                d = os.path.expanduser(args[0])
-                cwd = os.path.normpath(d if os.path.isabs(d) else os.path.join(cwd, d)) if (os.path.isabs(d) or cwd) else None
-            continue
-        if len(w) < 2 or os.path.basename(w[0]) != "git":
-            continue
-        i = 1
-        while i < len(w) and w[i].startswith("-"):
-            i += 2 if w[i] in ("-C", "-c", "--git-dir", "--work-tree") else 1
-        sub = w[i] if i < len(w) else ""
-        rest = w[i + 1:]
-        if role == "reviewer":
-            if sub == "stash" and [x for x in rest if not x.startswith("-")][:1] in (["list"], ["show"]):
-                continue
-            if sub in REVIEWER_GIT or (sub in ("checkout", "switch") and any(
-                    x in ("-b", "-B", "-c", "-C") for x in rest)):
-                raise Block(f"the reviewer role is read-only: 'git {sub}' changes the repository")
-        elif sub in ("add", "rm"):
-            ops = [x for x in rest if not x.startswith("-")]
-            if sub == "add" and (any(x in ("-A", "--all", "-u", "--update") for x in rest) or "." in ops):
-                pending += repo.git_list("ls-files", "-m", "-o", "--exclude-standard")
-                ops = [x for x in ops if x != "."]
-            pending += [at(x) for x in ops if cwd or os.path.isabs(x)]
-        elif sub == "commit":
-            extra = list(pending)
-            if any(x in ("-a", "--all") or (re.fullmatch(r"-[a-zA-Z]+", x) and "a" in x[1:]) for x in rest):
-                extra += repo.git_list("diff", "--name-only")
-            j = 0
-            while j < len(rest):
-                x = rest[j]
-                if x == "--":
-                    extra += rest[j + 1:]
-                    break
-                if x.startswith("--"):
-                    j += 2 if x in ("--message", "--file", "--author", "--date", "--template",
-                                    "--reuse-message", "--reedit-message", "--fixup", "--squash", "--cleanup") else 1
-                elif x.startswith("-") and len(x) > 1:
-                    # a short option cluster ending in m, F, C or c takes the next word
-                    j += 2 if x[-1] in "mFCc" else 1
-                else:
-                    extra.append(x)
-                    j += 1
-            for rel in repo.staged() + extra:
-                try:
-                    repo.check(role, os.path.join(repo.root, rel), True, True)
-                except Block as b:
-                    raise Block(f"git commit would commit a path this role may not write: {b}")
+    Bash(role, repo).run(Lexer(tin.get("command") or "").tokens(), repo.root)
 
 
 def main():
