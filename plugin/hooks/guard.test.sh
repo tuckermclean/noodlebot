@@ -242,5 +242,68 @@ echo y >>"$G3/a.test.sh"
 expect $a "implementer git commit -am with a modified tracked test" block "$G3" $I $B $cmd "git commit -am x"
 expect $a "implementer git commit with a test pathspec" block "$G3" $I $B $cmd "git commit -m x a.test.sh"
 
+# ---------- heredoc bodies are data (item 8) ----------
+nl='
+'
+expect $a "reviewer python3 - heredoc whose body has a > comparison" allow "$D" $V $B $cmd "python3 - <<'EOF'${nl}for i in range(3):${nl}    if i > 1: print(i)${nl}EOF"
+expect $a "tester python3 - heredoc whose body has a > comparison" allow "$D" $T $B $cmd "python3 - <<'EOF'${nl}if 2 > 1: print(1)${nl}EOF"
+expect $a "implementer python3 - heredoc whose body has a > comparison" allow "$D" $I $B $cmd "python3 - <<'EOF'${nl}if 2 > 1: print(1)${nl}EOF"
+expect $a "reviewer cat > scratch file outside the repository <<EOF with > in the body" allow "$D" $V $B $cmd "cat > $tmp/scratch/p.py <<'EOF'${nl}if 2 > 1: print(1)${nl}EOF"
+expect $a "reviewer unquoted <<EOF body naming a repository path after >" allow "$D" $V $B $cmd "cat <<EOF${nl}echo x > src/main.py${nl}EOF"
+expect $a "reviewer <<-EOF with tab-indented terminator and a > in the body" allow "$D" $V $B $cmd "python3 - <<-EOF${nl}	if 2 > 1: print(1)${nl}	EOF"
+expect $a "reviewer <<\"EOF\" with a > in the body" allow "$D" $V $B $cmd "python3 - <<\"EOF\"${nl}if 2 > 1: print(1)${nl}EOF"
+expect $a "tester <<-'EOF' body redirect to source is data" allow "$D" $T $B $cmd "cat <<-'EOF'${nl}echo x > src/main.py${nl}EOF"
+expect $a "implementer cat > tests/x.test.sh <<'EOF' is still judged" block "$D" $I $B $cmd "cat > tests/x.test.sh <<'EOF'${nl}echo hi${nl}EOF"
+expect $a "implementer cat > src file <<'EOF' is allowed" allow "$D" $I $B $cmd "cat > src/x.py <<'EOF'${nl}if 2 > 1: print(1)${nl}EOF"
+expect $a "tester cat > src/x.py <<EOF is still judged" block "$D" $T $B $cmd "cat > src/x.py <<EOF${nl}x${nl}EOF"
+expect $a "reviewer cat > repo file <<-\"EOF\" is still judged" block "$D" $V $B $cmd "cat > out.txt <<-\"EOF\"${nl}x${nl}EOF"
+expect $a "reviewer write after a heredoc ends is still judged" block "$D" $V $B $cmd "cat <<'EOF'${nl}x${nl}EOF${nl}echo y > out.txt"
+
+# ---------- cd / pushd earlier in the same Bash call (item 9) ----------
+expect $a "reviewer cd scratch && run test with > red.log" allow "$D" $V $B $cmd "cd $tmp/scratch && sh x.test.sh > red.log 2>&1"
+expect $a "reviewer cd \$(mktemp -d) && echo > out.txt" allow "$D" $V $B $cmd 'cd $(mktemp -d) && echo hi > out.txt'
+expect $a "reviewer cd \$VAR && echo > out.txt (unknown dir)" allow "$D" $V $B $cmd 'cd $SCR && echo hi > out.txt'
+expect $a "reviewer cd - && echo > out.txt (unknown dir)" allow "$D" $V $B $cmd 'cd - && echo hi > out.txt'
+expect $a "implementer cd tests && echo > a.test.sh" block "$D" $I $B $cmd "cd tests && echo x > a.test.sh"
+expect $a "implementer cd src && echo > a.py" allow "$D" $I $B $cmd "cd src && echo x > a.py"
+expect $a "tester cd tests && echo > b.test.sh" allow "$D" $T $B $cmd "cd tests && echo x > b.test.sh"
+expect $a "tester cd src && echo > a.py" block "$D" $T $B $cmd "cd src && echo x > a.py"
+expect $a "implementer cd absolute tests dir && echo > a.sh" block "$D" $I $B $cmd "cd $D/tests && echo x > a.sh"
+expect $a "implementer cd tests; echo > a.test.sh (semicolon)" block "$D" $I $B $cmd "cd tests; echo x > a.test.sh"
+expect $a "implementer cd src; echo > a.py (semicolon)" allow "$D" $I $B $cmd "cd src; echo x > a.py"
+expect $a "reviewer cd scratch; echo > out.txt (semicolon)" allow "$D" $V $B $cmd "cd $tmp/scratch; echo hi > out.txt"
+expect $a "implementer cd tests on its own line then a write" block "$D" $I $B $cmd "cd tests${nl}echo x > a.test.sh"
+expect $a "reviewer cd scratch on its own line then a write" allow "$D" $V $B $cmd "cd $tmp/scratch${nl}echo hi > out.txt"
+expect $a "implementer cd tests || true then a write" block "$D" $I $B $cmd "cd tests || exit 1; echo x > a.test.sh"
+expect $a "implementer pushd tests && echo > a.test.sh" block "$D" $I $B $cmd "pushd tests >/dev/null && echo x > a.test.sh"
+expect $a "implementer pushd src && echo > a.py" allow "$D" $I $B $cmd "pushd src >/dev/null && echo x > a.py"
+expect $a "reviewer pushd scratch && echo > out.txt" allow "$D" $V $B $cmd "pushd $tmp/scratch >/dev/null && echo hi > out.txt"
+expect $a "implementer cd a && cd b relative chain into tests/sub" block "$D" $I $B $cmd "cd tests && cd sub && echo x > a.py"
+expect $a "reviewer cd into the repository && write is still blocked" block "$D" $V $B $cmd "cd $D/src && echo x > a.py"
+expect $a "reviewer without cd: relative write still blocked" block "$D" $V $B $cmd "echo hi > out.txt"
+
+# ---------- read-only git stash for the reviewer (item 10) ----------
+expect $a "reviewer git stash list is allowed" allow "$D" $V $B $cmd "git stash list"
+expect $a "reviewer git stash show is allowed" allow "$D" $V $B $cmd "git stash show"
+expect $a "reviewer git stash show -p stash@{0} is allowed" allow "$D" $V $B $cmd "git stash show -p stash@{0}"
+expect $a "reviewer git stash pop is blocked" block "$D" $V $B $cmd "git stash pop"
+expect $a "reviewer git stash push is blocked" block "$D" $V $B $cmd "git stash push -m x"
+expect $a "reviewer git stash drop is blocked" block "$D" $V $B $cmd "git stash drop"
+expect $a "reviewer git stash apply is blocked" block "$D" $V $B $cmd "git stash apply"
+expect $a "reviewer git stash after git stash list is blocked" block "$D" $V $B $cmd "git stash list && git stash"
+
+# ---------- .noodlebot/roles.yaml is always a spec path (item 11) ----------
+expect $a "implementer Write .noodlebot/roles.yaml (defaults)" block "$D" $I $W $fp ".noodlebot/roles.yaml"
+expect $a "implementer Write .noodlebot/roles.yaml (absolute path)" block "$D" $I $W $fp "$D/.noodlebot/roles.yaml"
+expect $a "implementer Edit .noodlebot/roles.yaml (custom roles.yaml)" block "$C" $I $E $fp ".noodlebot/roles.yaml"
+expect $a "implementer Write .noodlebot/roles.yaml (tests-only roles.yaml)" block "$P" $I $W $fp ".noodlebot/roles.yaml"
+expect $a "implementer Bash redirect into .noodlebot/roles.yaml" block "$D" $I $B $cmd "echo x > .noodlebot/roles.yaml"
+expect $a "implementer Bash redirect into .noodlebot/roles.yaml (custom)" block "$C" $I $B $cmd "echo x > .noodlebot/roles.yaml"
+expect $a "tester Write .noodlebot/roles.yaml (defaults)" block "$D" $T $W $fp ".noodlebot/roles.yaml"
+expect $a "tester Write .noodlebot/roles.yaml (custom roles.yaml)" block "$C" $T $W $fp ".noodlebot/roles.yaml"
+expect $a "tester Bash redirect into .noodlebot/roles.yaml" block "$D" $T $B $cmd "echo x > .noodlebot/roles.yaml"
+expect $a "reviewer Write .noodlebot/roles.yaml" block "$D" $V $W $fp ".noodlebot/roles.yaml"
+expect $a "implementer may still write another file under .noodlebot/" allow "$D" $I $W $fp ".noodlebot/notes.txt"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all guard checks"
