@@ -20,7 +20,7 @@ import argparse, hashlib, json, os, re, subprocess, sys, time
 from datetime import datetime, timezone
 
 LABEL = "noodlebot-status"
-EVENT = re.compile(r"started |ended |released |merged |wrote FAILED|found ~/STOP")
+EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|found ~/STOP")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
 MAX_COMMENT = 60000
 
@@ -61,29 +61,39 @@ def event_text(line):
 
 
 def nodes(state):
-    d = os.path.join(state, "node")
-    return sorted(n for n in os.listdir(d) if NODE.match(n) and os.path.isdir(os.path.join(d, n))) if os.path.isdir(d) else []
+    """The tasks with a state directory: nodes ("B03", node/B03) and triaged issues ("#46", issue/46)."""
+    out = []
+    for kind, pat, fmt in (("node", NODE, "%s"), ("issue", re.compile(r"^\d+$"), "#%s")):
+        d = os.path.join(state, kind)
+        if os.path.isdir(d):
+            out += [fmt % n for n in sorted(os.listdir(d)) if pat.match(n) and os.path.isdir(os.path.join(d, n))]
+    return out
 
 
-def has(state, node, name):
-    return os.path.exists(os.path.join(state, "node", node, name))
+def tdir(state, task):
+    return os.path.join(state, "issue", task[1:]) if task.startswith("#") else os.path.join(state, "node", task)
+
+
+def has(state, task, name):
+    return os.path.exists(os.path.join(tdir(state, task), name))
 
 
 def waiting(state):
-    """Nodes whose QUESTION.md has no ANSWER.md yet."""
+    """Tasks whose QUESTION.md has no ANSWER.md yet."""
     return [n for n in nodes(state) if has(state, n, "QUESTION.md") and not has(state, n, "ANSWER.md")]
 
 
 def session(state):
-    """(node, pid, started) of the live session, or None."""
+    """(task, pid, started) of the live session, or None."""
     for n in nodes(state):
-        f = os.path.join(state, "node", n, "session.pid")
+        f = os.path.join(tdir(state, n), "session.pid")
         try:
             pid = open(f).read().strip()
             cmd = open("/proc/%s/cmdline" % pid, "rb").read().replace(b"\0", b" ").decode()
         except OSError:
             continue
-        if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (n, n), cmd):
+        k = n.lstrip("#")
+        if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (k, k), cmd):
             return n, pid, os.path.getmtime(f)
     return None
 
@@ -96,9 +106,10 @@ def narration(log):
             d = json.loads(line)
         except ValueError:
             continue
-        if d.get("parent_tool_use_id"):
+        if not isinstance(d, dict) or d.get("parent_tool_use_id"):
             continue
-        content = (d.get("message") or {}).get("content")
+        msg = d.get("message")
+        content = msg.get("content") if isinstance(msg, dict) else None
         if not isinstance(content, list):
             continue
         for c in content:
@@ -121,9 +132,10 @@ def last_result(log):
     for line in reversed(tail_lines(log, 1 << 20)):
         if '"type":"result"' in line.replace(" ", ""):
             try:
-                return (json.loads(line).get("result") or "").strip() or None
-            except ValueError:
+                r = json.loads(line).get("result")
+            except (ValueError, AttributeError):
                 return None
+            return r.strip() or None if isinstance(r, str) else None
     return None
 
 
@@ -144,13 +156,13 @@ def body_for(a, st, prs):
     for n in nodes(state):
         if has(state, n, "FAILED"):
             items.append("- **%s FAILED** (2 starts with no PR and no question). To retry, delete `%s`." %
-                         (n, os.path.join(state, "node", n, "FAILED")))
+                         (n, os.path.join(tdir(state, n), "FAILED")))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
             items.append("- %s: answered; resumes within seconds." % n)
         elif has(state, n, "QUESTION.md"):
             items.append("- **%s asks a question** (posted below as a comment). Reply to this issue to answer." % n)
         elif has(state, n, "WAITING-PR"):
-            pr = open(os.path.join(state, "node", n, "WAITING-PR")).read().strip()
+            pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
             items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after." % (n, pr))
     for n, pr in sorted(prs.items()):
         if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and not (st and st[0] == n):
@@ -160,19 +172,20 @@ def body_for(a, st, prs):
     out += ["", "## Session"]
     if st:
         n, pid, started = st
+        label = "triage of %s" % n if n.startswith("#") else n
         mins = int((time.time() - started) // 60)
-        starts = (open(os.path.join(state, "node", n, "starts")).read().strip()
+        starts = (open(os.path.join(tdir(state, n), "starts")).read().strip()
                   if has(state, n, "starts") else "?")
-        line = "**%s** running for %dh%02dm (start %s of 2, pid %s)" % (n, mins // 60, mins % 60, starts, pid)
+        line = "**%s** running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
         if n in prs:
             line += ", PR #%s" % prs[n]
         out.append(line)
-        texts, agent = narration(os.path.join(state, "node", n, "session.jsonl"))
+        texts, agent = narration(os.path.join(tdir(state, n), "session.jsonl"))
         if agent:
             out += ["", "Now running subagent: **%s**" % agent]
         out += ["", "Latest from the orchestrator (newest last):", ""]
         out += ["> %s" % t for t in texts] or ["> (nothing yet)"]
-        commits = git_lines(os.path.join(a.worktrees, n), "log", "--oneline", "-8", "origin/main..HEAD")
+        commits = [] if n.startswith("#") else git_lines(os.path.join(a.worktrees, n), "log", "--oneline", "-8", "origin/main..HEAD")
         if commits:
             out += ["", "Commits on the node branch (newest first):", ""] + ["- `%s`" % c for c in commits]
     else:
@@ -182,8 +195,9 @@ def body_for(a, st, prs):
     out += ["", "## Recent events", ""]
     out += ["- `%s` %s" % event_text(l) for l in events[-10:]] or ["- none yet"]
     out += ["", "---", "Answer a question by replying to this issue in plain words (e.g. \"Q1 approve, Q2 as "
-            "recommended\"). Only %s's replies count; if more than one node is waiting, start with its ID, "
-            "e.g. `B03: ...`. Closing this issue is fine: the loop opens a new one." % a.owner]
+            "recommended\"). Only %s's replies count; if more than one is waiting, start with its ID or "
+            "issue number, e.g. `B03: ...` or `#46: ...`. Hand an issue to the bot by adding the `noodlebot` label "
+            "(only labels you add count). Closing this issue is fine: the loop opens a new one." % a.owner]
     return "\n".join(out) + "\n"
 
 
@@ -234,7 +248,7 @@ def take_answers(a, rs, issue):
             continue
         text = c.get("body") or ""
         open_q = waiting(a.state)
-        m = re.match(r"\s*\**([A-Z][0-9][0-9])\**\s*[:\-]", text)
+        m = re.match(r"\s*\**(#\d+|[A-Z][0-9][0-9])\**\s*[:\-]", text)
         node = (m.group(1) if m.group(1) in open_q else None) if m else (open_q[0] if len(open_q) == 1 else None)
         if node is None and m and open_q:
             comment(a, issue, "Not recorded as an answer: %s is not waiting on a question (waiting: %s)." %
@@ -245,7 +259,7 @@ def take_answers(a, rs, issue):
                     ("no node is waiting on a question" if not open_q else
                      "more than one node is waiting (%s)" % ", ".join(open_q), open_q[0] if open_q else "B03"))
             continue
-        d = os.path.join(a.state, "node", node)
+        d = tdir(a.state, node)
         with open(os.path.join(d, "ANSWER.md.tmp"), "w") as f:
             f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
                     (node, a.owner, c["created_at"], c["html_url"], text))
@@ -271,10 +285,11 @@ def post_events(a, rs, issue):
     if lines:
         text = "\n".join("- `%s` %s" % event_text(l) for l in lines)
         for l in lines:  # a session's end: add its own closing summary
-            m = re.search(r"session ([A-Z][0-9][0-9]) ended", event_text(l)[1])
-            summary = m and last_result(os.path.join(a.state, "node", m.group(1), "session.jsonl"))
+            m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)", event_text(l)[1])
+            task = m and (m.group(1) or m.group(2))
+            summary = task and last_result(os.path.join(tdir(a.state, task), "session.jsonl"))
             if summary:
-                text += "\n\n**%s's closing summary:**\n\n%s" % (m.group(1), summary[:20000])
+                text += "\n\n**%s's closing summary:**\n\n%s" % (task, summary[:20000])
         comment(a, issue, text)
     rs["log_offset"] = off + end
 
@@ -282,7 +297,7 @@ def post_events(a, rs, issue):
 def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
-        q = os.path.join(a.state, "node", n, "QUESTION.md")
+        q = os.path.join(tdir(a.state, n), "QUESTION.md")
         key = str(int(os.path.getmtime(q)))
         if posted.get(n) == key:
             continue
@@ -333,7 +348,12 @@ def main():
         m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"]["ref"])
         if m:
             prs[m.group(1)] = pr["number"]
-    body = body_for(a, session(a.state), prs)
+    try:
+        body = body_for(a, session(a.state), prs)
+    except Exception as e:  # show the failure on the issue rather than leave it silently stale
+        body = ("# noodlebot status: %s\n\n_Updated %s. The scheduler loop is running, but building this "
+                "status failed: `%s`. See report.log._\n" % (a.repo, local(), str(e)[:300]))
+        print("report.py: status body failed: %s" % e, file=sys.stderr)
     h = hashlib.sha256(re.sub(r"_Updated .*?_", "", body).encode()).hexdigest()
     if h != rs.get("body_hash") or time.time() - rs.get("body_time", 0) >= 900:
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"body": body})
