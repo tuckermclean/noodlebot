@@ -210,5 +210,37 @@ expect $a "bare agent_type 'reviewer' (not plugin-scoped) is not a role" allow "
 expect $a "a repository's own implementer writes a test" allow "$D" monolith-implementer $W $fp "x.test.sh"
 expect $a "unknown noodlebot agent is not a role" allow "$D" noodlebot:other $W $fp "SPEC.md"
 
+# ---------- fd redirects after a write command ----------
+expect $a "tester mkdir -p with 2>/dev/null is a test-path write" allow "$D" $T $B $cmd "mkdir -p tests/foo 2>/dev/null"
+expect $a "tester touch with 2>&1 is a test-path write" allow "$D" $T $B $cmd "touch tests/a.test.sh 2>&1"
+expect $a "reviewer rm of a scratch path outside the repository with 2>/dev/null" allow "$D" $V $B $cmd "rm -rf $tmp/scratch/x 2>/dev/null"
+expect $a "reviewer mkdir under scratch outside the repository with 2>/dev/null" allow "$D" $V $B $cmd "mkdir -p $tmp/scratch/y 2>/dev/null"
+expect $a "implementer cp into tests/ with 2>&1" block "$D" $I $B $cmd "cp src/a.py tests/b.py 2>&1"
+
+# ---------- sed scripts given with -e ----------
+expect $a "tester sed -i -e on a test file" allow "$D" $T $B $cmd "sed -i -e s/a/b/ tests/a.test.sh"
+expect $a "implementer sed -i -e on a test file" block "$D" $I $B $cmd "sed -i -e s/a/b/ scheduler/x.test.sh"
+expect $a "implementer sed -i -e on source" allow "$D" $I $B $cmd "sed -i -e s/a/b/ src/main.py"
+
+# ---------- directory operands ----------
+expect $a "implementer rm -rf of the tests directory" block "$D" $I $B $cmd "rm -rf tests"
+expect $a "implementer rm -rf of nodes/ with a trailing slash" block "$D" $I $B $cmd "rm -rf nodes/"
+expect $a "implementer cp -t into the tests directory" block "$D" $I $B $cmd "cp -t tests src/a.py"
+expect $a "implementer rm -rf of a source directory" allow "$D" $I $B $cmd "rm -rf src"
+
+# ---------- add and commit in one call ----------
+G2="$tmp/gc2"
+mkrepo "$G2"; mkdir -p "$G2/src"; echo x >"$G2/src/a.py"
+expect $a "tester git add source && git commit in one call" block "$G2" $T $B $cmd "git add src/a.py && git commit -m x"
+expect $a "implementer git add a test && git commit in one call" block "$G2" $I $B $cmd "git add a.test.sh && git commit -m x"
+expect $a "implementer git add source && git commit in one call" allow "$G2" $I $B $cmd "git add src/a.py && git commit -m x"
+G3="$tmp/gc3"
+mkrepo "$G3"; echo x >"$G3/a.test.sh"; echo x >"$G3/s.py"
+git -C "$G3" add -A 2>/dev/null
+git -C "$G3" -c user.name=t -c user.email=t@t commit -qm init 2>/dev/null
+echo y >>"$G3/a.test.sh"
+expect $a "implementer git commit -am with a modified tracked test" block "$G3" $I $B $cmd "git commit -am x"
+expect $a "implementer git commit with a test pathspec" block "$G3" $I $B $cmd "git commit -m x a.test.sh"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all guard checks"
