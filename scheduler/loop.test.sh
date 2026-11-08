@@ -237,6 +237,7 @@ sleep 1
 ok "D02-AC-3: a root inside a Git working tree exits 2" test "$rc" = 2
 ok "D02-AC-3: and starts no session" test ! -s "$tmp/cwd-pg.log"
 ok "D02-AC-3: and its message names that working tree" grep -qF "$gw" "$tmp/pg.out"
+ok "D02-AC-3: its message names the working tree itself, not only the root" env GW="$gw" awk 'BEGIN{r=ENVIRON["GW"] "/data"; n=length(r)} {while((i=index($0,r))>0) $0=substr($0,1,i-1) substr($0,i+n); if(index($0,ENVIRON["GW"])>0) f=1} END{exit !f}' "$tmp/pg.out"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
