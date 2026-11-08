@@ -78,8 +78,12 @@ within() { timeout "$1" sh -c "until grep -qE \"\$1\" '$state/status.log' 2>/dev
 count() { grep -cE "$1" "$state/status.log"; }
 runs() { cat "$tmp/runs.$1" 2>/dev/null || echo 0; }
 
+# A01 is merged and still has a worktree with its evidence.
+mkdir -p "$nb/worktrees/themonolith/A01/out/node/A01" && echo brief >"$nb/worktrees/themonolith/A01/out/node/A01/brief.md"
 SCHED_REPORT=0 SCHED_TICK=30 SCHED_POLL=0.2 bash "$nb/scheduler/loop.sh" >"$tmp/loop1.out" 2>&1 &
 loop1=$!; pids+=("$loop1")
+ok "a merged node's worktree is removed" within 10 "A01 merged: removed its worktree, evidence kept in state/archive/A01-out"
+ok "its evidence is kept" grep -qx brief "$state/archive/A01-out/brief.md"
 ok "an answered question releases the node" within 10 "A02: released the owner's answer"
 ok "it starts the answered node" within 5 "started A02 \(second-node\).*start 1 of 2"
 ok "a session's exit wakes the loop (well inside the 30 s poll)" within 5 "session A02 ended \(rc 0\) waiting for spec PR #55"

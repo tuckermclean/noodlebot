@@ -122,6 +122,23 @@ start_triage() {
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
 
+# cleanup_merged: a merged node's worktree is not needed again. Keep its evidence (out/node/<ID>)
+# under state/archive/<ID>-out and remove the worktree; files a container made belong to podman's
+# subordinate ids, so plain rm may need podman unshare.
+cleanup_merged() {
+	local id wt
+	for id in $merged; do
+		wt=$wtroot/$id
+		[ -d "$wt" ] && [ "$id" != "$node" ] && [ ! -e "$state/node/$id/session.pid" ] || continue
+		mkdir -p "$state/archive"
+		[ -d "$wt/out/node/$id" ] && [ ! -e "$state/archive/$id-out" ] && mv "$wt/out/node/$id" "$state/archive/$id-out"
+		rm -rf "$wt" 2>/dev/null || podman unshare rm -rf "$wt" 2>/dev/null
+		git -C "$clone" worktree prune
+		if [ -d "$wt" ]; then note "$id merged, but removing its worktree failed"
+		else say "$id merged: removed its worktree, evidence kept in state/archive/$id-out"; fi
+	done
+}
+
 # report: after each tick (reusing its token, so no extra token request), mirror the state to the GitHub status issue and take the owner's answers
 # from it (report.py). Returns 3 when it wrote an ANSWER.md, so the loop ticks again at once. Its
 # failures go to report.log only: the scheduler never depends on it.
@@ -160,6 +177,7 @@ tick() {
 		if alive "$(cat "$f")" "$id"; then pid=$(cat "$f") node=$id sdir=$(dirname "$f")
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
+	cleanup_merged
 	if [ -n "$pid" ]; then
 		[[ $sdir == */issue/* ]] && id="triage of #$node" || id=$node
 		note "$saw; session $id (pid $pid) running" "log $(stat -c %s "$sdir/session.jsonl" 2>/dev/null) bytes"
