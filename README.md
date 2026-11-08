@@ -22,14 +22,14 @@ Each repository gets one open issue labelled `noodlebot-status` (`scheduler/repo
 after each 60 s tick). Its body shows what waits on you, the running session with the orchestrator's latest
 narration and the active subagent, and recent events. Each start, end (with the session's closing
 summary), release, merge and question is a comment, so GitHub notifies you. It is disposable: close it
-and the loop opens a new one. Its failures go to `state/<repo>/report.log` and never stop the loop.
+and the loop opens a new one. Its failures go to `$NOODLEBOT_DATA/state/<repo>/report.log` and never stop the loop.
 Nothing in it is specific to one repository: `report.py --repo OWNER/NAME --state DIR`.
 
 ## Handing an issue to the bot
 
 Add the `noodlebot` label to an issue. Only labels the repository owner adds count (the loop checks
 who added it, `scheduler/issues.py`). When no session is running, the loop triages it first
-(`/noodlebot:triage <N>`, state in `state/<repo>/issue/<N>/`): the result is a spec PR that fits the
+(`/noodlebot:triage <N>`, state in `$NOODLEBOT_DATA/state/<repo>/issue/<N>/`): the result is a spec PR that fits the
 issue into the graph, or a comment that answers it. Then the label becomes `noodlebot-triaged`.
 Merge the spec PR and the new or amended node is built like any other. A triage question shows on
 the status issue; answer it with `#<N>: ...`.
@@ -40,7 +40,7 @@ Reply to the status issue in plain words. Only the repository owner's comments c
 node is waiting, start with its ID (`B03: ...`). The reply becomes that node's `ANSWER.md`.
 Or, locally:
 
-A session that hits a `/node` step 7 stop writes `state/<repo>/node/<ID>/QUESTION.md` and ends; the
+A session that hits a `/node` step 7 stop writes `$NOODLEBOT_DATA/state/<repo>/node/<ID>/QUESTION.md` and ends; the
 node is held. To answer, write `ANSWER.md` next to it, in plain words ("Q1 approve, Q2 as
 recommended"). Within seconds the loop moves both into `answered/`, gives the node 2 fresh starts
 and starts it again. The session reads every answer in `answered/` and carries on.

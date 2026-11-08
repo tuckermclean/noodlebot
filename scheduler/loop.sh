@@ -8,7 +8,7 @@
 #   touch ~/STOP-<name>   (only that repository's loop exits)
 # It acts as soon as something changes: it checks the node markers and the running session every
 # SCHED_POLL seconds (default 2, local only) and asks GitHub about PRs every SCHED_TICK seconds
-# (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time (state/<name>/loop.lock). Sessions run under setsid and
+# (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
@@ -166,7 +166,7 @@ start_triage() {
 }
 
 # cleanup_merged: a merged node's worktree is not needed again. Keep its evidence (out/node/<ID>)
-# under state/archive/<ID>-out and remove the worktree; files a container made belong to podman's
+# under $NOODLEBOT_DATA/state/archive/<ID>-out and remove the worktree; files a container made belong to podman's
 # subordinate ids, so plain rm may need podman unshare.
 cleanup_merged() {
 	local id wt
