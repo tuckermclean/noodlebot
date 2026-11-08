@@ -7,7 +7,7 @@
 # "deployed <old>..<new>"; on failure it prints "not deployed: <sha> fails make test" once and records
 # the sha so it is not tried again. Nothing to do prints nothing. --rollback resets to
 # state/deploy/previous and records the commit it left as rejected, so the rollback sticks.
-# State: <live>/state/deploy/{previous,rejected}; lock <live>/state/deploy.lock (waited for, so a
+# State: <live>/state/deploy/{previous,rejected}; lock <live>/state/deploy.lock (waited for up to 5 minutes, so a
 # concurrent run finds nothing left to do). Exit: 0 nothing to do / deployed / rolled back;
 # 1 make test failed; 2 usage, not a git checkout, fetch or git failure (message on stderr).
 # The body is a function called last, so the file is fully read before the checkout changes under it.
@@ -16,22 +16,41 @@ die() { echo "deploy.sh: $*" >&2; exit 2; }
 
 rejected() { grep -qx "$1" "$live/state/deploy/rejected" 2>/dev/null; }
 
+cleanup() {
+	[ -n "${scratch:-}" ] || return 0
+	git -C "$live" worktree remove --force "$scratch/wt" >/dev/null 2>&1
+	rm -rf "$scratch"
+	git -C "$live" worktree prune >/dev/null 2>&1
+	scratch=
+}
+
 do_deploy() {
-	git -C "$live" fetch -q origin main >/dev/null 2>&1 || die "git fetch failed in $live"
+	timeout 60 git -C "$live" fetch -q origin main >/dev/null 2>&1 9>&- || die "git fetch failed in $live"
 	new=$(git -C "$live" rev-parse --verify -q origin/main^{commit}) || die "no origin/main in $live"
 	old=$(git -C "$live" rev-parse --verify -q HEAD) || die "no HEAD in $live"
 	[ "$new" = "$old" ] && return 0
 	rejected "$new" && return 0
 	git -C "$live" merge-base --is-ancestor "$new" "$old" 2>/dev/null && return 0
+	if ! git -C "$live" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then
+		echo "deploy.sh: $live cannot fast-forward to $new (HEAD is not an ancestor of origin/main)" >&2
+		return 2
+	fi
+	if [ -n "$(git -C "$live" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+		echo "deploy.sh: $live has uncommitted tracked changes; not deploying $new" >&2
+		return 2
+	fi
+	trap cleanup EXIT
+	trap 'kill "${mpid:-0}" 2>/dev/null; cleanup; exit 2' INT TERM
 	scratch=$(mktemp -d) || die "mktemp failed"
 	if ! git -C "$live" worktree add -q --detach "$scratch/wt" "$new" >/dev/null 2>&1; then
 		rm -rf "$scratch"
 		die "cannot create a scratch worktree for $new"
 	fi
-	if make -C "$scratch/wt" test >"$scratch/test.log" 2>&1; then ok=1; else ok=0; fi
-	git -C "$live" worktree remove --force "$scratch/wt" >/dev/null 2>&1
-	git -C "$live" worktree prune >/dev/null 2>&1
-	rm -rf "$scratch"
+	timeout 600 make -C "$scratch/wt" test >"$scratch/test.log" 2>&1 9>&- &
+	mpid=$!
+	if wait "$mpid"; then ok=1; else ok=0; fi
+	mpid=
+	cleanup
 	if [ "$ok" = 0 ]; then
 		echo "$new" >>"$live/state/deploy/rejected"
 		echo "not deployed: $new fails make test"
@@ -61,10 +80,8 @@ main() {
 	mkdir -p "$live/state/deploy" || die "cannot create $live/state/deploy"
 	exec 9>"$live/state/deploy.lock" || die "cannot open the lock"
 	command -v flock >/dev/null 2>&1 || die "flock not found"
-	flock 9 || die "cannot take the lock"
+	flock -w 300 9 || die "cannot take the lock"
 	if [ "$mode" = rollback ]; then do_rollback; else do_deploy; fi
 }
 
-main "$@"
-rc=$?
-exit "$rc"
+main "$@"; exit $?
