@@ -54,6 +54,10 @@ to the deps of any node that must not pass without it. Size it honestly.
 Criteria state observable outcomes, each testable as the template requires. When the cause is not
 known yet (an intermittent failure, say), the criteria are the outcome (e.g. "passes N consecutive
 CI runs, recorded") plus a diagnosis criterion with a recorded run; do not guess the fix.
+Every criterion must be achievable whatever the investigation finds: give a diagnosis criterion an
+explicit way out (e.g. "or, if N recorded runs show no failure, that record, and the issue is closed as
+not reproduced"), so a node can never block its dependants forever on something that may not recur.
+Use the latest facts, not only the issue text: later runs and comments may have changed the picture.
 
 Stop and ask the owner instead of choosing when the answer turns on a judgment only they can make:
 a principle or scope change, two placements that are both reasonable and lead to different work, or
