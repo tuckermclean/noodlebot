@@ -5,6 +5,7 @@ set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P)
 repo=${1:-tuckermclean/themonolith}
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
+case $root in /*) ;; *) root=$PWD/$root ;; esac
 state=$root/state/${repo#*/}
 wtroot=$root/worktrees/${repo#*/}
 

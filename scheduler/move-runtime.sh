@@ -4,8 +4,12 @@
 #   scheduler/move-runtime.sh <checkout>      (e.g. ~/gitrepos/noodlebot)
 # Stop the loops first (touch ~/STOP) and wait until no session runs. It refuses, moving nothing,
 # while a loop holds a state/*/loop.lock, a recorded session.pid is alive, or the root already has
-# a folder it would move onto; exit 2 if the root lies inside a Git working tree. Afterwards it runs
-# `git worktree repair` in each moved clone so the clones and their worktrees find each other.
+# a folder it would move onto; exit 2 if the root lies inside a Git working tree. On every run it
+# runs `git worktree repair` in every clone under the root so the clones and their worktrees find
+# each other; a rerun therefore finishes an interrupted move.
+# The move is meant within one filesystem. If the root is on another one, `mv` copies and deletes,
+# and container-made files (podman's subordinate ids) may stop it partway; then remove them with
+# `podman unshare` and rerun.
 # Every loop, status.sh and this script must see the same NOODLEBOT_DATA.
 set -u -o pipefail
 shopt -s dotglob nullglob
@@ -72,9 +76,9 @@ done
 mkdir -p "$root/repos" "$root/worktrees" "$root/state" || exit 2
 for d in $todo; do
 	for src in "$co/$d"/*; do
-		mv "$src" "$root/$d/" || { echo "move-runtime.sh: cannot move $src" >&2; exit 1; }
+		mv "$src" "$root/$d/" || { echo "move-runtime.sh: cannot move $src" >&2; repair; exit 1; }
 	done
-	rmdir "$co/$d" 2>/dev/null || { echo "move-runtime.sh: $co/$d is not empty, left in place" >&2; exit 1; }
+	rmdir "$co/$d" 2>/dev/null || { echo "move-runtime.sh: $co/$d is not empty, left in place" >&2; repair; exit 1; }
 done
 
 repair || exit 1

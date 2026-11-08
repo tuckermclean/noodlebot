@@ -349,6 +349,7 @@ def main():
     a.worktrees = a.worktrees or os.path.join(
         os.environ.get("NOODLEBOT_DATA") or os.path.join(os.path.expanduser("~"), ".local", "share", "noodlebot"),
         "worktrees", a.repo.split("/")[1])
+    a.worktrees = os.path.abspath(a.worktrees)
     path = os.path.join(a.state, "report.json")
     try:
         rs = json.load(open(path))

@@ -28,6 +28,7 @@ case $repo in */*) ;; *) echo "loop.sh: the argument is owner/name, not $repo" >
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
 here=$nb/scheduler
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
+case $root in /*) ;; *) root=$PWD/$root ;; esac
 clone=$root/repos/${repo#*/}
 wtroot=$root/worktrees/${repo#*/}
 state=$root/state/${repo#*/}
