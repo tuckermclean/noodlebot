@@ -5,7 +5,7 @@
 #   touch ~/STOP          (the loop exits within seconds; a running session keeps going)
 # It acts as soon as something changes: it checks the node markers and the running session every
 # SCHED_POLL seconds (default 2, local only) and asks GitHub about PRs every SCHED_TICK seconds
-# (default 60). Only one loop runs at a time (state/<name>/loop.lock). Sessions run under setsid and
+# (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time (state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
 # Layout under ~/gitrepos/noodlebot (all ignored by git):
@@ -70,21 +70,24 @@ ended() {
 	fi
 }
 
-# report <token>: mirror the state to the GitHub status issue and take the owner's answers from it
-# (report.py). Its failures go to report.log only: the scheduler never depends on it.
+# report: after each tick (reusing its token, so no extra token request), mirror the state to the GitHub status issue and take the owner's answers
+# from it (report.py). Returns 3 when it wrote an ANSWER.md, so the loop ticks again at once. Its
+# failures go to report.log only: the scheduler never depends on it.
 report() {
 	[ "${SCHED_REPORT:-1}" = 1 ] || return 0
-	GH_TOKEN=$1 timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
+	[ -n "$tick_tok" ] || return 0   # the tick had no token or did not reach GitHub
+	GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
 
-open='' merged=''
+open='' merged='' tick_tok=''
 tick() {
 	date +%s >"$state/heartbeat"
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	local tok
+	tick_tok=''
 	tok=$(~/.config/noodlebot/token) || { note "no GitHub App token; nothing started"; return; }
-	report "$tok"
+	tick_tok=$tok
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
@@ -164,5 +167,6 @@ pause() {
 while :; do
 	[ -e ~/STOP ] && { say "found ~/STOP; loop exits (session ${node:-none} ${pid:+pid $pid }keeps running)"; exit 0; }
 	tick
+	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
 	pause
 done

@@ -3,7 +3,7 @@
 
   report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--owner LOGIN]
 
-Run by loop.sh once per cycle with GH_TOKEN set; stdlib only, all GitHub access through `gh api`.
+Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; stdlib only, all GitHub access through `gh api`.
 Each run:
   1. finds the open issue labelled `noodlebot-status` (creating the label and issue if there is none,
      e.g. after the owner closed it), and remembers its number in DIR/report.json;
@@ -138,7 +138,7 @@ def git_lines(wt, *args):
 def body_for(a, st, prs):
     state = a.state
     out = ["# noodlebot status: %s" % a.repo, "",
-           "_Updated %s by the scheduler loop (about once a minute). If this is more than ~15 minutes old, "
+           "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
            "the loop is not running._" % local(), "", "## Waiting on you"]
     items = []
     for n in nodes(state):
@@ -251,6 +251,7 @@ def take_answers(a, rs, issue):
                     (node, a.owner, c["created_at"], c["html_url"], text))
         os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
         comment(a, issue, "Recorded as %s's ANSWER.md; %s resumes within seconds." % (node, node))
+        a.answered = True
 
 
 def post_events(a, rs, issue):
@@ -298,6 +299,7 @@ def main():
     p.add_argument("--worktrees", default="")
     p.add_argument("--owner", default="")
     a = p.parse_args()
+    a.answered = False
     a.owner = a.owner or a.repo.split("/")[0]
     a.worktrees = a.worktrees or os.path.join(os.path.dirname(os.path.dirname(a.state)), "worktrees",
                                               a.repo.split("/")[1])
@@ -333,15 +335,16 @@ def main():
             prs[m.group(1)] = pr["number"]
     body = body_for(a, session(a.state), prs)
     h = hashlib.sha256(re.sub(r"_Updated .*?_", "", body).encode()).hexdigest()
-    if h != rs.get("body_hash") or time.time() - rs.get("body_time", 0) >= 300:
+    if h != rs.get("body_hash") or time.time() - rs.get("body_time", 0) >= 900:
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"body": body})
         rs["body_hash"], rs["body_time"] = h, time.time()
         save()
+    return 3 if a.answered else 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except Exception as e:  # one line for the loop's log; the next run retries
         print("report.py: %s" % e, file=sys.stderr)
         sys.exit(1)

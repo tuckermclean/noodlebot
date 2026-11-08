@@ -11,7 +11,7 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
 ## Watching it: the status issue
 
 Each repository gets one open issue labelled `noodlebot-status` (`scheduler/report.py`, run by the loop
-once a minute). Its body shows what waits on you, the running session with the orchestrator's latest
+after each 60 s tick). Its body shows what waits on you, the running session with the orchestrator's latest
 narration and the active subagent, and recent events. Each start, end (with the session's closing
 summary), release, merge and question is a comment, so GitHub notifies you. It is disposable: close it
 and the loop opens a new one. Its failures go to `state/<repo>/report.log` and never stop the loop.

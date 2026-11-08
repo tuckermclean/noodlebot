@@ -102,7 +102,8 @@ run
 ok "someone else's comment is ignored" test ! -e "$state/node/A01/ANSWER.md"
 
 owner_says "Q1: as recommended"
-run
+run; rc=$?
+ok "recording an answer exits 3, so the loop ticks again at once" test "$rc" = 3
 ok "the owner's reply becomes ANSWER.md for the only waiting node" grep -q '^Q1: as recommended$' "$state/node/A01/ANSWER.md"
 ok "ANSWER.md says where it came from" grep -q 'posted by owner on GitHub at 2026-01-02T00:00:00Z: https://x/c' "$state/node/A01/ANSWER.md"
 ok "the bot confirms it" sh -c "python3 -I -c \"import json; print(json.load(open('$db'))['comments'][-1]['body'])\" | grep -q \"Recorded as A01's ANSWER.md\""
@@ -115,7 +116,7 @@ owner_says "approve"
 run
 ok "with two nodes waiting, a reply without an ID is refused" sh -c "[ ! -e '$state/node/A01/ANSWER.md' ] && [ ! -e '$state/node/A02/ANSWER.md' ]"
 owner_says "**A02**: approve"
-run
+run; rc=$?
 ok "a reply starting with the ID answers that node" sh -c "grep -q '^\*\*A02\*\*: approve' '$state/node/A02/ANSWER.md' && [ ! -e '$state/node/A01/ANSWER.md' ]"
 
 python3 -I -c "
