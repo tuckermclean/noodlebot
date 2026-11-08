@@ -13,6 +13,9 @@ else echo "loop:    NOT running; start with: tmux new -d -s sched $nb/scheduler/
 [ -e ~/STOP ] && echo "         ~/STOP exists: the loop exits within seconds"
 hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
 if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi
+iss=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue"])' "$state/report.json" 2>/dev/null)
+[ -n "$iss" ] && echo "on GitHub: https://github.com/$repo/issues/$iss (reply there to answer a question)"
+[ -s "$state/report.log" ] && echo "status issue: last error: $(tail -n 1 "$state/report.log" | cut -c1-140)"
 echo "last change: $(tail -n 1 "$state/status.log" 2>/dev/null | cut -c1-150)"
 
 # The session: a node whose session.pid names a live session process.

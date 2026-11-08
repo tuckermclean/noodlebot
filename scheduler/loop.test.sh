@@ -67,7 +67,7 @@ within() { timeout "$1" sh -c "until grep -qE \"\$1\" '$state/status.log' 2>/dev
 count() { grep -cE "$1" "$state/status.log"; }
 runs() { cat "$tmp/runs.$1" 2>/dev/null || echo 0; }
 
-SCHED_TICK=30 SCHED_POLL=0.2 bash "$nb/scheduler/loop.sh" >"$tmp/loop1.out" 2>&1 &
+SCHED_REPORT=0 SCHED_TICK=30 SCHED_POLL=0.2 bash "$nb/scheduler/loop.sh" >"$tmp/loop1.out" 2>&1 &
 loop1=$!; pids+=("$loop1")
 ok "an answered question releases the node" within 10 "A02: released the owner's answer"
 ok "it starts the answered node" within 5 "started A02 \(second-node\).*start 1 of 2"
@@ -80,14 +80,14 @@ ok "the answered node starts" within 5 "started A03 \(third-node\).*start 1 of 2
 a03=$(cat "$state/node/A03/session.pid" 2>/dev/null)
 ok "the session's pid is recorded" test -n "$a03"
 
-SCHED_TICK=1 SCHED_POLL=0.2 timeout 10 bash "$nb/scheduler/loop.sh" >"$tmp/second.out" 2>&1; rc=$?
+SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 timeout 10 bash "$nb/scheduler/loop.sh" >"$tmp/second.out" 2>&1; rc=$?
 ok "a second loop refuses to run" sh -c "[ $rc = 1 ] && grep -q 'already running' '$tmp/second.out'"
 
 kill "$loop1"; wait "$loop1" 2>/dev/null
 sleep 0.5
 ok "stopping the loop leaves the session running" kill -0 "$a03"
 
-SCHED_TICK=1 SCHED_POLL=0.2 bash "$nb/scheduler/loop.sh" >"$tmp/loop2.out" 2>&1 &
+SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 bash "$nb/scheduler/loop.sh" >"$tmp/loop2.out" 2>&1 &
 loop2=$!; pids+=("$loop2")
 ok "a restarted loop takes over the running session" within 5 "session A03 \(pid $a03\) running"
 sleep 2

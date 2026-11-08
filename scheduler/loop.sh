@@ -11,7 +11,7 @@
 # Layout under ~/gitrepos/noodlebot (all ignored by git):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
-#   state/<name>/            status.log, heartbeat; node/<ID>/{session.jsonl,session.stderr,unattended.md,
+#   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
 #                            answered/ keeps released questions and spec PRs
@@ -70,12 +70,21 @@ ended() {
 	fi
 }
 
+# report <token>: mirror the state to the GitHub status issue and take the owner's answers from it
+# (report.py). Its failures go to report.log only: the scheduler never depends on it.
+report() {
+	[ "${SCHED_REPORT:-1}" = 1 ] || return 0
+	GH_TOKEN=$1 timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
+		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
+}
+
 open='' merged=''
 tick() {
 	date +%s >"$state/heartbeat"
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	local tok
 	tok=$(~/.config/noodlebot/token) || { note "no GitHub App token; nothing started"; return; }
+	report "$tok"
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
