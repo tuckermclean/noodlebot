@@ -6,7 +6,7 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
 - `plugin/`: the bot's Claude Code skills, generic over repositories in the graph regime
   (`docs/graph.yaml` + `nodes/<ID>-<name>.md`); load with `claude --plugin-dir ~/gitrepos/noodlebot/plugin`.
   So far: `/noodlebot:triage <issue> [--dry-run]` fits an issue into the graph as a spec PR.
-- `make test`: the ready-node, release-markers, status-issue and end-to-end loop tests.
+- `make test`: the ready-node, release-markers, status-issue, issue-label and end-to-end loop tests.
 - The loop reacts within seconds to local changes (your `ANSWER.md`, a session ending) and checks
   GitHub every 60 s (PR merges). Only one loop runs at a time. Sessions run detached, so stopping or
   restarting the loop never stops a session; a restarted loop takes over the running one.
@@ -19,6 +19,15 @@ narration and the active subagent, and recent events. Each start, end (with the 
 summary), release, merge and question is a comment, so GitHub notifies you. It is disposable: close it
 and the loop opens a new one. Its failures go to `state/<repo>/report.log` and never stop the loop.
 Nothing in it is specific to one repository: `report.py --repo OWNER/NAME --state DIR`.
+
+## Handing an issue to the bot
+
+Add the `noodlebot` label to an issue. Only labels the repository owner adds count (the loop checks
+who added it, `scheduler/issues.py`). When no session is running, the loop triages it first
+(`/noodlebot:triage <N>`, state in `state/<repo>/issue/<N>/`): the result is a spec PR that fits the
+issue into the graph, or a comment that answers it. Then the label becomes `noodlebot-triaged`.
+Merge the spec PR and the new or amended node is built like any other. A triage question shows on
+the status issue; answer it with `#<N>: ...`.
 
 ## Answering a node's question
 

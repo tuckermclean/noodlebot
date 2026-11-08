@@ -27,7 +27,7 @@ state=$nb/state/${repo#*/}
 oauth=$HOME/.config/noodlebot/oauth-token
 log=$state/status.log
 tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600
-mkdir -p "$state/node" "$wtroot"
+mkdir -p "$state/node" "$state/issue" "$wtroot"
 pid='' node='' last_note='' last_note_t=0
 
 say() { echo "$(date -u +%FT%TZ) $*" >>"$log"; echo "$*"; }
@@ -40,34 +40,86 @@ note() {
 	fi
 }
 ids() { sed -n 's#^node/\([A-Z][0-9][0-9]\)-.*#\1#p' | sort -u | tr '\n' ' '; }
-starts_of() { cat "$state/node/$1/starts" 2>/dev/null || echo 0; }
-set_starts() { echo "$2" >"$state/node/$1/starts"; }
+# starts_of <dir> / set_starts <dir> <n>: a task's session starts (node/<ID> or issue/<N>).
+starts_of() { cat "$1/starts" 2>/dev/null || echo 0; }
+set_starts() { echo "$2" >"$1/starts"; }
 [ -r "$oauth" ] || { echo "loop.sh: $oauth is missing (claude setup-token)" >&2; exit 2; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
 [ -d "$clone/.git" ] || git clone -q "https://github.com/$repo" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
 
-# alive <pid> <ID>: the process exists and is that node's session (guards against pid reuse).
+# alive <pid> <key>: the process exists and is that task's session, whose prompt ends in <key>
+# (a node ID or an issue number); guards against pid reuse.
 alive() {
 	kill -0 "$1" 2>/dev/null || return 1
 	tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $2( |\$)|claude -p /node $2( |\$)"
 }
 
-# ended <ID> <saw>: a recorded session is gone; report how it ended and clear its pid file.
+# ended <dir> <saw>: a recorded session is gone; report how it ended and clear its pid file.
 ended() {
-	local id=$1 saw=$2 d=$state/node/$1 rc p
+	local d=$1 saw=$2 id rc p
+	id=$(basename "$d")
 	p=$(cat "$d/session.pid"); wait "$p" 2>/dev/null
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
+	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif [[ " $open $merged " == *" $id "* ]]; then say "$saw; session $id ended (rc $rc) with a PR"
-	elif [ "$(starts_of "$id")" -ge 2 ]; then
+	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) with no PR and no QUESTION.md" >"$d/FAILED"
-		set_starts "$id" 0   # deleting FAILED gives the node 2 fresh starts
+		set_starts "$d" 0   # deleting FAILED gives the node 2 fresh starts
 		say "$saw; session $id ended (rc $rc), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
 	else say "$saw; session $id ended (rc $rc), no PR, no QUESTION.md; may start again"
 	fi
+}
+
+# triage_ended <dir> <saw> <rc>: an issue's triage session is gone. Done (rc 0, no question): the
+# label becomes noodlebot-triaged (issues.py done) and its worktree goes.
+triage_ended() {
+	local d=$1 saw=$2 rc=$3 n
+	n=$(basename "$d")
+	if [ -e "$d/QUESTION.md" ]; then say "$saw; triage of #$n ended (rc $rc) with QUESTION.md"
+	elif [ "$rc" = 0 ]; then
+		set_starts "$d" 0
+		git -C "$clone" worktree remove --force "$wtroot/issue-$n" 2>/dev/null
+		if GH_TOKEN=$tick_tok python3 -I "$here/issues.py" done --repo "$repo" --number "$n" 2>>"$state/report.log"; then
+			say "$saw; triage of #$n done (rc 0); its label is now noodlebot-triaged"
+		else
+			echo "$(date -u +%FT%TZ) triage done, but swapping the label failed (report.log); remove the noodlebot label, then delete this file" >"$d/FAILED"
+			say "$saw; triage of #$n done (rc 0), but swapping its label failed: wrote FAILED"
+		fi
+	elif [ "$(starts_of "$d")" -ge 2 ]; then
+		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing" >"$d/FAILED"
+		set_starts "$d" 0
+		say "$saw; triage of #$n ended (rc $rc), 2 starts used: wrote FAILED"
+	else say "$saw; triage of #$n ended (rc $rc); may start again"
+	fi
+}
+
+# launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
+# prompt's last word: a node ID or an issue number).
+launch() {
+	rm -f "$2/session.rc"
+	# 9>&-: the session must not hold the loop's lock.
+	setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
+	pid=$! node=${3##* }
+	echo "$pid" >"$2/session.pid"
+	set_starts "$2" $(($(starts_of "$2") + 1))
+}
+
+# start_triage <N> <saw>: triage issue N (/noodlebot:triage) in a worktree of origin/main.
+start_triage() {
+	local n=$1 saw=$2 d=$state/issue/$1 wt=$wtroot/issue-$1 released
+	mkdir -p "$d"
+	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing #$n's markers failed"; return; }
+	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; #$n: $(echo "$released" | paste -sd';')"; fi
+	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return; }
+	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return; }
+	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+		"$here/unattended-triage.md" >"$d/unattended.md"
+	launch "$wt" "$d" "/noodlebot:triage $n"
+	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
 
 # report: after each tick (reusing its token, so no extra token request), mirror the state to the GitHub status issue and take the owner's answers
@@ -100,16 +152,24 @@ tick() {
 	tok=''
 
 	# The running session, if any: recorded in a pid file, so this works after a restart too.
+	local sdir=''
 	pid='' node=''
-	for f in "$state"/node/*/session.pid; do
+	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 		[ -e "$f" ] || continue
 		id=$(basename "$(dirname "$f")")
-		if alive "$(cat "$f")" "$id"; then pid=$(cat "$f") node=$id
-		else ended "$id" "$saw"; fi
+		if alive "$(cat "$f")" "$id"; then pid=$(cat "$f") node=$id sdir=$(dirname "$f")
+		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	if [ -n "$pid" ]; then
-		note "$saw; session $node (pid $pid) running" "log $(stat -c %s "$state/node/$node/session.jsonl" 2>/dev/null) bytes"
+		[[ $sdir == */issue/* ]] && id="triage of #$node" || id=$node
+		note "$saw; session $id (pid $pid) running" "log $(stat -c %s "$sdir/session.jsonl" 2>/dev/null) bytes"
 		return
+	fi
+
+	# Issues the owner labelled `noodlebot` come first: triage is short and only plans.
+	local n
+	if n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
+		[ -z "$n" ] || { start_triage "$n" "$saw"; return; }
 	fi
 
 	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.yaml" || { note "no graph on origin/main"; return; }
@@ -125,8 +185,8 @@ tick() {
 	mkdir -p "$state/node/$id"
 	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
 	released=$(sh "$here/release-markers.sh" "$state/node/$id") || { note "$saw; releasing $id's markers failed"; return; }
-	if [ -n "$released" ]; then set_starts "$id" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
-	[ "$(starts_of "$id")" -lt 2 ] || { note "$saw; $id ready but has used 2 starts; nothing started"; return; }
+	if [ -n "$released" ]; then set_starts "$state/node/$id" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
+	[ "$(starts_of "$state/node/$id")" -lt 2 ] || { note "$saw; $id ready but has used 2 starts; nothing started"; return; }
 
 	wt=$wtroot/$id
 	if [ ! -d "$wt" ]; then
@@ -135,19 +195,13 @@ tick() {
 	fi
 	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" \
 		"$here/unattended.md" >"$state/node/$id/unattended.md"
-	rm -f "$state/node/$id/session.rc"
-	# 9>&-: the session must not hold the loop's lock.
-	setsid "$here/run-session.sh" "$wt" "$state/node/$id" "$id" </dev/null 9>&- \
-		>"$state/node/$id/session.jsonl" 2>"$state/node/$id/session.stderr" &
-	pid=$! node=$id
-	echo "$pid" >"$state/node/$id/session.pid"
-	set_starts "$id" $(($(starts_of "$id") + 1))
-	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$id") of 2"
+	launch "$wt" "$state/node/$id" "/node $id"
+	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$state/node/$id") of 2"
 }
 
-# fingerprint: the markers and exit files under node/; a change means "look again now".
+# fingerprint: the markers and exit files under node/ and issue/; a change means "look again now".
 fingerprint() {
-	find "$state/node" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
+	find "$state/node" "$state/issue" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
 		-o -name FAILED -o -name session.rc \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
 }
 

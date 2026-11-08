@@ -15,16 +15,17 @@ hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
 if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi
 iss=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue"])' "$state/report.json" 2>/dev/null)
 [ -n "$iss" ] && echo "on GitHub: https://github.com/$repo/issues/$iss (reply there to answer a question)"
-[ -s "$state/report.log" ] && echo "status issue: last error: $(tail -n 1 "$state/report.log" | cut -c1-140)"
+[ "$state/report.log" -nt "$state/report.json" ] && echo "status issue: FAILING: $(tail -n 1 "$state/report.log" | cut -c1-140)"
 echo "last change: $(tail -n 1 "$state/status.log" 2>/dev/null | cut -c1-150)"
 
 # The session: a node whose session.pid names a live session process.
-spid='' node=''
-for f in "$state"/node/*/session.pid; do
+spid='' node='' sdir=''
+for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 	[ -e "$f" ] || continue
 	p=$(cat "$f") id=$(basename "$(dirname "$f")")
-	if tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $id( |\$)|claude -p /node $id( |\$)"; then spid=$p node=$id; fi
+	if tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $id( |\$)|claude -p /node $id( |\$)"; then spid=$p node=$id sdir=$(dirname "$f"); fi
 done
+[ -n "$node" ] && [ -z "${sdir##*/issue/*}" ] && node="#$node"
 [ -n "$node" ] || node=$(sed -n 's/.*started \([A-Z][0-9][0-9]\) .*/\1/p' "$state/status.log" 2>/dev/null | tail -n 1)
 if [ -n "$spid" ]; then
 	echo "session: $node RUNNING (pid $spid, for $(ps -o etime= -p "$spid" | tr -d ' '))"
@@ -32,7 +33,7 @@ elif [ -n "$node" ]; then
 	echo "session: none running (last: $node)"
 fi
 if [ -n "$node" ]; then
-	log=$state/node/$node/session.jsonl
+	log=${sdir:-$state/node/$node}/session.jsonl
 	echo "         log $(du -h "$log" | cut -f1), last written $(date -r "$log" '+%T')"
 	echo "-- last actions:"
 	tail -n 300 "$log" | python3 -I -c '
@@ -58,8 +59,10 @@ fi
 
 echo "-- waiting on you:"
 found=0
-for d in "$state"/node/*/; do
+for d in "$state"/node/*/ "$state"/issue/*/; do
+	[ -d "$d" ] || continue
 	id=$(basename "$d") d=${d%/}
+	[[ $d == */issue/* ]] && id="#$id"
 	head1() { grep -m1 -v '^\s*$' "$1" | sed 's/^# *//' | cut -c1-100; }
 	if [ -e "$d/FAILED" ]; then
 		found=1; echo "   $id FAILED: $(head1 "$d/FAILED")"

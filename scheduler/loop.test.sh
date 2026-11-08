@@ -19,8 +19,9 @@ ok() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; echo
 
 export HOME=$tmp/home
 nb=$tmp/nb state=$tmp/nb/state/themonolith
-mkdir -p "$HOME/.config/noodlebot" "$tmp/bin" "$nb/scheduler" "$state/node/A02" "$state/node/A03"
-cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md "$nb/scheduler/"
+mkdir -p "$HOME/.config/noodlebot" "$tmp/bin" "$nb/scheduler" "$nb/plugin" "$state/node/A02" "$state/node/A03"
+cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
+	"$src"/issues.py "$src"/unattended-triage.md "$nb/scheduler/"
 printf '#!/bin/sh\necho fake-token\n' >"$HOME/.config/noodlebot/token"
 echo fake-oauth >"$HOME/.config/noodlebot/oauth-token"
 chmod +x "$HOME/.config/noodlebot/token"
@@ -33,10 +34,19 @@ git -C "$tmp/work" add -A && git -C "$tmp/work" -c user.name=t -c user.email=t@t
 git clone -q --bare "$tmp/work" "$tmp/remote.git"
 git clone -q "$tmp/remote.git" "$nb/repos/themonolith"
 
-# gh: merged PRs come from $tmp/merged.tsv ("<number> <head branch>"), no open PRs.
+# gh: merged PRs come from $tmp/merged.tsv ("<number> <head branch>"), no open PRs. Issues
+# labelled noodlebot come from $tmp/issues.json, each labelled by the owner (tuckermclean); label calls are logged
+# to $tmp/labels.log, and removing noodlebot empties the list.
+echo '[]' >"$tmp/issues.json"
 cat >"$tmp/bin/gh" <<EOF
 #!/bin/sh
-case " \$* " in *" --state merged "*) cat "$tmp/merged.tsv" ;; esac
+case " \$* " in
+*" --state merged "*) cat "$tmp/merged.tsv" ;;
+*"/issues?labels=noodlebot"*) cat "$tmp/issues.json" ;;
+*"/events"*) echo '[{"event": "labeled", "label": {"name": "noodlebot"}, "actor": {"login": "tuckermclean"}}]' ;;
+*" DELETE "*"/labels/noodlebot"*) echo "\$*" >>"$tmp/labels.log"; echo '[]' >"$tmp/issues.json"; echo '[]' ;;
+*"/labels"*) echo "\$*" >>"$tmp/labels.log"; cat >/dev/null; echo '{}' ;;
+esac
 exit 0
 EOF
 # claude, per node and run:
@@ -45,6 +55,7 @@ EOF
 # Each run logs "<ID> run <n>: <what answered/ holds>" to $tmp/claude.log.
 cat >"$tmp/bin/claude" <<EOF
 #!/bin/sh
+case "\$2" in "/noodlebot:triage "*) echo "triage \${2#/noodlebot:triage }" >>"$tmp/claude.log"; exit 0 ;; esac
 id=\${2#/node }
 n=\$(( \$(cat "$tmp/runs.\$id" 2>/dev/null || echo 0) + 1 )); echo \$n >"$tmp/runs.\$id"
 echo "\$id run \$n: \$(ls "$state/node/\$id/answered" 2>/dev/null | sed 's/^[0-9TZ]*-//' | sort | tr '\n' ' ')" >>"$tmp/claude.log"
@@ -104,6 +115,12 @@ ok "the resumed node gets fresh starts" within 5 "started A02 .*start 1 of 2.*"
 ok "the resumed session ends with its new question" within 5 "session A02 ended \(rc 0\) with QUESTION.md"
 ok "each A02 session saw the archived answer, and later the spec PR" grep -qxF "A02 run 2: ANSWER.md QUESTION.md SPEC-PR " "$tmp/claude.log"
 grep -qxF "A02 run 1: ANSWER.md QUESTION.md " "$tmp/claude.log" || fail "A02 run 1 saw: $(cat "$tmp/claude.log")"
+echo '[{"number": 46}]' >"$tmp/issues.json"
+ok "an issue the owner labelled noodlebot is triaged" within 5 "started triage of #46 in .*issue-46, pid [0-9]+, start 1 of 2"
+ok "the triage session gets the triage prompt" sh -c "grep -qx 'triage 46' '$tmp/claude.log'"
+ok "a finished triage swaps the label" within 5 "triage of #46 done \(rc 0\); its label is now noodlebot-triaged"
+ok "the label calls add noodlebot-triaged and remove noodlebot" grep -q 'DELETE repos/tuckermclean/themonolith/issues/46/labels/noodlebot' "$tmp/labels.log"
+ok "the triage worktree is removed" test ! -d "$nb/worktrees/themonolith/issue-46"
 sleep 4
 ok "an idle loop logs 'nothing ready' once, not every poll" test "$(count 'nothing ready')" -le 2
 ok "the heartbeat is fresh" test "$(($(date +%s) - $(cat "$state/heartbeat" 2>/dev/null || echo 0)))" -le 3

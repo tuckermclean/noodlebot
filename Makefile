@@ -3,6 +3,7 @@ test:
 	sh scheduler/ready.test.sh
 	sh scheduler/release-markers.test.sh
 	sh scheduler/report.test.sh
+	sh scheduler/issues.test.sh
 	bash scheduler/loop.test.sh
 
 .PHONY: test
