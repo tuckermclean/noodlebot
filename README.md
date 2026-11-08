@@ -2,7 +2,10 @@
 
 Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/noodlebot/`, never in this repo).
 
-- `scheduler/`: the node scheduler, one loop per repository:
+- `scheduler/`: the node scheduler, one loop per repository. `scheduler/loops.sh start|stop|status`
+  runs them all over the repositories in `~/.config/noodlebot/repos` (one `owner/name` per line,
+  `#` comments allowed): `start` starts the loops not running, `stop` stops them via `~/STOP-<name>`
+  (sessions keep going), `status` prints a line per repository. The mechanism underneath, per repository:
   `tmux new -d -s sched-<name> ~/gitrepos/noodlebot/scheduler/loop.sh <owner/name>` (default
   tuckermclean/themonolith, in tmux session `sched`). Each repository has its own lock, state
   (`state/<name>/`), clone, worktrees and status issue; `touch ~/STOP` stops every loop,
