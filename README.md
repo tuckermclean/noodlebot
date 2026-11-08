@@ -3,6 +3,9 @@
 Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/noodlebot/`, never in this repo).
 
 - `scheduler/`: the v0 node scheduler for tuckermclean/themonolith. `scheduler/loop.sh` explains how to run it.
+- `plugin/`: the bot's Claude Code skills, generic over repositories in the graph regime
+  (`docs/graph.yaml` + `nodes/<ID>-<name>.md`); load with `claude --plugin-dir ~/gitrepos/noodlebot/plugin`.
+  So far: `/noodlebot:triage <issue> [--dry-run]` fits an issue into the graph as a spec PR.
 - `make test`: the ready-node, release-markers, status-issue and end-to-end loop tests.
 - The loop reacts within seconds to local changes (your `ANSWER.md`, a session ending) and checks
   GitHub every 60 s (PR merges). Only one loop runs at a time. Sessions run detached, so stopping or
