@@ -169,6 +169,7 @@ git init -q "$nb2" && touch "$nb2/CLAUDE.md" "$nb2/AGENTS.md"
 nb2=$(cd "$nb2" && pwd -P)
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$nb2/scheduler/"
+cp "$src/usage.py" "$nb2/scheduler/"
 export GIT_CONFIG_COUNT=3
 export GIT_CONFIG_KEY_0="url.$tmp/remote.git.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/o/pu
 export GIT_CONFIG_KEY_1="url.$tmp/remote.git.insteadOf" GIT_CONFIG_VALUE_1=https://github.com/o/ps
@@ -239,6 +240,23 @@ d02_run() {
 }
 d02_run pu "$HOME/.local/share/noodlebot" unset
 d02_run ps "$tmp/data2" set
+# D02-AC-1: status.sh reads the session's worktree under the runtime root: a live session for A02
+# and a commit ahead of origin/main in <root>/worktrees/<name>/A02 show up on a "commit" line.
+d02_wt() {
+	local name=$1 root=$2 mode=$3 subj="d02-wt-marker-$1" sp
+	sh -c 'sleep 60' claude -p /node A02 &
+	sp=$!; pids+=("$sp")
+	echo "$sp" >"$root/state/$name/node/A02/session.pid"
+	git -C "$root/worktrees/$name/A02" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$subj"
+	(
+		if [ "$mode" = set ]; then export NOODLEBOT_DATA=$root; else unset NOODLEBOT_DATA; fi
+		bash "$nb2/scheduler/status.sh" "o/$name" >"$tmp/status-wt-$name.out" 2>&1
+	)
+	ok "D02-AC-1 (NOODLEBOT_DATA $mode): status.sh reads that worktree (the session's commit)" grep -qE "^ +commit [0-9a-f]+ $subj\$" "$tmp/status-wt-$name.out"
+	kill "$sp" 2>/dev/null
+}
+d02_wt pu "$HOME/.local/share/noodlebot" unset
+d02_wt ps "$tmp/data2" set
 ok "D02-AC-4: neither template names ~/gitrepos/noodlebot" sh -c "! grep -qF '~/gitrepos/noodlebot' '$src/unattended.md' '$src/unattended-triage.md'"
 
 # D02-AC-3: a root inside a Git working tree is refused: exit 2, no session, the working tree named.
