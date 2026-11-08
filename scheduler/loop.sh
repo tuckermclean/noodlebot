@@ -59,6 +59,26 @@ alive() {
 	tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $2( |\$)|claude -p /node $2( |\$)"
 }
 
+# limit_exit <dir>: the session ended because of the plan's usage limit: its last rate_limit_event is
+# not "allowed", or its last result names a usage or rate limit. Such an end uses up no start.
+limit_exit() {
+	tail -c 400000 "$1/session.jsonl" 2>/dev/null | python3 -I -c '
+import json, re, sys
+ev = res = None
+for line in sys.stdin:
+    if "\"rate_limit_event\"" in line or "\"type\":\"result\"" in line.replace(" ", ""):
+        try: d = json.loads(line)
+        except ValueError: continue
+        if d.get("type") == "rate_limit_event": ev = d
+        elif d.get("type") == "result": res = d
+st = ((ev or {}).get("rate_limit_info") or {}).get("status", "allowed")
+txt = str((res or {}).get("result") or "") + " " + str((res or {}).get("subtype") or "")
+sys.exit(0 if st != "allowed" or re.search(r"usage limit|rate limit|limit reached|hit your limit", txt, re.I) else 1)'
+}
+
+# not_counted <dir>: give back the start a limit exit used.
+not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" $((n - 1)); }
+
 # ended <dir> <saw>: a recorded session is gone; report how it ended and clear its pid file.
 ended() {
 	local d=$1 saw=$2 id rc p
@@ -70,6 +90,9 @@ ended() {
 	if [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif [[ " $open $merged " == *" $id "* ]]; then say "$saw; session $id ended (rc $rc) with a PR"
+	elif [ "$rc" != 0 ] && limit_exit "$d"; then
+		not_counted "$d"
+		say "$saw; session $id stopped by the usage limit (rc $rc); start not counted, it resumes when the throttle opens"
 	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) with no PR and no QUESTION.md" >"$d/FAILED"
 		set_starts "$d" 0   # deleting FAILED gives the node 2 fresh starts
@@ -93,6 +116,9 @@ triage_ended() {
 			echo "$(date -u +%FT%TZ) triage done, but swapping the label failed (report.log); remove the noodlebot label, then delete this file" >"$d/FAILED"
 			say "$saw; triage of #$n done (rc 0), but swapping its label failed: wrote FAILED"
 		fi
+	elif limit_exit "$d"; then
+		not_counted "$d"
+		say "$saw; triage of #$n stopped by the usage limit (rc $rc); start not counted"
 	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing" >"$d/FAILED"
 		set_starts "$d" 0
@@ -175,7 +201,7 @@ start_node() {
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=()
+open='' merged='' tick_tok='' live=() throttled=0
 tick() {
 	date +%s >"$state/heartbeat"
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
@@ -207,8 +233,19 @@ tick() {
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	cleanup_merged
-	local cap=${SCHED_MAX:-0}
-	full() { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }
+	local cap=${SCHED_MAX:-0} usage
+	# The throttle: usage.py reads the plan's windows from every repository's sessions (one account,
+	# one budget). While it says hold, no new session starts; running ones are never stopped.
+	if [ "${SCHED_THROTTLE:-1}" = 1 ]; then
+		usage=$(python3 -I "$here/usage.py" --state-root "$(dirname "$state")" 2>>"$state/report.log") || usage="open: usage unknown"
+		if [[ $usage == hold:* ]]; then
+			[ "$throttled" = 1 ] || say "$saw; throttle engaged, no new sessions: ${usage#hold: }"
+			throttled=1
+		elif [ "$throttled" = 1 ]; then
+			say "$saw; throttle released: ${usage#open: }"; throttled=0
+		fi
+	fi
+	full() { [ "$throttled" = 1 ] || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
 
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
 	local n
@@ -232,14 +269,15 @@ tick() {
 		start_node "$id" "$name" "$saw"
 	done <<<"$ready"
 
-	if [ "${#live[@]}" = 0 ]; then note "$saw; nothing ready"
+	local held=''; [ "$throttled" = 1 ] && held="; throttle holding new sessions"
+	if [ "${#live[@]}" = 0 ]; then note "$saw; nothing ready$held"
 	else
 		local l=() e k
 		for e in "${live[@]}"; do
 			k=${e#* }; [ -d "$state/issue/$k" ] && [ ! -d "$state/node/$k" ] && k="#$k"
 			l+=("$k (pid ${e%% *})")
 		done
-		note "$saw; running: $(IFS=,; echo "${l[*]}" | sed 's/,/, /g')"
+		note "$saw; running: $(IFS=,; echo "${l[*]}" | sed 's/,/, /g')$held"
 	fi
 }
 

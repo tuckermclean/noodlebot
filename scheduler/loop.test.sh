@@ -21,7 +21,7 @@ export HOME=$tmp/home
 nb=$tmp/nb state=$tmp/nb/state/proj
 mkdir -p "$HOME/.config/noodlebot" "$tmp/bin" "$nb/scheduler" "$nb/plugin" "$state/node/A02" "$state/node/A03"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
-	"$src"/issues.py "$src"/unattended-triage.md "$nb/scheduler/"
+	"$src"/issues.py "$src"/usage.py "$src"/unattended-triage.md "$nb/scheduler/"
 printf '#!/bin/sh\necho fake-token\n' >"$HOME/.config/noodlebot/token"
 echo fake-oauth >"$HOME/.config/noodlebot/oauth-token"
 chmod +x "$HOME/.config/noodlebot/token"
@@ -63,7 +63,11 @@ case \$id.\$n in
 A02.1) echo 55 >"$state/node/A02/WAITING-PR" ;;
 A02.2) echo "Q1: still open" >"$state/node/A02/QUESTION.md" ;;
 A03.1) while [ ! -e "$tmp/go" ]; do sleep 0.2; done; exit 3 ;;
-A04.1|A05.1) while [ ! -e "$tmp/go2" ]; do sleep 0.2; done; echo "Q1: parallel" >"$state/node/\$id/QUESTION.md" ;;
+A04.1) while [ ! -e "$tmp/go2" ]; do sleep 0.2; done; echo "Q1: parallel" >"$state/node/\$id/QUESTION.md" ;;
+A05.1) while [ ! -e "$tmp/go2" ]; do sleep 0.2; done
+	echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":1,"status":"rejected"}}}}'
+	echo '{"type":"result","subtype":"error_during_execution","result":"You have hit your usage limit"}'; exit 1 ;;
+A05.2) echo "Q1: after the limit" >"$state/node/\$id/QUESTION.md" ;;
 esac
 exit 0
 EOF
@@ -123,12 +127,22 @@ ok "the resumed node gets fresh starts" within 5 "started A02 .*start 1 of 2.*"
 ok "the resumed session ends with its new question" within 5 "session A02 ended \(rc 0\) with QUESTION.md"
 ok "each A02 session saw the archived answer, and later the spec PR" grep -qxF "A02 run 2: ANSWER.md QUESTION.md SPEC-PR " "$tmp/claude.log"
 grep -qxF "A02 run 1: ANSWER.md QUESTION.md " "$tmp/claude.log" || fail "A02 run 1 saw: $(cat "$tmp/claude.log")"
+# The throttle: a 5-hour window at 99% holds new sessions; a fresh window releases them.
+rl() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":%s,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":0.0,"resetsAt":%s,"status":"allowed"}}}}\n' "$1" "$2" $(($(date +%s) + 3 * 86400)) >>"$state/node/A03/session.jsonl"; }
+rl 0.99 $(($(date +%s) + 3600))
+ok "a 5-hour window near its limit engages the throttle" within 5 "throttle engaged, no new sessions: 5-hour window projected"
 rm "$state/node/A04/FAILED" "$state/node/A05/FAILED"
+sleep 2
+ok "while it holds, ready nodes do not start" sh -c "! grep -q 'started A0[45]' '$state/status.log'"
+rl 0.01 $(($(date +%s) + 7200))
+ok "a fresh window releases the throttle" within 5 "throttle released"
 ok "two ready nodes start together" within 5 "started A05 \(fifth-node\)"
 ok "both run at once" within 5 "running: A04 \(pid [0-9]+\), A05 \(pid [0-9]+\)"
 touch "$tmp/go2"
-ok "each parallel session's end is reported" within 5 "session A05 ended \(rc 0\) with QUESTION.md"
-grep -q "session A04 ended (rc 0) with QUESTION.md" "$state/status.log" || fail "A04's end is reported"
+ok "each parallel session's end is reported" within 5 "session A04 ended \(rc 0\) with QUESTION.md"
+ok "a session stopped by the usage limit is reported as such" within 5 "session A05 stopped by the usage limit \(rc 1\); start not counted"
+ok "and its start is not counted: it starts again as start 1" within 5 "session A05 ended \(rc 0\) with QUESTION.md"
+ok "both A05 starts were start 1 of 2" test "$(count 'started A05 .*start 1 of 2')" = 2
 echo '[{"number": 46}]' >"$tmp/issues.json"
 ok "an issue the owner labelled noodlebot is triaged" within 5 "started triage of #46 in .*issue-46, pid [0-9]+, start 1 of 2"
 ok "the triage session gets the triage prompt" sh -c "grep -qx 'triage 46' '$tmp/claude.log'"
