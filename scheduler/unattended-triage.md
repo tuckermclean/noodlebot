@@ -17,6 +17,11 @@ triage issue #@N@ of @REPO@: the owner labelled it `noodlebot`. No human is watc
   Push with: GIT_TOKEN=$(~/.config/noodlebot/token) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD
   Edit a PR body with gh api -X PATCH repos/@REPO@/pulls/N -F body=@file.
   Never print, echo or log a token.
+- GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
+  closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
+  without a colon) followed by its number. Write one only where closing is intended (a node PR's
+  "Fixes #N" lines); everywhere else write "issue #N" or "Refs #N", and never quote a spec's
+  Resolves: line or describe what "closes" an issue next to its number.
 - Never merge, approve, push to main, change labels, or change repository settings.
 - End the run when the spec PR is open and the issue has your comment, or the comment alone answers
   it (placement 1), or you have written QUESTION.md.

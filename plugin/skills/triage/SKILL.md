@@ -78,6 +78,12 @@ a new open decision. Interactive: ask. Unattended: follow the run's instructions
 - Comment on the issue: the placement in one or two sentences and the PR link. For placement 1, the
   comment is the whole result.
 
+**Closing keywords.** GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
+closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
+without a colon) followed by its number. Write one only where closing is intended (a node PR's
+"Fixes #N" lines); everywhere else write "issue #N" or "Refs #N", and never quote a spec's
+Resolves: line or describe what "closes" an issue next to its number.
+
 ## 4. Report
 End with: the issue, the placement, the PR (or comment) URL, the nodes touched, and anything the
 owner should check first.

@@ -43,6 +43,11 @@ UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) starte
   App tokens expire after 1 hour. A wait or poll loop calls ~/.config/noodlebot/token inside the loop,
   on every poll, never once before it, and treats a failed gh call as an error it reports, not as "not
   done yet": a loop that caches the token spins forever once it expires and never sees the run end.
+- GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
+  closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
+  without a colon) followed by its number. Write one only where closing is intended (a node PR's
+  "Fixes #N" lines); everywhere else write "issue #N" or "Refs #N", and never quote a spec's
+  Resolves: line or describe what "closes" an issue next to its number.
 - Never merge, approve, push to main, or change branch protection or repository settings.
 - CI flakes seen so far: snapshot.debian.org outages while building the toolbox (the toolbox image
   is now pulled from GHCR, so rare), and an intermittent perl segfault in rc1's uefi boot test. Re-run
