@@ -213,7 +213,10 @@ tick() {
 	fi
 	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" \
 		"$here/unattended.md" >"$state/node/$id/unattended.md"
-	launch "$wt" "$state/node/$id" "/node $id"
+	# The repository's own /node skill while main still has one; the bot's plugin skill after.
+	local skill=/noodlebot:node
+	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
+	launch "$wt" "$state/node/$id" "$skill $id"
 	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$state/node/$id") of 2"
 }
 

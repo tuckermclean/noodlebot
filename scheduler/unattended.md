@@ -1,15 +1,21 @@
 UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) started this session to build node @ID@
 (@NAME@). Nobody can answer until morning.
 
-- At a /node step 7 stop, write the question, your proposed amendment and what is blocked to
+- At a step 7 stop of the node skill, write the question, your proposed amendment and what is blocked to
   @STATE@/node/@ID@/QUESTION.md, then end the run. Never continue on a guess. A SPEC §10 default
   for an open decision is the owner's standing choice, not a guess: take it and record it in the PR.
   Number the questions (Q1, Q2, ...) and give your recommendation for each, so the owner can answer
   in a line. End the file with: "To answer: write ANSWER.md next to this file."
 - You are in the worktree @WT@ on branch node/@ID@-@NAME@. Your brief and logs go in this
   worktree's out/node/@ID@/. The scheduler's own files are under @STATE@/.
-- First, bring the branch up to date: git fetch origin && git merge --no-edit origin/main. On a
-  conflict, git merge --abort, write QUESTION.md and end the run.
+- First, bring the branch up to date: git fetch origin && git merge --no-edit origin/main. Do the
+  same before the final CI run: other nodes run in parallel and merge while you work.
+  MERGE CONFLICTS: resolve them yourself, keeping both sides' intent (another node's merged work
+  stays), unless a conflicted file is a frozen test or fixture (in the repository's test and fixture
+  paths, committed by an earlier RED commit or node) or a spec file (SPEC.md, nodes/, docs/graph.yaml,
+  docs/migration.tsv, docs/capabilities.md). For those, git merge --abort, write QUESTION.md and end
+  the run. After resolving, rerun the quick test gate and every red target of this node, and list
+  each resolved file in the PR under Deviations.
 - RESUMING. If @STATE@/node/@ID@/answered/ exists, an earlier run of this node stopped. Read every
   file in it, oldest first (the names start with a UTC timestamp): <ts>-QUESTION.md is what a run
   asked, <ts>-ANSWER.md is the owner's answer, <ts>-SPEC-PR holds the number of a spec PR the owner
@@ -22,12 +28,16 @@ UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) starte
     question.
   - If the answer does not settle a blocking question, or contradicts itself, write a new
     QUESTION.md that says exactly what is still open, and end the run.
-- SPEC CHANGES. When an answer approves a change to SPEC.md, a node spec, docs/graph.yaml,
-  docs/migration.tsv or anything else /node step 7 says is a spec change, do not put it on the node
-  branch. Instead:
+- SMALL SPEC AMENDMENTS (the node skill's step 7: this node's spec only, every criterion's meaning
+  intact, such as a clearer Verify line or an added path) need no question and no spec PR: commit
+  them on the node branch and list them in the PR under "Spec amendments".
+- SPEC CHANGES. When an answer approves any other change to SPEC.md, a node spec, docs/graph.yaml,
+  docs/migration.tsv or anything else the node skill's step 7 says is a spec change, do not put it
+  on the node branch. Instead:
   1. git worktree add -b spec/@ID@-<short-topic> @WT@-spec origin/main (pick a new topic name if
      the branch exists), and make exactly the approved change there.
-  2. python3 -I .claude/skills/node/check-spec.py must report PROBLEMS 0.
+  2. The repository's spec checker must report PROBLEMS 0 (AGENTS.md names it: scripts/check-spec.py,
+     or .claude/skills/node/check-spec.py in older checkouts).
   3. Commit (subject "Spec: ..."), push the branch, open the PR with gh pr create. The body says
      what changes and quotes the question and the owner's answer it carries out.
   4. Remove the spec worktree (git worktree remove @WT@-spec). Write only the PR number to
