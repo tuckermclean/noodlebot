@@ -238,7 +238,7 @@ tick() {
 		note "the clone's checkout could not follow origin/main"
 	local tok
 	tick_tok=''
-	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { note "no GitHub App token; nothing started"; return; }
+	tok=$(~/.config/noodlebot/token "$repo") || { note "no GitHub App token; nothing started"; return; }
 	tick_tok=$tok
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
