@@ -125,6 +125,9 @@ db = json.load(open('$db')); db['issues']['100']['state'] = 'closed'; json.dump(
 run
 ok "a closed status issue is replaced by a new one" test "$(q "db['issues']['101']['state']")" = open
 
+printf '{"windows": {"five_hour": {"utilization": 0.62, "resetsAt": 1800000000, "status": "allowed"}, "seven_day": {"utilization": 0.4, "resetsAt": 1800500000, "status": "allowed"}}, "projected5h": 1.3, "weekElapsed": 0.5, "hold": true, "reason": "5-hour window projected to reach 130%% before it resets (limit 90%%)"}' >"$tmp/state/usage.json"
+run
+ok "the body shows both windows and the throttle holding" sh -c "python3 -I -c \"import json; print(json.load(open('$db'))['issues']['101']['body'])\" | grep -q '5-hour.* 62%, resets' && python3 -I -c \"import json; print(json.load(open('$db'))['issues']['101']['body'])\" | grep -q 'Throttle:\*\* \*\*holding new sessions\*\*: 5-hour window projected to reach 130%'"
 ok "no run left an error" test ! -s "$tmp/err"
 mkdir "$tmp/badbin" && printf '#!/bin/sh\necho "HTTP 502" >&2; exit 1\n' >"$tmp/badbin/gh" && chmod +x "$tmp/badbin/gh"
 PATH=$tmp/badbin:$PATH run; rc=$?

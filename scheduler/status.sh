@@ -17,6 +17,15 @@ if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub c
 iss=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue"])' "$state/report.json" 2>/dev/null)
 [ -n "$iss" ] && echo "on GitHub: https://github.com/$repo/issues/$iss (reply there to answer a question)"
 [ "$state/report.log" -nt "$state/report.json" ] && echo "status issue: FAILING: $(tail -n 1 "$state/report.log" | cut -c1-140)"
+python3 -I -c '
+import json, sys, time
+try: u = json.load(open(sys.argv[1]))
+except Exception: sys.exit(0)
+w = u.get("windows") or {}
+f = lambda k: "%.0f%% (resets %s)" % (w[k]["utilization"] * 100, time.strftime("%a %H:%M", time.localtime(w[k]["resetsAt"]))) if k in w else "?"
+p = u.get("projected5h")
+print("usage:   5-hour %s%s, 7-day %s; throttle %s" % (f("five_hour"), ", projected %.0f%%" % (p * 100) if p is not None else "", f("seven_day"),
+      "HOLDING: " + u["reason"] if u.get("hold") else "open"))' "$(dirname "$state")/usage.json"
 echo "last change: $(tail -n 1 "$state/status.log" 2>/dev/null | cut -c1-150)"
 
 # The sessions: every node or issue whose session.pid names a live session process.
