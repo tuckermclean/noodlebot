@@ -66,6 +66,9 @@ if method == "GET" and u.path.endswith("/labels"):
 if method == "POST" and u.path.endswith("/labels"):
     if mode == "failpost":
         print("gh: fake-gh-boom (HTTP 500)", file=sys.stderr); sys.exit(1)
+    if mode == "invalid":
+        print(json.dumps({"message": "Validation Failed", "errors": [{"resource": "Label", "code": "invalid", "field": "color"}]}))
+        print("gh: Validation Failed (HTTP 422)", file=sys.stderr); sys.exit(1)
     if mode == "reject" or body["name"] in [l["name"] for l in labels]:
         print(json.dumps({"message": "Validation Failed", "errors": [{"resource": "Label", "code": "already_exists", "field": "name"}]}))
         print("gh: Validation Failed (HTTP 422)", file=sys.stderr); sys.exit(1)
@@ -156,6 +159,30 @@ ok "L01-AC-3: a create that fails for another reason: the error is on stderr" gr
 setup reject bug
 ensure
 ok "L01-AC-3: a create rejected as already existing is not a failure (exit 0)" test "$rc" = 0 -a "$(h created)" = "noodlebot noodlebot-status noodlebot-triaged"
+
+# AC-3: a 422 that is not "already exists" (code invalid) is a failure.
+setup invalid bug
+ensure
+ok "L01-AC-3: a 422 with code invalid: exit non-zero" test "$rc" != 0 -a "$(h calls)" -ge 2
+ok "L01-AC-3: a 422 with code invalid: the error is on stderr" test -s "$tmp/err"
+ok "L01-AC-3: a 422 with code invalid: no label is reported created" test -z "$(grep 'created label' "$tmp/out")"
+
+# AC-3 / Change 1: a create rejected as already existing is not reported as created.
+setup reject bug
+ensure
+ok "L01-AC-3: rejected as already existing: no 'created label' line is printed" test -z "$(grep 'created label' "$tmp/out")"
+
+# AC-3: a failing create is a failure whatever the repository is called ("422" in its name).
+setup failpost bug
+PATH=$tmp/bin:$PATH GH_TOKEN=fake-token python3 "$src/labels.py" ensure --repo o/app422 >"$tmp/out" 2>"$tmp/err"; rc=$?
+ok "L01-AC-3: a failing create on a repository named app422: exit non-zero" test "$rc" != 0 -a "$(h calls)" -ge 2
+ok "L01-AC-3: a failing create on a repository named app422: the error is on stderr" grep -q fake-gh-boom "$tmp/err"
+
+# AC-2: label names are case-insensitive on GitHub: differently-cased existing labels count as present.
+setup "" Noodlebot NOODLEBOT-TRIAGED Noodlebot-Status
+ensure
+ok "L01-AC-2: differently-cased existing labels: exit 0" test "$rc" = 0
+ok "L01-AC-2: differently-cased existing labels: no POST, PATCH or DELETE" test "$(h writes)" = 0 -a "$(h calls)" -ge 1
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all labels checks"
