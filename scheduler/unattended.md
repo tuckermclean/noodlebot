@@ -1,5 +1,5 @@
-UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) started this session to build node @ID@
-(@NAME@). Nobody can answer until morning.
+UNATTENDED RUN. The noodlebot scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) started this session to build node @ID@
+(@NAME@) of @REPO@. Nobody can answer until morning.
 
 - At a step 7 stop of the node skill, write the question, your proposed amendment and what is blocked to
   @STATE@/node/@ID@/QUESTION.md, then end the run. Never continue on a guess. A SPEC §10 default
@@ -46,9 +46,9 @@ UNATTENDED RUN. The v0 scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) starte
   Approvals that need no spec change (a frozen test line, a deviation to record) apply straight away
   on the node branch. If the answers include both, first open the spec PR and stop; do the rest after.
 - GitHub: the gh CLI's stored account is suspended. Authenticate every gh call with the GitHub App:
-  GH_TOKEN=$(~/.config/noodlebot/token) gh ... --repo tuckermclean/themonolith
-  Push with: GIT_TOKEN=$(~/.config/noodlebot/token) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD
-  Edit a PR body with gh api -X PATCH repos/tuckermclean/themonolith/pulls/N -F body=@file.
+  GH_TOKEN=$(~/.config/noodlebot/token @REPO@) gh ... --repo @REPO@
+  Push with: GIT_TOKEN=$(~/.config/noodlebot/token @REPO@) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD
+  Edit a PR body with gh api -X PATCH repos/@REPO@/pulls/N -F body=@file.
   Never print, echo or log a token.
   App tokens expire after 1 hour. A wait or poll loop calls ~/.config/noodlebot/token inside the loop,
   on every poll, never once before it, and treats a failed gh call as an error it reports, not as "not

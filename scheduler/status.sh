@@ -1,15 +1,15 @@
 #!/bin/bash
 # One-screen status of the node scheduler. Keep it open next to htop:
-#   watch -n 10 -c ~/gitrepos/noodlebot/scheduler/status.sh
+#   watch -n 10 -c ~/gitrepos/noodlebot/scheduler/status.sh [owner/name]
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P)
-repo=tuckermclean/themonolith
+repo=${1:-tuckermclean/themonolith}
 state=$nb/state/${repo#*/}
 wtroot=$nb/worktrees/${repo#*/}
 
 echo "== $(date '+%F %T %Z')"
 if ! flock -n "$state/loop.lock" true 2>/dev/null; then echo "loop:    running; stop with: touch ~/STOP"
-else echo "loop:    NOT running; start with: tmux new -d -s sched $nb/scheduler/loop.sh"; fi
+else echo "loop:    NOT running; start with: tmux new -d -s sched-${repo#*/} $nb/scheduler/loop.sh $repo"; fi
 [ -e ~/STOP ] && echo "         ~/STOP exists: the loop exits within seconds"
 hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
 if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi
@@ -76,6 +76,6 @@ done
 [ $found = 0 ] && echo "   nothing"
 
 echo "-- open PRs:"
-GH_TOKEN=$(~/.config/noodlebot/token 2>/dev/null) gh pr list --repo $repo --state open \
+GH_TOKEN=$(~/.config/noodlebot/token "$repo" 2>/dev/null) gh pr list --repo $repo --state open \
 	--json number,title,author -q '.[] | select(.author.login | test("dependabot") | not) | "   #\(.number) \(.title[0:90])"' 2>/dev/null ||
 	echo "   (gh unavailable)"

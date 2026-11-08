@@ -2,8 +2,10 @@
 # Node scheduler for one repository: starts a `claude -p "/noodlebot:node <ID>"` session for every
 # ready node (ready.py --all), each in its own worktree, all at once (SCHED_MAX caps them; default
 # 0, no cap), plus one triage at a time for issues the owner labels `noodlebot`.
-#   tmux new -d -s sched ~/gitrepos/noodlebot/scheduler/loop.sh
-#   touch ~/STOP          (the loop exits within seconds; a running session keeps going)
+#   tmux new -d -s sched ~/gitrepos/noodlebot/scheduler/loop.sh [owner/name]   (default tuckermclean/themonolith)
+# One loop per repository, each with its own lock, state and status issue.
+#   touch ~/STOP          (every loop exits within seconds; running sessions keep going)
+#   touch ~/STOP-<name>   (only that repository's loop exits)
 # It acts as soon as something changes: it checks the node markers and the running session every
 # SCHED_POLL seconds (default 2, local only) and asks GitHub about PRs every SCHED_TICK seconds
 # (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time (state/<name>/loop.lock). Sessions run under setsid and
@@ -19,7 +21,8 @@
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
 set -u -o pipefail
-repo=tuckermclean/themonolith
+repo=${1:-tuckermclean/themonolith}
+case $repo in */*) ;; *) echo "loop.sh: the argument is owner/name, not $repo" >&2; exit 2 ;; esac
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
 here=$nb/scheduler
 clone=$nb/repos/${repo#*/}
@@ -162,7 +165,7 @@ start_node() {
 		git -C "$clone" worktree add -q -b "node/$id-$name" "$wt" origin/main 2>/dev/null ||
 			git -C "$clone" worktree add -q "$wt" "node/$id-$name" || { note "$saw; worktree for $id failed"; return 1; }
 	fi
-	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" \
+	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
 		"$here/unattended.md" >"$d/unattended.md"
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
 	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
@@ -182,7 +185,7 @@ tick() {
 		note "the clone's checkout could not follow origin/main"
 	local tok
 	tick_tok=''
-	tok=$(~/.config/noodlebot/token) || { note "no GitHub App token; nothing started"; return; }
+	tok=$(~/.config/noodlebot/token "$repo") || { note "no GitHub App token; nothing started"; return; }
 	tick_tok=$tok
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
@@ -253,14 +256,14 @@ pause() {
 	fp=$(fingerprint) end=$(($(date +%s) + tick_s))
 	while [ "$(date +%s)" -lt "$end" ]; do
 		sleep "$poll_s"
-		[ -e ~/STOP ] && return
+		{ [ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ]; } && return
 		for e in "${live[@]}"; do alive "${e%% *}" "${e#* }" || return; done
 		[ "$(fingerprint)" != "$fp" ] && return
 	done
 }
 
 while :; do
-	[ -e ~/STOP ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
+	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
 	pause

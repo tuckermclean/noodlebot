@@ -13,8 +13,8 @@ triage issue #@N@ of @REPO@: the owner labelled it `noodlebot`. No human is watc
   "As recommended" means the recommendation in the matching question.
 - GitHub: authenticate every gh call (and the skill's nodes.py, which calls gh) with the GitHub App,
   one fresh token per command:
-  GH_TOKEN=$(~/.config/noodlebot/token) GH_REPO=@REPO@ <command>
-  Push with: GIT_TOKEN=$(~/.config/noodlebot/token) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD
+  GH_TOKEN=$(~/.config/noodlebot/token @REPO@) GH_REPO=@REPO@ <command>
+  Push with: GIT_TOKEN=$(~/.config/noodlebot/token @REPO@) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD
   Edit a PR body with gh api -X PATCH repos/@REPO@/pulls/N -F body=@file.
   Never print, echo or log a token.
 - GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
