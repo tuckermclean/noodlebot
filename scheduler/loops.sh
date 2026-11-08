@@ -6,11 +6,17 @@
 #   scheduler/loops.sh status   one line per repository: loop, running sessions, what waits on the owner
 # LOOPS_STOP_WAIT (default 300) is one deadline, in seconds, for all loops together to exit after stop;
 # a loop checks STOP only between ticks. LOOPS_START_WAIT (default 10) is the same for start, for each
-# started loop to take its lock. Sessions are never touched. The underlying mechanism is scheduler/loop.sh.
+# started loop to take its lock. Sessions are never touched. The underlying mechanism is
+# scheduler/loop.sh. Locks, sessions and markers are read under the runtime root,
+# $NOODLEBOT_DATA/state/<name> (default ~/.local/share/noodlebot, as in loop.sh); start passes that
+# root to each loop as NOODLEBOT_DATA, since a tmux server keeps its own environment and the loop
+# would otherwise use another root and another lock.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
 list=$HOME/.config/noodlebot/repos
+root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
+case $root in /*) ;; *) root=$PWD/$root ;; esac
 wait_s=${LOOPS_STOP_WAIT:-300}
 start_wait=${LOOPS_START_WAIT:-10}
 
@@ -33,7 +39,7 @@ if [ ${#repos[@]} -eq 0 ]; then
 fi
 
 # running <name>: the loop's lock is held.
-running() { [ -e "$nb/state/$1/loop.lock" ] && ! flock -n "$nb/state/$1/loop.lock" true 2>/dev/null; }
+running() { [ -e "$root/state/$1/loop.lock" ] && ! flock -n "$root/state/$1/loop.lock" true 2>/dev/null; }
 
 rc=0
 case $cmd in
@@ -53,7 +59,7 @@ start)
 				rm -f "$HOME/STOP-$name"
 				echo "$repo: removed stale $HOME/STOP-$name"
 			fi
-			if tmux new -d -s "sched-$name" "$nb/scheduler/loop.sh" "$repo"; then
+			if tmux new -d -s "sched-$name" env NOODLEBOT_DATA="$root" "$nb/scheduler/loop.sh" "$repo"; then
 				echo "$repo: started in tmux session sched-$name"
 				launched+=("$repo")
 			else
@@ -67,7 +73,7 @@ start)
 		name=${repo#*/}
 		while ! running "$name" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
 		if ! running "$name"; then
-			echo "$repo: loop did not take its lock within ${start_wait}s; run $nb/scheduler/loop.sh $repo directly or see $nb/state/$name/status.log" >&2
+			echo "$repo: loop did not take its lock within ${start_wait}s; run $nb/scheduler/loop.sh $repo directly or see $root/state/$name/status.log" >&2
 			rc=1
 		fi
 	done ;;
@@ -98,7 +104,7 @@ stop)
 status)
 	for repo in "${repos[@]}"; do
 		name=${repo#*/}
-		state=$nb/state/$name
+		state=$root/state/$name
 		if running "$name"; then loop="loop running"; else loop="loop not running"; fi
 		live=() wait=()
 		for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do

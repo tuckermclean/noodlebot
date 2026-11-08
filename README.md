@@ -5,9 +5,12 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
 - `scheduler/`: the node scheduler, one loop per repository. `scheduler/loops.sh start|stop|status`
   runs them all over the repositories in `~/.config/noodlebot/repos` (one `owner/name` per line,
   `#` comments allowed): `start` starts the loops not running, `stop` stops them via `~/STOP-<name>`
-  (sessions keep going), `status` prints a line per repository. The mechanism underneath, per repository:
-  `tmux new -d -s sched-<name> ~/gitrepos/noodlebot/scheduler/loop.sh <owner/name>` (default
-  tuckermclean/themonolith, in tmux session `sched`). Each repository has its own lock, state
+  (sessions keep going), `status` prints a line per repository. It reads each loop's lock, sessions and
+  markers under the runtime root `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`), and `start`
+  passes that root to each loop, since a tmux server keeps its own environment. The mechanism
+  underneath, per repository:
+  `tmux new -d -s sched-<name> env NOODLEBOT_DATA=<root> ~/gitrepos/noodlebot/scheduler/loop.sh <owner/name>`
+  (default tuckermclean/themonolith, in tmux session `sched`). Each repository has its own lock, state
   (`$NOODLEBOT_DATA/state/<name>/`), clone, worktrees and status issue; `touch ~/STOP` stops every loop,
   `touch ~/STOP-<name>` one. `scheduler/status.sh [owner/name]` shows one repository.
 - `plugin/`: the bot's Claude Code skills, generic over repositories in the graph regime
