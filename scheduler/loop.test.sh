@@ -271,5 +271,15 @@ ok "D02-AC-3: and starts no session" test ! -s "$tmp/cwd-pg.log"
 ok "D02-AC-3: and its message names that working tree" grep -qF "$gw" "$tmp/pg.out"
 ok "D02-AC-3: its message names the working tree itself, not only the root" env GW="$gw" awk 'BEGIN{r=ENVIRON["GW"] "/data"; n=length(r)} {while((i=index($0,r))>0) $0=substr($0,1,i-1) substr($0,i+n); if(index($0,ENVIRON["GW"])>0) f=1} END{exit !f}' "$tmp/pg.out"
 
+# D02-AC-3: a root that does not exist yet inside a working tree is refused too, and not created.
+: >"$tmp/cwd-ny.log"
+NOODLEBOT_DATA=$gw/not/yet FAKE_LOG=$tmp/cwd-ny.log FAKE_STATE=$tmp/ny-state PATH=$tmp/bin2:$PATH \
+	SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 timeout 10 bash "$nb2/scheduler/loop.sh" o/pg >"$tmp/ny.out" 2>&1; rc=$?
+sleep 1
+ok "D02-AC-3: a not-yet-created root inside a Git working tree exits 2" test "$rc" = 2
+ok "D02-AC-3: and starts no session (not-yet-created root)" test ! -s "$tmp/cwd-ny.log"
+ok "D02-AC-3: and names the working tree (not-yet-created root)" env GW="$gw" awk 'BEGIN{r=ENVIRON["GW"] "/not/yet"; n=length(r)} {while((i=index($0,r))>0) $0=substr($0,1,i-1) substr($0,i+n); if(index($0,ENVIRON["GW"])>0) f=1} END{exit !f}' "$tmp/ny.out"
+ok "D02-AC-3: and does not create the root's parent (not-yet-created root)" test ! -e "$gw/not"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"

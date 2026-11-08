@@ -60,6 +60,7 @@ after=$(sums "$data/state")
 out=$(NOODLEBOT_DATA=$data bash "$mv_sh" "$co" 2>&1); rc=$?
 after2=$(sums "$data/state")
 [ $rc = 0 ] && [ -n "$out" ] && [ "$after" = "$after2" ] && [ ! -e "$co/repos" ] && [ ! -e "$co/state" ] && pass "D02-AC-5 a second run moves nothing, says so and exits 0" || fail "D02-AC-5 second run: rc $rc, out '$out'"
+printf '%s' "$out" | grep -qi 'nothing to move' && pass "D02-AC-5 the second run says there is nothing to move" || fail "D02-AC-5 the second run does not say so: '$out'"
 
 # --- D02-AC-5: the default root, NOODLEBOT_DATA unset
 f=$tmp/f2; fixture "$f"; co=$f/co; def=$HOME/.local/share/noodlebot
