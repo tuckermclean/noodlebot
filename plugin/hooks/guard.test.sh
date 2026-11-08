@@ -305,5 +305,46 @@ expect $a "tester Bash redirect into .noodlebot/roles.yaml" block "$D" $T $B $cm
 expect $a "reviewer Write .noodlebot/roles.yaml" block "$D" $V $W $fp ".noodlebot/roles.yaml"
 expect $a "implementer may still write another file under .noodlebot/" allow "$D" $I $W $fp ".noodlebot/notes.txt"
 
+
+# ---------- quoting: only unquoted operators count (item 12) ----------
+expect $a "reviewer grep -n '>' file (quoted >)" allow "$D" $V $B $cmd "grep -n '>' plugin/hooks/guard.py"
+expect $a "reviewer grep -rn \"> \" src (double-quoted >)" allow "$D" $V $B $cmd 'grep -rn "> " src'
+expect $a "reviewer awk -F '>' (quoted > field separator)" allow "$D" $V $B $cmd "awk -F '>' '{print \$1}' src/a.txt"
+expect $a "tester grep -n '>' src/main.py" allow "$D" $T $B $cmd "grep -n '>' src/main.py"
+expect $a "implementer grep -c '>>' tests/a.test.sh" allow "$D" $I $B $cmd "grep -c '>>' tests/a.test.sh"
+expect $a "reviewer quoted ; && | ( ) are words" allow "$D" $V $B $cmd "grep -n 'a; b && c | (d)' src/a.py"
+expect $a "reviewer here-string <<< starts no heredoc; next line still judged" block "$D" $V $B $cmd "grep foo <<< \"\$v\"${nl}echo x > src/out.txt"
+expect $a "reviewer quoted \"a << b\" starts no heredoc; next line still judged" block "$D" $V $B $cmd "echo \"a << b\"${nl}echo x > src/out.txt"
+expect $a "implementer quoted '<<' starts no heredoc; next line writes a test" block "$D" $I $B $cmd "echo 'a << b'${nl}echo x > tests/a.test.sh"
+expect $a "implementer a quoted > before a real redirect to a test is still judged" block "$D" $I $B $cmd "echo '>' > tests/a.test.sh"
+
+# ---------- cd inside a subshell holds to the matching ) (item 13) ----------
+expect $a "implementer (cd tests && ls) ; echo > src/foo.py" allow "$D" $I $B $cmd "(cd tests && ls) ; echo x > src/foo.py"
+expect $a "implementer x=\$(cd tests && pwd); echo > src/foo.py" allow "$D" $I $B $cmd 'x=$(cd tests && pwd); echo x > src/foo.py'
+expect $a "implementer (cd /tmp && ls) ; echo > tests/a.test.sh" block "$D" $I $B $cmd "(cd /tmp && ls) ; echo x > tests/a.test.sh"
+expect $a "implementer cd inside a subshell still applies within it" block "$D" $I $B $cmd "(cd tests && echo x > a.test.sh)"
+expect $a "reviewer (cd scratch && echo > out.txt) is outside the repository" allow "$D" $V $B $cmd "(cd $tmp/scratch && echo hi > out.txt)"
+expect $a "reviewer (cd scratch) ; echo > out.txt writes the repository root" block "$D" $V $B $cmd "(cd $tmp/scratch) ; echo hi > out.txt"
+
+# ---------- line continuation joins lines (item 14) ----------
+G4="$tmp/gc4"; staged "$G4" src/a.py; echo y >"$G4/a.test.sh"
+expect $a "implementer git add src/a.py \\ newline tests/a.test.sh && git commit" block "$G4" $I $B $cmd "git add src/a.py \\${nl} a.test.sh && git commit -m x"
+expect $a "implementer git add src/a.py \\ newline src/b.py && git commit" allow "$G4" $I $B $cmd "git add src/a.py \\${nl} src/b.py && git commit -m x"
+expect $a "tester echo > \\ newline tests file" allow "$D" $T $B $cmd "echo x > \\${nl}a.test.sh"
+expect $a "tester echo > \\ newline source file" block "$D" $T $B $cmd "echo x > \\${nl}src/a.py"
+
+# ---------- git in another repository is not judged (item 15) ----------
+S="$tmp/scratch/other"; mkrepo "$S"; mkdir -p "$tmp/scratch/o2"
+G5="$tmp/gc5"; staged "$G5" a.test.sh
+expect $a "tester cd scratch && git init && git add && git commit" allow "$D" $T $B $cmd "cd $tmp/scratch/o2 && git init -q && echo x > a.py && git add a.py && git commit -qm x"
+expect $a "tester cd scratch && git add a.py && git commit (scratch repo)" allow "$D" $T $B $cmd "cd $S && echo x > a.py && git add a.py && git commit -qm x"
+expect $a "tester git -C scratch commit" allow "$D" $T $B $cmd "git -C $S commit -qm x"
+expect $a "tester git -C scratch add a.py" allow "$D" $T $B $cmd "git -C $S add a.py"
+expect $a "implementer git -C scratch commit while its own repo has a staged test" allow "$G5" $I $B $cmd "git -C $S commit -qm x"
+expect $a "implementer git -C <repo>/ commit with a staged test" block "$G5" $I $B $cmd "git -C $G5/ commit -qm x"
+expect $a "implementer git -C <repo> commit with a staged test" block "$G5" $I $B $cmd "git -C $G5 commit -qm x"
+expect $a "implementer cd <repo> && git commit with a staged test" block "$G5" $I $B $cmd "cd $G5 && git commit -qm x"
+expect $a "reviewer git -C scratch commit" allow "$D" $V $B $cmd "git -C $S commit -qm x"
+expect $a "reviewer git -C <repo> commit" block "$G5" $V $B $cmd "git -C $G5 commit -qm x"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all guard checks"
