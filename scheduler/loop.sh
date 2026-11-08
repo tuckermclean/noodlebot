@@ -70,7 +70,7 @@ flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; e
 # repository. A failure is logged and the loop goes on.
 ensure_labels() {
 	local tok out
-	tok=$(~/.config/noodlebot/token "$repo") || { say "label step: no GitHub App token; labels not checked"; return; }
+	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { say "label step: no GitHub App token; labels not checked"; return; }
 	if out=$(GH_TOKEN=$tok python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
 		[ -z "$out" ] || say "label step: $(echo "$out" | sed 's/^created label //' | paste -sd' ' | sed 's/^/created labels: /')"
 	else
@@ -238,7 +238,7 @@ tick() {
 		note "the clone's checkout could not follow origin/main"
 	local tok
 	tick_tok=''
-	tok=$(~/.config/noodlebot/token "$repo") || { note "no GitHub App token; nothing started"; return; }
+	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { note "no GitHub App token; nothing started"; return; }
 	tick_tok=$tok
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \

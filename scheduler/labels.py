@@ -21,15 +21,25 @@ def gh(method, path, body=None):
     r = subprocess.run(cmd, input=json.dumps(body) if body is not None else None,
                        capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        raise RuntimeError("gh api %s %s failed: %s" % (method, path, (r.stderr or r.stdout).strip()[:300]))
+        e = RuntimeError("gh api %s %s failed: %s" % (method, path, (r.stderr or r.stdout).strip()[:300]))
+        e.stdout = r.stdout
+        raise e
     return json.loads(r.stdout) if r.stdout.strip() else None
+
+
+def already_exists(e):
+    try:
+        errs = json.loads(getattr(e, "stdout", "") or "").get("errors") or []
+    except (ValueError, AttributeError):
+        return False
+    return any(isinstance(x, dict) and x.get("code") == "already_exists" for x in errs)
 
 
 def existing(repo):
     names, page = set(), 1
     while True:
         got = gh("GET", "repos/%s/labels?per_page=100&page=%d" % (repo, page)) or []
-        names.update(l.get("name") for l in got)
+        names.update((l.get("name") or "").lower() for l in got)
         if len(got) < 100:
             return names
         page += 1
@@ -42,13 +52,14 @@ def main():
     a = p.parse_args()
     have = existing(a.repo)
     for name, color, desc in LABELS:
-        if name in have:
+        if name.lower() in have:
             continue
         try:
             gh("POST", "repos/%s/labels" % a.repo, {"name": name, "color": color, "description": desc})
         except RuntimeError as e:
-            if "already_exists" not in str(e) and "422" not in str(e):
+            if not already_exists(e):
                 raise
+            continue
         print("created label %s" % name)
 
 
