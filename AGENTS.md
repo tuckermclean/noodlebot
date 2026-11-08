@@ -8,8 +8,8 @@ Agent guidance for noodlebot. Architecture and principles are in `SPEC.md`; usag
 - `plugin/`: the Claude Code plugin (skills `node` and `triage`, the regime checker).
 - `docs/graph.yaml` and `nodes/`: this repository's planned work, under the graph regime.
 - `.claude/agents/`: this repository's role agents.
-- Never committed: `repos/`, `worktrees/`, `state/` (runtime) and anything under `~/.config/noodlebot/`
-  (credentials).
+- Runtime lives outside the checkout, under `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`: `repos/`,
+  `worktrees/`, `state/`). Never committed: anything under `~/.config/noodlebot/` (credentials).
 
 ## Commands
 
@@ -17,6 +17,8 @@ Agent guidance for noodlebot. Architecture and principles are in `SPEC.md`; usag
   loop test with fake `gh` and `claude`). Offline, under a minute.
 - `python3 -I plugin/skills/node/check-regime.py`: checks `docs/graph.yaml` against `nodes/`.
 - `scheduler/status.sh [owner/name]`: one repository's scheduler at a glance.
+- `scheduler/move-runtime.sh <checkout>`: one-time move of an older installation's `repos/`, `worktrees/`,
+  `state/` to the runtime root; stop the loops first (`touch ~/STOP`) and wait until no session runs.
 
 ## Building a node
 
@@ -52,7 +54,7 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
 - **Bash reads scripts incrementally.** An in-place edit makes a running script resume at its old byte
   offset in the new text.
 - **`pgrep -f` matches its own shell** and a session's prompt text. Find sessions through
-  `state/<name>/node/<ID>/session.pid` and `/proc/<pid>/cmdline`.
+  `$NOODLEBOT_DATA/state/<name>/node/<ID>/session.pid` and `/proc/<pid>/cmdline`.
 - **App tokens expire after an hour.** A wait loop fetches a fresh token on every poll and treats a
   failed `gh` call as an error.
 - **Container-made files** in worktrees belong to podman's subordinate ids; remove them with
