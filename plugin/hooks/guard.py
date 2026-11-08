@@ -121,7 +121,7 @@ class Repo:
         if role == "tester":
             if not self.hit("tests", rel, dirs):
                 raise Block(f"the tester may write only test and fixture paths; {rel} is not one")
-        elif self.hit("tests", rel, dirs) or self.hit("specs", rel, dirs):
+        elif self.hit("tests", rel, dirs) or self.hit("specs", rel, dirs) or rel == ".noodlebot/roles.yaml":
             raise Block(f"the implementer may not write test, fixture or spec paths; {rel} is one")
 
     def staged(self):
@@ -144,6 +144,24 @@ class Repo:
         return [x for x in r.stdout.decode("utf-8", "replace").split("\0") if x]
 
 
+HEREDOC = re.compile(r"<<-?\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][\w.-]*))")
+
+
+def strip_heredocs(cmd):
+    """Drop heredoc bodies (data, not shell) and their markers; join lines with ';'."""
+    out, pending = [], []
+    for line in cmd.split("\n"):
+        if pending:
+            word, dash = pending[0]
+            if (line.lstrip("\t") if dash else line) == word:
+                pending.pop(0)
+            continue
+        for m in HEREDOC.finditer(line):
+            pending.append((m.group(1) or m.group(2) or m.group(3), m.group(0).startswith("<<-")))
+        out.append(HEREDOC.sub("", line))
+    return " ; ".join(out)
+
+
 def tokens(cmd):
     try:
         lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
@@ -156,7 +174,7 @@ def tokens(cmd):
 def commands(cmd):
     """Split a shell line into (words, redirect-targets) per simple command."""
     cur, redirs, out, want, skip = [], [], [], False, False
-    toks = tokens(cmd) + [";"]
+    toks = tokens(strip_heredocs(cmd)) + [";"]
     for k, t in enumerate(toks):
         nxt = toks[k + 1] if k + 1 < len(toks) else ""
         if skip:
@@ -237,16 +255,31 @@ def decide(role, repo, tool, tin):
     if tool != "Bash":
         return
     cmd = tin.get("command") or ""
+    cwd = repo.root  # None once a cd target cannot be known
+
+    def at(p):
+        if os.path.isabs(p) or p.startswith(("~", "$", "`")):
+            return p
+        return os.path.join(cwd, p) if cwd else "$unknown/" + p
+
     pending = []  # paths a git add/rm earlier in this call will put in the index
     for words, redirs in commands(cmd):
         for p in redirs:
             if not p.startswith("/dev/"):
-                repo.check(role, p, False)
+                repo.check(role, at(p), False)
         for p in bash_writes(words):
-            repo.check(role, p, False, True)
+            repo.check(role, at(p), False, True)
         w = list(words)
         while w and (re.fullmatch(r"\w+=.*", w[0]) or w[0] in ("sudo", "env")):
             w = w[1:]
+        if w and w[0] in ("cd", "pushd", "popd"):
+            args = [x for x in w[1:] if not x.startswith("-") or x == "-"]
+            if w[0] == "popd" or not args or re.search(r"[$`]|^-$", args[0]):
+                cwd = None
+            else:
+                d = os.path.expanduser(args[0])
+                cwd = os.path.normpath(d if os.path.isabs(d) else os.path.join(cwd, d)) if (os.path.isabs(d) or cwd) else None
+            continue
         if len(w) < 2 or os.path.basename(w[0]) != "git":
             continue
         i = 1
@@ -255,6 +288,8 @@ def decide(role, repo, tool, tin):
         sub = w[i] if i < len(w) else ""
         rest = w[i + 1:]
         if role == "reviewer":
+            if sub == "stash" and [x for x in rest if not x.startswith("-")][:1] in (["list"], ["show"]):
+                continue
             if sub in REVIEWER_GIT or (sub in ("checkout", "switch") and any(
                     x in ("-b", "-B", "-c", "-C") for x in rest)):
                 raise Block(f"the reviewer role is read-only: 'git {sub}' changes the repository")
@@ -263,7 +298,7 @@ def decide(role, repo, tool, tin):
             if sub == "add" and (any(x in ("-A", "--all", "-u", "--update") for x in rest) or "." in ops):
                 pending += repo.git_list("ls-files", "-m", "-o", "--exclude-standard")
                 ops = [x for x in ops if x != "."]
-            pending += [os.path.join(repo.root, x) if not os.path.isabs(x) else x for x in ops]
+            pending += [at(x) for x in ops if cwd or os.path.isabs(x)]
         elif sub == "commit":
             extra = list(pending)
             if any(x in ("-a", "--all") or (re.fullmatch(r"-[a-zA-Z]+", x) and "a" in x[1:]) for x in rest):
