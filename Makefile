@@ -6,5 +6,6 @@ test:
 	sh scheduler/issues.test.sh
 	sh plugin/skills/node/check-regime.test.sh
 	bash scheduler/loop.test.sh
+	sh scheduler/move-runtime.test.sh
 
 .PHONY: test
