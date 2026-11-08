@@ -18,6 +18,8 @@
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
 #                            answered/ keeps released questions and spec PRs
+# An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
+# scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
 set -u -o pipefail

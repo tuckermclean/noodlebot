@@ -17,6 +17,8 @@ Agent guidance for noodlebot. Architecture and principles are in `SPEC.md`; usag
   loop test with fake `gh` and `claude`). Offline, under a minute.
 - `python3 -I plugin/skills/node/check-regime.py`: checks `docs/graph.yaml` against `nodes/`.
 - `scheduler/status.sh [owner/name]`: one repository's scheduler at a glance.
+- `scheduler/move-runtime.sh <checkout>`: one-time move of an older installation's `repos/`, `worktrees/`,
+  `state/` to the runtime root; stop the loops first (`touch ~/STOP`) and wait until no session runs.
 
 ## Building a node
 

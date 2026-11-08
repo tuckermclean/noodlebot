@@ -8,6 +8,7 @@
 # `git worktree repair` in each moved clone so the clones and their worktrees find each other.
 # Every loop, status.sh and this script must see the same NOODLEBOT_DATA.
 set -u -o pipefail
+shopt -s dotglob nullglob
 [ $# -eq 1 ] && [ -d "$1" ] || { echo "usage: move-runtime.sh <checkout>" >&2; exit 2; }
 co=$(cd "$1" && pwd -P) || exit 2
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
@@ -22,7 +23,25 @@ fi
 # What is there to move: <dir>/<name> for each of the three folders.
 todo=
 for d in repos worktrees state; do [ -d "$co/$d" ] && todo="$todo $d"; done
-if [ -z "$todo" ]; then echo "move-runtime.sh: nothing to move in $co (no repos/, worktrees/ or state/)"; exit 0; fi
+
+# Repair each clone and its worktrees (both directions of the links); safe to repeat, so a rerun
+# after an interrupted move fixes what it left broken.
+repair() {
+	local rc=0 clone n w
+	for clone in "$root"/repos/*/; do
+		[ -d "$clone/.git" ] || continue
+		n=$(basename "$clone")
+		set --
+		for w in "$root/worktrees/$n"/*/; do [ -e "$w/.git" ] && set -- "$@" "${w%/}"; done
+		git -C "$clone" worktree repair >/dev/null 2>&1
+		git -C "$clone" worktree repair "$@" >/dev/null 2>&1 || { echo "move-runtime.sh: worktree repair failed in $clone" >&2; rc=1; }
+	done
+	return $rc
+}
+if [ -z "$todo" ]; then
+	repair || exit 1
+	echo "move-runtime.sh: nothing to move in $co (no repos/, worktrees/ or state/)"; exit 0
+fi
 
 # Refuse while anything is in use.
 for l in "$co"/state/*/loop.lock; do
@@ -42,7 +61,6 @@ for f in "$co"/state/*/node/*/session.pid "$co"/state/*/issue/*/session.pid; do
 done
 for d in $todo; do
 	for src in "$co/$d"/*; do
-		[ -e "$src" ] || continue
 		if [ -e "$root/$d/$(basename "$src")" ]; then
 			echo "move-runtime.sh: $root/$d/$(basename "$src") already exists; move nothing onto it" >&2
 			exit 1
@@ -54,18 +72,10 @@ done
 mkdir -p "$root/repos" "$root/worktrees" "$root/state" || exit 2
 for d in $todo; do
 	for src in "$co/$d"/*; do
-		[ -e "$src" ] || continue
 		mv "$src" "$root/$d/" || { echo "move-runtime.sh: cannot move $src" >&2; exit 1; }
 	done
-	rmdir "$co/$d" 2>/dev/null || echo "move-runtime.sh: $co/$d is not empty, left in place" >&2
+	rmdir "$co/$d" 2>/dev/null || { echo "move-runtime.sh: $co/$d is not empty, left in place" >&2; exit 1; }
 done
 
-# Repair each moved clone and its worktrees (both directions of the links).
-for clone in "$root"/repos/*/; do
-	[ -d "$clone/.git" ] || continue
-	n=$(basename "$clone")
-	set --
-	for w in "$root/worktrees/$n"/*/; do [ -e "$w/.git" ] && set -- "$@" "${w%/}"; done
-	git -C "$clone" worktree repair "$@" >/dev/null 2>&1 || echo "move-runtime.sh: worktree repair failed in $clone" >&2
-done
+repair || exit 1
 echo "move-runtime.sh: moved$todo from $co to $root"
