@@ -20,7 +20,7 @@ After this node, merging a change to noodlebot deploys it: the scheduler tests t
 
 ## Gate
 - **D01-AC-1** — A new commit on the scheduler's own `main` that passes `make test` is deployed: the live checkout moves to it, and each loop re-execs within one tick and still owns the sessions it had. *Verify:* `scheduler/deploy.test.sh` and `scheduler/loop.test.sh`.
-- **D01-AC-2** — A commit that fails `make test` is not deployed: the live checkout and the loops keep running the old commit, the failure is one status-log event, and the same commit is not tried again. *Verify:* `scheduler/deploy.test.sh`.
+- **D01-AC-2** — A commit that fails `make test` is not deployed: the live checkout and the loops keep running the old commit, the failure is one status-log event, and the same commit is not tried again. *Verify:* `scheduler/deploy.test.sh` (deploy.sh) and `scheduler/loop.test.sh` (the loops and the status-log event).
 - **D01-AC-3** — `deploy.sh --rollback` returns the live checkout to the recorded previous commit. *Verify:* `scheduler/deploy.test.sh`.
 - **D01-AC-4** — Two concurrent `deploy.sh` runs deploy at most once (the second waits or skips). *Verify:* `scheduler/deploy.test.sh`.
 
