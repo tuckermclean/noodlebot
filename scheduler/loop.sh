@@ -176,6 +176,10 @@ open='' merged='' tick_tok='' live=()
 tick() {
 	date +%s >"$state/heartbeat"
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
+	# Keep the clone's own checkout on origin/main: sessions in its worktrees also load skills and
+	# agents from it, so a stale checkout would offer them stale ones.
+	git -C "$clone" merge -q --ff-only origin/main 2>/dev/null || git -C "$clone" checkout -q --detach origin/main 2>/dev/null ||
+		note "the clone's checkout could not follow origin/main"
 	local tok
 	tick_tok=''
 	tok=$(~/.config/noodlebot/token) || { note "no GitHub App token; nothing started"; return; }

@@ -115,6 +115,8 @@ ok "the start count survives the restart" within 5 "started A03 \(third-node\).*
 ok "a second empty exit writes FAILED" within 5 "session A03 ended \(rc 0\).*2 starts used: wrote FAILED"
 ok "FAILED is on disk" test -e "$state/node/A03/FAILED"
 
+git -C "$tmp/work" -c user.name=t -c user.email=t@t commit -q --allow-empty -m later && git -C "$tmp/work" push -q "$tmp/remote.git" HEAD:main
+ok "the clone's own checkout follows origin/main" timeout 5 sh -c "until [ \"\$(git -C '$nb/repos/themonolith' rev-parse HEAD)\" = \"\$(git -C '$tmp/remote.git' rev-parse main)\" ]; do sleep 0.2; done"
 echo "55 spec/A02-topic" >>"$tmp/merged.tsv"
 ok "a merged spec PR releases the node" within 5 "A02: spec PR #55 merged"
 ok "the resumed node gets fresh starts" within 5 "started A02 .*start 1 of 2.*"
