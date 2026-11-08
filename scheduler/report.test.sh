@@ -130,5 +130,34 @@ mkdir "$tmp/badbin" && printf '#!/bin/sh\necho "HTTP 502" >&2; exit 1\n' >"$tmp/
 PATH=$tmp/badbin:$PATH run; rc=$?
 ok "a failing gh exits non-zero with one line on stderr" sh -c "[ $rc -ne 0 ] && [ \$(wc -l <'$tmp/err') = 1 ]"
 
+# D02-AC-1: without --worktrees, report.py finds a node's worktree under the runtime root
+# ($NOODLEBOT_DATA, else $HOME/.local/share/noodlebot), whatever folder --state is in.
+# mkwt <root> <subject>: <root>/worktrees/repo/A01, a clone-less repository one commit ahead of origin/main.
+mkwt() {
+	w=$1/worktrees/repo/A01
+	mkdir -p "$w" && git init -q -b main "$w" &&
+		git -C "$w" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base &&
+		git -C "$w" update-ref refs/remotes/origin/main HEAD &&
+		git -C "$w" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$2"
+}
+# live_session <state>: a process whose command line looks like A01's session; its pid is recorded.
+live_session() {
+	sh -c 'sleep 60' claude -p /node A01 &
+	echo $! >"$1/node/A01/session.pid"; sess="$sess $!"
+}
+sess=''
+trap 'kill $sess 2>/dev/null; rm -rf "$tmp"' EXIT
+bodies="import json; print(' '.join(i['body'] for i in json.load(open('$db'))['issues'].values()))"
+# The state folders are not <root>/state/repo, so only the runtime-root rule can find the worktrees.
+sdata=$tmp/elsewhere/data-state sunset=$tmp/elsewhere/unset-state
+mkdir -p "$sdata/node/A01" "$sunset/node/A01"
+echo "2026-01-01T00:00:00Z open=[] merged-prs=[]; started A01 (first) in /wt, pid 1, start 1 of 2" | tee "$sdata/status.log" >"$sunset/status.log"
+mkwt "$tmp/root-data" commit-in-data-root && live_session "$sdata"
+mkwt "$tmp/home2/.local/share/noodlebot" commit-in-home-root && live_session "$sunset"
+NOODLEBOT_DATA=$tmp/root-data python3 -I "$src/report.py" --repo owner/repo --state "$sdata" 2>"$tmp/err2"
+ok "D02-AC-1: NOODLEBOT_DATA set, report.py finds the worktree under \$NOODLEBOT_DATA/worktrees/<name>" sh -c "python3 -I -c \"$bodies\" | grep -q commit-in-data-root"
+env -u NOODLEBOT_DATA HOME="$tmp/home2" python3 -I "$src/report.py" --repo owner/repo --state "$sunset" 2>>"$tmp/err2"
+ok "D02-AC-1: NOODLEBOT_DATA unset, report.py finds the worktree under \$HOME/.local/share/noodlebot/worktrees/<name>" sh -c "python3 -I -c \"$bodies\" | grep -q commit-in-home-root"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
