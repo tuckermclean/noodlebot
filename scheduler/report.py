@@ -140,6 +140,37 @@ def last_result(log):
     return None
 
 
+def num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def cost_turns(log):
+    """(latest total_cost_usd, turns summed over results) of the well-formed result events in the whole log, or None.
+
+    Streams the file line by line (constant memory) and parses only lines that mention a result."""
+    cost, turns, found = 0.0, 0, False
+    try:
+        with open(log, "rb") as f:
+            for raw in f:
+                if b'"result"' not in raw:
+                    continue
+                try:
+                    d = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if (isinstance(d, dict) and d.get("type") == "result" and num(d.get("total_cost_usd"))
+                        and num(d.get("num_turns"))):
+                    cost, turns, found = d["total_cost_usd"], turns + d["num_turns"], True
+    except OSError:
+        return None
+    return (cost, turns) if found else None
+
+
+def cost_text(log):
+    ct = cost_turns(log)
+    return "no cost yet" if ct is None else "$%.2f, %d turns" % ct
+
+
 def git_lines(wt, *args):
     try:
         r = subprocess.run(["git", "-C", wt] + list(args), capture_output=True, text=True, timeout=30)
@@ -170,7 +201,8 @@ def body_for(a, sts, prs):
             items.append("- %s's PR #%s: open, no session running on it (review or merge it)." % (n, pr))
     out += items or ["- nothing"]
 
-    out += ["", "## Sessions (%d running)" % len(sts)]
+    out += ["", "## Sessions (%d running)" % len(sts),
+            "", "_Costs are the CLI's list-price estimate, not the bill._"]
     many = len(sts) > 1
     for n, pid, started in sts:
         label = "triage of %s" % n if n.startswith("#") else n
@@ -180,6 +212,7 @@ def body_for(a, sts, prs):
         line = "### %s, running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
         if n in prs:
             line += ", PR #%s" % prs[n]
+        line += ", " + cost_text(os.path.join(tdir(state, n), "session.jsonl"))
         out += ["", line]
         texts, agent = narration(os.path.join(tdir(state, n), "session.jsonl"))
         if agent:
@@ -289,6 +322,8 @@ def post_events(a, rs, issue):
             m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)", event_text(l)[1])
             task = m and (m.group(1) or m.group(2))
             summary = task and last_result(os.path.join(tdir(a.state, task), "session.jsonl"))
+            if task:
+                text += "\n\n**%s's total:** %s" % (task, cost_text(os.path.join(tdir(a.state, task), "session.jsonl")))
             if summary:
                 text += "\n\n**%s's closing summary:**\n\n%s" % (task, summary[:20000])
         comment(a, issue, text)
