@@ -195,5 +195,89 @@ printf '# a comment\no/alpha\n\no/beta\n' >"$HOME/.config/noodlebot/repos"
 run status
 ok Purpose:comment-and-blank-lines-ignored-two-lines sh -c "[ \$(grep -c . '$sc/out') = 2 ] && [ \$(wc -l <'$sc/out') = 2 ]"
 
+echo "# runtime root: state lives under \${NOODLEBOT_DATA:-\$HOME/.local/share/noodlebot}/state (D02), not in the checkout"
+export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+# rt_lock <name>: the loop's lock under the runtime root $rt is held.
+rt_lock() { [ -e "$rt/state/$1/loop.lock" ] && ! flock -n "$rt/state/$1/loop.lock" true 2>/dev/null; }
+# rt_wait <name>: waits (at most 6 s) for that lock.
+rt_wait() { i=0; while ! rt_lock "$1" && [ $i -lt 60 ]; do sleep 0.1; i=$((i + 1)); done; rt_lock "$1"; }
+# rt_setup <scenario> <data dir | unset>: setup, a runtime root, and a fake loop.sh that keeps its
+# lock and state under ${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}/state/<name>.
+rt_setup() {
+	setup "$1"
+	if [ "$2" = unset ]; then unset NOODLEBOT_DATA; rt=$HOME/.local/share/noodlebot
+	else NOODLEBOT_DATA=$2; export NOODLEBOT_DATA; rt=$2; fi
+	cat >"$nb/scheduler/loop.sh" <<'EOT'
+#!/bin/sh
+name=${1#*/}
+st=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}/state/$name
+mkdir -p "$st"
+exec 9>"$st/loop.lock"
+flock -n 9 || exit 1
+echo $$ >"$st/loop.pid"
+while [ ! -e "$HOME/STOP" ] && [ ! -e "$HOME/STOP-$name" ]; do sleep 0.2; done
+EOT
+	chmod +x "$nb/scheduler/loop.sh"
+}
+# rt_cases <label>: start, status and stop against the runtime root $rt.
+rt_cases() {
+	l=$1
+	setsid "$nb/scheduler/loop.sh" "o/alpha" >/dev/null 2>&1 </dev/null &
+	rt_wait alpha
+	run start
+	ok "M01-AC-1:$l:beta-lock-held-under-runtime-root" sh -c "sleep 0.3; [ -e '$rt/state/beta/loop.lock' ] && ! flock -n '$rt/state/beta/loop.lock' true"
+	ok "M01-AC-1:$l:beta-started-in-sched-beta" sh -c "grep -q 'sched-beta' '$TMUXLOG'"
+	ok "M01-AC-1:$l:running-alpha-left-alone" sh -c "[ -e '$TMUXLOG' ] && ! grep -q sched-alpha '$TMUXLOG'"
+	ok "M01-AC-1:$l:alpha-lock-still-held" sh -c "! flock -n '$rt/state/alpha/loop.lock' true"
+	ok "M01-AC-1:$l:start-exits-0" sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+	mkdir -p "$rt/state/alpha/node/A01" "$rt/state/beta/node/B02"
+	setsid sh "$nb/scheduler/run-session.sh" o/alpha A01 >/dev/null 2>&1 </dev/null &
+	echo $! >"$rt/state/alpha/node/A01/session.pid"
+	sp=$!
+	echo "# Which colour?" >"$rt/state/beta/node/B02/QUESTION.md"
+	sleep 0.3
+	run status
+	aline=$(grep 'alpha' "$sc/out" | head -n 1)
+	bline=$(grep 'beta' "$sc/out" | head -n 1)
+	ok "M01-AC-3:$l:alpha-loop-running" sh -c "echo '$aline' | grep -qi 'loop running'"
+	ok "M01-AC-3:$l:beta-loop-running" sh -c "echo '$bline' | grep -qi 'loop running'"
+	ok "M01-AC-3:$l:alpha-session-A01-read-from-runtime-root" sh -c "echo '$aline' | grep -q 'sessions: A01'"
+	ok "M01-AC-3:$l:beta-waiting-B02-read-from-runtime-root" sh -c "echo '$bline' | grep -q 'B02 QUESTION'"
+	run stop
+	ok "M01-AC-2:$l:alpha-loop-stopped" sh -c "[ -e '$sc/rc' ] && flock -n '$rt/state/alpha/loop.lock' true"
+	ok "M01-AC-2:$l:beta-loop-stopped" sh -c "[ -e '$sc/rc' ] && flock -n '$rt/state/beta/loop.lock' true"
+	ok "M01-AC-2:$l:stop-exits-0" sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+	ok "M01-AC-2:$l:STOP-files-removed" sh -c "[ ! -e '$HOME/STOP-alpha' ] && [ ! -e '$HOME/STOP-beta' ]"
+	run status
+	aline=$(grep 'alpha' "$sc/out" | head -n 1)
+	ok "M01-AC-3:$l:alpha-loop-not-running-after-stop" sh -c "echo '$aline' | grep -qi 'loop not running'"
+	kill "$sp" 2>/dev/null
+}
+
+rt_setup rta unset
+rt_cases unset
+ok M01-AC-1:unset:no-state-folder-in-checkout sh -c "[ ! -e '$nb/state' ]"
+
+rt_setup rtb "$tmp/rtb/data"
+rt_cases separate-data
+ok M01-AC-1:separate-data:no-state-folder-in-checkout sh -c "[ ! -e '$nb/state' ]"
+
+echo "# runtime root: the tmux server's environment lacks NOODLEBOT_DATA"
+oldpath=$PATH
+rt_setup rtc "$tmp/rtc/data"
+mkdir -p "$sc/bin"
+printf '#!/bin/sh\nexec env -u NOODLEBOT_DATA "%s/bin/tmux" "$@"\n' "$tmp" >"$sc/bin/tmux"
+chmod +x "$sc/bin/tmux"
+PATH=$sc/bin:$oldpath
+run start
+ok M01-AC-1:tmux-env:started-through-wrapper-tmux sh -c "grep -q 'sched-beta' '$TMUXLOG'"
+ok M01-AC-1:tmux-env:beta-lock-under-NOODLEBOT_DATA sh -c "sleep 0.3; [ -e '$NOODLEBOT_DATA/state/beta/loop.lock' ] && ! flock -n '$NOODLEBOT_DATA/state/beta/loop.lock' true"
+ok M01-AC-1:tmux-env:alpha-lock-under-NOODLEBOT_DATA sh -c "[ -e '$NOODLEBOT_DATA/state/alpha/loop.lock' ] && ! flock -n '$NOODLEBOT_DATA/state/alpha/loop.lock' true"
+no M01-AC-1:tmux-env:nothing-under-default-root test -e "$HOME/.local/share/noodlebot/state"
+ok M01-AC-1:tmux-env:start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+touch "$HOME/STOP"
+PATH=$oldpath
+unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
