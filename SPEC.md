@@ -31,13 +31,16 @@ way.
 - `scheduler/`: `loop.sh` (one loop per repository: `loop.sh <owner/name>`), `run-session.sh` (one
   unattended session), `ready.py` (which nodes may start), `release-markers.sh` (answers and merged
   spec PRs), `issues.py` (issues the owner labels `noodlebot`), `report.py` (the status issue),
-  `status.sh` (a terminal view), and the session templates `unattended.md` and
+  `status.sh` (a terminal view), `move-runtime.sh` (the one-time move of an older installation's runtime
+  folders to the runtime root), and the session templates `unattended.md` and
   `unattended-triage.md`.
 - `plugin/`: the Claude Code plugin every session loads (`--plugin-dir`): the skills
   `/noodlebot:node` (build a node) and `/noodlebot:triage` (fit an issue into the graph), and the graph
   regime's spec checker `plugin/skills/node/check-regime.py`.
-- Runtime, ignored by Git: `repos/<name>` (a clone per repository), `worktrees/<name>/<ID>` (one per
-  running node), `state/<name>/` (logs, markers, the status issue's state, archived evidence).
+- Runtime, outside any checkout: the runtime root `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`)
+  holds `repos/<name>` (a clone per repository), `worktrees/<name>/<ID>` (one per running node) and
+  `state/<name>/` (logs, markers, the status issue's state, archived evidence). Every loop and helper
+  must see the same `NOODLEBOT_DATA`; the root may not lie inside a Git working tree.
 - **The graph regime.** A repository under it has `docs/graph.yaml` (nodes with id, name, deps,
   track, summary), one spec per node `nodes/<ID>-<name>.md`, and an `AGENTS.md` "Building a node"
   section. `check-regime.py` checks the first two.
