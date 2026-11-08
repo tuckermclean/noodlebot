@@ -130,5 +130,64 @@ mkdir "$tmp/badbin" && printf '#!/bin/sh\necho "HTTP 502" >&2; exit 1\n' >"$tmp/
 PATH=$tmp/badbin:$PATH run; rc=$?
 ok "a failing gh exits non-zero with one line on stderr" sh -c "[ $rc -ne 0 ] && [ \$(wc -l <'$tmp/err') = 1 ]"
 
+# C01: cost and turns of each session, from its stream-json `result` events. A fresh state dir: its status issue is 101.
+state2=$tmp/state/repo2
+mkdir -p "$tmp/rs" "$state2/node/A03" "$state2/node/A04" "$state2/node/A05" "$state2/node/A06" "$state2/node/A07"
+printf '#!/bin/sh\nwhile :; do sleep 1; done\n' >"$tmp/rs/run-session.sh"
+pids=
+for n in A03 A04 A05 A06; do
+	sh "$tmp/rs/run-session.sh" --node $n &
+	echo $! >"$state2/node/$n/session.pid"
+	pids="$pids $!"
+done
+trap 'kill $pids 2>/dev/null; rm -rf "$tmp"' EXIT
+sleep 1
+run2() { python3 -I "$src/report.py" --repo owner/repo --state "$state2" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err2"; }
+dump() {
+	python3 -I -c "
+import json
+db = json.load(open('$db'))
+open('$tmp/body2', 'w').write(db['issues']['101']['body'])
+open('$tmp/comments2', 'w').write('\n'.join(c['body'] for c in db['comments'] if c['issue'] == '101'))"
+}
+# section <ID>: the session's header line and the lines under it, up to the next heading.
+section() { awk -v id="$1" 'f && /^##/ {f=0} index($0, "### " id ",") == 1 {f=1} f' "$tmp/body2"; }
+sec_has() { section "$1" | grep -qF -- "$2"; }
+sec_turns() { section "$1" | grep -qE "(^|[^0-9])$2 turns"; }
+sec_lacks() { ! section "$1" | grep -qF -- "$2"; }
+sec_nodollar() { ! section "$1" | grep -qE '\$[0-9]'; }
+r() { printf '{"type":"result","subtype":"success","total_cost_usd":%s,"num_turns":%s,"result":"x"}\n' "$1" "$2"; }
+{ r 1.25 3; r 3.5 4; r 4.75 5; } >"$state2/node/A03/session.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Working."}]}}' >"$state2/node/A04/session.jsonl"
+printf '%s\n' 'garbage {' '[1, 2]' \
+	'{"type":"result","total_cost_usd":"3.00","num_turns":2}' \
+	'{"type":"result","num_turns":2}' \
+	'{"type":"result","total_cost_usd":3.0}' >"$state2/node/A05/session.jsonl"
+{ r 1.0 1; r '"99"' 2; echo 'garbage {'; r 2.5 3; r null 1; } >"$state2/node/A06/session.jsonl"
+{ r 2.5 2; r 7.25 6; } >"$state2/node/A07/session.jsonl"
+: >"$state2/status.log"
+run2; rc1=$?
+dump
+echo "2026-01-03T00:00:00Z open=[] merged-prs=[]; session A07 ended (rc 0)" >>"$state2/status.log"
+run2; rc2=$?
+dump
+
+ok "C01-AC-1: the running session shows its latest total_cost_usd in dollars" sec_has A03 '$4.75'
+ok "C01-AC-1: the running session shows the turns summed over its results" sec_turns A03 12
+ok "C01-AC-1: the cost is the running total, not the sum of the totals" sh -c "! grep -F '\$9.50' '$tmp/body2'"
+ok "C01-AC-3: a session with no result event shows no cost yet" sec_has A04 'no cost yet'
+ok "C01-AC-3: a session with no result event shows no dollar figure" sec_nodollar A04
+ok "C01-AC-3: a session with only malformed lines shows no cost yet" sec_has A05 'no cost yet'
+ok "C01-AC-3: a session with only malformed lines shows no dollar figure" sec_nodollar A05
+ok "C01-AC-3: well-formed results among malformed lines give the cost" sec_has A06 '$2.50'
+ok "C01-AC-3: such a session does not show no cost yet" sec_lacks A06 'no cost yet'
+ok "C01-AC-3: a malformed cost is not shown" sh -c "! grep -F '\$99' '$tmp/body2'"
+ok "C01-AC-3: the report exits 0 and the body is written" sh -c "[ $rc1 -eq 0 ] && [ $rc2 -eq 0 ] && grep -qF 'Sessions (4 running)' '$tmp/body2'"
+ok "C01-AC-3: the report leaves nothing on stderr" test ! -s "$tmp/err2"
+ok "C01-AC-2: the end of A07 is posted as a comment" grep -qF 'session A07 ended' "$tmp/comments2"
+ok "C01-AC-2: the end comment carries the latest total, in dollars" grep -qF '$7.25' "$tmp/comments2"
+ok "C01-AC-2: the end comment carries the turns summed over results" grep -qE '(^|[^0-9])8 turns' "$tmp/comments2"
+ok "C01-AC-2: the end comment does not carry the sum of the totals" sh -c "! grep -F '\$9.75' '$tmp/comments2'"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
