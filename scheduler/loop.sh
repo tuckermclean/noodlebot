@@ -11,6 +11,10 @@
 # (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time (state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
+# Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
+# a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
+# (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
+# goes to state/<name>/deploy.log.
 # Layout under ~/gitrepos/noodlebot (all ignored by git):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
@@ -32,6 +36,7 @@ oauth=$HOME/.config/noodlebot/oauth-token
 log=$state/status.log
 tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600
 mkdir -p "$state/node" "$state/issue" "$wtroot"
+start_head=$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null || true)
 pid='' node='' last_note='' last_note_t=0
 
 say() { echo "$(date -u +%FT%TZ) $*" >>"$log"; echo "$*"; }
@@ -174,10 +179,21 @@ start_node() {
 	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
 
+# deploy: self-deploy this checkout (deploy.sh); its stdout lines are status events, its stderr goes
+# to deploy.log. Never fails the tick; 9>&- keeps the loop's lock from deploy.sh and make test.
+deploy() {
+	[ -x "$here/deploy.sh" ] && [ -n "$start_head" ] || return 0
+	local line
+	"$here/deploy.sh" "$nb" </dev/null 9>&- 2>"$state/deploy.err" | while IFS= read -r line; do say "$line" >/dev/null; done
+	if [ -s "$state/deploy.err" ]; then sed "s/^/$(date -u +%FT%TZ) /" "$state/deploy.err" >>"$state/deploy.log"; fi
+	return 0
+}
+
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
 open='' merged='' tick_tok='' live=()
 tick() {
 	date +%s >"$state/heartbeat"
+	deploy
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	# Keep the clone's own checkout on origin/main: sessions in its worktrees also load skills and
 	# agents from it, so a stale checkout would offer them stale ones.
@@ -266,5 +282,9 @@ while :; do
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
+	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
+		say "deployed a new checkout; loop re-execs (pid $$)"
+		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
+	fi
 	pause
 done
