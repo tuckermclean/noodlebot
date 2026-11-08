@@ -18,43 +18,39 @@ iss=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue"
 [ "$state/report.log" -nt "$state/report.json" ] && echo "status issue: FAILING: $(tail -n 1 "$state/report.log" | cut -c1-140)"
 echo "last change: $(tail -n 1 "$state/status.log" 2>/dev/null | cut -c1-150)"
 
-# The session: a node whose session.pid names a live session process.
-spid='' node='' sdir=''
+# The sessions: every node or issue whose session.pid names a live session process.
+n_live=0
 for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 	[ -e "$f" ] || continue
-	p=$(cat "$f") id=$(basename "$(dirname "$f")")
-	if tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $id( |\$)|claude -p /node $id( |\$)"; then spid=$p node=$id sdir=$(dirname "$f"); fi
-done
-[ -n "$node" ] && [ -z "${sdir##*/issue/*}" ] && node="#$node"
-[ -n "$node" ] || node=$(sed -n 's/.*started \([A-Z][0-9][0-9]\) .*/\1/p' "$state/status.log" 2>/dev/null | tail -n 1)
-if [ -n "$spid" ]; then
-	echo "session: $node RUNNING (pid $spid, for $(ps -o etime= -p "$spid" | tr -d ' '))"
-elif [ -n "$node" ]; then
-	echo "session: none running (last: $node)"
-fi
-if [ -n "$node" ]; then
-	log=${sdir:-$state/node/$node}/session.jsonl
-	echo "         log $(du -h "$log" | cut -f1), last written $(date -r "$log" '+%T')"
-	echo "-- last actions:"
+	p=$(cat "$f") id=$(basename "$(dirname "$f")") sdir=$(dirname "$f")
+	tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $id( |\$)|claude -p /node $id( |\$)" || continue
+	n_live=$((n_live + 1)) label=$id
+	[[ $sdir == */issue/* ]] && label="triage of #$id"
+	log=$sdir/session.jsonl
+	echo "== $label RUNNING (pid $p, for $(ps -o etime= -p "$p" | tr -d ' ')); log $(du -h "$log" | cut -f1), last written $(date -r "$log" '+%T')"
+	# The last actions; a subagent's are marked with ">".
 	tail -n 300 "$log" | python3 -I -c '
 import json, sys
 acts = []
 for line in sys.stdin:
     try: d = json.loads(line)
     except Exception: continue
-    if d.get("type") == "assistant":
-        for c in d.get("message", {}).get("content", []):
-            if c.get("type") == "tool_use":
-                i = c.get("input", {})
+    if not isinstance(d, dict): continue
+    msg = d.get("message")
+    if d.get("type") == "assistant" and isinstance(msg, dict):
+        for c in msg.get("content") or []:
+            if isinstance(c, dict) and c.get("type") == "tool_use":
+                i = c.get("input") or {}
                 what = str(i.get("description") or i.get("command") or i.get("file_path") or i.get("skill") or "")
-                first = what.splitlines()[0][:110] if what else ""
-                acts.append("   %s: %s" % (c.get("name"), first))
+                first = what.splitlines()[0][:100] if what else ""
+                acts.append("   %s%s: %s" % ("> " if d.get("parent_tool_use_id") else "", c.get("name"), first))
     if d.get("type") == "result":
-        acts.append("   [session ended: %s, %s turns]" % (d.get("subtype"), d.get("num_turns")))
-print("\n".join(acts[-6:]) or "   (none yet)")'
-	echo "-- commits on node/$node:"
-	git -C "$wtroot/$node" log --oneline origin/main..HEAD 2>/dev/null | head -n 8 | sed 's/^/   /'
-	[ -z "$(git -C "$wtroot/$node" log --oneline origin/main..HEAD 2>/dev/null)" ] && echo "   (none)"
+        acts.append("   [turn ended: %s, %s turns]" % (d.get("subtype"), d.get("num_turns")))
+print("\n".join(acts[-4:]) or "   (none yet)")'
+	[[ $sdir == */issue/* ]] || git -C "$wtroot/$id" log --oneline -3 origin/main..HEAD 2>/dev/null | sed 's/^/   commit /'
+done
+if [ "$n_live" = 0 ]; then
+	echo "sessions: none running (last started: $(sed -n 's/.*started \(.*\) in .*/\1/p' "$state/status.log" 2>/dev/null | tail -n 1))"
 fi
 
 echo "-- waiting on you:"

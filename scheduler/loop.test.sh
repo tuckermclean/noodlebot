@@ -29,7 +29,7 @@ chmod +x "$HOME/.config/noodlebot/token"
 # The remote: main carries A01 -> (A02, A03).
 git init -q -b main "$tmp/work"
 mkdir -p "$tmp/work/docs"
-printf 'nodes:\n  - {id: A01, name: first-node, deps: []}\n  - {id: A02, name: second-node, deps: [A01]}\n  - {id: A03, name: third-node, deps: [A01]}\n' >"$tmp/work/docs/graph.yaml"
+printf 'nodes:\n  - {id: A01, name: first-node, deps: []}\n  - {id: A02, name: second-node, deps: [A01]}\n  - {id: A03, name: third-node, deps: [A01]}\n  - {id: A04, name: fourth-node, deps: [A01]}\n  - {id: A05, name: fifth-node, deps: [A01]}\n' >"$tmp/work/docs/graph.yaml"
 git -C "$tmp/work" add -A && git -C "$tmp/work" -c user.name=t -c user.email=t@t commit -q -m init
 git clone -q --bare "$tmp/work" "$tmp/remote.git"
 git clone -q "$tmp/remote.git" "$nb/repos/themonolith"
@@ -63,6 +63,7 @@ case \$id.\$n in
 A02.1) echo 55 >"$state/node/A02/WAITING-PR" ;;
 A02.2) echo "Q1: still open" >"$state/node/A02/QUESTION.md" ;;
 A03.1) while [ ! -e "$tmp/go" ]; do sleep 0.2; done; exit 3 ;;
+A04.1|A05.1) while [ ! -e "$tmp/go2" ]; do sleep 0.2; done; echo "Q1: parallel" >"$state/node/\$id/QUESTION.md" ;;
 esac
 exit 0
 EOF
@@ -72,6 +73,7 @@ echo "1 node/A01-first-node" >"$tmp/merged.tsv"
 echo "Q1: which way?" >"$state/node/A02/QUESTION.md"
 echo "Q1: as recommended" >"$state/node/A02/ANSWER.md"
 echo "Q1: and this?" >"$state/node/A03/QUESTION.md"
+mkdir -p "$state/node/A04" "$state/node/A05"; touch "$state/node/A04/FAILED" "$state/node/A05/FAILED"
 
 # within <seconds> <pattern>: a status.log line matches within that time.
 within() { timeout "$1" sh -c "until grep -qE \"\$1\" '$state/status.log' 2>/dev/null; do sleep 0.1; done" _ "$2"; }
@@ -104,7 +106,7 @@ ok "stopping the loop leaves the session running" kill -0 "$a03"
 
 SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 bash "$nb/scheduler/loop.sh" >"$tmp/loop2.out" 2>&1 &
 loop2=$!; pids+=("$loop2")
-ok "a restarted loop takes over the running session" within 5 "session A03 \(pid $a03\) running"
+ok "a restarted loop takes over the running session" within 5 "running: .*A03 \(pid $a03\)"
 sleep 2
 ok "and does not start it a second time" test "$(runs A03)" = 1
 touch "$tmp/go"
@@ -119,14 +121,21 @@ ok "the resumed node gets fresh starts" within 5 "started A02 .*start 1 of 2.*"
 ok "the resumed session ends with its new question" within 5 "session A02 ended \(rc 0\) with QUESTION.md"
 ok "each A02 session saw the archived answer, and later the spec PR" grep -qxF "A02 run 2: ANSWER.md QUESTION.md SPEC-PR " "$tmp/claude.log"
 grep -qxF "A02 run 1: ANSWER.md QUESTION.md " "$tmp/claude.log" || fail "A02 run 1 saw: $(cat "$tmp/claude.log")"
+rm "$state/node/A04/FAILED" "$state/node/A05/FAILED"
+ok "two ready nodes start together" within 5 "started A05 \(fifth-node\)"
+ok "both run at once" within 5 "running: A04 \(pid [0-9]+\), A05 \(pid [0-9]+\)"
+touch "$tmp/go2"
+ok "each parallel session's end is reported" within 5 "session A05 ended \(rc 0\) with QUESTION.md"
+grep -q "session A04 ended (rc 0) with QUESTION.md" "$state/status.log" || fail "A04's end is reported"
 echo '[{"number": 46}]' >"$tmp/issues.json"
 ok "an issue the owner labelled noodlebot is triaged" within 5 "started triage of #46 in .*issue-46, pid [0-9]+, start 1 of 2"
 ok "the triage session gets the triage prompt" sh -c "grep -qx 'triage 46' '$tmp/claude.log'"
 ok "a finished triage swaps the label" within 5 "triage of #46 done \(rc 0\); its label is now noodlebot-triaged"
 ok "the label calls add noodlebot-triaged and remove noodlebot" grep -q 'DELETE repos/tuckermclean/themonolith/issues/46/labels/noodlebot' "$tmp/labels.log"
 ok "the triage worktree is removed" test ! -d "$nb/worktrees/themonolith/issue-46"
+idle0=$(count 'nothing ready')
 sleep 4
-ok "an idle loop logs 'nothing ready' once, not every poll" test "$(count 'nothing ready')" -le 2
+ok "an idle loop logs 'nothing ready' once, not every poll" test $(($(count 'nothing ready') - idle0)) -le 1
 ok "the heartbeat is fresh" test "$(($(date +%s) - $(cat "$state/heartbeat" 2>/dev/null || echo 0)))" -le 3
 ok "the OAuth token is in no state file" sh -c "! grep -rq fake-oauth '$state'"
 

@@ -1,7 +1,8 @@
-"""Prints "<ID> <name>" for the first node in graph order that the scheduler may start, or nothing.
+"""Prints "<ID> <name>" for the first node in graph order that the scheduler may start, or nothing;
+with --all, one line for every such node, in graph order.
 
     python3 -I ready.py --graph docs/graph.yaml --markers out/node \
-        [--merged ID]... [--open ID]... [--subjects FILE] [--merged-prs FILE]
+        [--merged ID]... [--open ID]... [--subjects FILE] [--merged-prs FILE] [--all]
 
 A node is ready when it is not merged, every dep is merged, and its markers in <markers>/<ID>/
 allow it:
@@ -49,6 +50,7 @@ def main() -> int:
     ap.add_argument("--merged", action="append", default=[])
     ap.add_argument("--open", action="append", default=[])
     ap.add_argument("--subjects")
+    ap.add_argument("--all", action="store_true")
     ap.add_argument("--merged-prs")
     a = ap.parse_args()
 
@@ -77,7 +79,8 @@ def main() -> int:
         if state == "hold" or (state == "none" and nid in opened):
             continue
         print(f"{nid} {n['name']}")
-        return 0
+        if not a.all:
+            return 0
     return 0
 
 

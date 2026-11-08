@@ -1,6 +1,7 @@
 #!/bin/bash
-# Node scheduler for one repository: starts `claude -p "/node <ID>"` for the first ready node
-# (ready.py) in its own worktree, one session at a time.
+# Node scheduler for one repository: starts a `claude -p "/noodlebot:node <ID>"` session for every
+# ready node (ready.py --all), each in its own worktree, all at once (SCHED_MAX caps them; default
+# 0, no cap), plus one triage at a time for issues the owner labels `noodlebot`.
 #   tmux new -d -s sched ~/gitrepos/noodlebot/scheduler/loop.sh
 #   touch ~/STOP          (the loop exits within seconds; a running session keeps going)
 # It acts as soon as something changes: it checks the node markers and the running session every
@@ -112,10 +113,10 @@ launch() {
 start_triage() {
 	local n=$1 saw=$2 d=$state/issue/$1 wt=$wtroot/issue-$1 released
 	mkdir -p "$d"
-	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing #$n's markers failed"; return; }
+	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing #$n's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; #$n: $(echo "$released" | paste -sd';')"; fi
-	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return; }
-	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return; }
+	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return 1; }
+	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return 1; }
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		"$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
@@ -129,7 +130,7 @@ cleanup_merged() {
 	local id wt
 	for id in $merged; do
 		wt=$wtroot/$id
-		[ -d "$wt" ] && [ "$id" != "$node" ] && [ ! -e "$state/node/$id/session.pid" ] || continue
+		[ -d "$wt" ] && [ ! -e "$state/node/$id/session.pid" ] || continue
 		mkdir -p "$state/archive"
 		[ -d "$wt/out/node/$id" ] && [ ! -e "$state/archive/$id-out" ] && mv "$wt/out/node/$id" "$state/archive/$id-out"
 		rm -rf "$wt" 2>/dev/null || podman unshare rm -rf "$wt" 2>/dev/null
@@ -149,7 +150,29 @@ report() {
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
 
-open='' merged='' tick_tok=''
+# start_node <ID> <name> <saw>: start a ready node's session (/node, or the plugin's skill).
+start_node() {
+	local id=$1 name=$2 saw=$3 d=$state/node/$1 wt=$wtroot/$1 released skill=/noodlebot:node
+	mkdir -p "$d"
+	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
+	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing $id's markers failed"; return 1; }
+	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
+	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; $id ready but has used 2 starts; not started"; return 1; }
+	if [ ! -d "$wt" ]; then
+		git -C "$clone" worktree add -q -b "node/$id-$name" "$wt" origin/main 2>/dev/null ||
+			git -C "$clone" worktree add -q "$wt" "node/$id-$name" || { note "$saw; worktree for $id failed"; return 1; }
+	fi
+	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" \
+		"$here/unattended.md" >"$d/unattended.md"
+	# The repository's own /node skill while main still has one; the bot's plugin skill after.
+	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
+	launch "$wt" "$d" "$skill $id"
+	live+=("$pid $id")
+	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$d") of 2"
+}
+
+# live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
+open='' merged='' tick_tok='' live=()
 tick() {
 	date +%s >"$state/heartbeat"
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
@@ -165,59 +188,52 @@ tick() {
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
 	cut -d' ' -f1 "$state/merged-prs.tsv" >"$state/merged-prs.txt"
-	local saw="open=[${open% }] merged-prs=[${merged% }]" f id
+	local saw="open=[${open% }] merged-prs=[${merged% }]" f id name triaging='' p
 	tok=''
 
-	# The running session, if any: recorded in a pid file, so this works after a restart too.
-	local sdir=''
-	pid='' node=''
+	# Running sessions: recorded in pid files, so this works after a restart too.
+	live=()
 	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 		[ -e "$f" ] || continue
-		id=$(basename "$(dirname "$f")")
-		if alive "$(cat "$f")" "$id"; then pid=$(cat "$f") node=$id sdir=$(dirname "$f")
+		id=$(basename "$(dirname "$f")") p=$(cat "$f")
+		if alive "$p" "$id"; then live+=("$p $id"); [[ $f == */issue/* ]] && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	cleanup_merged
-	if [ -n "$pid" ]; then
-		[[ $sdir == */issue/* ]] && id="triage of #$node" || id=$node
-		note "$saw; session $id (pid $pid) running" "log $(stat -c %s "$sdir/session.jsonl" 2>/dev/null) bytes"
-		return
-	fi
+	local cap=${SCHED_MAX:-0}
+	full() { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }
 
-	# Issues the owner labelled `noodlebot` come first: triage is short and only plans.
+	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
 	local n
-	if n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
-		[ -z "$n" ] || { start_triage "$n" "$saw"; return; }
+	if [ -z "$triaging" ] && ! full && n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
+		[ -z "$n" ] || { start_triage "$n" "$saw" && live+=("$pid $n"); }
 	fi
 
+	# Every ready node that has no session yet, in graph order (SCHED_MAX caps the sessions; 0: none).
 	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.yaml" || { note "no graph on origin/main"; return; }
 	git -C "$clone" log --format=%s origin/main >"$state/subjects.txt"
-	local args=() next name wt released
+	local args=() ready
 	for id in $merged; do args+=(--merged "$id"); done
 	for id in $open; do args+=(--open "$id"); done
-	next=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
-		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" "${args[@]}") ||
+	ready=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
+		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --all "${args[@]}") ||
 		{ note "$saw; ready.py failed; nothing started"; return; }
-	[ -n "$next" ] || { note "$saw; nothing ready"; return; }
-	id=${next%% *} name=${next#* }
-	mkdir -p "$state/node/$id"
-	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
-	released=$(sh "$here/release-markers.sh" "$state/node/$id") || { note "$saw; releasing $id's markers failed"; return; }
-	if [ -n "$released" ]; then set_starts "$state/node/$id" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
-	[ "$(starts_of "$state/node/$id")" -lt 2 ] || { note "$saw; $id ready but has used 2 starts; nothing started"; return; }
+	while read -r id name; do
+		[ -n "$id" ] || continue
+		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
+		full && break
+		start_node "$id" "$name" "$saw"
+	done <<<"$ready"
 
-	wt=$wtroot/$id
-	if [ ! -d "$wt" ]; then
-		git -C "$clone" worktree add -q -b "node/$id-$name" "$wt" origin/main 2>/dev/null ||
-			git -C "$clone" worktree add -q "$wt" "node/$id-$name" || { note "$saw; worktree for $id failed"; return; }
+	if [ "${#live[@]}" = 0 ]; then note "$saw; nothing ready"
+	else
+		local l=() e k
+		for e in "${live[@]}"; do
+			k=${e#* }; [ -d "$state/issue/$k" ] && [ ! -d "$state/node/$k" ] && k="#$k"
+			l+=("$k (pid ${e%% *})")
+		done
+		note "$saw; running: $(IFS=,; echo "${l[*]}" | sed 's/,/, /g')"
 	fi
-	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" \
-		"$here/unattended.md" >"$state/node/$id/unattended.md"
-	# The repository's own /node skill while main still has one; the bot's plugin skill after.
-	local skill=/noodlebot:node
-	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
-	launch "$wt" "$state/node/$id" "$skill $id"
-	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$state/node/$id") of 2"
 }
 
 # fingerprint: the markers and exit files under node/ and issue/; a change means "look again now".
@@ -226,21 +242,21 @@ fingerprint() {
 		-o -name FAILED -o -name session.rc \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
 }
 
-# pause: until the next GitHub poll is due, or sooner when a marker changes, the session exits or
+# pause: until the next GitHub poll is due, or sooner when a marker changes, any session exits or
 # ~/STOP appears.
 pause() {
-	local fp end
+	local fp end e
 	fp=$(fingerprint) end=$(($(date +%s) + tick_s))
 	while [ "$(date +%s)" -lt "$end" ]; do
 		sleep "$poll_s"
 		[ -e ~/STOP ] && return
-		[ -n "$pid" ] && ! alive "$pid" "$node" && return
+		for e in "${live[@]}"; do alive "${e%% *}" "${e#* }" || return; done
 		[ "$(fingerprint)" != "$fp" ] && return
 	done
 }
 
 while :; do
-	[ -e ~/STOP ] && { say "found ~/STOP; loop exits (session ${node:-none} ${pid:+pid $pid }keeps running)"; exit 0; }
+	[ -e ~/STOP ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
 	pause

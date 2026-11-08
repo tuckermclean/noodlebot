@@ -63,5 +63,11 @@ out=$(python3 -I "$ready" --graph "$tmp/missing.yaml" --markers "$tmp" 2>&1); rc
 if [ $rc != 0 ] && [ -z "$(printf '%s' "$out" | grep -E '^A0[0-9] ')" ]; then echo "PASS: an unreadable graph fails and names no node"
 else echo "FAIL: an unreadable graph: rc $rc, output '$out'"; fails=$((fails + 1)); fi
 
+# --all: every ready node, in graph order (A02 and A03 both depend only on A01).
+reset
+check "--all lists every ready node in graph order" "$(printf 'A02 second-node\nA03 third-node')" --merged A01 --all
+reset; mkdir -p "$tmp/m/A02"; : >"$tmp/m/A02/QUESTION.md"
+check "--all still skips a held node" "A03 third-node" --merged A01 --all
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all scheduler-ready checks"

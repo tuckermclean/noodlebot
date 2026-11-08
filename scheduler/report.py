@@ -11,7 +11,7 @@ Each run:
      question (the only one waiting, or the one named first: "B03: ..."), and replies;
   3. posts new status.log events (starts, ends, releases, merges, FAILED) as one comment;
   4. posts each new unanswered QUESTION.md in full, once;
-  5. rewrites the issue body: what waits on the owner, the running session and its latest narration,
+  5. rewrites the issue body: what waits on the owner, every running session and its latest narration,
      recent events. Body edits do not notify; comments do.
 On the first run it does not replay old comments or events. Any failure exits non-zero; the loop
 logs it and carries on, and the next run picks up where this one stopped.
@@ -83,8 +83,9 @@ def waiting(state):
     return [n for n in nodes(state) if has(state, n, "QUESTION.md") and not has(state, n, "ANSWER.md")]
 
 
-def session(state):
-    """(task, pid, started) of the live session, or None."""
+def sessions(state):
+    """[(task, pid, started)] of the live sessions."""
+    out = []
     for n in nodes(state):
         f = os.path.join(tdir(state, n), "session.pid")
         try:
@@ -94,8 +95,8 @@ def session(state):
             continue
         k = n.lstrip("#")
         if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (k, k), cmd):
-            return n, pid, os.path.getmtime(f)
-    return None
+            out.append((n, pid, os.path.getmtime(f)))
+    return out
 
 
 def narration(log):
@@ -147,7 +148,7 @@ def git_lines(wt, *args):
         return []
 
 
-def body_for(a, st, prs):
+def body_for(a, sts, prs):
     state = a.state
     out = ["# noodlebot status: %s" % a.repo, "",
            "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
@@ -165,30 +166,30 @@ def body_for(a, st, prs):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
             items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after." % (n, pr))
     for n, pr in sorted(prs.items()):
-        if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and not (st and st[0] == n):
+        if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in [t[0] for t in sts]:
             items.append("- %s's PR #%s: open, no session running on it (review or merge it)." % (n, pr))
     out += items or ["- nothing"]
 
-    out += ["", "## Session"]
-    if st:
-        n, pid, started = st
+    out += ["", "## Sessions (%d running)" % len(sts)]
+    many = len(sts) > 1
+    for n, pid, started in sts:
         label = "triage of %s" % n if n.startswith("#") else n
         mins = int((time.time() - started) // 60)
         starts = (open(os.path.join(tdir(state, n), "starts")).read().strip()
                   if has(state, n, "starts") else "?")
-        line = "**%s** running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
+        line = "### %s, running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
         if n in prs:
             line += ", PR #%s" % prs[n]
-        out.append(line)
+        out += ["", line]
         texts, agent = narration(os.path.join(tdir(state, n), "session.jsonl"))
         if agent:
             out += ["", "Now running subagent: **%s**" % agent]
-        out += ["", "Latest from the orchestrator (newest last):", ""]
-        out += ["> %s" % t for t in texts] or ["> (nothing yet)"]
-        commits = [] if n.startswith("#") else git_lines(os.path.join(a.worktrees, n), "log", "--oneline", "-8", "origin/main..HEAD")
+        out += [""] + (["> %s" % t for t in texts[-4 if many else -8:]] or ["> (nothing yet)"])
+        commits = [] if n.startswith("#") else git_lines(os.path.join(a.worktrees, n), "log", "--oneline",
+                                                         "-3" if many else "-8", "origin/main..HEAD")
         if commits:
-            out += ["", "Commits on the node branch (newest first):", ""] + ["- `%s`" % c for c in commits]
-    else:
+            out += ["", "Latest commits:", ""] + ["- `%s`" % c for c in commits]
+    if not sts:
         out.append("No session running.")
 
     events = [l for l in tail_lines(os.path.join(state, "status.log"), 64 << 10) if EVENT.search(event_text(l)[1])]
@@ -349,7 +350,7 @@ def main():
         if m:
             prs[m.group(1)] = pr["number"]
     try:
-        body = body_for(a, session(a.state), prs)
+        body = body_for(a, sessions(a.state), prs)
     except Exception as e:  # show the failure on the issue rather than leave it silently stale
         body = ("# noodlebot status: %s\n\n_Updated %s. The scheduler loop is running, but building this "
                 "status failed: `%s`. See report.log._\n" % (a.repo, local(), str(e)[:300]))
