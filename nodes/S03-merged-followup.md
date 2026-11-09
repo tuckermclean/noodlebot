@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | S01 | none | M |
+| now | S01 | U01 | M |
 
 **Owns:** the merged-node follow-up in `scheduler/ready.py`; the follow-up start (branch, worktree, prompt), the follow-up cases of the merged-PR stop (`pr_done`), of the "ended with a PR" check (`ended`) and of the merged-worktree cleanup (`cleanup_merged`) in `scheduler/loop.sh`; the follow-up prompt `scheduler/unattended-followup.md`; the answered and merged-question items of `scheduler/report.py`'s "Waiting on you" section and its reply to an answer; their cases in `scheduler/ready.test.sh`, `scheduler/loop.test.sh` and `scheduler/report.test.sh`.
 **Resolves:** #31
