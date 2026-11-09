@@ -873,14 +873,43 @@ def merged_numbers(a):
     return out
 
 
-def pr_events(a):
+def subject_numbers(a):
+    """{node: PR number or None} for the nodes whose squash subject is in subjects.txt (the number from a trailing "(#N)")."""
+    subjects = read_lines(os.path.join(a.state, "subjects.txt"))
+    out = {}
+    for n in graph_nodes(a.state):
+        for s in subjects:
+            if s.startswith("%s %s:" % (n["id"], n["name"])):
+                m = re.search(r"\(#(\d+)\)\s*$", s)
+                out[n["id"]] = int(m.group(1)) if m else out.get(n["id"])
+                if m:
+                    break
+    return out
+
+
+def merges_unknown(a):
+    """True when merged-prs.tsv is empty although merges are known from the subjects: the loop's gh pr list failed this tick."""
+    return not tsv(a, "merged-prs.tsv") and bool(merged_ids(a.state, graph_nodes(a.state)))
+
+
+def pr_events(a, rs=None):
     """[(node, key, kind, PR number or None)] for the merged and closed-without-merging PRs the loop recorded."""
     out, seen = [], set()
-    for node, nums in sorted(merged_numbers(a).items()):
-        seen.add(node)
-        out += [(node, "merged:%d" % n, "merged", n) for n in sorted(nums)]
-    for node in sorted(merged_ids(a.state, graph_nodes(a.state)) - seen):  # merged by squash subject only
-        out.append((node, "merged", "merged", None))
+    unknown = merges_unknown(a)
+    if not unknown:
+        for node, nums in sorted(merged_numbers(a).items()):
+            seen.add(node)
+            out += [(node, "merged:%d" % n, "merged", n) for n in sorted(nums)]
+        subj = subject_numbers(a)
+        for node in sorted(merged_ids(a.state, graph_nodes(a.state)) - seen):  # merged by squash subject only
+            done = ((rs or {}).get("units", {}).get(node, {}) or {}).get("done", [])
+            n = subj.get(node)
+            if n:
+                if "merged" in done:
+                    continue
+                out.append((node, "merged:%d" % n, "merged", n))
+            elif not any(k == "merged" or k.startswith("merged:") for k in done):
+                out.append((node, "merged", "merged", None))
     for w in tsv(a, "closed-prs.tsv"):
         m = len(w) > 3 and w[0].isdigit() and w[3] == "false" and re.match(r"node/([A-Z][0-9][0-9])-", w[1])
         if m:
@@ -931,7 +960,7 @@ def closable(a, issue, res, merged, homed):
 def close_issues(a, rs):
     """Close the home issue and Resolves issues of the merged nodes, each with one comment naming the PR(s), once every node
     resolving the issue is merged and no unit holds it open; the first run after that holds."""
-    if not rs.get("pr_seed") or not git_lines(a.clone, "rev-parse", "--verify", "-q", "origin/main"):
+    if not rs.get("close_seed") or merges_unknown(a) or not git_lines(a.clone, "rev-parse", "--verify", "-q", "origin/main"):
         return  # not yet seeded, or the specs cannot be read (a Resolves issue could be closed too early)
     cands, res = closing_candidates(a, rs)
     if not cands:
@@ -948,6 +977,8 @@ def close_issues(a, rs):
             continue
         resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in homed.get(issue, []) if NODE.match(t)}
         try:
+            if not c.get("commented") and gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
+                c = closed[str(issue)] = {"commented": True}  # already closed by someone: no comment
             if not c.get("commented"):
                 prs = sorted({n for k in resolvers for n in nums.get(k, [])})
                 what = ", ".join("PR #%d" % n for n in prs) if prs else "the node's PR"
@@ -959,6 +990,25 @@ def close_issues(a, rs):
             a.save()
         except Exception as e:
             a.errors.append(str(e))
+
+
+def seed_closing(a, rs):
+    """Record the issues closable now (merged before this bookkeeping) as closed, so the loop leaves them alone; only
+    once origin/main of the clone is readable, else a Resolves issue would be missed."""
+    if rs.get("close_seed") or not rs.get("pr_seed") or merges_unknown(a):
+        return
+    if not git_lines(a.clone, "rev-parse", "--verify", "-q", "origin/main"):
+        return
+    try:
+        closed = rs.setdefault("closed", {})
+        cands, res = closing_candidates(a, rs)
+        merged, homed = merged_ids(a.state, graph_nodes(a.state)), home_units(a)
+        for i in cands:
+            if closable(a, i, res, merged, homed):
+                closed.setdefault(str(i), {"seed": True, "closed": True})
+        rs["close_seed"] = True
+    except Exception as e:
+        a.errors.append(str(e))
 
 
 def post_prs(a, rs, pulls):
@@ -977,11 +1027,18 @@ def post_prs(a, rs, pulls):
             if m and pr.get("number"):
                 yield m.group(1), pr
 
-    def comments_of(pr):
-        """The PR's comments since the cursor (all on the seed run), in order."""
+    def comments_of(pr, every=False):
+        """The PR's comments since the cursor (every page on the seed run), in order."""
         since = (rs.get("pr_since") or {}).get(str(pr["number"]))
-        return sorted(gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
-                         (a.repo, pr["number"], "&since=" + since if since else "")) or [], key=lambda c: c["id"])
+        out, page = [], 1
+        while True:
+            got = gh("GET", "repos/%s/issues/%s/comments?per_page=100&page=%d%s" %
+                     (a.repo, pr["number"], page, "&since=" + since if since else "")) or []
+            out += got
+            if not every or len(got) < 100 or page >= 50:
+                break
+            page += 1
+        return sorted(out, key=lambda c: c["id"])
 
     def verdict(c):  # a quoted line ("> Fresh review (...)") is not a verdict
         m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c.get("body") or "")
@@ -991,7 +1048,7 @@ def post_prs(a, rs, pulls):
         try:
             for t, pr in node_prs():
                 keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head"]["sha"]] if (pr.get("head") or {}).get("sha") else [])
-                cs = comments_of(pr)
+                cs = comments_of(pr, True)
                 keys += ["review:%s" % c["id"] for c in cs if verdict(c)]
                 if cs:
                     rs.setdefault("pr_since", {})[str(pr["number"])] = max(c.get("created_at", "") for c in cs)
@@ -999,17 +1056,13 @@ def post_prs(a, rs, pulls):
             for t, key, _, _ in pr_events(a):
                 if key not in done_of(t):
                     done_of(t).append(key)
-            closed = rs.setdefault("closed", {})  # closable now: merged before, so the loop leaves it alone
-            cands, res = closing_candidates(a, rs)
-            merged, homed = merged_ids(a.state, graph_nodes(a.state)), home_units(a)
-            for i in cands:
-                if closable(a, i, res, merged, homed):
-                    closed.setdefault(str(i), {"seed": True, "closed": True})
             rs["pr_seed"] = True
         except Exception as e:
             a.errors.append(str(e))
+        seed_closing(a, rs)
         a.save()
         return
+    seed_closing(a, rs)
 
     def post(t, key, stage, body=""):
         try:
@@ -1034,7 +1087,7 @@ def post_prs(a, rs, pulls):
                     else:
                         post(t, "ci:" + sha, "PR #%s: CI passed" % n, "All %d checks on %s passed." % (len(runs), sha[:7]))
             except Exception as e:
-                if "403" in str(e) or "404" in str(e):  # check runs not readable for this commit: log once, stop asking
+                if re.search(r"\(HTTP (403|404)\)", str(e)) and "rate limit" not in str(e).lower():  # check runs not readable for this commit: log once, stop asking
                     rs.setdefault("ci_off", []).append(sha)
                     print("report.py: no CI result for %s: %s" % (sha[:7], e), file=sys.stderr)
                 else:
@@ -1050,7 +1103,7 @@ def post_prs(a, rs, pulls):
                 rs.setdefault("pr_since", {})[str(n)] = c.get("created_at", "")
         except Exception as e:
             a.errors.append(str(e))
-    for t, key, kind, n in pr_events(a):
+    for t, key, kind, n in pr_events(a, rs):
         if t not in tasks:
             continue
         pr = "PR #%d" % n if n else "the node's PR"
