@@ -325,6 +325,11 @@ followup_branch() {
 start_node() {
 	local id=$1 name=$2 saw=$3 kind=${4:-} d=$state/node/$1 wt=$wtroot/$1 released skill=/noodlebot:node br=node/$1-$2 prompt=unattended.md
 	mkdir -p "$d"
+	# A follow-up with no marker yet and a worktree here: the merged node's leftover. Hold it before the
+	# answer is released (markers untouched), so cleanup_merged retries and a later tick starts it.
+	if [ "$kind" = followup ] && [ ! -s "$d/FOLLOWUP" ] && [ -d "$wt" ]; then
+		note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
+	fi
 	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing $id's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
