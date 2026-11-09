@@ -2,11 +2,18 @@
 
 Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/noodlebot/`, never in this repo).
 
-- `scheduler/`: the node scheduler, one loop per repository:
-  `tmux new -d -s sched-<name> ~/gitrepos/noodlebot/scheduler/loop.sh <owner/name>` (default
-  tuckermclean/themonolith, in tmux session `sched`). Each repository has its own lock, state
-  (`$NOODLEBOT_DATA/state/<name>/`), clone, worktrees and status issue; `touch ~/STOP` stops every loop,
-  `touch ~/STOP-<name>` one. `scheduler/status.sh [owner/name]` shows one repository.
+- `scheduler/`: the node scheduler, one loop per repository. `scheduler/loops.sh start|stop|status`
+  runs them all over the repositories in `~/.config/noodlebot/repos` (one `owner/name` per line,
+  `#` comments allowed): `start` starts the loops not running, `stop` stops them via `~/STOP-<name>`
+  (sessions keep going), `status` prints a line per repository. It reads each loop's lock, sessions and
+  markers under the runtime root `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`), and `start`
+  passes that root to each loop, since a tmux server keeps its own environment. `start` refuses while
+  `~/STOP` exists and removes a stale `~/STOP-<name>`; it also refuses while a loop from before the
+  runtime move still holds `<checkout>/state/<name>/loop.lock`: stop it and run the move first
+  (`scheduler/move-runtime.sh`, below). The mechanism underneath, per repository:
+  `tmux new -d -s sched-<name> env NOODLEBOT_DATA=<root> ~/gitrepos/noodlebot/scheduler/loop.sh <owner/name>`.
+  Each repository has its own lock, state (`$NOODLEBOT_DATA/state/<name>/`), clone, worktrees and
+  status issue; `touch ~/STOP` stops every loop, `touch ~/STOP-<name>` one. `scheduler/status.sh [owner/name]` shows one repository.
 - `plugin/`: the bot's Claude Code skills, generic over repositories in the graph regime
   (`docs/graph.yaml` + `nodes/<ID>-<name>.md`); load with `claude --plugin-dir ~/gitrepos/noodlebot/plugin`.
   `/noodlebot:node <ID>` builds a node test-first (the repository's part comes from its AGENTS.md,
