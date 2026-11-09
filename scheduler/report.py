@@ -16,7 +16,7 @@ Each run:
 On the first run it does not replay old comments or events. Any failure exits non-zero; the loop
 logs it and carries on, and the next run picks up where this one stopped.
 """
-import argparse, hashlib, json, os, re, subprocess, sys, time
+import argparse, hashlib, json, math, os, re, subprocess, sys, time
 from datetime import datetime, timezone
 
 LABEL = "noodlebot-status"
@@ -141,7 +141,7 @@ def last_result(log):
 
 
 def num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 def cost_turns(log):
