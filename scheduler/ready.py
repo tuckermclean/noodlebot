@@ -1,9 +1,10 @@
-"""Prints "<ID> <name>" for the first node in graph order that the scheduler may start, or nothing;
+"""Prints "<ID> <name>" (a merged node to follow up: "<ID> <name> followup") for the first node in graph order that the scheduler may start, or nothing;
 with --all, one line for every such node, in graph order.
 
     python3 -I ready.py --graph docs/graph.yaml --markers out/node \
         [--merged ID]... [--open ID]... [--subjects FILE] [--merged-prs FILE] [--all]
 
+A merged node with an answer to act on (or a FOLLOWUP marker) is printed with a third word, followup.
 A node is ready when it is not merged, every dep is merged, and its markers in <markers>/<ID>/
 allow it:
 - FAILED holds it.

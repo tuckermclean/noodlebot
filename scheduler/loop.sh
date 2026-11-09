@@ -119,6 +119,17 @@ bg_cut_off() {
 # not_counted <dir>: give back the start a limit exit used.
 not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" $((n - 1)); }
 
+# has_pr <dir> <ID>: the node has an open or merged PR that ends a session as "with a PR". A follow-up
+# (its FOLLOWUP marker holds the branch) counts only a PR on its own follow-up branch.
+has_pr() {
+	local br
+	if br=$(cat "$1/FOLLOWUP" 2>/dev/null) && [ -n "$br" ]; then
+		grep -qxF "$br" "$state/open-prs.txt" 2>/dev/null || awk -v b="$br" '$2 == b { f = 1 } END { exit !f }' "$state/merged-prs.tsv"
+	else
+		[[ " $open $merged " == *" $2 "* ]]
+	fi
+}
+
 # ended <dir> <saw>: a recorded session is gone; report how it ended and clear its pid file.
 ended() {
 	local d=$1 saw=$2 id rc p
@@ -130,7 +141,7 @@ ended() {
 	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
-	elif [[ " $open $merged " == *" $id "* ]]; then say "$saw; session $id ended (rc $rc) with a PR"
+	elif has_pr "$d" "$id"; then say "$saw; session $id ended (rc $rc) with a PR"
 	elif bg_cut_off "$d"; then
 		not_counted "$d"
 		say "$saw; session $id ended (rc $rc) with its background work cut off; start not counted"
@@ -191,16 +202,22 @@ stop_group() {
 
 # pr_done <ID> <start>: a node's session started at <start> (epoch s) has no more use: sets why to the
 # reason ("merged"/"closed") and prn to the PR. Merged; or no open PR and a PR on node/<ID>-* closed
-# without merging at or after <start>.
+# without merging at or after <start>. For a follow-up (FOLLOWUP marker) only a PR on its follow-up
+# branch counts: the node's earlier merged PR is no reason to stop it.
 pr_done() {
-	local id=$1 start=$2 n br t m
-	if [[ " $merged " == *" $id "* ]]; then
+	local id=$1 start=$2 n br t m fb=''
+	fb=$(cat "$state/node/$id/FOLLOWUP" 2>/dev/null) || fb=''
+	if [ -n "$fb" ]; then
+		prn=$(awk -v b="$fb" '$2 == b { print $1 }' "$state/merged-prs.tsv" | sort -n | tail -n1)
+		[ -n "$prn" ] && { why=merged; return 0; }
+	elif [[ " $merged " == *" $id "* ]]; then
 		prn=$(awk -v b="node/$id-" 'index($2, b) == 1 { print $1 }' "$state/merged-prs.tsv" | sort -n | tail -n1)
 		why=merged; return 0
 	fi
 	[[ " $open " == *" $id "* ]] && return 1
 	while read -r n br t m; do
-		[ "$m" = false ] && [[ $br == node/$id-* ]] || continue
+		[ "$m" = false ] || continue
+		if [ -n "$fb" ]; then [ "$br" = "$fb" ] || continue; else [[ $br == node/$id-* ]] || continue; fi
 		t=$(date -d "$t" +%s 2>/dev/null) || continue
 		[ "$t" -ge "$start" ] && { prn=$n why=closed; return 0; }
 	done <"$state/closed-prs.tsv"
@@ -248,20 +265,38 @@ start_triage() {
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
 
+# followup_done <saw>: a follow-up whose PR (on its follow-up branch) is merged is done: its FOLLOWUP
+# marker moves into answered/ (a running session was stopped by stop_done before).
+followup_done() {
+	local f d id br prn ts
+	for f in "$state"/node/*/FOLLOWUP; do
+		[ -e "$f" ] || continue
+		d=$(dirname "$f") id=$(basename "$d") br=$(cat "$f")
+		prn=$(awk -v b="$br" '$2 == b { print $1 }' "$state/merged-prs.tsv" | sort -n | tail -n1)
+		[ -n "$prn" ] || continue
+		ts=$(date -u +%Y%m%dT%H%M%SZ)
+		mkdir -p "$d/answered"
+		mv "$f" "$d/answered/$ts-FOLLOWUP" && say "$1; $id: its follow-up PR #$prn is merged, the follow-up is done"
+	done
+}
+
 # cleanup_merged: a merged node's worktree is not needed again. Keep its evidence (out/node/<ID>)
-# under $NOODLEBOT_DATA/state/archive/<ID>-out and remove the worktree; files a container made belong to podman's
-# subordinate ids, so plain rm may need podman unshare.
+# under $NOODLEBOT_DATA/state/archive/<ID>-out (a follow-up's, when that exists, under <ID>-out-<UTC time>) and remove the worktree;
+# files a container made belong to podman's subordinate ids, so plain rm may need podman unshare.
+# A follow-up in progress (FOLLOWUP marker) keeps its worktree.
 cleanup_merged() {
-	local id wt
+	local id wt arch
 	for id in $merged; do
 		wt=$wtroot/$id
-		[ -d "$wt" ] && [ ! -e "$state/node/$id/session.pid" ] || continue
+		[ -d "$wt" ] && [ ! -e "$state/node/$id/session.pid" ] && [ ! -e "$state/node/$id/FOLLOWUP" ] || continue
 		mkdir -p "$state/archive"
-		[ -d "$wt/out/node/$id" ] && [ ! -e "$state/archive/$id-out" ] && mv "$wt/out/node/$id" "$state/archive/$id-out"
+		arch=$id-out
+		[ -e "$state/archive/$arch" ] && arch=$id-out-$(date -u +%Y%m%dT%H%M%SZ)
+		[ -d "$wt/out/node/$id" ] && [ ! -e "$state/archive/$arch" ] && mv "$wt/out/node/$id" "$state/archive/$arch"
 		rm -rf "$wt" 2>/dev/null || podman unshare rm -rf "$wt" 2>/dev/null
 		git -C "$clone" worktree prune
 		if [ -d "$wt" ]; then note "$id merged, but removing its worktree failed"
-		else say "$id merged: removed its worktree, evidence kept in state/archive/$id-out"; fi
+		else say "$id merged: removed its worktree, evidence kept in state/archive/$arch"; fi
 	done
 }
 
@@ -275,25 +310,44 @@ report() {
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
 
-# start_node <ID> <name> <saw>: start a ready node's session (/node, or the plugin's skill).
+# followup_branch <ID>: the branch for a new follow-up of a merged node: node/<ID>-followup-<n>, n one
+# more than the highest among the clone's branches, origin's and the merged and closed PRs.
+followup_branch() {
+	local n
+	n=$({ git -C "$clone" branch -a --format='%(refname:short)'; cut -d' ' -f2 "$state/merged-prs.tsv" "$state/closed-prs.tsv"; } 2>/dev/null |
+		sed -n "s#^\(origin/\)\{0,1\}node/$1-followup-\([0-9][0-9]*\)\$#\2#p" | sort -n | tail -n1)
+	echo "node/$1-followup-$((${n:-0} + 1))"
+}
+
+# start_node <ID> <name> <saw> [followup]: start a ready node's session (/node, or the plugin's skill).
+# A merged node's answer ("followup") starts on a branch of its own, node/<ID>-followup-<n>, which the
+# FOLLOWUP marker keeps until its PR is merged.
 start_node() {
-	local id=$1 name=$2 saw=$3 d=$state/node/$1 wt=$wtroot/$1 released skill=/noodlebot:node
+	local id=$1 name=$2 saw=$3 kind=${4:-} d=$state/node/$1 wt=$wtroot/$1 released skill=/noodlebot:node br=node/$1-$2 prompt=unattended.md
 	mkdir -p "$d"
 	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing $id's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; $id ready but has used 2 starts; not started"; return 1; }
+	if [ "$kind" = followup ]; then
+		prompt=unattended-followup.md
+		br=$(cat "$d/FOLLOWUP" 2>/dev/null) || br=''
+		[ -n "$br" ] || { br=$(followup_branch "$id"); echo "$br" >"$d/FOLLOWUP"; }
+		if [ -d "$wt" ] && [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$br" ]; then
+			note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
+		fi
+	fi
 	if [ ! -d "$wt" ]; then
-		git -C "$clone" worktree add -q -b "node/$id-$name" "$wt" origin/main 2>/dev/null ||
-			git -C "$clone" worktree add -q "$wt" "node/$id-$name" || { note "$saw; worktree for $id failed"; return 1; }
+		git -C "$clone" worktree add -q -b "$br" "$wt" origin/main 2>/dev/null ||
+			git -C "$clone" worktree add -q "$wt" "$br" || { note "$saw; worktree for $id failed"; return 1; }
 	fi
 	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
-		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended.md" >"$d/unattended.md"
+		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" "$here/$prompt" >"$d/unattended.md" || { note "$saw; $id: no $prompt; not started"; return 1; }
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
 	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
 	launch "$wt" "$d" "$skill $id"
 	live+=("$pid $id")
-	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$d") of 2"
+	say "$saw; started $id ($name)${kind:+ as a follow-up on $br} in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
 
 # deploy: self-deploy this checkout (deploy.sh); its stdout lines are status events, its stderr goes
@@ -322,7 +376,8 @@ tick() {
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
-		! open=$(GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' | ids) ||
+		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' >"$state/open-prs.txt" ||
+		! open=$(ids <"$state/open-prs.txt") ||
 		! GH_TOKEN=$tok gh pr list --repo $repo --state closed --limit 500 --json number,headRefName,closedAt,mergedAt \
 			-q '.[] | "\(.number) \(.headRefName) \(.closedAt) \(.mergedAt != null)"' >"$state/closed-prs.tsv"; then
 		note "gh pr list failed; nothing started"; return
@@ -342,6 +397,7 @@ tick() {
 			live+=("$p $id"); [[ $f == */issue/* ]] && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
+	followup_done "$saw"
 	cleanup_merged
 	local cap=${SCHED_MAX:-0} usage
 	# The throttle: usage.py reads the plan's windows from every repository's sessions (one account,
@@ -372,11 +428,11 @@ tick() {
 	ready=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
 		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --all "${args[@]}") ||
 		{ note "$saw; ready.py failed; nothing started"; return; }
-	while read -r id name; do
+	while read -r id name kind; do
 		[ -n "$id" ] || continue
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
 		full && break
-		start_node "$id" "$name" "$saw"
+		start_node "$id" "$name" "$saw" "$kind"
 	done <<<"$ready"
 
 	local held=''; [ "$throttled" = 1 ] && held="; throttle holding new sessions"
