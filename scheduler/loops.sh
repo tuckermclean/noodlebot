@@ -156,7 +156,10 @@ status)
 	for repo in "${repos[@]}"; do
 		name=${repo#*/}
 		state=$root/state/$name
-		if running "$name"; then loop="loop running"; else loop="loop not running"; fi
+		if running "$name"; then
+			loop="loop running"
+			v=$(cat "$state/version" 2>/dev/null) && [ -n "$v" ] && loop="loop running version $v"
+		else loop="loop not running"; fi
 		live=() wait=()
 		for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 			[ -e "$f" ] || continue
