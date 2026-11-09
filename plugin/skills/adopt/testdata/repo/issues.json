@@ -1,0 +1,6 @@
+[
+  {"number": 1, "title": "Add --json output", "body": "Scripts need machine-readable output. `tallyho --json FILE...` should print one JSON object per file plus a total.", "labels": [{"name": "enhancement"}]},
+  {"number": 2, "title": "Add --top N most frequent words", "body": "Show the N most frequent words of each file, case-insensitive, ties broken alphabetically.", "labels": [{"name": "enhancement"}]},
+  {"number": 3, "title": "Binary files are counted as text", "body": "Running tallyho on a PNG prints nonsense word counts. It should skip binary files with a warning on stderr.", "labels": [{"name": "bug"}]},
+  {"number": 4, "title": "Read defaults from ~/.tallyhorc", "body": "Let users set default flags in a config file. Unclear whether the file should be shell or key=value.", "labels": [{"name": "question"}]}
+]
