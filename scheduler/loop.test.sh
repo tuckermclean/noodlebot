@@ -833,11 +833,13 @@ s3sleep 1
 s3ok "S03-AC-2: the answered question is moved into answered/ (QUESTION.md and ANSWER.md)" 5 s3released G01
 s3ok "S03-AC-2: one session starts, as start 1 of 2, naming the node and branch node/G01-followup-1" 5 s3has 'started G01 .*node/G01-followup-1.*start 1 of 2'
 s3chk "S03-AC-2: that start is the only status-log event that names node/G01-followup-1" s3cnt 'node/G01-followup-1' 1
+s3ok "S03-AC-2: (G01) its session has recorded its branch, HEAD and worktree (run 1)" 8 sh -c "[ -s '$S03/br.G01.1' ] && [ -s '$S03/head.G01.1' ] && [ -s '$S03/pwd.G01.1' ]"
 s3chk "S03-AC-2: the session ran on branch node/G01-followup-1" s3eq "$(s3f br.G01.1)" node/G01-followup-1
 s3chk "S03-AC-2: in a new worktree of its own under the worktrees folder" s3wtown G01.1
 s3chk "S03-AC-2: whose first commit is origin/main's head (HEAD at start, and the branch's first commit)" s3firstcommit G01.1 node/G01-followup-1
 s3chk "S03-AC-2: the node started once" s3eq "$(s3runs G01)" 1
 s3ok "S03-AC-2: G08 had a follow-up whose PR is merged (no branch of it): the next one starts on node/G08-followup-2" 5 s3has 'started G08 .*node/G08-followup-2.*start 1 of 2'
+s3ok "S03-AC-2: (G08) its session has recorded its branch" 8 sh -c "[ -s '$S03/br.G08.1' ]"
 s3chk "S03-AC-2: (G08) the session ran on node/G08-followup-2" s3eq "$(s3f br.G08.1)" node/G08-followup-2
 s3chk "S03-AC-2: (G08) no branch node/G08-followup-1 was made" s3brs G08 1
 
@@ -864,6 +866,7 @@ s3chk "S03-AC-4: the same for G08" s3pg G08
 s3chk "S03-AC-4: (G02, G03, G08) each ran once" s3eq "$(s3runs G02)$(s3runs G03)$(s3runs G08)" 111
 now=$(date +%s)
 p2=$(cat "$st6/node/G02/session.pid" 2>/dev/null || echo 999999) p3=$(cat "$st6/node/G03/session.pid" 2>/dev/null || echo 999999)
+s3ok "S03-AC-4: (G02, G03) their sessions have recorded their children" 8 sh -c "[ -s '$S03/child.G02.1' ] && [ -s '$S03/child.G03.1' ]"
 c2=$(s3f child.G02.1) c3=$(s3f child.G03.1)
 echo "21 node/G02-followup-1" >>"$S03/merged.tsv"; printf '21 node/G02-followup-1 %s 1\n' "$now" >>"$S03/closed.tsv"
 s3ok "S03-AC-4: a follow-up whose own PR is merged: its process group is gone within a tick" 4 grp_gone "$p2"
@@ -909,6 +912,7 @@ s3chk "S03-AC-6: its branch stays" git -C "$cl6" rev-parse --verify -q node/G01-
 s3chk "S03-AC-6: its earlier commit is in the worktree" sh -c "git -C '$w1' log --format=%s | grep -qx 'G01 follow-up work'"
 echo "Q1: yes" >"$st6/node/G01/ANSWER.md"
 s3ok "S03-AC-6: after the answer the next session starts (run 2)" 8 s3runsis G01 2
+s3ok "S03-AC-6: its second session has recorded its files (run 2)" 8 sh -c "[ -s '$S03/br.G01.2' ] && [ -s '$S03/pwd.G01.2' ]"
 s3chk "S03-AC-6: it runs on the same follow-up branch" s3eq "$(s3f br.G01.2)" node/G01-followup-1
 s3chk "S03-AC-6: in the same worktree" s3eq "$(s3f pwd.G01.2)" "$(s3f pwd.G01.1)"
 s3chk "S03-AC-6: with its earlier commit" grep -qx 'G01 follow-up work' "$S03/log.G01.2"
@@ -930,6 +934,7 @@ s3chk "S03-AC-6: and nothing says it was stopped" test "$(s3n 'stopped session G
 # a later answer: the next follow-up number
 echo "Q2: next?" >"$st6/node/G01/QUESTION.md"; echo "Q2: go" >"$st6/node/G01/ANSWER.md"
 s3ok "S03-AC-2: after a merged follow-up, the next answered question starts node/G01-followup-2" 8 s3has 'started G01 .*node/G01-followup-2.*start 1 of 2'
+s3ok "S03-AC-2: (G01) its session has started (run 3)" 8 sh -c "[ -s '$S03/br.G01.3' ] && [ -s '$S03/head.G01.3' ]"
 s3chk "S03-AC-2: (G01) the session ran on node/G01-followup-2" s3eq "$(s3f br.G01.3)" node/G01-followup-2
 s3chk "S03-AC-2: (G01) whose first commit is origin/main's head" sh -c "[ '$(s3f head.G01.3)' = '$(s3origin)' ] && [ \"\$(git -C '$cl6' rev-parse node/G01-followup-2)\" = '$(s3origin)' ]"
 s3sleep 4
