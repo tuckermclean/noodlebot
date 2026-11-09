@@ -221,5 +221,66 @@ env -u NOODLEBOT_DATA HOME="$tmp/home2" python3 -I "$src/report.py" --repo owner
 ok "D02-AC-1: NOODLEBOT_DATA unset, report.py finds the worktree under \$HOME/.local/share/noodlebot/worktrees/<name>" sh -c "python3 -I -c \"$bodies\" | grep -q commit-in-home-root"
 trap 'kill $pids $sess 2>/dev/null; rm -rf "$tmp"' EXIT
 
+# C01-AC-3 again: non-finite numbers (NaN, Infinity, 1e400) and truncated result lines are malformed lines, skipped.
+state3=$tmp/state/repo3
+mkdir -p "$state3/node/E01" "$state3/node/E02" "$state3/node/E03"
+pids3=
+for n in E01 E02; do
+	sh "$tmp/rs/run-session.sh" --node $n &
+	echo $! >"$state3/node/$n/session.pid"
+	pids3="$pids3 $!"
+done
+trap 'kill $pids $sess $pids3 2>/dev/null; rm -rf "$tmp"' EXIT
+sleep 1
+run3() { python3 -I "$src/report.py" --repo owner/repo --state "$state3" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err3"; }
+dump3() {
+	python3 -I -c "
+import json
+db = json.load(open('$db'))
+open('$tmp/body3', 'w').write('\n'.join(x['body'] for x in db['issues'].values() if 'E01' in x['body']))
+open('$tmp/endcomment3', 'w').write('\n'.join(c['body'] for c in db['comments'] if 'session E03 ended' in c['body']))"
+}
+section3() { awk -v id="$1" 'f && /^##/ {f=0} index($0, "### " id ",") == 1 {f=1} f' "$tmp/body3"; }
+nf='{"type":"result","total_cost_usd":%s,"num_turns":%s}\n'
+nonfinite() {
+	printf "$nf" 1.5 NaN
+	printf "$nf" 1.5 Infinity
+	printf "$nf" 1.5 1e400
+	printf "$nf" 1.5 -Infinity
+	printf "$nf" NaN 2
+	printf "$nf" Infinity 2
+	printf "$nf" 1e400 2
+	printf "$nf" -Infinity 2
+}
+{ nonfinite; printf '%s\n' '{"type":"result","total_cost_usd":1.5,"num_tu'; } >"$state3/node/E01/session.jsonl"
+{ nonfinite; r 1.0 1; printf '%s\n' '{"type":"result","total_cost_usd":9.9,"num_tu'; r 2.5 3; nonfinite; printf '%s\n' '{"type":"result","total_cost_usd":8.8,"num_tu'; } >"$state3/node/E02/session.jsonl"
+{ r 1.0 1; nonfinite; r 6.5 4; printf '%s\n' '{"type":"result","total_cost_usd":9.9,"num_tu'; } >"$state3/node/E03/session.jsonl"
+: >"$state3/status.log"
+run3; rc3=$?
+dump3
+echo "2026-01-04T00:00:00Z open=[] merged-prs=[]; session E03 ended (rc 0)" >>"$state3/status.log"
+run3; rc4=$?
+dump3
+sec3_has() { section3 "$1" | grep -qF -- "$2"; }
+sec3_nodollar() { ! section3 "$1" | grep -qE '\$[0-9]'; }
+sec3_turns() { section3 "$1" | grep -qE "(^|[^0-9])$2 turns"; }
+sec3_lacks() { ! section3 "$1" | grep -qF -- "$2"; }
+nonfin='\$-?(inf|nan)|(inf|nan) turns|\$[0-9]{6,}'
+ok "C01-AC-3: non-finite and truncated results only: the session shows no cost yet" sec3_has E01 'no cost yet'
+ok "C01-AC-3: non-finite and truncated results only: no dollar figure" sec3_nodollar E01
+ok "C01-AC-3: the status body shows no non-finite cost or turns" sh -c "! grep -qiE '$nonfin' '$tmp/body3'"
+ok "C01-AC-3: well-formed result among non-finite and truncated lines gives the latest cost" sec3_has E02 '$2.50'
+ok "C01-AC-3: such a session shows its summed turns" sec3_turns E02 4
+ok "C01-AC-3: such a session does not show no cost yet" sec3_lacks E02 'no cost yet'
+ok "C01-AC-3: a truncated cost is not shown" sh -c "! grep -qE '9[.]90|8[.]80' '$tmp/body3'"
+ok "C01-AC-3: the end of E03 is posted despite non-finite and truncated lines" test -s "$tmp/endcomment3"
+ok "C01-AC-3: the end comment (whole body) carries the well-formed total" grep -qF '$6.50' "$tmp/endcomment3"
+ok "C01-AC-3: the end comment (whole body) carries the well-formed turns" grep -qE '(^|[^0-9])5 turns' "$tmp/endcomment3"
+ok "C01-AC-3: the end comment shows no non-finite cost or turns" sh -c "! grep -qiE '$nonfin' '$tmp/endcomment3'"
+ok "C01-AC-3: the report exits 0 on both runs" sh -c "[ $rc3 -eq 0 ] && [ $rc4 -eq 0 ]"
+ok "C01-AC-3: the status body is the normal one, not a fallback" grep -qF 'Sessions (2 running)' "$tmp/body3"
+ok "C01-AC-3: the report leaves nothing on stderr" test ! -s "$tmp/err3"
+trap 'kill $pids $sess $pids3 2>/dev/null; rm -rf "$tmp"' EXIT
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
