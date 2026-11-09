@@ -14,7 +14,7 @@
 # Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
 # a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
 # (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
-# goes to state/<name>/deploy.log.
+# goes to state/<name>/deploy.log; its state and lock are $NOODLEBOT_DATA/deploy/ (the loop passes its runtime root).
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
@@ -237,7 +237,7 @@ start_node() {
 deploy() {
 	[ -x "$here/deploy.sh" ] && [ -n "$start_head" ] || return 0
 	local line
-	"$here/deploy.sh" "$nb" </dev/null 9>&- 2>"$state/deploy.err" | while IFS= read -r line; do say "$line" >/dev/null; done
+	NOODLEBOT_DATA="$root" "$here/deploy.sh" "$nb" </dev/null 9>&- 2>"$state/deploy.err" | while IFS= read -r line; do say "$line" >/dev/null; done
 	if [ -s "$state/deploy.err" ]; then sed "s/^/$(date -u +%FT%TZ) /" "$state/deploy.err" >>"$state/deploy.log"; fi
 	return 0
 }
