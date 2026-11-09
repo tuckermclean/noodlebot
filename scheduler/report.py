@@ -3,7 +3,7 @@
 
   report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--owner LOGIN]
 
-Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; stdlib only, all GitHub access through `gh api`.
+Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all GitHub access through `gh api`.
 Each run:
   1. finds the open issue labelled `noodlebot-status` (creating the label and issue if there is none,
      e.g. after the owner closed it), and remembers its number in DIR/report.json;
@@ -76,6 +76,96 @@ def tdir(state, task):
 
 def has(state, task, name):
     return os.path.exists(os.path.join(tdir(state, task), name))
+
+
+def read_lines(path):
+    try:
+        with open(path, errors="replace") as f:
+            return [l.strip() for l in f if l.strip()]
+    except OSError:
+        return []
+
+
+def merged_ids(state, graph=()):
+    """Node IDs whose PR is merged: from merged-prs.tsv's branches, and the squash subjects in subjects.txt."""
+    out = set()
+    for l in read_lines(os.path.join(state, "merged-prs.tsv")):
+        m = re.match(r"\S+ node/([A-Z][0-9][0-9])-", l)
+        if m:
+            out.add(m.group(1))
+    subjects = read_lines(os.path.join(state, "subjects.txt"))
+    for n in graph:
+        if any(s.startswith("%s %s:" % (n["id"], n["name"])) for s in subjects):
+            out.add(n["id"])
+    return out
+
+
+def is_merged(state, n):
+    try:
+        return n in merged_ids(state, graph_nodes(state))
+    except Exception:
+        return False
+
+
+def graph_nodes(state):
+    try:
+        import yaml
+        with open(os.path.join(state, "graph.yaml"), encoding="utf-8") as fh:
+            ns = yaml.safe_load(fh)["nodes"]
+        return [n for n in ns if isinstance(n, dict) and isinstance(n.get("id"), str) and isinstance(n.get("name"), str)]
+    except Exception:
+        return []
+
+
+def start_info(state, node):
+    """What the scheduler will do with an answered node: ("ready", merged) when ready.py, run on the state
+    folder's latest inputs, names it; ("wait", why) when it does not; None when that cannot be told."""
+    try:
+        import yaml
+        graph = yaml.safe_load(open(os.path.join(state, "graph.yaml"), encoding="utf-8"))["nodes"]
+        merged = merged_ids(state, graph)
+        cmd = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ready.py"),
+               "--graph", os.path.join(state, "graph.yaml"), "--markers", os.path.join(state, "node"), "--all",
+               "--merged-prs", os.path.join(state, "merged-prs.txt")]
+        if os.path.exists(os.path.join(state, "subjects.txt")):
+            cmd += ["--subjects", os.path.join(state, "subjects.txt")]
+        for i in sorted(merged_ids(state)):
+            cmd += ["--merged", i]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return None
+        for l in r.stdout.splitlines():
+            w = l.split()
+            if w and w[0] == node:
+                return "ready", len(w) > 2 and w[2] == "followup"
+        entry = next((n for n in graph if n["id"] == node), None)
+        if entry is None:
+            return "wait", "%s is not in the graph" % node
+        d = tdir(state, node)
+        if has(state, node, "FAILED"):
+            return "wait", "it is held by FAILED: %s" % (next(iter(read_lines(os.path.join(d, "FAILED"))), "no reason given"))
+        if has(state, node, "WAITING-PR"):
+            pr = open(os.path.join(d, "WAITING-PR")).read().strip()
+            if pr not in read_lines(os.path.join(state, "merged-prs.txt")):
+                return "wait", "it waits for you to merge spec PR #%s" % pr
+        deps = [x for x in entry.get("deps") or [] if x not in merged]
+        if node not in merged and deps:
+            return "wait", "it waits for unmerged deps: %s" % ", ".join(deps)
+        return "wait", "the scheduler does not start it yet"
+    except Exception as e:
+        if os.path.exists(os.path.join(state, "graph.yaml")):
+            print("report.py: cannot tell when %s starts: %s" % (node, e), file=sys.stderr)
+        return None
+
+
+def answered_text(state, node):
+    """The clause for an answered node: when it starts, or what it waits for, or nothing about timing."""
+    info = start_info(state, node)
+    if info is None:
+        return "the answer is recorded"
+    if info[0] == "ready":
+        return "a follow-up starts within seconds" if info[1] else "resumes within seconds"
+    return "answered, but " + info[1]
 
 
 def waiting(state):
@@ -234,7 +324,10 @@ def body_for(a, sts, prs):
                 why = fh.readline().strip() or "no reason given"
             items.append("- **%s FAILED**: %s. To retry, delete `%s`." % (n, why, path))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
-            items.append("- %s: answered; resumes within seconds." % n)
+            items.append("- %s: %s." % (n, answered_text(state, n) if n in nodes(state) and not n.startswith("#") else "answered"))
+        elif has(state, n, "QUESTION.md") and not n.startswith("#") and is_merged(state, n):
+            items.append("- **%s's PR is merged; its question is still open, and an answer starts a follow-up** "
+                         "(posted below as a comment). Reply to this issue to answer." % n)
         elif has(state, n, "QUESTION.md"):
             items.append("- **%s asks a question** (posted below as a comment). Reply to this issue to answer." % n)
         elif has(state, n, "WAITING-PR"):
@@ -342,7 +435,11 @@ def take_answers(a, rs, issue):
             f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
                     (node, a.owner, c["created_at"], c["html_url"], text))
         os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
-        comment(a, issue, "Recorded as %s's ANSWER.md; %s resumes within seconds." % (node, node))
+        if node.startswith("#"):
+            comment(a, issue, "Recorded as %s's ANSWER.md." % node)
+        else:
+            what = answered_text(a.state, node)
+            comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
         a.answered = True
 
 

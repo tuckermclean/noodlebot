@@ -40,7 +40,7 @@ check "QUESTION.md with ANSWER.md: the node is ready again" "A02 second-node" --
 reset; mkdir -p "$tmp/m/A02"; : >"$tmp/m/A02/QUESTION.md"; : >"$tmp/m/A02/ANSWER.md"
 check "an answered node with an open PR is ready" "A02 second-node" --merged A01 --open A02
 reset; mkdir -p "$tmp/m/A02"; : >"$tmp/m/A02/QUESTION.md"; : >"$tmp/m/A02/ANSWER.md"
-check "an answered node that is merged is not ready" "A03 third-node" --merged A01 --merged A02
+check "an answered node that is merged is printed as a follow-up" "A02 second-node followup" --merged A01 --merged A02
 reset; mkdir -p "$tmp/m/A02"; : >"$tmp/m/A02/ANSWER.md"
 check "ANSWER.md alone changes nothing" "A02 second-node" --merged A01
 reset; mkdir -p "$tmp/m/A02"; : >"$tmp/m/A02/QUESTION.md"; : >"$tmp/m/A02/ANSWER.md"; : >"$tmp/m/A02/FAILED"
@@ -68,6 +68,54 @@ reset
 check "--all lists every ready node in graph order" "$(printf 'A02 second-node\nA03 third-node')" --merged A01 --all
 reset; mkdir -p "$tmp/m/A02"; : >"$tmp/m/A02/QUESTION.md"
 check "--all still skips a held node" "A03 third-node" --merged A01 --all
+
+
+# S03: a merged node with an answer to act on is printed as "<ID> <name> followup".
+A2="$tmp/m/A02"
+answered() { reset; mkdir -p "$A2"; : >"$A2/QUESTION.md"; : >"$A2/ANSWER.md"; }
+answered
+check "S03-AC-1: a merged node (--merged) with an answered question: followup, even with --open" "A02 second-node followup" --merged A01 --merged A02 --open A02
+printf '%s\n' "A01 first-node: the root (#5)" "A02 second-node: the second (#6)" >"$tmp/subjects2"
+answered
+check "S03-AC-1: a node merged by its squash subject with an answered question: followup" "A02 second-node followup" --subjects "$tmp/subjects2"
+reset; mkdir -p "$A2"; echo 12 >"$A2/WAITING-PR"
+check "S03-AC-1: a merged node with a WAITING-PR in --merged-prs: followup" "A02 second-node followup" --merged A01 --merged A02 --merged-prs "$tmp/prs"
+reset; mkdir -p "$A2"; echo 41 >"$A2/WAITING-PR"
+check "S03-AC-1: a merged node with a WAITING-PR not in --merged-prs is not printed" "A03 third-node" --merged A01 --merged A02 --merged-prs "$tmp/prs"
+reset; mkdir -p "$A2"; echo 12 >"$A2/WAITING-PR"
+check "S03-AC-1: a merged node with a WAITING-PR and no --merged-prs is not printed" "A03 third-node" --merged A01 --merged A02
+reset; mkdir -p "$A2"; echo 12 >"$A2/WAITING-PR"; : >"$A2/QUESTION.md"
+check "S03-AC-1: a merged WAITING-PR with an unanswered QUESTION.md is not printed" "A03 third-node" --merged A01 --merged A02 --merged-prs "$tmp/prs"
+reset; mkdir -p "$A2"; echo node/A02-followup-1 >"$A2/FOLLOWUP"
+check "S03-AC-1: a merged node with a FOLLOWUP marker: followup" "A02 second-node followup" --merged A01 --merged A02
+reset; mkdir -p "$A2"; echo node/A02-followup-1 >"$A2/FOLLOWUP"
+check "S03-AC-1: a FOLLOWUP marker with --open for that node is not printed" "A03 third-node" --merged A01 --merged A02 --open A02
+reset; mkdir -p "$A2"; echo node/A02-followup-1 >"$A2/FOLLOWUP"
+check "S03-AC-1: a FOLLOWUP marker for a node merged by squash subject: followup" "A02 second-node followup" --subjects "$tmp/subjects2"
+reset; mkdir -p "$A2"; echo node/A02-followup-1 >"$A2/FOLLOWUP"; : >"$A2/QUESTION.md"
+check "S03-AC-1: a FOLLOWUP marker with an unanswered QUESTION.md is not printed" "A03 third-node" --merged A01 --merged A02
+reset; mkdir -p "$A2"; echo node/A02-followup-1 >"$A2/FOLLOWUP"; : >"$A2/FAILED"
+check "S03-AC-1: a FOLLOWUP marker with FAILED is not printed" "A03 third-node" --merged A01 --merged A02
+reset; mkdir -p "$A2"; echo node/A02-followup-1 >"$A2/FOLLOWUP"; echo 41 >"$A2/WAITING-PR"
+check "S03-AC-1: a FOLLOWUP marker with an unmerged WAITING-PR is not printed" "A03 third-node" --merged A01 --merged A02 --merged-prs "$tmp/prs"
+reset
+check "S03-AC-1: a merged node with no markers is not printed" "A03 third-node" --merged A01 --merged A02
+reset; mkdir -p "$A2"; : >"$A2/QUESTION.md"
+check "S03-AC-1: a merged node with an unanswered QUESTION.md is not printed" "A03 third-node" --merged A01 --merged A02
+answered; : >"$A2/FAILED"
+check "S03-AC-1: a merged answered node with FAILED is not printed" "A03 third-node" --merged A01 --merged A02
+reset; mkdir -p "$A2"; : >"$A2/ANSWER.md"
+check "S03-AC-1: a merged node with ANSWER.md alone is not printed" "A03 third-node" --merged A01 --merged A02
+answered
+check "S03-AC-1: --all orders the followup line among ready lines in graph order" "$(printf 'A02 second-node followup\nA04 fourth-node')" --merged A01 --merged A02 --merged A03 --all
+mkdir -p "$tmp/m/A03"; : >"$tmp/m/A03/QUESTION.md"; : >"$tmp/m/A03/ANSWER.md"
+check "S03-AC-1: --all with two followups and an ordinary node, in graph order" "$(printf 'A02 second-node followup\nA03 third-node followup\nA04 fourth-node')" --merged A01 --merged A02 --merged A03 --all
+answered
+check "S03-AC-1: --all with a followup before an unmerged ready node" "$(printf 'A02 second-node followup\nA03 third-node')" --merged A01 --merged A02 --all
+reset; mkdir -p "$tmp/m/A03"; : >"$tmp/m/A03/QUESTION.md"; : >"$tmp/m/A03/ANSWER.md"
+check "S03-AC-1: --all: an unmerged answered node keeps its plain line, before and after" "$(printf 'A02 second-node\nA03 third-node')" --merged A01 --all
+answered
+check "S03-AC-1: without --all only the first ready line is printed (the followup)" "A02 second-node followup" --merged A01 --merged A02 --merged A03
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all scheduler-ready checks"
