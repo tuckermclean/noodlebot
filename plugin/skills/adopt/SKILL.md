@@ -73,6 +73,19 @@ Only after `ANSWER.md`. Order: the graph first, then the specs, so they agree.
   its `DEFAULTS` the default globs, which treat `**/*.test.sh`, `**/tests/**`, `**/testdata/**`,
   `**/fixtures/**` etc. as tests) only if those defaults do not match the repository's test paths
   (`tests:` and `specs:`, root-relative globs).
+- **Deps follow Verify.** A node whose *Verify* relies on another node's change (a test runner, a
+  fixture, a helper, a Makefile target) lists that node in `deps`; e.g. "make test runs tests/test_x.sh"
+  needs the node that made `make test` run every test. Better still, write Verify lines that work on the
+  repository as it stands plus the node's own change.
+- **No guess presented as settled.** Where a criterion needs a choice the answers do not make, or
+  conflicts with a stated principle or an answer (the owner says "follow the README" and a criterion
+  narrows it; a principle says "exit non-zero only on unreadable input" and a criterion exits non-zero
+  on a bad argument), put it in `SPEC.md`'s open decisions with a default, and in the node's
+  `decisions` in the graph. Keep criteria consistent with the principles; qualify a principle only if
+  the answers allow it. Before finishing, check every criterion against `SPEC.md`'s principles and the
+  answers.
+- **Changes are numbered**, and each names the criterion it produces (`*<ID>-AC-n.*`), as the drafted
+  template says.
 Do not write implementation or tests.
 
 ## 4. Check
@@ -101,7 +114,8 @@ With `--dry-run`, run sections 1 to 4 offline against a local directory or a clo
 - Write the drafts into an output directory (`--out <dir>`, else `out/adopt/<name>/`) holding
   `SPEC.md`, `AGENTS.md`, `docs/graph.yaml` and `nodes/`; never write into the input directory. Run the
   checker with `--root` on it. No push, no PR, no comment.
-- Print a result summary: the output directory, nodes and criteria drafted, the checker's last line.
+- Print a result summary: the output directory, nodes and criteria drafted, the checker's last line, the questions asked, the nodes with
+  deps, and every point where this skill was unclear.
 
 ## 6. Report
 End with: the repository, the PR URL (or the output directory for a dry run), the nodes drafted, the
