@@ -10,5 +10,6 @@ test:
 	sh plugin/hooks/guard.test.sh
 	bash scheduler/loop.test.sh
 	sh scheduler/move-runtime.test.sh
+	sh plugin/skills/adopt/adopt.test.sh
 
 .PHONY: test
