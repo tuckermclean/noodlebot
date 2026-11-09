@@ -1,7 +1,9 @@
 #!/bin/bash
 # Node scheduler for one repository: starts a `claude -p "/noodlebot:node <ID>"` session for every
 # ready node (ready.py --all), each in its own worktree, all at once (SCHED_MAX caps them; default
-# 0, no cap), plus one triage at a time for issues the owner labels `noodlebot`.
+# 0, no cap), plus one triage at a time for issues the owner labels `noodlebot`, or one update session
+# for a bot's spec/* PR that conflicts with main or whose graph gives an ID of main to another node
+# (/noodlebot:triage --update <N>; the same one slot as a triage).
 #   tmux new -d -s sched ~/gitrepos/noodlebot/scheduler/loop.sh [owner/name]   (default tuckermclean/themonolith)
 # One loop per repository, each with its own lock, state and status issue.
 #   touch ~/STOP          (every loop exits within seconds; running sessions keep going)
@@ -19,10 +21,12 @@
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
+#   worktrees/<name>/pr-<N>  one worktree per spec-PR update, on the PR's branch
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
-#                            answered/ keeps released questions and spec PRs
+#                            answered/ keeps released questions and spec PRs;
+#                            issue/<N>/ (a triage) and pr/<N>/ (a spec-PR update: also from, done) hold the same files
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged and noodlebot-status exist (labels.py).
@@ -50,7 +54,7 @@ if top=$(git -C "$probe" rev-parse --show-toplevel 2>/dev/null); then
 	exit 2
 fi
 mkdir -p "$root" || exit 2
-mkdir -p "$state/node" "$state/issue" "$wtroot"
+mkdir -p "$state/node" "$state/issue" "$state/pr" "$wtroot"
 start_head=$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null || true)
 pid='' node='' last_note='' last_note_t=0
 
@@ -64,7 +68,7 @@ note() {
 	fi
 }
 ids() { sed -n 's#^node/\([A-Z][0-9][0-9]\)-.*#\1#p' | sort -u | tr '\n' ' '; }
-# starts_of <dir> / set_starts <dir> <n>: a task's session starts (node/<ID> or issue/<N>).
+# starts_of <dir> / set_starts <dir> <n>: a task's session starts (node/<ID>, issue/<N> or pr/<N>).
 starts_of() { cat "$1/starts" 2>/dev/null || echo 0; }
 set_starts() { echo "$2" >"$1/starts"; }
 [ -r "$oauth" ] || { echo "loop.sh: $oauth is missing (claude setup-token)" >&2; exit 2; }
@@ -142,6 +146,7 @@ ended() {
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
+	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
@@ -186,6 +191,30 @@ triage_ended() {
 		set_starts "$d" 0
 		say "$saw; triage of #$n ended (rc $rc), 2 starts used: wrote FAILED"
 	else say "$saw; triage of #$n ended (rc $rc); may start again"
+	fi
+}
+
+# update_ended <dir> <saw> <rc>: a spec-PR update session is gone. rc 0: its worktree goes and the
+# main and PR-head commits it started from are kept (done); the PR is not started again until one moves.
+update_ended() {
+	local d=$1 saw=$2 rc=$3 n
+	n=$(basename "$d")
+	if bg_cut_off "$d"; then
+		not_counted "$d"
+		say "$saw; update of PR #$n ended (rc $rc) with its background work cut off; start not counted"
+	elif [ "$rc" = 0 ]; then
+		set_starts "$d" 0
+		git -C "$clone" worktree remove --force "$wtroot/pr-$n" 2>/dev/null
+		[ -e "$d/from" ] && mv "$d/from" "$d/done"
+		say "$saw; update of PR #$n ended (rc 0); not started again until main or the PR's head moves"
+	elif limit_exit "$d"; then
+		not_counted "$d"
+		say "$saw; update of PR #$n stopped by the usage limit (rc $rc); start not counted"
+	elif [ "$(starts_of "$d")" -ge 2 ]; then
+		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing the update" >"$d/FAILED"
+		set_starts "$d" 0
+		say "$saw; update of PR #$n ended (rc $rc), 2 starts used: wrote FAILED"
+	else say "$saw; update of PR #$n ended (rc $rc); may start again"
 	fi
 }
 
@@ -266,6 +295,60 @@ start_triage() {
 		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
+}
+
+# start_update <N> <branch> <main> <head> <saw>: update spec PR N (/noodlebot:triage --update N) in a
+# worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
+# commits it starts from.
+start_update() {
+	local n=$1 br=$2 mainc=$3 head=$4 saw=$5 d=$state/pr/$1 wt=$wtroot/pr-$1 released
+	mkdir -p "$d"
+	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing PR #$n's markers failed"; return 1; }
+	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; PR #$n: $(echo "$released" | paste -sd';')"; fi
+	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; PR #$n needs an update but has used 2 starts; nothing started"; return 1; }
+	if [ -d "$wt" ]; then
+		# left by an earlier end without rc 0: bring it to the PR's current head, not mid-merge
+		{ git -C "$wt" merge --abort; git -C "$wt" checkout -q -f -B "$br" "origin/$br" &&
+			git -C "$wt" reset -q --hard "origin/$br" && git -C "$wt" clean -qfd; } 2>/dev/null ||
+			{ note "$saw; resetting the worktree of PR #$n failed"; return 1; }
+	else
+		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
+	fi
+	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended-update.md" >"$d/unattended.md"
+	echo "$mainc $head" >"$d/from"
+	launch "$wt" "$d" "/noodlebot:triage --update $n"
+	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
+}
+
+# graph_clash <branch>: origin/<branch>'s graph gives an ID of origin/main's graph to a node of another name.
+graph_clash() {
+	git -C "$clone" show "origin/main:docs/graph.yaml" >"$state/graph.main.yaml" 2>/dev/null &&
+		git -C "$clone" show "origin/$1:docs/graph.yaml" >"$state/graph.pr.yaml" 2>/dev/null &&
+		python3 -I -c '
+import sys, yaml
+def pairs(f):
+    return {n["id"]: n["name"] for n in (yaml.safe_load(open(f)) or {}).get("nodes", [])}
+try:
+    m, b = pairs(sys.argv[1]), pairs(sys.argv[2])
+except Exception:
+    sys.exit(1)
+sys.exit(0 if any(i in m and m[i] != nm for i, nm in b.items()) else 1)' "$state/graph.main.yaml" "$state/graph.pr.yaml"
+}
+
+# next_update: every bot spec/* PR (one line each) that needs an update (CONFLICTING, or a clash of IDs with
+# main; UNKNOWN waits), has no FAILED and is not held by a finished update of the same main and head.
+next_update() {
+	local n br oid bot mg mainc
+	mainc=$(git -C "$clone" rev-parse -q --verify origin/main) || return 1
+	while read -r n br oid bot mg; do
+		[[ $br == spec/* ]] && [ "$bot" = true ] || continue
+		[ -e "$state/pr/$n/FAILED" ] && continue
+		[ "$(cat "$state/pr/$n/done" 2>/dev/null)" = "$mainc $oid" ] && continue
+		if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && graph_clash "$br"; }; then
+			echo "$n $br $mainc $oid"
+		fi
+	done <"$state/open-prs.tsv"
 }
 
 # followup_done <saw>: a follow-up whose PR (on its follow-up branch) is merged is done: its FOLLOWUP
@@ -386,7 +469,9 @@ tick() {
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
-		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' >"$state/open-prs.txt" ||
+		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json number,headRefName,headRefOid,author,mergeable \
+			-q '.[] | "\(.number) \(.headRefName) \(.headRefOid) \(.author.is_bot) \(.mergeable)"' >"$state/open-prs.tsv" ||
+		! cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" ||
 		! open=$(ids <"$state/open-prs.txt") ||
 		! GH_TOKEN=$tok gh pr list --repo $repo --state closed --limit 500 --json number,headRefName,closedAt,mergedAt \
 			-q '.[] | "\(.number) \(.headRefName) \(.closedAt) \(.mergedAt != null)"' >"$state/closed-prs.tsv"; then
@@ -399,12 +484,12 @@ tick() {
 
 	# Running sessions: recorded in pid files, so this works after a restart too.
 	live=()
-	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
+	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
 		[ -e "$f" ] || continue
 		id=$(basename "$(dirname "$f")") p=$(cat "$f")
 		if alive "$p" "$id"; then
 			[[ $f == */node/* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
-			live+=("$p $id"); [[ $f == */issue/* ]] && triaging=$id
+			live+=("$p $id"); [[ $f == */issue/* || $f == */pr/* ]] && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	followup_done "$saw"
@@ -426,7 +511,16 @@ tick() {
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
 	local n
 	if [ -z "$triaging" ] && ! full && n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
-		[ -z "$n" ] || { start_triage "$n" "$saw" && live+=("$pid $n"); }
+		[ -z "$n" ] || { start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; }
+	fi
+	# A bot's spec PR that needs an update: one session at a time, sharing the triage's slot.
+	if [ -z "$triaging" ] && ! full; then
+		local un ub um uh
+		while read -r un ub um uh; do
+			[ -n "$un" ] || continue
+			# a failed start does not keep the later PRs from their turn
+			start_update "$un" "$ub" "$um" "$uh" "$saw" && { live+=("$pid $un"); triaging=$un; break; }
+		done < <(next_update)
 	fi
 
 	# Every ready node that has no session yet, in graph order (SCHED_MAX caps the sessions; 0: none).
@@ -450,16 +544,18 @@ tick() {
 	else
 		local l=() e k
 		for e in "${live[@]}"; do
-			k=${e#* }; [ -d "$state/issue/$k" ] && [ ! -d "$state/node/$k" ] && k="#$k"
+			k=${e#* }
+			if [ -d "$state/pr/$k" ] && [ ! -d "$state/node/$k" ]; then k="PR #$k"
+			elif [ -d "$state/issue/$k" ] && [ ! -d "$state/node/$k" ]; then k="#$k"; fi
 			l+=("$k (pid ${e%% *})")
 		done
 		note "$saw; running: $(IFS=,; echo "${l[*]}" | sed 's/,/, /g')$held"
 	fi
 }
 
-# fingerprint: the markers and exit files under node/ and issue/; a change means "look again now".
+# fingerprint: the markers and exit files under node/, issue/ and pr/; a change means "look again now".
 fingerprint() {
-	find "$state/node" "$state/issue" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
+	find "$state/node" "$state/issue" "$state/pr" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
 		-o -name FAILED -o -name session.rc \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
 }
 
