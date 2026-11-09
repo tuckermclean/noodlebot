@@ -38,13 +38,23 @@ Add the `noodlebot` label to an issue. Only labels the repository owner adds cou
 who added it, `scheduler/issues.py`). When no session is running, the loop triages it first
 (`/noodlebot:triage <N>`, state in `$NOODLEBOT_DATA/state/<repo>/issue/<N>/`): the result is a spec PR that fits the
 issue into the graph, or a comment that answers it. Then the label becomes `noodlebot-triaged`.
-Merge the spec PR and the new or amended node is built like any other. A triage question shows on
-the status issue; answer it with `#<N>: ...`.
+Merge the spec PR and the new or amended node is built like any other.
+
+Each issue the bot works on is its unit's home: the loop posts that unit's milestones there as comments,
+each starting with a `**Stage:**` line (a start or resume, a question, an answer received, the PR and its
+CI, FAILED, triage done). The home issue of a triage is the issue itself; of a node, the first issue on the
+**Resolves:** line of its spec, and a node with none gets a new "Build <ID> <name>" issue labelled
+`noodlebot-unit`. The PRs only say `Refs #N`; once the nodes that resolve an issue are merged, the loop
+closes it, and reopens it if you add the `noodlebot` label again. A question shows on the status issue
+as a short pointer to its comment on the home issue.
 
 ## Answering a node's question
 
-Reply to the status issue in plain words. Only the repository owner's comments count; if more than one
-node is waiting, start with its ID (`B03: ...`). The reply becomes that node's `ANSWER.md`.
+Reply on the unit's issue (the home issue where the loop posted the question), in plain words. Only the repository
+owner's comments count. No prefix is needed: your comment answers the one question open there, gets a +1
+and becomes that node's `ANSWER.md`. Only if several questions are open on that issue, start with the ID
+(`B03: ...`). You can also still reply on the status issue (start with the ID, or `#<N>:` for a triage
+when more than one is waiting). A question is answered once, from whichever issue you replied on.
 Or, locally:
 
 A session that hits a `/node` step 7 stop writes `$NOODLEBOT_DATA/state/<repo>/node/<ID>/QUESTION.md` and ends; the

@@ -5,7 +5,8 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   @STATE@/node/@ID@/QUESTION.md, then end the run. Never continue on a guess. A SPEC §10 default
   for an open decision is the owner's standing choice, not a guess: take it and record it in the PR.
   Number the questions (Q1, Q2, ...) and give your recommendation for each, so the owner can answer
-  in a line. End the file with: "To answer: write ANSWER.md next to this file."
+  in a line. End the file with: "To answer: reply on this unit's issue (the loop posts the question there)."
+  The loop turns the owner's reply into ANSWER.md; the owner may also write ANSWER.md next to this file.
 - You are in the worktree @WT@ on branch node/@ID@-@NAME@. Your brief and logs go in this
   worktree's out/node/@ID@/. The scheduler's own files are under @STATE@/.
 - First, bring the branch up to date: git fetch origin && git merge --no-edit origin/main. Do the
@@ -55,15 +56,15 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   done yet": a loop that caches the token spins forever once it expires and never sees the run end.
 - GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
   closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
-  without a colon) followed by its number. Write one only where closing is intended (a node PR's
-  "Fixes #N" lines); everywhere else write "issue #N" or "Refs #N", and never quote a spec's
+  without a colon) followed by its number. Write no closing keyword before an issue number anywhere
+  (the loop closes the issues once the nodes are merged); write "issue #N" or "Refs #N", and never quote a spec's
   Resolves: line or describe what "closes" an issue next to its number.
 - Never merge, approve, push to main, or change branch protection or repository settings.
 - CI flakes seen so far: snapshot.debian.org outages while building the toolbox (the toolbox image
   is now pulled from GHCR, so rare), and an intermittent perl segfault in rc1's uefi boot test. Re-run
   a failed job once (gh run rerun <id> --failed) before treating it as real.
 - If the node's spec has a **Resolves:** line (issues it was created or amended for), the PR body
-  says "Fixes #N" for each issue on it, so GitHub closes them when the PR merges. If an issue turns
-  out not to be resolved by this node, say so in the PR and write "Refs #N" instead.
+  says "Refs #N" for each issue on it; the loop closes them once the nodes are merged. If an issue turns
+  out not to be resolved by this node, say so in the PR.
 - When the PR is open, CI is green and the fresh reviewer's comment is on it (/node step 6), or
   you have written QUESTION.md or WAITING-PR, end the run.
