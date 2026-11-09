@@ -435,10 +435,10 @@ def take_answers(a, rs, issue):
             f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
                     (node, a.owner, c["created_at"], c["html_url"], text))
         os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
-        what = None if node.startswith("#") else answered_text(a.state, node)
         if node.startswith("#"):
             comment(a, issue, "Recorded as %s's ANSWER.md." % node)
         else:
+            what = answered_text(a.state, node)
             comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
         a.answered = True
 

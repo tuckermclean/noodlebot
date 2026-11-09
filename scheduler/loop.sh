@@ -119,11 +119,15 @@ bg_cut_off() {
 # not_counted <dir>: give back the start a limit exit used.
 not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" $((n - 1)); }
 
+# fu_branch <node dir>: the follow-up branch in its FOLLOWUP marker; fails if there is none (a missing,
+# empty or blank marker is no marker).
+fu_branch() { local b; b=$(tr -d '[:space:]' <"$1/FOLLOWUP" 2>/dev/null) && [ -n "$b" ] && echo "$b"; }
+
 # has_pr <dir> <ID>: the node has an open or merged PR that ends a session as "with a PR". A follow-up
 # (its FOLLOWUP marker holds the branch) counts only a PR on its own follow-up branch.
 has_pr() {
 	local br
-	if br=$(cat "$1/FOLLOWUP" 2>/dev/null) && [ -n "$br" ]; then
+	if br=$(fu_branch "$1"); then
 		grep -qxF "$br" "$state/open-prs.txt" 2>/dev/null || awk -v b="$br" '$2 == b { f = 1 } END { exit !f }' "$state/merged-prs.tsv"
 	else
 		[[ " $open $merged " == *" $2 "* ]]
@@ -206,8 +210,7 @@ stop_group() {
 # branch counts: the node's earlier merged PR is no reason to stop it.
 pr_done() {
 	local id=$1 start=$2 n br t m fb=''
-	fb=$(cat "$state/node/$id/FOLLOWUP" 2>/dev/null) || fb=''
-	if [ -n "$fb" ]; then
+	if fb=$(fu_branch "$state/node/$id"); then
 		prn=$(awk -v b="$fb" '$2 == b { print $1 }' "$state/merged-prs.tsv" | sort -n | tail -n1)
 		[ -n "$prn" ] && { why=merged; return 0; }
 	elif [[ " $merged " == *" $id "* ]]; then
@@ -270,8 +273,8 @@ start_triage() {
 followup_done() {
 	local f d id br prn ts
 	for f in "$state"/node/*/FOLLOWUP; do
-		[ -e "$f" ] || continue
-		d=$(dirname "$f") id=$(basename "$d") br=$(cat "$f")
+		d=$(dirname "$f") id=$(basename "$d")
+		br=$(fu_branch "$d") || continue
 		prn=$(awk -v b="$br" '$2 == b { print $1 }' "$state/merged-prs.tsv" | sort -n | tail -n1)
 		[ -n "$prn" ] || continue
 		ts=$(date -u +%Y%m%dT%H%M%SZ)
@@ -288,7 +291,7 @@ cleanup_merged() {
 	local id wt arch
 	for id in $merged; do
 		wt=$wtroot/$id
-		[ -d "$wt" ] && [ ! -e "$state/node/$id/session.pid" ] && [ ! -e "$state/node/$id/FOLLOWUP" ] || continue
+		[ -d "$wt" ] && [ ! -e "$state/node/$id/session.pid" ] && ! fu_branch "$state/node/$id" >/dev/null || continue
 		mkdir -p "$state/archive"
 		arch=$id-out
 		[ -e "$state/archive/$arch" ] && arch=$id-out-$(date -u +%Y%m%dT%H%M%SZ)
@@ -327,7 +330,7 @@ start_node() {
 	mkdir -p "$d"
 	# A follow-up with no marker yet and a worktree here: the merged node's leftover. Hold it before the
 	# answer is released (markers untouched), so cleanup_merged retries and a later tick starts it.
-	if [ "$kind" = followup ] && [ ! -s "$d/FOLLOWUP" ] && [ -d "$wt" ]; then
+	if [ "$kind" = followup ] && ! fu_branch "$d" >/dev/null && [ -d "$wt" ]; then
 		note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
 	fi
 	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
@@ -336,16 +339,11 @@ start_node() {
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; $id ready but has used 2 starts; not started"; return 1; }
 	if [ "$kind" = followup ]; then
 		prompt=unattended-followup.md
-		br=$(cat "$d/FOLLOWUP" 2>/dev/null) || br=''
-		if [ -n "$br" ]; then
+		if br=$(fu_branch "$d"); then
 			if [ -d "$wt" ] && [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$br" ]; then
 				note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
 			fi
 		else
-			# No marker yet: a worktree here is the merged node's leftover. Leave no marker, so cleanup_merged keeps retrying.
-			if [ -d "$wt" ]; then
-				note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
-			fi
 			br=$(followup_branch "$id"); echo "$br" >"$d/FOLLOWUP"
 		fi
 	fi
