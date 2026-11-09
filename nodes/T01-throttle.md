@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | T02 | M |
+| now | none | S02, T02 | M |
 
 **Owns:** `scheduler/usage.py`, `scheduler/usage.test.sh`, the throttle and limit-exit handling in `scheduler/loop.sh`, the Usage section in `scheduler/report.py` and `scheduler/status.sh`, their cases in `scheduler/loop.test.sh` and `scheduler/report.test.sh`.
 
