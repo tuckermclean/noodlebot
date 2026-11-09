@@ -154,6 +154,8 @@ out=$(sh "$deploy" "$live" 2>/dev/null)
 ok "D01-AC-2 make test ran once for the commit that cannot be fast-forwarded" '[ "$(runs a2)" = 1 ]'
 ok "D01-AC-2 the live checkout stays on the old commit when the fast-forward fails" '[ "$(runs a2)" = 1 ] && [ "$(head_of)" = "$before" ]'
 ok "D01-AC-2 the failed fast-forward prints at most one stdout line (a status event)" '[ "$(runs a2)" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c .)" -le 1 ]'
+ok "D01-AC-2 the failed fast-forward prints exactly one stdout line" '[ "$(runs a2)" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c .)" = 1 ]'
+ok "D01-AC-2 that line starts with 'not deployed: <sha>'" '[ "$(runs a2)" = 1 ] && printf "%s\n" "$out" | grep -Eq "^not deployed: $(short "$a2")[0-9a-f]*( |\$)"'
 out=$(sh "$deploy" "$live" 2>/dev/null)
 ok "D01-AC-2 the same commit is not tried again: make test is not rerun" '[ "$(runs a2)" = 1 ]'
 ok "D01-AC-2 the later run prints nothing on stdout" '[ "$(runs a2)" = 1 ] && [ -z "$out" ]'
@@ -172,6 +174,27 @@ ok "D01-AC-2 a killed make test leaves the live checkout alone" '[ "$(runs a3)" 
 out=$(dep)
 ok "D01-AC-2 a later run retries the commit (make test runs again)" '[ "$(runs a3)" = 2 ]'
 ok "D01-AC-2 and deploys it once make test passes" '[ "$(runs a3)" = 2 ] && [ "$(head_of)" = "$a3" ]'
+
+# D2: a make test killed on every run is retried a bounded number of times, then rejected with one status line.
+commitm d2 "@echo d2 >>$log; kill -KILL \$\$PPID"
+d2=$(full "$tmp/work" HEAD)
+before=$(head_of)
+d2out=""
+i=0
+while [ "$i" -lt 5 ]; do
+	o=$(sh "$deploy" "$live" 2>/dev/null)
+	d2out="$d2out$o
+"
+	i=$((i + 1))
+done
+ok "D01-AC-2 a make test killed on every run ran (guard)" '[ "$(runs d2)" -ge 1 ]'
+ok "D01-AC-2 a make test killed on every run is run at most 3 times over 5 deploy runs" '[ "$(runs d2)" -ge 1 ] && [ "$(runs d2)" -le 3 ]'
+ok "D01-AC-2 the always-killed commit never moves the live checkout" '[ "$(runs d2)" -ge 1 ] && [ "$(head_of)" = "$before" ]'
+ok "D01-AC-2 the always-killed commit gives exactly one stdout line over 5 runs" '[ "$(runs d2)" -ge 1 ] && [ "$(printf "%s" "$d2out" | grep -c .)" = 1 ]'
+ok "D01-AC-2 that line starts with 'not deployed: <sha>'" '[ "$(runs d2)" -ge 1 ] && printf "%s" "$d2out" | grep -Eq "^not deployed: $(short "$d2")[0-9a-f]*( |\$)"'
+# leave a deployed state: a newer passing commit supersedes the rejected one
+commit d3 pass
+dep >/dev/null
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
