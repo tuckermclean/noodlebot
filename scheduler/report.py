@@ -518,7 +518,9 @@ def migrate(a, rs):
         if has(a.state, n, "FAILED"):
             keys.append("failed:" + mtime_key(os.path.join(tdir(a.state, n), "FAILED")))
         if has(a.state, n, "QUESTION.md"):
-            keys.append("question:" + mtime_key(os.path.join(tdir(a.state, n), "QUESTION.md")))
+            key = mtime_key(os.path.join(tdir(a.state, n), "QUESTION.md"))
+            if rs.get("questions", {}).get(n) == key:  # only a question the old version posted
+                keys.append("question:" + key)
         if keys:
             units.setdefault(n, {}).setdefault("done", []).extend(keys)
     if rs.get("m_offset") is None:
@@ -552,9 +554,12 @@ def collect_starts(a, rs):
         task = m.group(1) or m.group(2)
         k = re.search(r"\bstart (\d+) of (\d+)", what)
         count = "start %s of %s" % (k.group(1), k.group(2)) if k else "start count unknown"
-        if task.startswith("#"):
+        resumed = os.path.isdir(os.path.join(tdir(a.state, task), "answered"))
+        if task.startswith("#") and resumed:
+            stage = "triage resumed after your answer (%s)" % count
+        elif task.startswith("#"):
             stage = "triage started (%s)" % count
-        elif os.path.isdir(os.path.join(tdir(a.state, task), "answered")):
+        elif resumed:
             stage = "resumed after your answer (%s)" % count
         else:
             stage = "session started (%s)" % count
@@ -682,7 +687,12 @@ def main():
         "worktrees", a.repo.split("/")[1])
     a.worktrees = os.path.abspath(a.worktrees)
     a.clone = a.clone or os.path.join(os.path.dirname(os.path.dirname(a.worktrees)), "repos", os.path.basename(a.worktrees))
-    a.errors = []
+    class Errors(list):
+        def append(self, e):  # logged as it happens, so a later crash cannot lose it
+            print("report.py: %s" % e, file=sys.stderr)
+            super().append(e)
+
+    a.errors = Errors()
     path = os.path.join(a.state, "report.json")
     try:
         rs = json.load(open(path))
@@ -731,8 +741,6 @@ def main():
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"body": body})
         rs["body_hash"], rs["body_time"] = h, time.time()
         save()
-    for e in a.errors:
-        print("report.py: %s" % e, file=sys.stderr)
     return 3 if a.answered else (1 if a.errors else 0)
 
 
