@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | none | M |
+| now | none | S03 | M |
 
 **Owns:** the closed-PR query and the stop of a node's session whose PR is merged or closed in `scheduler/loop.sh`, the FAILED line of `scheduler/report.py`'s "Waiting on you" section, their cases in `scheduler/loop.test.sh` and `scheduler/report.test.sh`.
 **Resolves:** #10
