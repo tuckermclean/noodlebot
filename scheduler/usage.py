@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The plan's usage, read from the sessions' own rate_limit_event lines, and whether to hold new sessions.
 
-  usage.py --state-root DIR [--now EPOCH]
+  usage.py --state-root DIR [--now EPOCH] [--escalate]
 
 All repositories' sessions run on one account, so they share one budget: this reads every
 DIR/<repo>/{node,issue}/*/session.jsonl changed in the last 7 days and merges what it finds into
@@ -14,6 +14,11 @@ It holds new sessions (running ones are never stopped) when:
   of the last 30 minutes (or of the whole window so far, with too few samples);
 - the 7-day window is more than USAGE_7D_MARGIN (default 0.10) ahead of an even pace for the week.
 Prints one line: "open: ..." or "hold: <reason>"; exits 0 either way (1 only on an error).
+
+With --escalate it prints instead "escalate: <reason>" when the 5-hour window, at the same projected burn
+rate, reaches 100% at least USAGE_ESCALATE_MARGIN minutes (default 30) before its reset (a window already
+at 100% counts, if its reset is that far away), else "no escalation: <summary>". The 7-day window, a window
+past its reset and a missing reading never escalate. State handling is otherwise the same.
 """
 import glob
 import json
@@ -84,12 +89,13 @@ def main():
         samples.append([now, five["utilization"], five["resetsAt"]])
     samples = [s for s in samples if s[0] >= now - FIVE_H][-60:]
 
-    hold, why, proj = [], [], None
+    hold, why, proj, rate, left5 = [], [], None, 0, 0
     for name, w in win.items():
         if w["resetsAt"] > now and w["status"] != "allowed":
             hold.append("%s window %s" % (name.replace("_", "-"), w["status"]))
     if five and five["resetsAt"] > now:
         u, left = five["utilization"], five["resetsAt"] - now
+        left5 = left
         recent = [s for s in samples if s[0] >= now - 1800]
         if len(recent) >= 2 and recent[-1][0] - recent[0][0] >= 300:
             rate = (recent[-1][1] - recent[0][1]) / (recent[-1][0] - recent[0][0])
@@ -115,6 +121,14 @@ def main():
     with open(path + ".tmp", "w") as f:
         json.dump(state, f, indent=1)
     os.replace(path + ".tmp", path)
+    if "--escalate" in a:
+        mins = float(os.environ.get("USAGE_ESCALATE_MARGIN", "30"))
+        u = five["utilization"] if five else 0
+        if left5 > 0 and (u >= 1 or rate > 0 and (1 - u) / rate <= left5 - mins * 60) and left5 >= mins * 60:
+            print("escalate: 5-hour window at %.0f%% reaches 100%% at least %.0f minutes before its reset" % (u * 100, mins))
+        else:
+            print("no escalation: " + state["summary"])
+        return 0
     print(("hold: " + state["reason"]) if hold else ("open: " + state["summary"]))
     return 0
 
