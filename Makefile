@@ -10,6 +10,7 @@ test:
 	sh scheduler/deploy.test.sh
 	sh plugin/hooks/guard.test.sh
 	bash scheduler/loop.test.sh
+	sh scheduler/loops.test.sh
 	sh scheduler/move-runtime.test.sh
 
 .PHONY: test
