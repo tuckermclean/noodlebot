@@ -1306,6 +1306,234 @@ s3chk "S03-AC-4: (G01) it ran once more, not again" s3eq "$(s3runs G01)" 3
 
 kill "$lp6"; wait "$lp6" 2>/dev/null
 s3_cleanup
+
+# ---- S05: a node removed from the graph is wound down (its PR and issues closed, its session stopped, its worktree and state removed) ----
+# Own remote and data root (nb5/s5data), a 1 s tick, a fake claude that starts a child (sleep) of its own
+# and records its pid. The fake gh keeps PRs and issues in $S5 ($S5/open.tsv "<N> <branch> <oid> false MERGEABLE",
+# closed.tsv "<N> <branch> <closed time> false", issue.<N> = OPEN|CLOSED) and logs to $S5/calls.log, one line per
+# call that worked: "pr-comment <N> <text>", "pr-close <N> del=<0|1>", "issue-comment <N> <text>",
+# "issue-close <N> reason=<reason>", "pr-merge <N>". A comment given with --comment/-c on a close counts as
+# one comment, as the same call as a "gh pr comment"/"gh issue comment". A close of a PR listed in
+# $S5/fail.prclose fails (exit 1) and logs "fail-pr-close <N>" to $S5/attempts.log. Status-log wording pinned here:
+#   <ID> removed by <#N or short commit hash>: closed its PR #<P> without merging
+#   <ID> removed by <#N or short commit hash>: marked issue #<I> not planned
+#   <ID> removed by <#N or short commit hash>: removed its worktree and state
+# Nodes (all out of the graph unless noted); the removal is main's commit "... (#77)" for R01, R03, R04,
+# R05 and a commit without (#N) for R02:
+#   R01 open PR #21, state, worktree; Resolves #101 (open) #102 (closed) #103 (also R09's, on main)
+#   R02 in the graph at first: running session (+ child), then open PR #22; Resolves #105
+#   R03 PR #23 closed by the owner earlier, state only; Resolves #106    R04 worktree only; Resolves #107
+#   R05 open PR #25 whose close fails for a while, state; Resolves #108 and #104 (s5reopened by the owner)
+#   R06 open PR #26, state, worktree; no spec, no deletion in history: left alone
+#   R08 in the graph, running; its PR #28 is closed: held by FAILED as S01 says.   R09 in the graph, FAILED.
+# A second loop (R07, PR #31, state, worktree): its spec deletion (#88) is in main's history, but main's
+# docs/graph.yaml is gone: nothing is touched.
+s5ok() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
+S5=$tmp/s05 S5B=$tmp/s05b; mkdir -p "$S5" "$S5B" "$tmp/s05bin" "$tmp/s05nb/scheduler" "$tmp/s05nb/plugin"
+for f in "$src"/*; do case $f in *.test.sh|*/testdata|*/loop.sh) ;; *) cp -r "$f" "$tmp/s05nb/scheduler/" ;; esac; done
+cp "$src"/loop.sh "$tmp/s05nb/scheduler/"
+cat >"$tmp/s05bin/gh" <<'EOF'
+#!/bin/sh
+d=$S05D
+a1=$1 a2=$2 n=${3:-}
+case "$a1 $a2" in
+"pr list")
+	case " $* " in
+	*" --state merged "*) cat "$d/merged.tsv" ;;
+	*" --state open "*) cat "$d/open.tsv" ;;
+	*" --state closed "*) cat "$d/closed.tsv" ;;
+	esac
+	exit 0 ;;
+"pr close"|"pr comment"|"pr merge"|"issue view"|"issue close"|"issue comment"|"issue reopen") ;;
+*) case " $* " in *"/issues?labels=noodlebot"*) echo '[]' ;; esac; exit 0 ;;
+esac
+[ "$#" -ge 3 ] && shift 3 || shift $#
+body='' reason='' del=0 json='' q=''
+while [ "$#" -gt 0 ]; do
+	case $1 in
+	--comment|-c|--body|-b) body=$2 ;;
+	--reason|-r) reason=$2 ;;
+	--delete-branch|-d) del=1 ;;
+	--json) json=$2 ;;
+	-q|--jq) q=$2 ;;
+	esac
+	shift
+done
+body=$(printf '%s' "$body" | tr '\n' ' ')
+case "$a1 $a2" in
+"pr close")
+	if grep -qx "$n" "$d/fail.prclose" 2>/dev/null; then echo "fail-pr-close $n" >>"$d/attempts.log"; echo "fake-close-failure" >&2; exit 1; fi
+	[ -z "$body" ] || echo "pr-comment $n $body" >>"$d/calls.log"
+	echo "pr-close $n del=$del" >>"$d/calls.log"
+	br=$(awk -v n="$n" '$1 == n { print $2 }' "$d/open.tsv")
+	[ -z "$br" ] || echo "$n $br $(date -u +%FT%TZ) false" >>"$d/closed.tsv"
+	grep -v "^$n " "$d/open.tsv" >"$d/open.new"; mv "$d/open.new" "$d/open.tsv" ;;
+"pr comment") echo "pr-comment $n $body" >>"$d/calls.log" ;;
+"pr merge") echo "pr-merge $n" >>"$d/calls.log" ;;
+"issue view")
+	s=$(cat "$d/issue.$n" 2>/dev/null || echo OPEN)
+	if [ -n "$q" ]; then echo "$s"; else echo "{\"state\": \"$s\"}"; fi ;;
+"issue comment") echo "issue-comment $n $body" >>"$d/calls.log" ;;
+"issue close")
+	[ -z "$body" ] || echo "issue-comment $n $body" >>"$d/calls.log"
+	echo "issue-close $n reason=$reason" >>"$d/calls.log"
+	echo CLOSED >"$d/issue.$n" ;;
+esac
+exit 0
+EOF
+cat >"$tmp/s05bin/claude" <<'EOF'
+#!/bin/sh
+id=${2##* }
+n=$(( $(cat "$S05D/runs.$id" 2>/dev/null || echo 0) + 1 )); echo $n >"$S05D/runs.$id"
+mkdir -p "out/node/$id" && echo brief >"out/node/$id/brief.md"
+sleep 300 & echo $! >"$S05D/child.$id.$n"
+while :; do sleep 0.2; done
+EOF
+chmod +x "$tmp/s05bin/gh" "$tmp/s05bin/claude"
+s5spec() { printf '# %s\n\n**Resolves:** %s\n' "$1" "$2"; }
+git init -q -b main "$tmp/s05work"; mkdir -p "$tmp/s05work/docs" "$tmp/s05work/nodes"
+printf 'nodes:\n  - {id: R02, name: n2, deps: []}\n  - {id: R08, name: n8, deps: []}\n  - {id: R09, name: n9, deps: []}\n' >"$tmp/s05work/docs/graph.yaml"
+s5spec R01 '#101, #102, #103' >"$tmp/s05work/nodes/R01-n1.md"; s5spec R02 '#105' >"$tmp/s05work/nodes/R02-n2.md"
+s5spec R03 '#106' >"$tmp/s05work/nodes/R03-n3.md";            s5spec R04 '#107' >"$tmp/s05work/nodes/R04-n4.md"
+s5spec R05 '#108, #104' >"$tmp/s05work/nodes/R05-n5.md";      s5spec R08 '#109' >"$tmp/s05work/nodes/R08-n8.md"
+s5spec R09 '#103' >"$tmp/s05work/nodes/R09-n9.md"
+git -C "$tmp/s05work" add -A && git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m init
+git clone -q --bare "$tmp/s05work" "$tmp/s05remote.git"
+s5data=$tmp/s5data s5st=$tmp/s5data/state/sc s5wt=$tmp/s5data/worktrees/sc s5cl=$tmp/s5data/repos/sc
+mkdir -p "$s5data/repos" "$s5st/node/R01" "$s5st/node/R03" "$s5st/node/R05" "$s5st/node/R06" "$s5st/node/R09"
+git clone -q "$tmp/s05remote.git" "$s5cl"
+touch "$s5st/node/R09/FAILED"
+for i in 01 04 06; do
+	git -C "$s5cl" worktree add -q -b "node/R$i-n${i#0}" "$s5wt/R$i" origin/main
+	mkdir -p "$s5wt/R$i/out/node/R$i"; echo evidence >"$s5wt/R$i/out/node/R$i/brief.md"
+done
+for i in 01 03 05 06; do echo 1 >"$s5st/node/R$i/starts"; done
+now=$(date +%s)
+printf '21 node/R01-n1 o1 false MERGEABLE\n25 node/R05-n5 o5 false MERGEABLE\n26 node/R06-n6 o6 false MERGEABLE\n' >"$S5/open.tsv"
+printf '23 node/R03-n3 %s false\n' "$(date -u -d "@$((now - 3600))" +%FT%TZ)" >"$S5/closed.tsv"
+: >"$S5/merged.tsv"; : >"$S5/calls.log"; : >"$S5/attempts.log"; echo 25 >"$S5/fail.prclose"
+for i in 101 103 104 105 106 107 108 109 120; do echo OPEN >"$S5/issue.$i"; done; echo CLOSED >"$S5/issue.102"
+# the loop that finds the graph unreadable
+git init -q -b main "$tmp/s05workb"; mkdir -p "$tmp/s05workb/docs" "$tmp/s05workb/nodes"
+printf 'nodes:\n  - {id: R30, name: n30, deps: [R99]}\n' >"$tmp/s05workb/docs/graph.yaml"; s5spec R07 '#120' >"$tmp/s05workb/nodes/R07-n7.md"
+git -C "$tmp/s05workb" add -A && git -C "$tmp/s05workb" -c user.name=t -c user.email=t@t commit -q -m init
+git -C "$tmp/s05workb" rm -q nodes/R07-n7.md && git -C "$tmp/s05workb" -c user.name=t -c user.email=t@t commit -q -m 'Remove R07 (#88)'
+git -C "$tmp/s05workb" rm -q docs/graph.yaml && git -C "$tmp/s05workb" -c user.name=t -c user.email=t@t commit -q -m 'Remove the graph'
+git clone -q --bare "$tmp/s05workb" "$tmp/s05remoteb.git"
+s5datab=$tmp/s5datab s5stb=$tmp/s5datab/state/sc s5wtb=$tmp/s5datab/worktrees/sc s5clb=$tmp/s5datab/repos/sc
+mkdir -p "$s5datab/repos" "$s5stb/node/R07"; git clone -q "$tmp/s05remoteb.git" "$s5clb"
+git -C "$s5clb" worktree add -q -b node/R07-n7 "$s5wtb/R07" origin/main; echo 1 >"$s5stb/node/R07/starts"
+printf '31 node/R07-n7 o7 false MERGEABLE\n' >"$S5B/open.tsv"; : >"$S5B/closed.tsv"; : >"$S5B/merged.tsv"; : >"$S5B/calls.log"; echo OPEN >"$S5B/issue.120"
+s05_cleanup() {
+	local f
+	for f in "$s5st"/node/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
+	for f in "$S5"/child.*; do [ -e "$f" ] && kill -KILL "$(cat "$f")" 2>/dev/null; done
+	return 0
+}
+# shellcheck disable=SC2154 # p is the trap's own loop variable
+trap 'for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done; s01_cleanup; s05_cleanup; pkill -f "$tmp/" 2>/dev/null; rm -rf "$tmp"' EXIT
+s5loop() {   # s5loop <data root> <gh dir>
+	NOODLEBOT_DATA=$1 S05D=$2 PATH=$tmp/s05bin:$PATH SCHED_REPORT=0 SCHED_THROTTLE=0 SCHED_TICK=1 SCHED_POLL=0.2 \
+		bash "$tmp/s05nb/scheduler/loop.sh" o/sc >>"$tmp/s05-loop.out" 2>&1 &
+	pids+=("$!"); s5lp=$!
+}
+s5calls() { grep -cE -- "$1" "$S5/calls.log" 2>/dev/null || true; }
+s5callsis() { [ "$(s5calls "$1")" = "$2" ]; }
+s5ev() { grep -cE -- "$1" "$s5st/status.log" 2>/dev/null || true; }
+s5evis() { [ "$(s5ev "$1")" = "$2" ]; }
+s5loop "$s5datab" "$S5B"; s5lpb=$s5lp
+s5loop "$s5data" "$S5"; s5lpa=$s5lp
+s5ok "S05 setup: the sessions of R02 and R08 run, each with a child" waitf 20 sh -c "[ -s '$S5/child.R02.1' ] && [ -s '$S5/child.R08.1' ]"
+s5pg2=$(cat "$s5st/node/R02/session.pid" 2>/dev/null) s5pg8=$(cat "$s5st/node/R08/session.pid" 2>/dev/null)
+s5c2=$(cat "$S5/child.R02.1" 2>/dev/null)
+printf '22 node/R02-n2 o2 false MERGEABLE\n' >>"$S5/open.tsv"
+sleep 3.5
+# nothing is removed while no deletion of a spec is in main's history
+s5ok "S05-AC-4: a node out of the graph whose spec deletion is not in main's history: no PR is closed, no issue is touched" test "$(wc -l <"$S5/calls.log")" = 0
+s5ok "S05-AC-4: and its PR, state and worktree stay (R01)" sh -c "grep -q '^21 ' '$S5/open.tsv' && [ -d '$s5st/node/R01' ] && [ -d '$s5wt/R01' ]"
+s5ok "S05-AC-4: no removed-node event is written" sh -c "! grep -qE 'removed by|removed its worktree' '$s5st/status.log'"
+printf '28 node/R08-n8 %s false\n' "$(date -u +%FT%TZ)" >>"$S5/closed.tsv"
+s5ok "S05-AC-4: a node still in the graph whose PR was closed: its session is stopped (S01)" waitf 5 grp_gone "$s5pg8"
+s5ok "S05-AC-4: and it is held by FAILED naming the PR (S01)" waitf 3 sh -c "grep -qE '#28([^0-9]|\$)' '$s5st/node/R08/FAILED'"
+s5ok "S05-AC-4: its state and worktree stay, and no PR or issue is touched for it" sh -c "[ -d '$s5wt/R08' ] && [ -d '$s5st/node/R08' ] && [ \"\$(wc -l <'$S5/calls.log')\" = 0 ]"
+# the removal lands on main
+git -C "$tmp/s05work" rm -q nodes/R01-n1.md nodes/R03-n3.md nodes/R04-n4.md nodes/R05-n5.md
+git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m 'Remove the nodes R01, R03, R04 and R05 (#77)'
+git -C "$tmp/s05work" rm -q nodes/R02-n2.md
+printf 'nodes:\n  - {id: R08, name: n8, deps: []}\n  - {id: R09, name: n9, deps: []}\n' >"$tmp/s05work/docs/graph.yaml"
+git -C "$tmp/s05work" add -A && git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m 'Remove node R02'
+s5h2=$(git -C "$tmp/s05work" rev-parse HEAD); s5h2s=${s5h2:0:7}
+git -C "$tmp/s05work" push -q "$tmp/s05remote.git" HEAD:main
+# R02: session stopped, PR closed, cleaned
+s5ok "S05-AC-3: the running session of a removed node: its process group is gone within a tick" waitf 5 grp_gone "$s5pg2"
+s5ok "S05-AC-3: and its child with it" waitf 2 dead "$s5c2"
+s5ok "S05-AC-1: (commit without (#N)) its open PR #22 is closed after one comment naming the node and the commit" waitf 8 sh -c "grep -qE '^pr-close 22 ' '$S5/calls.log'"
+s5ok "S05-AC-1: (commit without (#N)) exactly one comment on PR #22, naming R02 and the commit" sh -c "[ \"\$(grep -cE '^pr-comment 22 ' '$S5/calls.log')\" = 1 ] && grep -E '^pr-comment 22 ' '$S5/calls.log' | grep -F R02 | grep -qF '$s5h2s'"
+s5ok "S05-AC-1: (commit without (#N)) one status-log event names the node, PR #22 and the commit" waitf 3 s5evis "R02 removed by $s5h2s[0-9a-f]*: closed its PR #22 without merging" 1
+s5ok "S05-AC-3: a removed node with a session: its evidence is archived under state/archive/R02-out" waitf 8 test -f "$s5st/archive/R02-out/brief.md"
+s5ok "S05-AC-3: (R02) its worktree and state folder are removed" waitf 5 sh -c "[ ! -d '$s5wt/R02' ] && [ ! -d '$s5st/node/R02' ]"
+s5ok "S05-AC-3: (R02) one status-log event says its worktree and state were removed" waitf 3 s5evis "R02 removed by $s5h2s[0-9a-f]*: removed its worktree and state" 1
+s5ok "S05-AC-3: (R02) no FAILED is written for it" sh -c "! grep -E 'R02' '$s5st/status.log' | grep -q FAILED && [ ! -e '$s5st/node/R02/FAILED' ]"
+s5ok "S05-AC-2: (R02) its open issue #105 gets one comment naming the node and the commit, and is closed as not planned" waitf 5 sh -c "[ \"\$(grep -cE '^issue-close 105 reason=not planned\$' '$S5/calls.log')\" = 1 ] && [ \"\$(grep -cE '^issue-comment 105 ' '$S5/calls.log')\" = 1 ] && grep -E '^issue-comment 105 ' '$S5/calls.log' | grep -F R02 | grep -qF '$s5h2s'"
+s5ok "S05-AC-2: (R02) one status-log event for issue #105" s5evis "R02 removed by $s5h2s[0-9a-f]*: marked issue #105 not planned" 1
+# R01: the clean case
+s5ok "S05-AC-1: a removed node's open PR #21 is closed" waitf 8 sh -c "grep -qE '^pr-close 21 ' '$S5/calls.log'"
+s5ok "S05-AC-1: exactly one comment on PR #21, naming the node and PR #77" sh -c "[ \"\$(grep -cE '^pr-comment 21 ' '$S5/calls.log')\" = 1 ] && grep -E '^pr-comment 21 ' '$S5/calls.log' | grep -F R01 | grep -qF '#77'"
+s5ok "S05-AC-1: it is closed without merging and its branch is not deleted" sh -c "grep -qE '^pr-close 21 del=0\$' '$S5/calls.log' && [ \"\$(grep -c '^pr-merge' '$S5/calls.log')\" = 0 ] && git -C '$s5cl' rev-parse --verify -q node/R01-n1 >/dev/null"
+s5ok "S05-AC-1: it is out of the open list and in the closed list" sh -c "! grep -q '^21 ' '$S5/open.tsv' && grep -q '^21 ' '$S5/closed.tsv'"
+s5ok "S05-AC-1: one status-log event names the node, PR #21 and #77" s5evis "R01 removed by #77: closed its PR #21 without merging" 1
+s5ok "S05-AC-3: (R01) its evidence is archived under state/archive/R01-out" waitf 5 test -f "$s5st/archive/R01-out/brief.md"
+s5ok "S05-AC-3: (R01) its worktree and state folder are removed" waitf 5 sh -c "[ ! -d '$s5wt/R01' ] && [ ! -d '$s5st/node/R01' ]"
+s5ok "S05-AC-3: (R01) one status-log event says its worktree and state were removed" s5evis "R01 removed by #77: removed its worktree and state" 1
+# R03: the owner closed its PR earlier; only state
+s5ok "S05-AC-3: a removed node whose PR the owner closed earlier, with only state left: the state folder is removed" waitf 8 test ! -d "$s5st/node/R03"
+s5ok "S05-AC-3: (R03) one status-log event says its worktree and state were removed" s5evis "R03 removed by #77: removed its worktree and state" 1
+s5ok "S05-AC-3: (R03) its PR #23 is neither commented on nor closed again" s5callsis ' 23( |$)' 0
+# R04: only a worktree
+s5ok "S05-AC-3: a removed node with only a worktree left: its evidence is archived under state/archive/R04-out" waitf 8 test -f "$s5st/archive/R04-out/brief.md"
+s5ok "S05-AC-3: (R04) its worktree is removed" test ! -d "$s5wt/R04"
+s5ok "S05-AC-3: (R04) one status-log event says its worktree and state were removed" s5evis "R04 removed by #77: removed its worktree and state" 1
+# issues of R01 / R03 / R04
+s5ok "S05-AC-2: an open issue #101 of the deleted spec gets one comment naming the node and PR #77" waitf 5 sh -c "[ \"\$(grep -cE '^issue-comment 101 ' '$S5/calls.log')\" = 1 ] && grep -E '^issue-comment 101 ' '$S5/calls.log' | grep -F R01 | grep -qF '#77'"
+s5ok "S05-AC-2: and is closed as not planned, once" s5callsis '^issue-close 101 reason=not planned$' 1
+s5ok "S05-AC-2: one status-log event names the node, #77 and issue #101" s5evis "R01 removed by #77: marked issue #101 not planned" 1
+s5ok "S05-AC-2: an issue already closed (#102) is left alone" s5callsis '^issue-(comment|close) 102( |$)' 0
+s5ok "S05-AC-2: an issue still resolved by a node on main (#103) is left alone" s5callsis '^issue-(comment|close) 103( |$)' 0
+s5ok "S05-AC-2: (R03) its open issue #106 is commented on once and closed as not planned" waitf 5 sh -c "[ \"\$(grep -cE '^issue-comment 106 ' '$S5/calls.log')\" = 1 ] && [ \"\$(grep -cE '^issue-close 106 reason=not planned\$' '$S5/calls.log')\" = 1 ]"
+s5ok "S05-AC-2: (R04) its open issue #107 is commented on once and closed as not planned" waitf 5 sh -c "[ \"\$(grep -cE '^issue-comment 107 ' '$S5/calls.log')\" = 1 ] && [ \"\$(grep -cE '^issue-close 107 reason=not planned\$' '$S5/calls.log')\" = 1 ]"
+# R05: the PR close fails
+s5ok "S05-AC-4: a failing gh pr close is tried (and fails)" waitf 5 sh -c "grep -q 'fail-pr-close 25' '$S5/attempts.log'"
+s5ok "S05-AC-4: and logged in the status log" sh -c "grep -v FAILED '$s5st/status.log' | grep -i fail | grep -qE '(#|PR |close )25([^0-9]|\$)'"
+s5ok "S05-AC-4: the tick carries on: the other removed nodes were wound down meanwhile" test ! -d "$s5st/node/R03"
+s5ok "S05-AC-4: PR #25 stays open and the state of R05 stays while the close fails" sh -c "grep -q '^25 ' '$S5/open.tsv' && [ -d '$s5st/node/R05' ]"
+n=0; while [ "$n" -lt 25 ] && [ "$(cat "$S5/issue.104")" = OPEN ]; do sleep 0.2; n=$((n + 1)); done
+if [ "$(cat "$S5/issue.104")" = CLOSED ]; then echo OPEN >"$S5/issue.104"; s5reopened=1; else s5reopened=0; fi
+sleep 2
+rm -f "$S5/fail.prclose"
+s5ok "S05-AC-4: at a later tick the step completes: PR #25 is closed" waitf 8 sh -c "grep -qE '^pr-close 25 ' '$S5/calls.log'"
+s5ok "S05-AC-4: with one comment only, not one per attempt" sh -c "[ \"\$(grep -cE '^pr-comment 25 ' '$S5/calls.log')\" = 1 ] && grep -E '^pr-comment 25 ' '$S5/calls.log' | grep -F R05 | grep -qF '#77'"
+s5ok "S05-AC-4: and a single close" s5callsis '^pr-close 25 ' 1
+s5ok "S05-AC-4: and its worktree and state are removed" waitf 8 test ! -d "$s5st/node/R05"
+s5ok "S05-AC-4: (R05) one status-log event for the PR close and one for the removal" sh -c "[ \"\$(grep -cE 'R05 removed by #77: closed its PR #25 without merging' '$s5st/status.log')\" = 1 ] && [ \"\$(grep -cE 'R05 removed by #77: removed its worktree and state' '$s5st/status.log')\" = 1 ]"
+s5ok "S05-AC-2: (R05) its issue #108 is commented on once and closed as not planned once" sh -c "[ \"\$(grep -cE '^issue-comment 108 ' '$S5/calls.log')\" = 1 ] && [ \"\$(grep -cE '^issue-close 108 reason=not planned\$' '$S5/calls.log')\" = 1 ]"
+s5ok "S05-AC-2: (R05) its issue #104 is closed as not planned" waitf 5 sh -c "grep -qE '^issue-close 104 reason=not planned\$' '$S5/calls.log'"
+if [ "$s5reopened" = 0 ]; then sleep 1; echo OPEN >"$S5/issue.104"; fi   # the owner reopens it once the loop closed it
+sleep 3.5
+s5ok "S05-AC-2: an issue s5reopened after the loop closed it is not closed again, nor commented on again" sh -c "[ \"\$(grep -cE '^issue-close 104 ' '$S5/calls.log')\" = 1 ] && [ \"\$(grep -cE '^issue-comment 104 ' '$S5/calls.log')\" = 1 ] && [ \"\$(cat '$S5/issue.104')\" = OPEN ]"
+# later ticks repeat nothing
+s5ok "S05-AC-1: later ticks neither comment nor close again (PRs #21, #22)" sh -c "[ \"\$(grep -cE '^pr-(comment|close) (21|22) ' '$S5/calls.log')\" = 4 ]"
+s5ok "S05-AC-1: and write no second event" sh -c "[ \"\$(grep -cE 'removed by .*: closed its PR' '$s5st/status.log')\" = 3 ]"
+s5ok "S05-AC-3: one removal event each (R01..R05), none repeated" sh -c "[ \"\$(grep -cE 'removed by .*: removed its worktree and state' '$s5st/status.log')\" = 5 ]"
+s5ok "S05-AC-3: a removed node is never started (R02 once, the others never)" sh -c "[ \"\$(cat '$S5/runs.R02')\" = 1 ] && [ ! -e '$S5/runs.R01' ] && [ ! -e '$S5/runs.R03' ] && [ ! -e '$S5/runs.R04' ] && [ ! -e '$S5/runs.R05' ]"
+s5ok "S05-AC-3: and no FAILED is written for any of them" sh -c "! grep -E 'R0[1-5]' '$s5st/status.log' | grep -q FAILED && ! ls '$s5st'/node/R0[1-5]/FAILED >/dev/null 2>&1"
+s5ok "S05-AC-4: a node missing from the graph with no deletion in history (R06) keeps its PR, state and worktree" sh -c "grep -q '^26 ' '$S5/open.tsv' && [ -d '$s5st/node/R06' ] && [ -d '$s5wt/R06' ] && ! grep -qE '^(pr|issue)-[a-z]+ 26( |\$)' '$S5/calls.log'"
+s5ok "S05-AC-4: the held node (R08) is still held, its state and worktree kept" sh -c "[ -e '$s5st/node/R08/FAILED' ] && [ -d '$s5wt/R08' ] && ! grep -q 'R08 removed' '$s5st/status.log'"
+s5ok "S05-AC-4: the node still on main with an issue in common (R09) is untouched" sh -c "[ -e '$s5st/node/R09/FAILED' ] && ! grep -q 'R09 removed' '$s5st/status.log'"
+# the graph cannot be read: nothing is touched
+s5ok "S05-AC-4: with main's graph unreadable, nothing is closed or removed (R07's spec deletion is in the history)" sh -c "[ \"\$(wc -l <'$S5B/calls.log')\" = 0 ] && grep -q '^31 ' '$S5B/open.tsv' && [ -d '$s5stb/node/R07' ] && [ -d '$s5wtb/R07' ] && [ ! -d '$s5stb/archive/R07-out' ]"
+s5ok "S05-AC-4: (graph unreadable) the loop was ticking" sh -c "[ -s '$s5stb/heartbeat' ] && ! grep -q 'removed by' '$s5stb/status.log'"
+kill "$s5lpa" "$s5lpb" 2>/dev/null; wait "$s5lpa" "$s5lpb" 2>/dev/null
+s05_cleanup
 [ "$fails" -eq "$fails0" ] || s3dumplog
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
