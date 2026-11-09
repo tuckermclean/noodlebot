@@ -663,6 +663,7 @@ cat >"$tmp/bin5/claude" <<'EOF'
 case "$2" in "/noodlebot:triage "*) k=71; q="$S02_STATE/issue/71/QUESTION.md" ;; *) k=${2##* }; q="$S02_STATE/node/$k/QUESTION.md" ;; esac
 n=$(( $(cat "$S02/runs.$k" 2>/dev/null || echo 0) + 1 )); echo $n >"$S02/runs.$k"
 echo "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-UNSET}" >"$S02/env.$k.$n"
+[ "$k.$n" = 71.1 ] && touch .s02-kept
 case $k.$n in
 C01.1) exit 0 ;;
 C01.2) cat "$S02/msg" >&2; exit 0 ;;
@@ -704,6 +705,7 @@ ok "S02-AC-2: a non-zero rc without the message is counted as before: FAILED" sh
 ok "S02-AC-3: a triage cut off with rc 0 and no QUESTION.md does not swap its label (no DELETE of noodlebot)" sh -c "! grep -q 'DELETE.*issues/71/labels/noodlebot' '$S02/gh.log'"
 ok "S02-AC-3: it is not reported done" sh -c "! grep -q 'triage of #71 done' '$state/status.log'"
 ok "S02-AC-3: its worktree is kept" test -d "$wt5/issue-71"
+ok "S02-AC-3: its worktree is kept, not removed and re-made (a file run 1 left there is still there)" test -e "$wt5/issue-71/.s02-kept"
 ok "S02-AC-3: its start was given back: both runs are start 1 of 2" test "$(count 'started triage of #71 .*start 1 of 2')" = 2
 ok "S02-AC-3: the end is one status-log event (rc 0, background work cut off, start not counted)" test "$(grep -i 'triage of #71' "$state/status.log" | grep -i 'background' | grep -ci 'not counted')" = 1
 ok "S02-AC-3: and the triage is started again, then ends with its question" test "$(s02runs 71)" = 2
