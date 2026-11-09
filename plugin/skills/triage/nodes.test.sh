@@ -125,5 +125,41 @@ sed -n '/\-\-update <PR>/,$p' "$sk" >"$tmp/upd.txt"
 for w in 'merge' 'renumber' 'checker\|check-regime' 'push' 'comment'; do
 	if grep -qi -e "$w" "$tmp/upd.txt"; then ok "G01-AC-4: --update text mentions $w"; else bad "G01-AC-4: --update text does not mention $w"; fi
 done
+# ---------- G01-AC-2 after a merge: both graph rows kept, in either order ----------
+merged_case() { # merged_case <label> <id:name>...: the branch's graph holds these rows after merging main
+	lbl=$1; shift
+	O="$tmp/om-$lbl.git"
+	mkorigin "$O" S01:first S02:second
+	mkbranch "$O.seed" spec/s03-alpha S03:alpha
+	mkbranch "$O.seed" spec/s04-beta S04:beta
+	git -C "$O.seed" checkout -q main
+	graph "$O.seed/docs/graph.yaml" S01:first S02:second S03:gamma
+	git -C "$O.seed" add -A && git -C "$O.seed" commit -q -m "main takes S03" && git -C "$O.seed" push -q origin main
+	git -C "$O.seed" checkout -q spec/s03-alpha
+	git -C "$O.seed" merge -q -s ours --no-commit main >/dev/null 2>&1
+	graph "$O.seed/docs/graph.yaml" "$@"
+	git -C "$O.seed" add -A && git -C "$O.seed" commit -q -m "merge main, keep both rows" && git -C "$O.seed" push -q origin spec/s03-alpha
+	git -C "$O.seed" checkout -q main
+	prs 41:spec/s03-alpha 42:spec/s04-beta
+	run "$O" spec/s03-alpha
+	if printf '%s\n' "$out" | grep -i 'clash' | grep 'S03' | grep -qi 'main'; then ok "G01-AC-2: after a merge ($lbl): S03 still a clash with main"; else bad "G01-AC-2: after a merge ($lbl): no clash line naming S03 and main"; fi
+	if printf '%s\n' "$out" | grep 'S04' | grep -q '42'; then ok "G01-AC-2: after a merge ($lbl): the other PR (S04, 42) is listed"; else bad "G01-AC-2: after a merge ($lbl): S04 / 42 not listed"; fi
+	if printf '%s\n' "$out" | grep -i '^next free' | grep -q 'S05'; then ok "G01-AC-2: after a merge ($lbl): next free S is S05"; else bad "G01-AC-2: after a merge ($lbl): 'next free:' line lacks S05"; fi
+}
+merged_case alpha-first S01:first S02:second S03:alpha S03:gamma
+merged_case gamma-first S01:first S02:second S03:gamma S03:alpha
+
+# ---------- G01-AC-4: the --update section (from its heading) ----------
+hl=$(grep -n '^#.*--update' "$sk" | head -n 1 | cut -d: -f1)
+if [ -n "$hl" ]; then
+	sed -n "$hl,\$p" "$sk" >"$tmp/upd2.txt"
+	ok "G01-AC-4: a heading names --update"
+else
+	: >"$tmp/upd2.txt"; bad "G01-AC-4: no heading names --update"
+fi
+for w in 'merge' 'renumber' 'checker\|check-regime' 'push' 'comment'; do
+	if grep -qi -e "$w" "$tmp/upd2.txt"; then ok "G01-AC-4: --update section mentions $w"; else bad "G01-AC-4: --update section does not mention $w"; fi
+done
+
 
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
