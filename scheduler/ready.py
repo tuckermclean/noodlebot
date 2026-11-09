@@ -1,9 +1,10 @@
-"""Prints "<ID> <name>" for the first node in graph order that the scheduler may start, or nothing;
+"""Prints "<ID> <name>" (a merged node to follow up: "<ID> <name> followup") for the first node in graph order that the scheduler may start, or nothing;
 with --all, one line for every such node, in graph order.
 
     python3 -I ready.py --graph docs/graph.yaml --markers out/node \
         [--merged ID]... [--open ID]... [--subjects FILE] [--merged-prs FILE] [--all]
 
+A merged node with an answer to act on (or a FOLLOWUP marker) is printed with a third word, followup.
 A node is ready when it is not merged, every dep is merged, and its markers in <markers>/<ID>/
 allow it:
 - FAILED holds it.
@@ -12,6 +13,8 @@ allow it:
   number is listed in --merged-prs (one merged PR number per line).
 With no markers, a node with an open PR is not ready (it waits for the owner). An answered question
 or a merged WAITING-PR makes it ready even with its PR open, so the session can resume.
+A merged node is printed with a third word, "followup", when its markers say resume, or when only
+a FOLLOWUP marker is there and it has no open PR.
 A node counts as merged when it is passed
 with --merged (a merged node/<ID>-* PR) or when a line of --subjects (`git log --format=%s
 origin/main`) starts with "<ID> <name>:", the squash subject of its PR. The second source exists
@@ -25,7 +28,7 @@ import yaml
 
 
 def markers(d: str, merged_prs: set) -> str:
-    """'hold', 'resume' (an answer or a merged spec PR to act on) or 'none'."""
+    """'hold', 'resume' (an answer or a merged spec PR to act on), 'followup' (a FOLLOWUP marker only) or 'none'."""
     has = lambda m: os.path.exists(os.path.join(d, m))  # noqa: E731
     if has("FAILED"):
         return "hold"
@@ -40,7 +43,9 @@ def markers(d: str, merged_prs: set) -> str:
         if not num.isdigit() or num not in merged_prs:
             return "hold"
         resume = True
-    return "resume" if resume else "none"
+    if resume:
+        return "resume"
+    return "followup" if has("FOLLOWUP") else "none"
 
 
 def main() -> int:
@@ -71,14 +76,16 @@ def main() -> int:
 
     for n in nodes:
         nid = n["id"]
-        if nid in merged:
-            continue
-        if not all(d in merged for d in n.get("deps") or []):
+        is_merged = nid in merged
+        if not is_merged and not all(d in merged for d in n.get("deps") or []):
             continue
         state = markers(os.path.join(a.markers, nid), merged_prs)
-        if state == "hold" or (state == "none" and nid in opened):
+        if is_merged:
+            if state == "none" or state == "hold" or (state == "followup" and nid in opened):
+                continue
+        elif state == "hold" or (state in ("none", "followup") and nid in opened):
             continue
-        print(f"{nid} {n['name']}")
+        print(f"{nid} {n['name']}" + (" followup" if is_merged else ""))
         if not a.all:
             return 0
     return 0

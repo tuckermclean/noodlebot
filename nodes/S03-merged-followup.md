@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | S01 | none | M |
+| now | S01 | U01 | M |
 
 **Owns:** the merged-node follow-up in `scheduler/ready.py`; the follow-up start (branch, worktree, prompt), the follow-up cases of the merged-PR stop (`pr_done`), of the "ended with a PR" check (`ended`) and of the merged-worktree cleanup (`cleanup_merged`) in `scheduler/loop.sh`; the follow-up prompt `scheduler/unattended-followup.md`; the answered and merged-question items of `scheduler/report.py`'s "Waiting on you" section and its reply to an answer; their cases in `scheduler/ready.test.sh`, `scheduler/loop.test.sh` and `scheduler/report.test.sh`.
 **Resolves:** #31
@@ -40,4 +40,4 @@ After this node an owner's answer to a node whose PR is already merged is acted 
 - "Resumes within seconds" is still said while the throttle holds new sessions or `SCHED_MAX` is reached: `ready.py` knows neither, and issue #31 asks only for its verdict.
 - `scheduler/status.sh` and `scheduler/loops.sh` keep their own wording; an answered merged node is listed as answered only until the next tick starts its follow-up.
 - A follow-up PR's squash subject also starts with `<ID> <name>:`; the node is merged already, so nothing changes in `ready.py`'s view, but a follow-up's own merge is recognised only through its PR on `node/<ID>-followup-<n>` (500-PR list limit, as for the other PR lists).
-- `scheduler/loop.sh`'s `ended` and stop paths are also changed by T02 (open PR) and S02; whichever merges later resolves the conflict.
+- `scheduler/loop.sh`'s `ended` and stop paths are also changed by S02 and S05; whichever merges later resolves the conflict.
