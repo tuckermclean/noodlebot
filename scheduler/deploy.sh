@@ -5,16 +5,33 @@
 # Fetches origin, and when origin/main is a new commit that has not been rejected, runs `make test`
 # in a scratch worktree of that commit; on success it fast-forwards the live checkout and prints
 # "deployed <old>..<new>"; on failure it prints "not deployed: <sha> fails make test" once and records
-# the sha so it is not tried again. Nothing to do prints nothing. --rollback resets to
-# deploy/previous and records the commit it left as rejected, so the rollback sticks.
-# State: $NOODLEBOT_DATA/deploy/{previous,rejected} (default ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock (waited for up to 5 minutes, so a
-# concurrent run finds nothing left to do). Nothing is written inside the live checkout. Exit: 0 nothing to do / deployed / rolled back;
-# 1 make test failed; 2 usage, not a git checkout, fetch or git failure (message on stderr).
+# the sha so it is not tried again. A sha whose make test passed but that cannot be fast-forwarded is
+# recorded too, with one line "not deployed: <sha> cannot fast-forward <live>". A make test that times
+# out or is killed by a signal is retried on later runs (stderr only), and after $max_tries such
+# attempts for the same sha it is recorded with one line "not deployed: <sha> make test timed out or
+# was killed <n> times". Nothing to do prints nothing; every stdout line is one status event.
+# --rollback resets to deploy/previous and records the commit it left as rejected, so the rollback sticks.
+# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries} (default ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock (waited for up to 5 minutes, so a
+# concurrent run finds nothing left to do). Nothing is written inside the live checkout. Exit:
+# 0 nothing to do, deployed, or rolled back;
+# 1 not deployed and recorded (fails make test, cannot fast-forward, or timed out / killed $max_tries times);
+# 2 nothing recorded, retried next run: usage, not a git checkout, fetch or git failure, a live checkout
+#   that cannot fast-forward or has uncommitted changes, make test timed out or killed (fewer than
+#   $max_tries times), or make could not run (status 125-127: timeout or make missing) (message on stderr).
 # The body is a function called last, so the file is fully read before the checkout changes under it.
 
 die() { echo "deploy.sh: $*" >&2; exit 2; }
 
+max_tries=3
+
 rejected() { grep -qx "$1" "$sd/rejected" 2>/dev/null; }
+
+# reject <sha> <reason>: record the sha so it is not tried again, and print the one status line.
+reject() {
+	echo "$1" >>"$sd/rejected"
+	rm -f "$sd/tries"
+	echo "not deployed: $1 $2"
+}
 
 cleanup() {
 	[ -n "${scratch:-}" ] || return 0
@@ -57,18 +74,33 @@ do_deploy() {
 	mpid=
 	cleanup
 	if [ "$rc" = 124 ] || [ "$rc" -gt 128 ]; then
-		echo "deploy.sh: make test for $new timed out or was killed (status $rc); will retry" >&2
+		# Count attempts per sha ("<sha> <n>" in $sd/tries) so a hanging make test is not rerun forever.
+		n=0
+		[ -f "$sd/tries" ] && read -r tsha tn <"$sd/tries" && [ "$tsha" = "$new" ] && n=$tn
+		case $n in ''|*[!0-9]*) n=0 ;; esac
+		n=$((n + 1))
+		if [ "$n" -ge "$max_tries" ]; then
+			reject "$new" "make test timed out or was killed $n times"
+			return 1
+		fi
+		echo "$new $n" >"$sd/tries"
+		echo "deploy.sh: make test for $new timed out or was killed (status $rc, attempt $n of $max_tries); will retry" >&2
+		return 2
+	fi
+	if [ "$rc" -ge 125 ] && [ "$rc" -le 127 ]; then
+		echo "deploy.sh: make test for $new could not run (status $rc: timeout or make missing); will retry" >&2
 		return 2
 	fi
 	if [ "$rc" != 0 ]; then
-		echo "$new" >>"$sd/rejected"
-		echo "not deployed: $new fails make test"
+		reject "$new" "fails make test"
 		return 1
 	fi
 	if ! git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1; then
-		echo "$new" >>"$sd/rejected"
-		die "cannot fast-forward $live to $new (recorded; not tried again)"
+		echo "deploy.sh: cannot fast-forward $live to $new (recorded; not tried again)" >&2
+		reject "$new" "cannot fast-forward $live"
+		return 1
 	fi
+	rm -f "$sd/tries"
 	echo "$old" >"$sd/previous"
 	echo "deployed $old..$new"
 }
