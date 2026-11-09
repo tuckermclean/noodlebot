@@ -836,6 +836,7 @@ s3chk "S03-AC-2: that start is the only status-log event that names node/G01-fol
 s3ok "S03-AC-2: (G01) its session has recorded its branch, HEAD and worktree (run 1)" 8 sh -c "[ -s '$S03/br.G01.1' ] && [ -s '$S03/head.G01.1' ] && [ -s '$S03/pwd.G01.1' ]"
 s3chk "S03-AC-2: the session ran on branch node/G01-followup-1" s3eq "$(s3f br.G01.1)" node/G01-followup-1
 s3chk "S03-AC-2: in a new worktree of its own under the worktrees folder" s3wtown G01.1
+s3ok "S03-AC-2: (G01) its session has made its first commit" 8 sh -c "[ \"\$(git -C '$cl6' rev-parse node/G01-followup-1)\" != \"\$(git -C '$cl6' rev-parse origin/main)\" ]"
 s3chk "S03-AC-2: whose first commit is origin/main's head (HEAD at start, and the branch's first commit)" s3firstcommit G01.1 node/G01-followup-1
 s3chk "S03-AC-2: the node started once" s3eq "$(s3runs G01)" 1
 s3ok "S03-AC-2: G08 had a follow-up whose PR is merged (no branch of it): the next one starts on node/G08-followup-2" 5 s3has 'started G08 .*node/G08-followup-2.*start 1 of 2'
@@ -844,6 +845,7 @@ s3chk "S03-AC-2: (G08) the session ran on node/G08-followup-2" s3eq "$(s3f br.G0
 s3chk "S03-AC-2: (G08) no branch node/G08-followup-1 was made" s3brs G08 1
 
 # AC-3: the appended prompt.
+s3ok "S03-AC-3: (G01) its session has recorded its appended prompt" 8 sh -c "[ -s '$S03/sys.G01.1' ]"
 s3chk "S03-AC-3: the session's appended prompt is the node's unattended.md in its state folder" test -s "$S03/sys.G01.1" -a "$(cat "$st6/node/G01/unattended.md" 2>/dev/null)" = "$(s3f sys.G01.1)"
 s3chk "S03-AC-3: it says the node's PR is merged" s3prompt "PR (is|was|has been|is already|was already) merged|already merged"
 s3chk "S03-AC-3: it says the answer is carried out as a follow-up PR" s3prompt 'follow-?up PR'
@@ -913,6 +915,7 @@ s3chk "S03-AC-6: its earlier commit is in the worktree" sh -c "git -C '$w1' log 
 echo "Q1: yes" >"$st6/node/G01/ANSWER.md"
 s3ok "S03-AC-6: after the answer the next session starts (run 2)" 8 s3runsis G01 2
 s3ok "S03-AC-6: its second session has recorded its files (run 2)" 8 sh -c "[ -s '$S03/br.G01.2' ] && [ -s '$S03/pwd.G01.2' ]"
+s3ok "S03-AC-6: (G01) its second session has recorded its log and answers (run 2)" 8 sh -c "[ -s '$S03/log.G01.2' ] && [ -s '$S03/ans.G01.2' ]"
 s3chk "S03-AC-6: it runs on the same follow-up branch" s3eq "$(s3f br.G01.2)" node/G01-followup-1
 s3chk "S03-AC-6: in the same worktree" s3eq "$(s3f pwd.G01.2)" "$(s3f pwd.G01.1)"
 s3chk "S03-AC-6: with its earlier commit" grep -qx 'G01 follow-up work' "$S03/log.G01.2"
