@@ -15,6 +15,7 @@ fail() { echo "FAIL: $1"; fails=$((fails + 1)); }
 ok() { if eval "$2"; then pass "$1"; else fail "$1"; fi; }
 
 export HOME=$tmp/home
+export NOODLEBOT_DATA=$tmp/data   # the runtime root, outside the live clone (D01 Q2)
 mkdir -p "$HOME"
 log=$tmp/make.log
 : >"$log"
@@ -45,7 +46,7 @@ head_of() { full "$live" HEAD; }
 short() { printf %.7s "$1"; }
 runs() { grep -c "^$1\$" "$log"; }
 dep() { sh "$deploy" "$live" 2>&1; }
-prev_is() { [ "$(cat "$live/state/deploy/previous" 2>/dev/null | xargs -r -n1 git -C "$live" rev-parse 2>/dev/null)" = "$1" ]; }
+prev_is() { [ "$(cat "$NOODLEBOT_DATA/deploy/previous" 2>/dev/null | xargs -r -n1 git -C "$live" rev-parse 2>/dev/null)" = "$1" ]; }
 
 c0=$(head_of)
 c1=$(full "$tmp/work" HEAD)
@@ -55,7 +56,7 @@ out=$(dep)
 m1=0; printf '%s\n' "$out" | grep -Eq "^deployed $(short "$c0")[0-9a-f]*\.\.$(short "$c1")[0-9a-f]*\$" && m1=1
 ok "D01-AC-1 prints deployed <old>..<new>" '[ "$m1" = 1 ]'
 ok "D01-AC-1 live checkout moved to the new commit" '[ "$(head_of)" = "$c1" ]'
-ok "D01-AC-1 state/deploy/previous is the old HEAD" 'prev_is "$c0"'
+ok "D01-AC-1 deploy/previous is the old HEAD" 'prev_is "$c0"'
 ok "D01-AC-1 make test ran once for the commit" '[ "$(runs c1)" = 1 ]'
 deployed1=$m1
 out=$(dep)
@@ -107,6 +108,23 @@ ok "D01-AC-4 exactly one run prints deployed" '[ "$n" = 1 ]'
 ok "D01-AC-4 make test ran once for the commit" '[ "$(runs c5)" = 1 ]'
 ok "D01-AC-4 live checkout is at the new commit" '[ "$(head_of)" = "$c5" ]'
 ok "D01-AC-4 previous is the original HEAD" 'prev_is "$c4"'
+
+lockheld() {
+	commit c6 pass; c6=$(full "$tmp/work" HEAD); before=$(head_of)
+	mkdir -p "$NOODLEBOT_DATA/deploy"
+	( flock 9; sleep 3 ) 9>"$NOODLEBOT_DATA/deploy/lock" &
+	hp=$!; sleep 0.5
+	timeout 1 sh "$deploy" "$live" >/dev/null 2>&1
+	during=$(head_of); ran=$(runs c6)
+	wait $hp
+	[ "$ran" = 0 ] && [ "$during" = "$before" ]
+}
+
+# D01 (runtime root, D02): deploy.sh writes nothing inside the live checkout; its state and lock are under $NOODLEBOT_DATA/deploy.
+ok "D01-AC-1 deploys, rejects and rollback leave no state/ folder in the live checkout" '[ ! -e "$live/state" ]'
+ok "D01-AC-1 the live checkout has no untracked or ignored file after all runs" '[ -z "$(git -C "$live" status --porcelain --ignored 2>&1)" ]'
+ok "D01-AC-1 the deploy state is under NOODLEBOT_DATA/deploy" '[ -s "$NOODLEBOT_DATA/deploy/previous" ]'
+ok "D01-AC-4 the lock is NOODLEBOT_DATA/deploy/lock (a held lock makes a run wait or skip, deploying nothing)" 'lockheld'
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
