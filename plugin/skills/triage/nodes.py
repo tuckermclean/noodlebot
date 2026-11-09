@@ -9,7 +9,7 @@ for each term, the nodes whose spec mentions it (case-insensitive), most mention
 authenticated for the repository; without it the state column is "?".
 Also lists the open PRs whose head branch starts with spec/ (their docs/graph.yaml is read from
 origin/<branch>, so fetch first): the IDs each adds that main lacks, with its PR number; one `next free:`
-line per letter in use (the number after the highest ID on main, in those PRs and in this graph); and
+line holding, for every letter in use, the number after the highest ID on main, in those PRs and in this graph (`next free: S05 T02`); and
 `clash` lines for a new ID that main or another open spec PR gives to a node of another name. On a spec
 branch main's graph is origin/main's and the branch's own PR is not counted as another PR. If the PR list
 or a PR's graph cannot be read it says the IDs in open spec PRs are unknown, prints no `next free:` line
@@ -72,7 +72,7 @@ def spec_pr_report(work):
             names = graph_names(pr_graph(p))
             allids |= set(names)
             added += [(p["number"], i, n) for i, n in names.items() if i not in mainnames]
-    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError, subprocess.TimeoutExpired):
         print("IDs in open spec PRs: unknown (could not list the open PRs or read a PR's graph); no next free ID")
         return False
     for num, i, n in added:
@@ -97,8 +97,8 @@ def spec_pr_report(work):
         m = re.match(r"([A-Z])([0-9]+)$", i)
         if m:
             top[m.group(1)] = max(top.get(m.group(1), 0), int(m.group(2)))
-    for letter in sorted(top):
-        print("next free: %s%02d" % (letter, top[letter] + 1))
+    if top:
+        print("next free: " + " ".join("%s%02d" % (l, top[l] + 1) for l in sorted(top)))
     return True
 
 

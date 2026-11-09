@@ -46,10 +46,11 @@ Pick the first that holds, and write down why the earlier ones do not:
    that node in its `deps`. A merged node's spec is history; never add criteria to it.
 4. **New node** when nothing owns the area.
 
-For a new node: the ID on the `next free:` line of `nodes.py`'s output for the letter family whose
-nodes do similar work (it counts `main` and every open `spec/*` PR, so two PRs never take one ID; never
-pick a number from `ids in use`).
-When `nodes.py` cannot tell (IDs unknown, no `next free:` line), the run ends without a PR; a later start tries again. A short kebab-case `name`; minimal `deps` (only what its gate truly needs);
+For a new node: the ID for the letter family whose nodes do similar work from the `next free:` line of
+`nodes.py`'s output (one line, every letter in use, e.g. `next free: S05 T02`; it counts `main` and every open `spec/*` PR, so two PRs never take one
+ID; never pick a number from `ids in use`).
+When `nodes.py` cannot tell (IDs unknown, no `next free:` line), the run ends without a PR; a later
+start tries again. A short kebab-case `name`; minimal `deps` (only what its gate truly needs);
 `track` by the repository's rule; a one-sentence `summary`; a full spec from the template; and add it
 to the deps of any node that must not pass without it. Size it honestly.
 
@@ -105,6 +106,7 @@ nothing else.
 3. Rerun the spec checker until it reports PROBLEMS 0.
 4. With `--dry-run`, stop here (no push, no PR edit, no comment) and write `out/triage/pr-<N>/result.md`:
    the merge, each renumbering (old -> new) and the checker's output.
+   A conflict that needs a judgment (step 1) is written to the same `result.md` and gets no comment.
 5. Push the branch. Update the PR's title and body to the new IDs. Comment on the PR with what was
    merged, each renumbering (old -> new) and the checker's result.
 
