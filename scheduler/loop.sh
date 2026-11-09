@@ -118,6 +118,12 @@ ended() {
 	p=$(cat "$d/session.pid"); wait "$p" 2>/dev/null
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
+	if [ -e "$d/paused" ]; then   # a loop killed mid-pause left session.pid behind; paused stays for "resumed"
+		not_counted "$d"
+		if [ "$(basename "$(dirname "$d")")" = issue ]; then id="triage of #$id"; fi
+		say "$saw; $id ended while being paused; start not counted"
+		return
+	fi
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
@@ -297,7 +303,7 @@ escalate_pause() {
 		d=$(dirname "$f") p=$(cat "$f" 2>/dev/null) key=$(basename "$d")
 		alive "$p" "$key" || continue
 		[[ $f == "$state"/* ]] || return 0   # the newest belongs to another repository
-		what=$key; [[ $f == */issue/* ]] && what="triage of #$key"
+		what=$key; [[ $f == "$state"/issue/* ]] && what="triage of #$key"
 		echo "${esc#escalate: }" >"$d/paused"
 		stop_group "$p" || { rm -f "$d/paused"; note "$saw; $what (pid $p) survived SIGKILL; not paused"; return 0; }
 		wait "$p" 2>/dev/null
