@@ -8,7 +8,8 @@
 #   touch ~/STOP-<name>   (only that repository's loop exits)
 # It acts as soon as something changes: it checks the node markers and the running session every
 # SCHED_POLL seconds (default 2, local only) and asks GitHub about PRs every SCHED_TICK seconds
-# (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
+# (default 60); a running session whose node's PR is merged, or closed without merging after the session
+# started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
@@ -114,7 +115,8 @@ ended() {
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
-	if [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
+	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
+	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif [[ " $open $merged " == *" $id "* ]]; then say "$saw; session $id ended (rc $rc) with a PR"
 	elif [ "$rc" != 0 ] && limit_exit "$d"; then
@@ -152,6 +154,55 @@ triage_ended() {
 		say "$saw; triage of #$n ended (rc $rc), 2 starts used: wrote FAILED"
 	else say "$saw; triage of #$n ended (rc $rc); may start again"
 	fi
+}
+
+# stop_group <pid>: end a session's process group (setsid made its pid the pgid): SIGTERM, SIGKILL
+# after a grace of 3 s, and return once the group is gone, with the leader reaped.
+stop_group() {
+	local p=$1 i st
+	kill -TERM -- "-$p" 2>/dev/null
+	for i in $(seq 1 40); do
+		[ "$i" = 15 ] && kill -KILL -- "-$p" 2>/dev/null
+		st=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | cut -c1)
+		[ "$st" = Z ] && wait "$p" 2>/dev/null
+		kill -0 -- "-$p" 2>/dev/null || return 0
+		sleep 0.2
+	done
+	return 1
+}
+
+# pr_done <ID> <start>: a node's session started at <start> (epoch s) has no more use: sets why to the
+# reason ("merged"/"closed") and prn to the PR. Merged; or no open PR and a PR on node/<ID>-* closed
+# without merging at or after <start>.
+pr_done() {
+	local id=$1 start=$2 n br t m
+	if [[ " $merged " == *" $id "* ]]; then
+		prn=$(awk -v b="node/$id-" 'index($2, b) == 1 { print $1 }' "$state/merged-prs.tsv" | sort -n | tail -n1)
+		why=merged; return 0
+	fi
+	[[ " $open " == *" $id "* ]] && return 1
+	while read -r n br t m; do
+		[ "$m" = false ] && [[ $br == node/$id-* ]] || continue
+		t=$(date -d "$t" +%s 2>/dev/null) || continue
+		[ "$t" -ge "$start" ] && { prn=$n why=closed; return 0; }
+	done <"$state/closed-prs.tsv"
+	return 1
+}
+
+# stop_done <dir> <pid> <saw>: stop a session whose PR is done, wait until its group is gone, say so once, and reap it. A closed PR
+# holds the node (FAILED naming the PR, starts 0: deleting FAILED gives it 2 fresh starts).
+stop_done() {
+	local d=$1 p=$2 saw=$3 id prn why
+	id=$(basename "$d")
+	pr_done "$id" "$(stat -c %Y "$d/session.pid" 2>/dev/null || echo 0)" || return 1
+	if [ "$why" = closed ]; then
+		echo "$(date -u +%FT%TZ) PR #$prn was closed without merging; delete this file to start the node again" >"$d/FAILED"
+		set_starts "$d" 0
+	fi
+	# a group that survived SIGKILL is not reaped and no event is written: it stays live, retried next tick
+	stop_group "$p" || { note "$saw; session $id (pid $p) survived SIGKILL"; return 1; }
+	say "$saw; stopped session $id: its PR #$prn is $why"
+	ended "$d" "$saw"
 }
 
 # launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
@@ -243,7 +294,9 @@ tick() {
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
-		! open=$(GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' | ids); then
+		! open=$(GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' | ids) ||
+		! GH_TOKEN=$tok gh pr list --repo $repo --state closed --limit 500 --json number,headRefName,closedAt,mergedAt \
+			-q '.[] | "\(.number) \(.headRefName) \(.closedAt) \(.mergedAt != null)"' >"$state/closed-prs.tsv"; then
 		note "gh pr list failed; nothing started"; return
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
@@ -256,7 +309,9 @@ tick() {
 	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 		[ -e "$f" ] || continue
 		id=$(basename "$(dirname "$f")") p=$(cat "$f")
-		if alive "$p" "$id"; then live+=("$p $id"); [[ $f == */issue/* ]] && triaging=$id
+		if alive "$p" "$id"; then
+			[[ $f == */node/* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
+			live+=("$p $id"); [[ $f == */issue/* ]] && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	cleanup_merged

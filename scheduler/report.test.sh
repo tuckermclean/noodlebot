@@ -415,5 +415,16 @@ ok "C01-AC-3: the H02 end comment (whole body) carries the well-formed turns" gr
 trap 'kill $pids $sess $pids3 $pids4 $pids5 $pids6 2>/dev/null; rm -rf "$tmp"' EXIT
 
 
+# S01-AC-4: the item for a FAILED node gives the reason from the first line of its FAILED file (not
+# its other lines) and the path to delete.
+mkdir -p "$state/node/C05"
+printf '2026-01-03T00:00:00Z PR #12 was closed without merging; delete this file to start the node again\nsecond-line-detail\n' >"$state/node/C05/FAILED"
+run
+s01body=$(q "[i['body'] for i in db['issues'].values() if i['state'] == 'open'][0]")
+ok "S01-AC-4: the FAILED item gives the first line of the FAILED file as the reason" sh -c "printf '%s\n' \"\$1\" | grep -qF 'PR #12 was closed without merging; delete this file to start the node again'" _ "$s01body"
+ok "S01-AC-4: and the path to delete" sh -c "printf '%s\n' \"\$1\" | grep 'C05 FAILED' | grep -qF '$state/node/C05/FAILED'" _ "$s01body"
+ok "S01-AC-4: and not the fixed text" sh -c "! printf '%s\n' \"\$1\" | grep 'C05 FAILED' | grep -q '2 starts with no PR'" _ "$s01body"
+ok "S01-AC-4: and not the file's later lines" sh -c "! printf '%s\n' \"\$1\" | grep -q second-line-detail" _ "$s01body"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
