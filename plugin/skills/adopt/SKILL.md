@@ -22,9 +22,9 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
   it local and unpushed until section 5; on resume, re-create it from the current default branch if
   that moved while the owner answered. (A dry run on a local directory creates no clone and no
   branch and makes no commit; it stops with files in the output directory.)
-- Check up front that the run's credential can push and open a PR (e.g. `gh api repos/<owner/name>`).
-  An App installation token may report no permissions there: do not stop on that alone, only if a
-  real push is refused later.
+- Real run only: record in `FACTS.md` what `gh api repos/<owner/name>` reports about the credential's
+  permissions; an App installation token may report none, so this alone never stops the run; a push
+  refused in section 5 stops the run and is reported. Never print a credential.
 - Read the code layout, the README and any `AGENTS.md`/`CLAUDE.md`/docs, the existing tests, the CI
   workflows, and how to build, test and lint (Makefile, package scripts, workflow steps). Note which
   commands pass today. A command that cannot run here (heavy install, a database, Docker) is recorded
@@ -33,7 +33,8 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
 - Compare the repository's test and fixture paths with the role guard's defaults (see section 3), e.g.
   a `fixtures/` directory that holds application data, or `tests.py` files the defaults miss.
 - Read the issues, closed ones too, and merged PRs: they are the history of intent (section 2 item 3
-  needs them). `gh issue list --state all --json number,title,body,labels` and
+  needs them). `gh issue list --state all --json number,title,body,labels,state`,
+  `gh pr list --state merged --json number,title,body` and
   `gh issue view <n> --comments` for the ones that matter. Note the work they ask for. With no issues
   at all, the work list is asked for in section 2.
 - Write down what you found and what you could not tell in `FACTS.md` next to `QUESTION.md`, so a
@@ -74,7 +75,7 @@ Only after `ANSWER.md`. Order: the graph first, then the specs, so they agree.
   Unlocks written `none` when empty, Unlocks being the nodes that depend on this one, each criterion
   as one line `- **<ID>-AC-<n>** — … *Verify:* …`, and IDs of a capital letter and two digits. Work already done is not a node: say in `SPEC.md` that it exists, or note it in the
   Purpose of the node that builds on it. Size nodes honestly (S under a day, M two or three, L more).
-  Issues become nodes or criteria. A node drafted from an issue gets `**Resolves:** #<n>` right after
+  Open issues become nodes or criteria (closed ones are history only). A node drafted from an issue gets `**Resolves:** #<n>` right after
   its **Owns:** line, so the node's PR fixes it; this PR itself only says `Refs #N`.
   Drafts name no repository (no owner/name of any, not even the plugin's own). They do name the
   plugin's node skill directly as `/noodlebot:node <ID>` and the guard's config file as
@@ -123,7 +124,8 @@ node that builds the work, not this PR, fixes the issue.
 ## Dry run
 With `--dry-run`, run sections 1 to 4 offline against a local directory or a clone:
 - Issues come from `issues.json` in that directory if present (the form of
-  `gh issue list --json number,title,body,labels`), else there are none.
+  `gh issue list --state all --json number,title,body,labels,state`; an entry without `state` counts
+  as open), else there are none.
 - The owner's answers come from the `--answers <file>` the caller names, else an `ANSWER.md` in the
   output directory, else one in the input directory. If none exists, write `QUESTION.md` (into the
   output directory) and stop as usual. If one exists, `QUESTION.md` is still written there first, as the record.
