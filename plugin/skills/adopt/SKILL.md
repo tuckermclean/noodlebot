@@ -3,7 +3,7 @@ name: adopt
 description: Bring a repository that has no docs/graph.yaml into the graph regime - read its code, README, issues, tests and CI, ask the owner (QUESTION.md) what the code cannot show, then draft SPEC.md, docs/graph.yaml, nodes/<ID>-<name>.md and an AGENTS.md "Building a node" section as one spec PR on spec/adopt. Produces specs only, never code or tests. Use for "/adopt <owner/name>" or when asked to put a repository under the node graph.
 ---
 
-# /adopt <owner/name> [--dry-run]
+# /adopt <owner/name | dir> [--dry-run [--out <dir>]] [--answers <file>]
 
 You turn an existing repository into a **plan the scheduler can build from**: the graph regime
 (`docs/graph.yaml`, `nodes/<ID>-<name>.md`, `SPEC.md`, an `AGENTS.md` "Building a node" section),
@@ -18,7 +18,8 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
 ## 1. Facts first (deterministic)
 - Work in a fresh clone or worktree, never in someone's checkout:
   `gh repo clone <owner/name> <dir>` (or `git fetch origin && git worktree add -b spec/adopt <dir> origin/<default branch>`).
-  Create the branch `spec/adopt` there.
+  Create the branch `spec/adopt` there. (A dry run on a local directory creates no clone and no
+  branch and makes no commit; it stops with files in the output directory.)
 - Read the code layout, the README and any `AGENTS.md`/`CLAUDE.md`/docs, the existing tests, the CI
   workflows, and how to build, test and lint (Makefile, package scripts, workflow steps). Note which
   commands pass today.
@@ -35,9 +36,10 @@ recommendation so a bare "yes" works. Ask what the code cannot show:
 4. principles and constraints that every change must respect;
 5. open decisions that block work, with a default for each;
 6. anything in the facts that conflicts or is unclear.
+`<name>` is the repository's name, or the directory's basename for a local directory.
 Put it in the run's output folder, `out/adopt/<name>/QUESTION.md`, and tell the owner where it is.
 Unattended, the run's own instructions for questions win. **Then stop**: no drafts before the owner's
-`ANSWER.md` exists next to `QUESTION.md`. On resume, read `ANSWER.md`; a question it leaves open
+`ANSWER.md` exists (next to `QUESTION.md`, or the file given by `--answers`). On resume, read `ANSWER.md`; a question it leaves open
 becomes an open decision with your default, not a guess presented as settled.
 
 ## 3. Drafts
@@ -52,17 +54,24 @@ Only after `ANSWER.md`. Order: the graph first, then the specs, so they agree.
 - **`nodes/<ID>-<name>.md`**, one per node, following the template: title `# <ID> — <name>`, a header
   row `| Track | Deps | Unlocks | Size |` matching the graph, **Owns:** (paths the node creates or
   changes), the template's headings, and criteria `**<ID>-AC-<n>**` numbered from 1, each one testable
-  with *Verify:*. Work already done is not a node: say in `SPEC.md` that it exists, or note it in the
+  with *Verify:*. The checker (`<plugin dir>/skills/node/check-regime.py`; read it) requires: Deps and
+  Unlocks written `none` when empty, Unlocks being the nodes that depend on this one, each criterion
+  as one line `- **<ID>-AC-<n>** — … *Verify:* …`, and IDs of a capital letter and two digits. Work already done is not a node: say in `SPEC.md` that it exists, or note it in the
   Purpose of the node that builds on it. Size nodes honestly (S under a day, M two or three, L more).
-  Issues become nodes or criteria; reference them as `Refs #N`, never as closing keywords.
+  Issues become nodes or criteria. A node drafted from an issue gets `**Resolves:** #<n>` right after
+  its **Owns:** line, so the node's PR fixes it; this PR itself only says `Refs #N`.
+  Drafts name no repository, not even the plugin: refer to the plugin's skills and checker by role
+  and placeholder path (`<plugin dir>/...`).
 - **`AGENTS.md`**, a "Building a node" section (add to an existing file, do not replace it):
   authority order (`SPEC.md`, `docs/graph.yaml`, the node spec, then `AGENTS.md`); role agents: the
   plugin's tester, implementer and reviewer, unless the repository has its own; the spec checker
   (`python3 -I <plugin dir>/skills/node/check-regime.py`, PROBLEMS 0); the test, lint and CI commands
   that exist; the form of a red target (a command that exits non-zero before and 0 after); the test and
   fixture paths; porting rules or "none"; what CI evidence to record.
-- **The role guard's `roles.yaml`** (the plugin's guard documents where it goes) only if its default
-  test paths do not match the repository's (`tests:` and `specs:`, root-relative globs).
+- **The role guard's config** (`<plugin dir>/hooks/guard.py`: its docstring gives the file's location,
+  its `DEFAULTS` the default globs, which treat `**/*.test.sh`, `**/tests/**`, `**/testdata/**`,
+  `**/fixtures/**` etc. as tests) only if those defaults do not match the repository's test paths
+  (`tests:` and `specs:`, root-relative globs).
 Do not write implementation or tests.
 
 ## 4. Check
@@ -85,9 +94,9 @@ node that builds the work, not this PR, fixes the issue.
 With `--dry-run`, run sections 1 to 4 offline against a local directory or a clone:
 - Issues come from `issues.json` in that directory if present (the form of
   `gh issue list --json number,title,body,labels`), else there are none.
-- The owner's answers come from an `ANSWER.md` the caller provides (next to `QUESTION.md`). If it is
-  missing, write `QUESTION.md` and stop as usual.
-- Write the drafts into an output directory (the given path, else `out/adopt/<name>/`) holding
+- The owner's answers come from the `--answers <file>` the caller names, else an `ANSWER.md` in the
+  output directory, else one in the input directory. If none exists, write `QUESTION.md` and stop as usual.
+- Write the drafts into an output directory (`--out <dir>`, else `out/adopt/<name>/`) holding
   `SPEC.md`, `AGENTS.md`, `docs/graph.yaml` and `nodes/`; never write into the input directory. Run the
   checker with `--root` on it. No push, no PR, no comment.
 - Print a result summary: the output directory, nodes and criteria drafted, the checker's last line.
