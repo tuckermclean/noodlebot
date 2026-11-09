@@ -282,5 +282,58 @@ ok "C01-AC-3: the status body is the normal one, not a fallback" grep -qF 'Sessi
 ok "C01-AC-3: the report leaves nothing on stderr" test ! -s "$tmp/err3"
 trap 'kill $pids $sess $pids3 2>/dev/null; rm -rf "$tmp"' EXIT
 
+# C01-AC-3 once more: an integer too large for a float is valid JSON, but the line is malformed and skipped.
+state4=$tmp/state/repo4
+mkdir -p "$state4/node/F01" "$state4/node/F02" "$state4/node/F03"
+pids4=
+for n in F01 F02; do
+	sh "$tmp/rs/run-session.sh" --node $n &
+	echo $! >"$state4/node/$n/session.pid"
+	pids4="$pids4 $!"
+done
+trap 'kill $pids $sess $pids3 $pids4 2>/dev/null; rm -rf "$tmp"' EXIT
+sleep 1
+run4() { python3 -I "$src/report.py" --repo owner/repo --state "$state4" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err4"; }
+dump4() {
+	python3 -I -c "
+import json
+db = json.load(open('$db'))
+open('$tmp/body4', 'w').write('\n'.join(x['body'] for x in db['issues'].values() if 'F01' in x['body']))
+open('$tmp/endcomment4', 'w').write('\n'.join(c['body'] for c in db['comments'] if 'session F03 ended' in c['body']))"
+}
+section4() { awk -v id="$1" 'f && /^##/ {f=0} index($0, "### " id ",") == 1 {f=1} f' "$tmp/body4"; }
+big=1$(awk 'BEGIN { for (i = 0; i < 400; i++) printf "0" }')
+bigint() {
+	printf "$nf" "$big" 2
+	printf "$nf" 1.5 "$big"
+	printf "$nf" "-$big" 2
+	printf "$nf" 1.5 "-$big"
+}
+bigint >"$state4/node/F01/session.jsonl"
+{ bigint; r 1.0 1; bigint; r 2.5 3; bigint; } >"$state4/node/F02/session.jsonl"
+{ r 1.0 1; bigint; r 6.5 4; bigint; } >"$state4/node/F03/session.jsonl"
+: >"$state4/status.log"
+run4; rc5=$?
+dump4
+echo "2026-01-05T00:00:00Z open=[] merged-prs=[]; session F03 ended (rc 0)" >>"$state4/status.log"
+run4; rc6=$?
+dump4
+sec4_has() { section4 "$1" | grep -qF -- "$2"; }
+sec4_nodollar() { ! section4 "$1" | grep -qE '\$[0-9]'; }
+sec4_turns() { section4 "$1" | grep -qE "(^|[^0-9])$2 turns"; }
+sec4_lacks() { ! section4 "$1" | grep -qF -- "$2"; }
+ok "C01-AC-3: huge-integer results only: the session shows no cost yet" sec4_has F01 'no cost yet'
+ok "C01-AC-3: huge-integer results only: no dollar figure" sec4_nodollar F01
+ok "C01-AC-3: well-formed result among huge-integer lines gives the latest cost" sec4_has F02 '$2.50'
+ok "C01-AC-3: such a session shows its summed turns" sec4_turns F02 4
+ok "C01-AC-3: such a session does not show no cost yet" sec4_lacks F02 'no cost yet'
+ok "C01-AC-3: the end of F03 is posted despite huge-integer lines" test -s "$tmp/endcomment4"
+ok "C01-AC-3: the end comment (whole body) carries the well-formed total despite huge integers" grep -qF '$6.50' "$tmp/endcomment4"
+ok "C01-AC-3: the end comment (whole body) carries the well-formed turns despite huge integers" grep -qE '(^|[^0-9])5 turns' "$tmp/endcomment4"
+ok "C01-AC-3: the report exits 0 on both huge-integer runs" sh -c "[ $rc5 -eq 0 ] && [ $rc6 -eq 0 ]"
+ok "C01-AC-3: the huge-integer status body is the normal one, not a fallback" grep -qF 'Sessions (2 running)' "$tmp/body4"
+ok "C01-AC-3: the huge-integer runs leave nothing on stderr" test ! -s "$tmp/err4"
+trap 'kill $pids $sess $pids3 $pids4 2>/dev/null; rm -rf "$tmp"' EXIT
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
