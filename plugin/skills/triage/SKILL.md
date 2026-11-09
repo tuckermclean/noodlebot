@@ -92,7 +92,8 @@ Run by the loop for one of the bot's own open `spec/*` PRs that conflicts with `
 IDs `main` has since given to another node. Work in a worktree checked out on the PR's named branch
 (`spec/...`), not a detached HEAD (`nodes.py` takes "on a spec branch" from the branch name); change
 nothing else.
-1. `git fetch origin`, then merge `origin/main` into the branch: a merge commit, never a rebase, never a
+1. `git fetch origin`, bring the branch to `origin/<branch>` (a fast-forward; a leftover worktree may be behind),
+   then merge `origin/main` into the branch: a merge commit, never a rebase, never a
    force push. If the merge conflicts and needs no judgment, resolve it by keeping both sides: both
    graph rows, and main's header row with the branch's change put back in; leave no conflict markers.
    The renumbering in step 2 then fixes the duplicate ID. If a conflict needs a judgment (two edits to

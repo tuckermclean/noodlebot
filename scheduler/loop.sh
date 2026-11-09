@@ -286,7 +286,14 @@ start_update() {
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing PR #$n's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; PR #$n: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; PR #$n needs an update but has used 2 starts; nothing started"; return 1; }
-	[ -d "$wt" ] || git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
+	if [ -d "$wt" ]; then
+		# left by an earlier end without rc 0: bring it to the PR's current head, not mid-merge
+		{ git -C "$wt" merge --abort; git -C "$wt" checkout -q -f -B "$br" "origin/$br" &&
+			git -C "$wt" reset -q --hard "origin/$br" && git -C "$wt" clean -qfd; } 2>/dev/null ||
+			{ note "$saw; resetting the worktree of PR #$n failed"; return 1; }
+	else
+		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
+	fi
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended-update.md" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
@@ -309,7 +316,7 @@ except Exception:
 sys.exit(0 if any(i in m and m[i] != nm for i, nm in b.items()) else 1)' "$state/graph.main.yaml" "$state/graph.pr.yaml"
 }
 
-# next_update <saw>: the first bot spec/* PR that needs an update (CONFLICTING, or a clash of IDs with
+# next_update: every bot spec/* PR (one line each) that needs an update (CONFLICTING, or a clash of IDs with
 # main; UNKNOWN waits), has no FAILED and is not held by a finished update of the same main and head.
 next_update() {
 	local n br oid bot mg mainc
@@ -319,10 +326,9 @@ next_update() {
 		[ -e "$state/pr/$n/FAILED" ] && continue
 		[ "$(cat "$state/pr/$n/done" 2>/dev/null)" = "$mainc $oid" ] && continue
 		if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && graph_clash "$br"; }; then
-			echo "$n $br $mainc $oid"; return 0
+			echo "$n $br $mainc $oid"
 		fi
 	done <"$state/open-prs.tsv"
-	return 1
 }
 
 # cleanup_merged: a merged node's worktree is not needed again. Keep its evidence (out/node/<ID>)
@@ -442,10 +448,13 @@ tick() {
 		[ -z "$n" ] || { start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; }
 	fi
 	# A bot's spec PR that needs an update: one session at a time, sharing the triage's slot.
-	if [ -z "$triaging" ] && ! full && n=$(next_update); then
+	if [ -z "$triaging" ] && ! full; then
 		local un ub um uh
-		read -r un ub um uh <<<"$n"
-		start_update "$un" "$ub" "$um" "$uh" "$saw" && live+=("$pid $un") && triaging=$un
+		while read -r un ub um uh; do
+			[ -n "$un" ] || continue
+			# a failed start does not keep the later PRs from their turn
+			start_update "$un" "$ub" "$um" "$uh" "$saw" && { live+=("$pid $un"); triaging=$un; break; }
+		done < <(next_update)
 	fi
 
 	# Every ready node that has no session yet, in graph order (SCHED_MAX caps the sessions; 0: none).
