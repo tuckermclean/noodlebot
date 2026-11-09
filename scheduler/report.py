@@ -157,7 +157,8 @@ def whole(v):
 def cost_turns(log):
     """(latest total_cost_usd, turns summed over results) of the well-formed result events in the whole log, or None.
 
-    Streams the file line by line (constant memory) and parses only lines that mention a result."""
+    Streams the file line by line (memory is bounded by the longest line) and parses only lines that mention a
+    result. Any error while decoding, parsing or checking one line makes it a malformed line, which is skipped."""
     cost, turns, found = 0.0, 0, False
     try:
         with open(log, "rb") as f:
@@ -166,11 +167,13 @@ def cost_turns(log):
                     continue
                 try:
                     d = json.loads(raw.decode("utf-8", "replace"))
-                except ValueError:
+                    if not (isinstance(d, dict) and d.get("type") == "result" and num(d.get("total_cost_usd"))
+                            and whole(d.get("num_turns"))):
+                        continue
+                    c, t = d["total_cost_usd"], d["num_turns"]
+                except Exception:  # e.g. too deeply nested (RecursionError): a malformed line
                     continue
-                if (isinstance(d, dict) and d.get("type") == "result" and num(d.get("total_cost_usd"))
-                        and whole(d.get("num_turns"))):
-                    cost, turns, found = d["total_cost_usd"], turns + d["num_turns"], True
+                cost, turns, found = c, turns + t, True
     except OSError:
         return None
     return (cost, turns) if found else None
