@@ -20,7 +20,7 @@ import argparse, hashlib, json, os, re, subprocess, sys, time
 from datetime import datetime, timezone
 
 LABEL = "noodlebot-status"
-EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|found ~/STOP|throttle |usage limit")
+EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
 MAX_COMMENT = 60000
 
@@ -185,8 +185,10 @@ def body_for(a, sts, prs):
     items = []
     for n in nodes(state):
         if has(state, n, "FAILED"):
-            items.append("- **%s FAILED** (2 starts with no PR and no question). To retry, delete `%s`." %
-                         (n, os.path.join(tdir(state, n), "FAILED")))
+            path = os.path.join(tdir(state, n), "FAILED")
+            with open(path, errors="replace") as fh:
+                why = fh.readline().strip() or "no reason given"
+            items.append("- **%s FAILED**: %s. To retry, delete `%s`." % (n, why, path))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
             items.append("- %s: answered; resumes within seconds." % n)
         elif has(state, n, "QUESTION.md"):
