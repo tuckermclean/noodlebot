@@ -18,27 +18,42 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
 ## 1. Facts first (deterministic)
 - Work in a fresh clone or worktree, never in someone's checkout:
   `gh repo clone <owner/name> <dir>` (or `git fetch origin && git worktree add -b spec/adopt <dir> origin/<default branch>`).
-  Create the branch `spec/adopt` there. (A dry run on a local directory creates no clone and no
+  A real run's clone goes in `out/adopt/<name>/repo`. Create the branch `spec/adopt` there and leave
+  it local and unpushed until section 5; on resume, re-create it from the current default branch if
+  that moved while the owner answered. (A dry run on a local directory creates no clone and no
   branch and makes no commit; it stops with files in the output directory.)
+- Check up front that the run's credential can push and open a PR (e.g. `gh api repos/<owner/name>`).
+  An App installation token may report no permissions there: do not stop on that alone, only if a
+  real push is refused later.
 - Read the code layout, the README and any `AGENTS.md`/`CLAUDE.md`/docs, the existing tests, the CI
   workflows, and how to build, test and lint (Makefile, package scripts, workflow steps). Note which
-  commands pass today.
-- Read the open issues: `gh issue list --state open --json number,title,body,labels` and
-  `gh issue view <n> --comments` for the ones that matter. Note the work they ask for.
-- Write down what you found and what you could not tell. Do not invent intent from the code.
+  commands pass today. A command that cannot run here (heavy install, a database, Docker) is recorded
+  as "not run: <reason>" plus what CI shows. A documented command that is itself broken is a fact to
+  raise in section 2.
+- Compare the repository's test and fixture paths with the role guard's defaults (see section 3), e.g.
+  a `fixtures/` directory that holds application data, or `tests.py` files the defaults miss.
+- Read the issues, closed ones too, and merged PRs: they are the history of intent (section 2 item 3
+  needs them). `gh issue list --state all --json number,title,body,labels` and
+  `gh issue view <n> --comments` for the ones that matter. Note the work they ask for. With no issues
+  at all, the work list is asked for in section 2.
+- Write down what you found and what you could not tell in `FACTS.md` next to `QUESTION.md`, so a
+  resumed run has it. Do not invent intent from the code.
 
 ## 2. Ask the owner (QUESTION.md), then stop
 Write `QUESTION.md` with the questions only the owner can answer, numbered, each with your
-recommendation so a bare "yes" works. Ask what the code cannot show:
+recommendation so a bare "yes" works. A recommendation is a proposal, labelled as such, never a
+settled fact ("Do not invent intent" still holds). Keep `QUESTION.md` short enough to read on a phone
+(about 80 lines): the fewest questions that settle the plan. Ask what the code cannot show:
 1. scope and non-goals: what this repository is for and what it is not;
 2. priorities and order: which work comes first, which can wait (`track: now` / `later`);
 3. what is done and what is only planned (existing code that is half-built, issues already fixed);
 4. principles and constraints that every change must respect;
 5. open decisions that block work, with a default for each;
-6. anything in the facts that conflicts or is unclear.
+6. anything in the facts that conflicts or is unclear, including test or fixture paths that differ
+   from the guard's defaults and a documented command that is broken.
 `<name>` is the repository's name, or the directory's basename for a local directory.
-Put it in the run's output folder, `out/adopt/<name>/QUESTION.md` (the `--out <dir>` of a dry run:
-`<dir>/QUESTION.md`), and tell the owner where it is.
+Put it in the run's output folder, `out/adopt/<name>/QUESTION.md`, relative to the directory the
+skill is run from (the `--out <dir>` of a dry run: `<dir>/QUESTION.md`), and tell the owner where it is.
 Unattended, the run's own instructions for questions win. **Then stop**: no drafts before the owner's
 `ANSWER.md` exists (next to `QUESTION.md`, or the file given by `--answers`). On resume, read `ANSWER.md`; a question it leaves open
 becomes an open decision with your default, not a guess presented as settled.
@@ -61,10 +76,11 @@ Only after `ANSWER.md`. Order: the graph first, then the specs, so they agree.
   Purpose of the node that builds on it. Size nodes honestly (S under a day, M two or three, L more).
   Issues become nodes or criteria. A node drafted from an issue gets `**Resolves:** #<n>` right after
   its **Owns:** line, so the node's PR fixes it; this PR itself only says `Refs #N`.
-  Drafts name no repository, not even the plugin: refer to the plugin's skills and checker by role
-  and placeholder path (`<plugin dir>/...`).
+  Drafts name no repository (no owner/name of any, not even the plugin's own). They do name the
+  plugin's node skill directly as `/noodlebot:node <ID>` and the guard's config file as
+  `.noodlebot/roles.yaml`; the checker is `<plugin dir>/skills/node/check-regime.py`.
 - **`AGENTS.md`**, a "Building a node" section (add to an existing file, do not replace it):
-  authority order (`SPEC.md`, `docs/graph.yaml`, the node spec, then `AGENTS.md`); role agents: the
+  build a node with `/noodlebot:node <ID>`; authority order (`SPEC.md`, `docs/graph.yaml`, the node spec, then `AGENTS.md`); role agents: the
   plugin's tester, implementer and reviewer, unless the repository has its own; the spec checker
   (`python3 -I <plugin dir>/skills/node/check-regime.py`, PROBLEMS 0); the test, lint and CI commands
   that exist; the form of a red target (a command that exits non-zero before and 0 after); the test and
@@ -72,7 +88,7 @@ Only after `ANSWER.md`. Order: the graph first, then the specs, so they agree.
 - **The role guard's config** (`<plugin dir>/hooks/guard.py`: its docstring gives the file's location,
   its `DEFAULTS` the default globs, which treat `**/*.test.sh`, `**/tests/**`, `**/testdata/**`,
   `**/fixtures/**` etc. as tests) only if those defaults do not match the repository's test paths
-  (`tests:` and `specs:`, root-relative globs).
+  (`tests:` and `specs:`, root-relative globs), in `.noodlebot/roles.yaml` at the repository root.
 - **Deps follow Verify.** A node whose *Verify* relies on another node's change (a test runner, a
   fixture, a helper, a Makefile target) lists that node in `deps`; e.g. "make test runs tests/test_x.sh"
   needs the node that made `make test` run every test. Better still, write Verify lines that work on the
