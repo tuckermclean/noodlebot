@@ -109,6 +109,13 @@ txt = str((res or {}).get("result") or "") + " " + str((res or {}).get("subtype"
 sys.exit(0 if st != "allowed" or re.search(r"usage limit|rate limit|limit reached|hit your limit", txt, re.I) else 1)'
 }
 
+# bg_cut_off <dir>: the CLI said on session.stderr that it stopped background tasks still running
+# after the last turn (whatever the exit code). Such an end uses up no start.
+bg_cut_off() {
+	tail -c 100000 "$1/session.stderr" 2>/dev/null | tr '\n' ' ' |
+		grep -qiE 'background tasks? still running.*after the last turn.*stopping them'
+}
+
 # not_counted <dir>: give back the start a limit exit used.
 not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" $((n - 1)); }
 
@@ -124,6 +131,9 @@ ended() {
 	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif [[ " $open $merged " == *" $id "* ]]; then say "$saw; session $id ended (rc $rc) with a PR"
+	elif bg_cut_off "$d"; then
+		not_counted "$d"
+		say "$saw; session $id ended (rc $rc) with its background work cut off; start not counted"
 	elif [ "$rc" != 0 ] && limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; session $id stopped by the usage limit (rc $rc); start not counted, it resumes when the throttle opens"
@@ -141,6 +151,9 @@ triage_ended() {
 	local d=$1 saw=$2 rc=$3 n
 	n=$(basename "$d")
 	if [ -e "$d/QUESTION.md" ]; then say "$saw; triage of #$n ended (rc $rc) with QUESTION.md"
+	elif bg_cut_off "$d"; then
+		not_counted "$d"
+		say "$saw; triage of #$n ended (rc $rc) with its background work cut off; start not counted"
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
 		git -C "$clone" worktree remove --force "$wtroot/issue-$n" 2>/dev/null

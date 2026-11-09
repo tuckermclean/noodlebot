@@ -10,6 +10,7 @@ plugin=$(cd "$(dirname "$0")/../plugin" && pwd -P)
 cd "$wt" || { echo 2 >"$dir/session.rc"; exit 2; }
 unset ANTHROPIC_API_KEY GH_TOKEN GITHUB_TOKEN
 CLAUDE_CODE_OAUTH_TOKEN=$(cat "$HOME/.config/noodlebot/oauth-token"); export CLAUDE_CODE_OAUTH_TOKEN
+CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}; export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS
 claude -p "$prompt" --plugin-dir "$plugin" --permission-mode auto --permission-prompts none \
 	--output-format stream-json --verbose --append-system-prompt "$(cat "$dir/unattended.md")"
 rc=$?
