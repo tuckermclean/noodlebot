@@ -1158,5 +1158,46 @@ ok "U01-AC-6: and it closes again at the first run after the question is release
 ok "U01-AC-6: no node or triage issue other than the resolved ones was closed (triage issues 57 and 69 stay open)" test "$(ustateof 57)$(ustateof 69)" = openopen
 ok "U01-AC-6: the status issue is still open" test "$(ustateof "$ustatus")" = open
 
+# U01-AC-4 (S2b): an owner comment led by the ID of a unit that is not waiting is not the waiting unit's answer.
+mkspec V10 share-wait '#54'
+mkspec V11 share-done '#54'
+mkspec V12 lone-asker ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs3 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+ustate6=$tmp/ustate6
+mkdir -p "$ustate6/node/V10" "$ustate6/node/V11" "$ustate6/node/V12"
+: >"$ustate6/status.log"
+urun "$ustate6"
+printf 'Q1: wait?\nv10-unique-q-line\n' >"$ustate6/node/V10/QUESTION.md"
+printf 'Q1: done?\nv11-unique-q-line\n' >"$ustate6/node/V11/QUESTION.md"
+printf 'Q1: lone?\nv12-unique-q-line\n' >"$ustate6/node/V12/QUESTION.md"
+ev "session V10 ended (rc 0) with QUESTION.md" "$ustate6"
+ev "session V11 ended (rc 0) with QUESTION.md" "$ustate6"
+ev "session V12 ended (rc 0) with QUESTION.md" "$ustate6"
+urun "$ustate6"; urun "$ustate6"
+uowned 54 "V11: yes" https://x/s6-v11
+urun "$ustate6"; urun "$ustate6"
+ok "U01-AC-4: (precondition) V10 and V11 share issue 54 and V11 is answered by its ID prefix, V10 still waits" sh -c "[ \"\$(cat '$ustate6/node/V10/issue' 2>/dev/null)\$(cat '$ustate6/node/V11/issue' 2>/dev/null)\" = 5454 ] && grep -q '^V11: yes\$' '$ustate6/node/V11/ANSWER.md' && [ ! -e '$ustate6/node/V10/ANSWER.md' ]"
+uowned 54 "V11: actually no" https://x/s6-v11-again
+urun "$ustate6"; urun "$ustate6"; urun "$ustate6"
+ok "U01-AC-4: a comment led by the ID of a unit that is not waiting (V11, answered) is not recorded as the waiting unit's (V10) answer" sh -c "[ ! -e '$ustate6/node/V10/ANSWER.md' ] && ! grep -q 'actually no' '$ustate6/node/V11/ANSWER.md'"
+ok "U01-AC-4: and gets one reply over repeated runs, saying it is not recorded" test "$(ubcount 54 '\A(?!\*\*Stage:)Not recorded')" = 1
+ok "U01-AC-4: and no reaction" test "$(ureact https://x/s6-v11-again)" = 0
+h12=$(cat "$ustate6/node/V12/issue" 2>/dev/null)
+uowned "$h12" "Q12: go ahead" https://x/s6-q12
+urun "$ustate6"; urun "$ustate6"
+ok "U01-AC-4: a leading token that only looks like an ID (Q12:, no such unit) with one waiting unit is that unit's answer" sh -c "grep -q '^Q12: go ahead\$' '$ustate6/node/V12/ANSWER.md'"
+ok "U01-AC-4: and it gets one +1 reaction" test -n "$h12" -a "$(ureact https://x/s6-q12)" = 1
+
+# Risks (S2b): a spec-PR update task (state pr/<N>/) is not a unit and has no home issue.
+nis6=$(uq "len(db['issues'])")
+mkdir -p "$ustate6/pr/77"
+printf '2026-02-04T00:00:00Z second exit (rc 1) without finishing\npr77-detail\n' >"$ustate6/pr/77/FAILED"
+printf 'Q1: update?\npr77-unique-q-line\n' >"$ustate6/pr/77/QUESTION.md"
+urun "$ustate6"; urun "$ustate6"; urun "$ustate6"
+ok "Risks: a pr/<N> folder with FAILED and QUESTION.md creates no issue (no Build PR issue, issue count unchanged)" test "$(uq "len(db['issues'])")" = "$nis6" -a "$(uq "len([i for i in db['issues'].values() if 'PR #' in i['title']])")" = 0
+ok "Risks: and no pr/<N>/issue file is written" test ! -e "$ustate6/pr/77/issue"
+ok "Risks: and no comment (milestone or question) names PR #77 or its question" test "$(uq "len([c for c in db['comments'] if 'PR #77' in c['body'] or 'pr77-unique-q-line' in c['body']])")" = 0
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
