@@ -66,5 +66,26 @@ else
 	bad "A01-AC-2: example/ names no repository (cannot check: no example/)"
 fi
 
+# A01-AC-3 (stronger): order by headings, the stop for ANSWER.md, one PR
+ac3_check() { # $1 = SKILL.md path, $2 = label suffix
+	_f=$1
+	_h=$(awk 'NR==1&&/^---$/{fm=1;next} fm&&/^---$/{fm=0;next} fm{next} /^#+ /{print NR": "$0}' "$_f")
+	_q=$(printf '%s\n' "$_h" | grep 'QUESTION\.md' | head -n 1 | cut -d: -f1)
+	_d=$(printf '%s\n' "$_h" | grep -i 'draft' | head -n 1 | cut -d: -f1)
+	if [ -n "$_q" ]; then ok "A01-AC-3: a heading mentions QUESTION.md$2"; else bad "A01-AC-3: no heading mentions QUESTION.md$2"; fi
+	if [ -n "$_d" ]; then ok "A01-AC-3: a heading mentions drafts$2"; else bad "A01-AC-3: no heading mentions drafts$2"; fi
+	if [ -n "$_q" ] && [ -n "$_d" ]; then
+		if [ "$_q" -lt "$_d" ]; then ok "A01-AC-3: the QUESTION.md heading comes before the drafts heading$2"; else bad "A01-AC-3: the drafts heading (line $_d) comes before the QUESTION.md heading (line $_q)$2"; fi
+	fi
+	if [ -n "$_q" ]; then
+		_sec=$(awk -v s="$_q" 'NR<s{next} NR>s&&/^## /{exit} {print}' "$_f")
+		if printf '%s\n' "$_sec" | grep -qi 'stop' && printf '%s\n' "$_sec" | grep -q 'ANSWER\.md'; then ok "A01-AC-3: the QUESTION.md section stops until ANSWER.md exists$2"; else bad "A01-AC-3: the QUESTION.md section does not say to stop until ANSWER.md exists$2"; fi
+	else
+		bad "A01-AC-3: no QUESTION.md section to check for the stop$2"
+	fi
+	if grep -Eqi 'one (PR|pull request)' "$_f"; then ok "A01-AC-3: the skill opens one PR$2"; else bad "A01-AC-3: the skill does not say it opens one PR$2"; fi
+}
+if [ -f "$skill" ]; then ac3_check "$skill" ""; else bad "A01-AC-3: stronger checks cannot run: no SKILL.md"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
