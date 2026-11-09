@@ -1277,5 +1277,110 @@ ok "U01-AC-6: a new QUESTION.md of a unit whose home issue was closed by someone
 ok "U01-AC-6: and the question is posted there once, in full" test "$(ucontains "$z1" "$ustate8/node/Z01/QUESTION.md")" = 1
 ok "U01-AC-6: the reopened issue is not closed again by the loop and holds the start and the question only" test "$(unum "$z1")" = 2
 
+# U01-AC-3 "merged once" + U01-AC-9 (S3c, G1): a failed `gh pr list` leaves merged-prs.tsv empty (the loop truncates it first)
+# while subjects.txt + graph.yaml still show the merges; the node's merged milestone is not posted again, no issue is created,
+# nothing is closed or commented, once the file is back.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+db['issues']['81'] = {'number': 81, 'title': 'Seeded 81', 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_81'}
+json.dump(db, open('$udb', 'w'))"
+mkspec P01 p-one '#81'
+mkspec P02 p-two ''
+mkspec P03 p-three ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs5 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+ustate9=$tmp/ustate9
+mkdir -p "$ustate9/node/P01" "$ustate9/node/P02" "$ustate9/node/P03"
+cat >"$ustate9/graph.yaml" <<'GRAPH'
+nodes:
+  - {id: P01, name: p-one, deps: []}
+  - {id: P02, name: p-two, deps: []}
+  - {id: P03, name: p-three, deps: []}
+GRAPH
+: >"$ustate9/status.log"
+usetpulls '[]'
+rm -f "$tmp/ufail"
+# P03 was merged long ago: known from both sources at the seed run, no home issue
+echo "703 node/P03-p-three" >"$ustate9/merged-prs.tsv"
+echo "P03 p-three: long ago (#703)" >"$ustate9/subjects.txt"
+: >"$ustate9/closed-prs.tsv"
+urun "$ustate9"
+ev "started P01 (p-one) in /wt, pid 1, start 1 of 2" "$ustate9"
+ev "started P02 (p-two) in /wt, pid 2, start 1 of 2" "$ustate9"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+p1=$(cat "$ustate9/node/P01/issue" 2>/dev/null); p2=$(cat "$ustate9/node/P02/issue" 2>/dev/null)
+printf '701 node/P01-p-one\n702 node/P02-p-two\n703 node/P03-p-three\n' >"$ustate9/merged-prs.tsv"
+printf 'P01 p-one: it (#701)\nP02 p-two: it (#702)\nP03 p-three: long ago (#703)\n' >"$ustate9/subjects.txt"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+ok "U01-AC-3: (precondition G1) P01 (Resolves #81) and P02 (no Resolves line) each have one merged milestone naming their PR" test "$p1" = 81 -a -n "$p2" -a "$(ucount 81 '(?i)merged.*701|701.*merged')" -ge 1 -a "$(ucount "${p2:-0}" '(?i)merged.*702|702.*merged')" -ge 1
+ok "U01-AC-6: (precondition G1) P01's issue 81 is closed" test "$(ustateof 81)" = closed
+g1c=$(uq "len(db['comments'])"); g1i=$(uq "len(db['issues'])")
+g1m1=$(ucount 81 '(?i)\bmerged\b'); g1m2=$(ucount "${p2:-0}" '(?i)\bmerged\b')
+: >"$tmp/ucalls"
+: >"$ustate9/merged-prs.tsv"; : >"$ustate9/closed-prs.tsv"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+printf '701 node/P01-p-one\n702 node/P02-p-two\n703 node/P03-p-three\n' >"$ustate9/merged-prs.tsv"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+ok "U01-AC-3: a run with merged-prs.tsv empty (failed gh pr list) and the file restored post no second merged milestone for P01 (Resolves line)" test "$(ucount 81 '(?i)\bmerged\b')" = "$g1m1"
+ok "U01-AC-3: nor for P02 (no Resolves line)" test "$(ucount "${p2:-0}" '(?i)\bmerged\b')" = "$g1m2"
+ok "U01-AC-9: no issue is created (no Build issue for P03, merged long ago with no home issue)" test "$(uq "len(db['issues'])")" = "$g1i" -a "$(ubuilds 'Build P03 p-three')" = 0 -a ! -e "$ustate9/node/P03/issue"
+ok "U01-AC-9: no comment of any kind is added anywhere" test "$(uq "len(db['comments'])")" = "$g1c"
+ok "U01-AC-6: nothing is closed or reopened again (no PATCH of 81, of P02's home or of any issue but the status body)" test "$(upatches 81)" = 0 -a "$(upatches "${p2:-0}")" = 0 -a "$(grep -c '^PATCH' "$tmp/ucalls" || true)" -le 3
+
+# U01-AC-3 "the CI result once per PR head commit" (S3c, G2): a transient failure of the check-runs call (its message names the
+# path, and so the sha, which here holds 404 / 403) is retried; the CI result is posted once after it succeeds.
+mkspec Q01 q-one ''
+mkspec Q02 q-two ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs6 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+ustate10=$tmp/ustate10
+mkdir -p "$ustate10/node/Q01" "$ustate10/node/Q02"
+: >"$ustate10/status.log"
+usetpulls '[]'
+urun "$ustate10"
+ev "started Q01 (q-one) in /wt, pid 1, start 1 of 2" "$ustate10"
+ev "started Q02 (q-two) in /wt, pid 2, start 1 of 2" "$ustate10"
+urun "$ustate10"; urun "$ustate10"
+q1=$(cat "$ustate10/node/Q01/issue" 2>/dev/null); q2=$(cat "$ustate10/node/Q02/issue" 2>/dev/null)
+usetchecks c0404de '[{"name": "test", "status": "completed", "conclusion": "success"}]'
+usetchecks c0403de '[{"name": "test", "status": "completed", "conclusion": "failure"}]'
+usetpulls "[$(upull 604 node/Q01-q-one c0404de), $(upull 603 node/Q02-q-two c0403de)]"
+echo 'GET .*check-runs' >"$tmp/ufail"
+urun "$ustate10"
+urun "$ustate10"
+ok "U01-AC-3: (precondition G2) while the check-runs call fails no CI result is posted" test "$(ucount "${q1:-0}" '(?i)CI (passed|failed)')" = 0
+rm -f "$tmp/ufail"
+urun "$ustate10"; urun "$ustate10"; urun "$ustate10"
+ok "U01-AC-3: after a transient HTTP 502 on the check-runs call of a head commit whose sha holds 404, its CI result is posted once" test -n "$q1" -a "$(ucount "$q1" '(?i)CI passed')" = 1
+ok "U01-AC-3: likewise for a sha holding 403 (a failed result naming its failing check), once" test -n "$q2" -a "$(ucount "$q2" '(?is)CI failed.*test')" = 1
+ok "U01-AC-3: and the PR opened is still posted once on each" test "$(ucount "${q1:-0}" 'pull/604\b')" = 1 -a "$(ucount "${q2:-0}" 'pull/603\b')" = 1
+
+# U01-AC-9 (S3c, G3): the first run on an old report.json happens while the clone cannot be read; the issue of a node merged
+# before, already closed, is never commented on or patched by later runs with the clone readable.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+db['issues']['85'] = {'number': 85, 'title': 'Seeded 85', 'body': '', 'labels': [], 'state': 'closed', 'node_id': 'I_85'}
+json.dump(db, open('$udb', 'w'))"
+mkspec R01 r-one '#85'
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs7 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+urun_noclone() { env PATH="$ubin:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$1" --worktrees "$tmp/worktrees/repo" --clone "$tmp/no-such-clone" --owner owner 2>"$tmp/uerr"; }
+ustate11=$tmp/ustate11
+mkdir -p "$ustate11/node/R01"
+: >"$ustate11/status.log"
+usetpulls '[]'
+echo "801 node/R01-r-one" >"$ustate11/merged-prs.tsv"
+rmax=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$rmax" >"$ustate11/report.json"
+: >"$tmp/ucalls"
+urun_noclone "$ustate11"
+urun_noclone "$ustate11"
+urun "$ustate11"; urun "$ustate11"; urun "$ustate11"; urun "$ustate11"
+ok "U01-AC-9: with the clone unreadable at the first run, a node merged before and its closed Resolves issue (85) get no comment later" test "$(unum 85)" = 0
+ok "U01-AC-9: and no PATCH of it ever, and it stays closed" test "$(upatches 85)" = 0 -a "$(ustateof 85)" = closed
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
