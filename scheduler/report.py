@@ -25,7 +25,14 @@ Each run:
      `noodlebot-unit`. It is recorded in the unit's state folder (node/<ID>/issue, issue/<N>/issue). What was
      posted per unit is in report.json, so a failed post is retried on the next run and nothing is posted twice;
      the first run after this was added posts nothing for events, questions or FAILED from before;
-  6. rewrites the issue body: what waits on the owner, every running session and its latest narration,
+  6. posts PR milestones on a node's home issue, each once: the PR opened, the CI result per head commit (once all
+     its check runs completed), each `Fresh review (<verdict>)` PR comment's verdict, merged or closed without
+     merging (from the loop's merged-prs.tsv / closed-prs.tsv), a triage ended done (with its spec PR);
+     then closes the home issue, the Build issue and the Resolves issues of merged nodes (one comment naming the PR)
+     once every node resolving the issue is merged and none of its units holds it (open or unreleased question,
+     follow-up); a new QUESTION.md of a unit whose home issue is closed reopens that issue. Issues of triages are
+     never closed. Merged nodes and PRs from before this bookkeeping are only recorded, never commented on or closed;
+  7. rewrites the issue body: what waits on the owner, every running session and its latest narration,
      recent events. Body edits do not notify; comments do.
 On the first run it does not replay old comments or events. Any failure (a failed milestone post included,
 after the other work is done) exits non-zero; the loop logs it and carries on, and the next run picks up
@@ -602,6 +609,9 @@ def collect_starts(a, rs):
         what = event_text(raw.decode("utf-8", "replace").strip())[1]
         d = TRIAGE_DONE.match(what)
         if d:
+            if not getattr(a, "pulls_ok", True):  # its spec PR cannot be told: read this line again next run
+                end = line_off - off
+                break
             pr = next((p for p in getattr(a, "pulls", []) if re.match(r"spec/triage-%s-" % d.group(1)[1:],
                                                                       (p.get("head") or {}).get("ref") or "")), None)
             queue(a, rs, d.group(1), "done:%d" % line_off, "triage done",
@@ -678,10 +688,14 @@ def home_units(a):
 
 def finished(a, n):
     """A unit nothing more is expected from: no question, no session and, for a node, merged without a follow-up
-    in progress; a triage with no question. A new QUESTION.md makes it unfinished again."""
-    if held(a, n) or has(a.state, n, "session.pid"):
+    in progress; a triage once it ended done. A new QUESTION.md makes it unfinished again."""
+    if held(a, n) or has(a.state, n, "session.pid") or has(a.state, n, "FAILED"):
         return False
-    return n.startswith("#") or is_merged(a.state, n)
+    if n.startswith("#"):  # done: its done line was seen (queued or posted)
+        rs = getattr(a, "rs", None) or {}
+        return any(k.startswith("done:") for k in rs.get("units", {}).get(n, {}).get("done", [])) or \
+            any(m["task"] == n and m["key"].startswith("done:") for m in rs.get("pending", []))
+    return is_merged(a.state, n)
 
 
 def held(a, n):
@@ -697,12 +711,19 @@ def take_home_answers(a, rs, status_issue):
     a reply only when none is open, or several are and the comment does not start with one's ID."""
     seen = rs.setdefault("home", {})
     for issue, tasks in sorted(home_units(a).items()):
+        st = seen.get(str(issue))
+        for rid in list((st or {}).get("react", [])):  # a failed +1 is retried even when the unit is finished
+            try:
+                gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, rid), {"content": "+1"})
+                st["react"].remove(rid)
+                a.save()
+            except RuntimeError as e:
+                a.errors.append(str(e))
         tasks = [t for t in tasks if not finished(a, t)]
         if issue == status_issue or not tasks:
             continue
         units = rs.get("units", {})
         floor = min([units[t]["first_at"] for t in tasks if units.get(t, {}).get("first_at")] or [""])
-        st = seen.get(str(issue))
         try:
             since = (st or {}).get("since") or floor
             comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
@@ -713,12 +734,6 @@ def take_home_answers(a, rs, status_issue):
                     st["id"] = max([c["id"] for c in comments] or [0])
                     a.save()
                     continue
-            for rid in list(st.get("react", [])):
-                try:
-                    gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, rid), {"content": "+1"})
-                    st["react"].remove(rid)
-                except RuntimeError as e:
-                    a.errors.append(str(e))
             for c in sorted(comments, key=lambda c: c["id"]):
                 if c["id"] <= st["id"]:
                     continue
@@ -729,7 +744,10 @@ def take_home_answers(a, rs, status_issue):
                     pending = [t for t in tasks if t in waiting(a.state)]
                     opened = [t for t in pending if (units.get(t, {}).get("qc") or {}).get("key") ==
                               "question:" + mtime_key(os.path.join(tdir(a.state, t), "QUESTION.md"))]
-                    cands = [t for t in opened if (units[t]["qc"].get("at") or "") < c["created_at"]]
+                    def after(t):  # posted after the unit's question: by comment id when known, else by time
+                        qc = units[t]["qc"]
+                        return c["id"] > qc["id"] if isinstance(qc.get("id"), int) else (qc.get("at") or "") < c["created_at"]
+                    cands = [t for t in opened if after(t)]
                     m = ID_PREFIX.match(text)
                     if not pending:
                         comment(a, issue, "Not recorded as an answer: no question is waiting on this issue.")
@@ -738,7 +756,7 @@ def take_home_answers(a, rs, status_issue):
                                 "Start the reply with the ID of the one you answer, e.g. `%s: ...`." %
                                 (", ".join(cands), cands[0]))
                     elif cands and m and m.group(1) in nodes(a.state) and m.group(1) not in cands:
-                        comment(a, issue, "Not recorded as an answer: %s is not waiting on a question (waiting: %s)." %
+                        comment(a, issue, "Not recorded as an answer: %s has no question waiting on this issue (waiting here: %s)." %
                                 (m.group(1), ", ".join(cands)))
                     elif cands:
                         node = m.group(1) if m and m.group(1) in cands else cands[0]
@@ -896,18 +914,25 @@ def closing_candidates(a, rs):
 
 
 def reopen(a, rs, issue):
-    c = (rs.get("closed") or {}).get(str(issue))
-    if c is None:
-        return
-    if c.get("closed"):
+    """Make a unit's home issue open for its new question (closed by the loop, or by someone else)."""
+    if gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "open"})
-    del rs["closed"][str(issue)]
-    a.save()
+    if (rs.get("closed") or {}).pop(str(issue), None) is not None:
+        a.save()
+
+
+def closable(a, issue, res, merged, homed):
+    """True when every node resolving the issue is merged and no unit of it (a resolver or one homed there) holds it."""
+    units = homed.get(issue, [])
+    resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in units if NODE.match(t)}
+    return resolvers <= merged and not any(held(a, t) for t in resolvers | set(units))
 
 
 def close_issues(a, rs):
     """Close the home issue and Resolves issues of the merged nodes, each with one comment naming the PR(s), once every node
-    resolving the issue is merged and no unit homed there holds it open; the first run after that holds."""
+    resolving the issue is merged and no unit holds it open; the first run after that holds."""
+    if not rs.get("pr_seed") or not git_lines(a.clone, "rev-parse", "--verify", "-q", "origin/main"):
+        return  # not yet seeded, or the specs cannot be read (a Resolves issue could be closed too early)
     cands, res = closing_candidates(a, rs)
     if not cands:
         return
@@ -919,10 +944,9 @@ def close_issues(a, rs):
         c = closed.get(str(issue)) or {}
         if c.get("closed"):
             continue
-        units = homed.get(issue, [])
-        resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in units if NODE.match(t)}
-        if not resolvers <= merged or any(held(a, t) for t in units):
+        if not closable(a, issue, res, merged, homed):
             continue
+        resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in homed.get(issue, []) if NODE.match(t)}
         try:
             if not c.get("commented"):
                 prs = sorted({n for k in resolvers for n in nums.get(k, [])})
@@ -953,25 +977,34 @@ def post_prs(a, rs, pulls):
             if m and pr.get("number"):
                 yield m.group(1), pr
 
-    def reviews(pr):
-        for c in sorted(gh("GET", "repos/%s/issues/%s/comments?per_page=100" % (a.repo, pr["number"])) or [],
-                        key=lambda c: c["id"]):
-            m = re.match(r"\W*Fresh review \((\w+)\)", c.get("body") or "")
-            if m:
-                yield c, m.group(1)
+    def comments_of(pr):
+        """The PR's comments since the cursor (all on the seed run), in order."""
+        since = (rs.get("pr_since") or {}).get(str(pr["number"]))
+        return sorted(gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
+                         (a.repo, pr["number"], "&since=" + since if since else "")) or [], key=lambda c: c["id"])
+
+    def verdict(c):  # a quoted line ("> Fresh review (...)") is not a verdict
+        m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c.get("body") or "")
+        return m and m.group(1)
 
     if not rs.get("pr_seed"):
         try:
             for t, pr in node_prs():
                 keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head"]["sha"]] if (pr.get("head") or {}).get("sha") else [])
-                keys += ["review:%s" % c["id"] for c, _ in reviews(pr)]
+                cs = comments_of(pr)
+                keys += ["review:%s" % c["id"] for c in cs if verdict(c)]
+                if cs:
+                    rs.setdefault("pr_since", {})[str(pr["number"])] = max(c.get("created_at", "") for c in cs)
                 done_of(t).extend(k for k in keys if k not in done_of(t))
             for t, key, _, _ in pr_events(a):
                 if key not in done_of(t):
                     done_of(t).append(key)
-            closed = rs.setdefault("closed", {})
-            for i in closing_candidates(a, rs)[0]:
-                closed.setdefault(str(i), {"seed": True, "closed": False})
+            closed = rs.setdefault("closed", {})  # closable now: merged before, so the loop leaves it alone
+            cands, res = closing_candidates(a, rs)
+            merged, homed = merged_ids(a.state, graph_nodes(a.state)), home_units(a)
+            for i in cands:
+                if closable(a, i, res, merged, homed):
+                    closed.setdefault(str(i), {"seed": True, "closed": True})
             rs["pr_seed"] = True
         except Exception as e:
             a.errors.append(str(e))
@@ -990,7 +1023,7 @@ def post_prs(a, rs, pulls):
         n = pr["number"]
         post(t, "pr:%s" % n, "PR #%s open, final review running" % n, "The pull request: %s" % pr_link(pr))
         sha = (pr.get("head") or {}).get("sha")
-        if sha and "ci:" + sha not in done_of(t):
+        if sha and "ci:" + sha not in done_of(t) and sha not in rs.get("ci_off", []):
             try:
                 runs = (gh("GET", "repos/%s/commits/%s/check-runs?per_page=100" % (a.repo, sha)) or {}).get("check_runs") or []
                 if runs and all(r.get("status") == "completed" for r in runs):
@@ -1001,11 +1034,20 @@ def post_prs(a, rs, pulls):
                     else:
                         post(t, "ci:" + sha, "PR #%s: CI passed" % n, "All %d checks on %s passed." % (len(runs), sha[:7]))
             except Exception as e:
-                a.errors.append(str(e))
+                if "403" in str(e) or "404" in str(e):  # check runs not readable for this commit: log once, stop asking
+                    rs.setdefault("ci_off", []).append(sha)
+                    print("report.py: no CI result for %s: %s" % (sha[:7], e), file=sys.stderr)
+                else:
+                    a.errors.append(str(e))
         try:
-            for c, verdict in reviews(pr):
-                post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, verdict),
-                     "Verdict: %s%s" % (verdict, " (%s)" % c["html_url"] if c.get("html_url") else ""))
+            for c in comments_of(pr):
+                v = verdict(c)
+                if v:
+                    post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, v),
+                         "Verdict: %s%s" % (v, " (%s)" % c["html_url"] if c.get("html_url") else ""))
+                    if "review:%s" % c["id"] not in done_of(t):
+                        break  # its post failed: read from this comment again next run
+                rs.setdefault("pr_since", {})[str(n)] = c.get("created_at", "")
         except Exception as e:
             a.errors.append(str(e))
     for t, key, kind, n in pr_events(a):
@@ -1063,11 +1105,12 @@ def main():
             old = gh("GET", "repos/%s/issues/%s/comments?per_page=100" % (a.repo, issue)) or []
             rs["comment_id"] = max([c["id"] for c in old] or [0])
         save()
-    a.pulls, pulls_err = [], None
+    a.rs = rs
+    a.pulls, pulls_err, a.pulls_ok = [], None, True
     try:
         a.pulls = gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []
     except Exception as e:  # raised after the work below, as before
-        pulls_err = e
+        pulls_err, a.pulls_ok = e, False
     try:
         take_answers(a, rs, issue)
         take_home_answers(a, rs, issue)
