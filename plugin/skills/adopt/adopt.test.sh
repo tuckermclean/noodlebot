@@ -20,7 +20,7 @@ if [ "$have" -eq 1 ]; then ok "A01-AC-1: plugin/skills/adopt/SKILL.md exists"; e
 fm=$(awk 'NR==1&&/^---$/{inf=1;next} inf&&/^---$/{exit} inf{print}' "$f")
 if printf '%s\n' "$fm" | grep -q '^name: adopt$'; then ok "A01-AC-1: frontmatter has name: adopt (/noodlebot:adopt)"; else bad "A01-AC-1: frontmatter has no 'name: adopt' line"; fi
 if [ "$have" -eq 1 ]; then
-	hit=$(sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' "$f" | grep -in -e themonolith -e monolith -e strange-company -e qa-lab -e linux-live-iso-factory -e 'tuckermclean/' -e noodlebot | head -n 3)
+	hit=$(sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' "$f" | grep -in -e themonolith -e monolith -e strange-company -e qa-lab -e linux-live-iso-factory -e 'tuckermclean/' -e noodlebot | head -n 3)
 	if [ -z "$hit" ]; then ok "A01-AC-1: SKILL.md names no repository"; else bad "A01-AC-1: SKILL.md names a repository: $hit"; fi
 	hit=$(grep -in 'github\.com/[A-Za-z0-9_.-]*/[A-Za-z0-9_.-]' "$f" | head -n 3)
 	if [ -z "$hit" ]; then ok "A01-AC-1: SKILL.md has no github.com/<owner>/<name> URL"; else bad "A01-AC-1: SKILL.md has a concrete GitHub slug: $hit"; fi
@@ -60,7 +60,7 @@ fi
 if printf '%s\n' "$rep" | grep -q 'PROBLEMS 0$'; then ok "A01-AC-2: check-regime.py reports PROBLEMS 0 on example/"; else bad "A01-AC-2: check-regime.py does not report PROBLEMS 0 on example/: $(printf '%s\n' "$rep" | tail -n 1)"; fi
 if printf '%s\n' "$rep" | grep -Eq '[1-9][0-9]* criteria'; then ok "A01-AC-2: the checker counts at least one criterion"; else bad "A01-AC-2: the checker counts no criterion on example/"; fi
 if [ -d "$ex" ]; then
-	hit=$(grep -rin -e themonolith -e monolith -e strange-company -e qa-lab -e linux-live-iso-factory -e 'tuckermclean/' -e noodlebot "$ex" | head -n 3)
+	hit=$(find "$ex" -type f -exec cat {} + | sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' | grep -in -e themonolith -e monolith -e strange-company -e qa-lab -e linux-live-iso-factory -e 'tuckermclean/' -e noodlebot | head -n 3)
 	if [ -z "$hit" ]; then ok "A01-AC-2: example/ names no repository"; else bad "A01-AC-2: example/ names a repository: $hit"; fi
 else
 	bad "A01-AC-2: example/ names no repository (cannot check: no example/)"
@@ -86,6 +86,18 @@ ac3_check() { # $1 = SKILL.md path, $2 = label suffix
 	if grep -Eqi 'one (PR|pull request)' "$_f"; then ok "A01-AC-3: the skill opens one PR$2"; else bad "A01-AC-3: the skill does not say it opens one PR$2"; fi
 }
 if [ -f "$skill" ]; then ac3_check "$skill" ""; else bad "A01-AC-3: stronger checks cannot run: no SKILL.md"; fi
+
+# ---------- A01 S3 (Q2): name the node skill and the guard config directly ----------
+if [ "$have" -eq 1 ] && grep -qF '/noodlebot:node <ID>' "$f"; then ok "A01-AC-1: SKILL.md tells drafts to name the node skill as /noodlebot:node <ID>"; else bad "A01-AC-1: SKILL.md does not contain the literal text /noodlebot:node <ID>"; fi
+if [ "$have" -eq 1 ] && grep -qF '.noodlebot/roles.yaml' "$f"; then ok "A01-AC-1: SKILL.md names the guard config .noodlebot/roles.yaml"; else bad "A01-AC-1: SKILL.md does not name the guard config .noodlebot/roles.yaml"; fi
+if [ -f "$ex/AGENTS.md" ] && grep -qF '/noodlebot:node' "$ex/AGENTS.md"; then ok "A01-AC-2: example/AGENTS.md mentions /noodlebot:node"; else bad "A01-AC-2: example/AGENTS.md does not mention /noodlebot:node"; fi
+# the relaxed filter (same sed+grep as above) still catches a repository mention
+for line in 'see tuckermclean/noodlebot' 'the noodlebot repository' 'run /noodlebot:node and see noodlebot'; do
+	hit=$(printf '%s\n' "$line" | sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' | grep -in -e themonolith -e monolith -e strange-company -e qa-lab -e linux-live-iso-factory -e 'tuckermclean/' -e noodlebot | head -n 3)
+	if [ -n "$hit" ]; then ok "A01-AC-1/2: relaxed filter still catches: $line"; else bad "A01-AC-1/2: relaxed filter misses a repository mention: $line"; fi
+done
+hit=$(printf '%s\n' 'use /noodlebot:node <ID> and .noodlebot/roles.yaml' | sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' | grep -in -e tuckermclean/ -e noodlebot | head -n 3)
+if [ -z "$hit" ]; then ok "A01-AC-1/2: relaxed filter lets the skill and config names through"; else bad "A01-AC-1/2: relaxed filter rejects the skill/config names: $hit"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
