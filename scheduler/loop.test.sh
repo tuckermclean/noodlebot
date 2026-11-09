@@ -523,5 +523,175 @@ s01ok "S01-AC-5: and no FAILED is written for B05" test ! -e "$state/node/B05/FA
 kill "$loop3s"; wait "$loop3s" 2>/dev/null
 s01_cleanup
 
+# ---- T02: escalation: the newest session is paused while the throttle holds and the 5-hour window is
+# projected to hit 100% well before its reset; the task resumes once the throttle opens ----
+# Own root $tmp/data5, repository o/proj5 (nodes C01..C03, no deps; issue #7 labelled noodlebot), and a
+# second repository "other" under the same state root with a live session Q01 of its own (no loop runs for
+# it). The fake claude's first run of a task commits in its worktree (nodes), starts a child (sleep) of
+# its own and runs until stopped; its second run writes QUESTION.md and exits 0. The plan's usage comes
+# from the "feed" directory's session.jsonl (a repository-less state dir that usage.py reads):
+#   esc    5-hour window at 99% with 1 h left (projected at 100% in minutes), 7-day on pace
+#   hold   a new 5-hour window at 1%, 7-day window 90% used at 1/7 of the week: holds, no escalation
+#   open   a new 5-hour window at 1%, 7-day on pace
+# Wording the tests expect in status.log: a pause event contains "paus", the task (node ID, or #N for a
+# triage) and "escalat" (the reason), and neither "resumed" nor "running:"; a resume is the start's own
+# event: it contains "resumed", the task and "start 1 of 2".
+T02=$tmp/t02; export T02
+data5=$tmp/data5 st5=$tmp/data5/state/proj5 wt5=$tmp/data5/worktrees/proj5; export st5
+mkdir -p "$T02/other" "$tmp/bin5" "$tmp/nb5/scheduler" "$tmp/nb5/plugin" "$data5/repos" "$data5/state/feed/node/F01"
+cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
+	"$src"/issues.py "$src"/unattended-triage.md "$src"/usage.py "$tmp/nb5/scheduler/"
+echo '[{"number": 7}]' >"$T02/issues.json"
+git init -q -b main "$tmp/work5"; mkdir -p "$tmp/work5/docs"
+{ echo 'nodes:'; for i in 1 2 3; do echo "  - {id: C0$i, name: n$i, deps: []}"; done; } >"$tmp/work5/docs/graph.yaml"
+git -C "$tmp/work5" add -A && git -C "$tmp/work5" -c user.name=t -c user.email=t@t commit -q -m init
+git clone -q --bare "$tmp/work5" "$tmp/remote5.git"
+git clone -q "$tmp/remote5.git" "$data5/repos/proj5"
+cat >"$tmp/bin5/gh" <<'XEOF'
+#!/bin/sh
+case " $* " in
+*"/issues?labels=noodlebot"*) cat "$T02/issues.json" ;;
+*"/events"*) echo '[{"event": "labeled", "label": {"name": "noodlebot"}, "actor": {"login": "o"}}]' ;;
+esac
+exit 0
+XEOF
+cat >"$tmp/bin5/claude" <<'XEOF'
+#!/bin/sh
+id=${2##* }
+n=$(( $(cat "$T02/runs.$id" 2>/dev/null || echo 0) + 1 )); echo $n >"$T02/runs.$id"
+case $2 in
+/noodlebot:triage*) d=$st5/issue/$id ;;
+*) d=$st5/node/$id ;;
+esac
+if [ "$n" -ge 2 ]; then echo "Q1: after the pause" >"$d/QUESTION.md"; exit 0; fi
+case $2 in /noodlebot:triage*) ;; *)
+	echo work >"work-$id.txt"; git add "work-$id.txt"; git -c user.name=t -c user.email=t@t commit -qm "work $id" ;;
+esac
+sleep 300 & echo $! >"$T02/child.$id.$n"
+while :; do sleep 0.2; done
+XEOF
+cat >"$T02/other/run-session.sh" <<'XEOF'
+#!/bin/sh
+sleep 300 &
+while :; do sleep 0.2; done
+XEOF
+chmod +x "$tmp/bin5/gh" "$tmp/bin5/claude"
+t02_cleanup() {
+	local f
+	for f in "$st5"/node/*/session.pid "$st5"/issue/*/session.pid "$data5"/state/other/node/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
+	for f in "$T02"/child.*; do [ -e "$f" ] && kill -KILL "$(cat "$f")" 2>/dev/null; done
+	return 0
+}
+# shellcheck disable=SC2154 # p is the trap's own loop variable
+trap 'for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done; s01_cleanup; t02_cleanup; pkill -f "$tmp/" 2>/dev/null; rm -rf "$tmp"' EXIT
+t02ok() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
+loop5() {   # loop5 <tick> [VAR=value...]
+	local t=$1; shift
+	env NOODLEBOT_DATA=$data5 PATH=$tmp/bin5:$PATH SCHED_REPORT=0 SCHED_TICK=$t SCHED_POLL=0.2 "$@" \
+		bash "$tmp/nb5/scheduler/loop.sh" o/proj5 >>"$tmp/t02-loop.out" 2>&1 &
+	pids+=("$!"); lp5=$!
+}
+stop5() { kill "$lp5" 2>/dev/null; wait "$lp5" 2>/dev/null; sleep 0.3; }
+feed() {   # feed <5h util> <5h resetsAt> <7d util> <7d resetsAt>
+	printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":%s,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":%s,"resetsAt":%s,"status":"allowed"}}}}\n' \
+		"$1" "$2" "$3" "$4" >>"$data5/state/feed/node/F01/session.jsonl"
+}
+pev() { grep -i paus "$st5/status.log" | grep -viE 'resumed|running:' | grep -cF -- "$1"; }
+rev() { grep -i resumed "$st5/status.log" | grep -cF -- "$1"; }
+pev_is() { [ "$(pev "$1")" = "$2" ]; }
+rev_is() { [ "$(rev "$1")" = "$2" ]; }
+pg5() { cat "$st5/$1/session.pid"; }
+t02runs() { cat "$T02/runs.$1" 2>/dev/null || echo 0; }
+all_up() { grp_up "$pC1" && grp_up "$pC2" && grp_up "$pC3" && grp_up "$pT7"; }
+no_pause_events() { ! grep -i paus "$st5/status.log" | grep -viE 'resumed|running:' | grep -q .; }
+usage_holds() { grep -q '"hold": true' "$data5/state/usage.json"; }
+t0=$(date +%s)
+
+# Four sessions start with an open throttle (no readings yet).
+loop5 2
+t02ok "T02 setup: three nodes and a triage run, each with a child of its own" waitf 25 sh -c "[ \$(ls '$T02'/child.C0[1-3].1 '$T02'/child.7.1 2>/dev/null | wc -l) = 4 ]"
+pC1=$(pg5 node/C01) pC2=$(pg5 node/C02) pC3=$(pg5 node/C03) pT7=$(pg5 issue/7)
+cC3=$(cat "$T02/child.C03.1" 2>/dev/null) cT7=$(cat "$T02/child.7.1" 2>/dev/null)
+t02ok "T02 setup: a session's child is in the session's process group" sh -c "[ \"\$(ps -o pgid= -p '$cC3' | tr -d ' ')\" = '$pC3' ]"
+stop5
+# Distinct pid-file times, newest first: Q01 (other repository), C03, #7, C02, C01.
+mkdir -p "$data5/state/other/node/Q01"
+setsid sh "$T02/other/run-session.sh" "$tmp" "$data5/state/other/node/Q01" "/node Q01" </dev/null >/dev/null 2>&1 &
+pQ=$!; echo "$pQ" >"$data5/state/other/node/Q01/session.pid"
+touch -d "@$((t0 - 60))" "$st5/node/C01/session.pid"; touch -d "@$((t0 - 50))" "$st5/node/C02/session.pid"
+touch -d "@$((t0 - 40))" "$st5/issue/7/session.pid"; touch -d "@$((t0 - 30))" "$st5/node/C03/session.pid"
+touch -d "@$((t0 - 10))" "$data5/state/other/node/Q01/session.pid"
+t02ok "T02 setup: the other repository's session is alive" grp_up "$pQ"
+
+# T02-AC-5: no running session is stopped for usage with escalation off, the throttle off, or the throttle open.
+feed 0.99 $((t0 + 3600)) 0.0 $((t0 + 5 * 86400))
+rm -f "$data5/state/other/node/Q01/session.pid"   # no foreign session in the way: the newest is this loop's own
+loop5 2 SCHED_ESCALATE=0
+sleep 4.5
+t02ok "T02 setup: the throttle holds on the 5-hour window" usage_holds
+t02ok "T02-AC-5: SCHED_ESCALATE=0: no running session is stopped" all_up
+t02ok "T02-AC-5: SCHED_ESCALATE=0: no pause event" no_pause_events
+stop5
+loop5 2 SCHED_THROTTLE=0
+sleep 4.5
+t02ok "T02-AC-5: SCHED_THROTTLE=0: no running session is stopped" all_up
+t02ok "T02-AC-5: SCHED_THROTTLE=0: no pause event" no_pause_events
+stop5
+loop5 2 USAGE_5H_LIMIT=9.99
+sleep 4.5
+t02ok "T02-AC-5: the throttle open while --escalate would say escalate (USAGE_5H_LIMIT=9.99): no running session is stopped" all_up
+t02ok "T02-AC-5: the throttle open while --escalate would say escalate: no pause event" no_pause_events
+stop5
+
+# T02-AC-3: the newest live session under the state root is the other repository's.
+echo "$pQ" >"$data5/state/other/node/Q01/session.pid"; touch -d "@$((t0 - 10))" "$data5/state/other/node/Q01/session.pid"
+loop5 3
+t02ok "T02 setup: the throttle engages while escalation is called for" waitf 8 sh -c "grep -q 'throttle engaged' '$st5/status.log'"
+sleep 4
+t02ok "T02-AC-3: a newer session of another repository blocks the stop: none of this loop's sessions is stopped" all_up
+t02ok "T02-AC-3: and no pause event is written" no_pause_events
+t02ok "T02-AC-3: the other repository's session is untouched" grp_up "$pQ"
+
+# T02-AC-2: once that session is gone, this loop pauses its newest, C03, and only it.
+kill -KILL -- "-$pQ" 2>/dev/null
+t02ok "T02-AC-2: the newest session, C03, is stopped (its process group is gone)" waitf 6 grp_gone "$pC3"
+t02ok "T02-AC-2: and its child with it" waitf 2 dead "$cC3"
+sleep 1.5
+t02ok "T02-AC-2: only one session per tick: the others still run a moment later" sh -c "$(declare -f grp_gone grp_up); grp_up $pC1 && grp_up $pC2 && grp_up $pT7"
+t02ok "T02-AC-2: one status-log event names the task" pev_is C03 1
+t02ok "T02-AC-2: and gives the reason (escalat...)" sh -c "grep -i paus '$st5/status.log' | grep -F C03 | grep -qi escalat"
+t02ok "T02-AC-2: its start is given back" test "$(cat "$st5/node/C03/starts" 2>/dev/null)" = 0
+t02ok "T02-AC-2: and it is not held with FAILED" test ! -e "$st5/node/C03/FAILED"
+t02ok "T02-AC-4: the paused node's worktree remains" test -d "$wt5/C03"
+t02ok "T02-AC-4: its committed work is still on its branch" sh -c "git -C '$data5/repos/proj5' log --format=%s node/C03-n3 | grep -qx 'work C03'"
+t02ok "T02-AC-4: and in its worktree" test -f "$wt5/C03/work-C03.txt"
+t02ok "T02-AC-2: the next tick stops the next newest, the triage of #7" waitf 6 grp_gone "$pT7"
+t02ok "T02-AC-2: and its child with it" waitf 2 dead "$cT7"
+# escalation is no longer called for, but the throttle still holds (7-day window ahead of pace)
+feed 0.01 $((t0 + 7200)) 0.9 $((t0 + 6 * 86400))
+t02ok "T02-AC-2: one status-log event names the triage" pev_is '#7' 1
+t02ok "T02-AC-2: and gives the reason (escalat...)" sh -c "grep -i paus '$st5/status.log' | grep -F '#7' | grep -qi escalat"
+t02ok "T02-AC-4: the paused triage's worktree remains" test -d "$wt5/issue-7"
+t02ok "T02-AC-2: the triage's start is given back" test "$(cat "$st5/issue/7/starts" 2>/dev/null)" = 0
+sleep 4.5
+t02ok "T02 setup: the throttle still holds, without escalation" usage_holds
+t02ok "T02-AC-2: once escalation is no longer called for, no further session is stopped" sh -c "$(declare -f grp_gone grp_up); grp_up $pC1 && grp_up $pC2"
+t02ok "T02-AC-2: and no further pause event is written" sh -c "[ \$(grep -i paus '$st5/status.log' | grep -viE 'resumed|running:' | grep -cE 'C0[12]') = 0 ]"
+t02ok "T02-AC-4: the paused tasks do not start while the throttle holds" sh -c "[ '$(t02runs C03)' = 1 ] && [ '$(t02runs 7)' = 1 ]"
+
+# T02-AC-4: the throttle opens; the paused tasks start at the next tick, no start used.
+feed 0.01 $((t0 + 10800)) 0.01 $((t0 + 7 * 86400))
+t02ok "T02-AC-4: the paused node starts again at the first tick after the throttle opens" waitf 6 sh -c "[ \$(cat '$T02/runs.C03') = 2 ]"
+t02ok "T02-AC-4: and the paused triage" waitf 6 sh -c "[ \$(cat '$T02/runs.7') = 2 ]"
+sleep 1
+t02ok "T02-AC-4: one status-log event names the node as resumed" rev_is C03 1
+t02ok "T02-AC-4: it is a start with the same count as before the pause (start 1 of 2)" sh -c "grep -i resumed '$st5/status.log' | grep -F C03 | grep -q 'start 1 of 2'"
+t02ok "T02-AC-4: one status-log event names the triage as resumed" rev_is '#7' 1
+t02ok "T02-AC-4: it is start 1 of 2 too" sh -c "grep -i resumed '$st5/status.log' | grep -F '#7' | grep -q 'start 1 of 2'"
+t02ok "T02-AC-4: the resumed node saw its committed work" test -f "$wt5/C03/work-C03.txt"
+t02ok "T02-AC-4: its branch still holds the commit" sh -c "git -C '$data5/repos/proj5' log --format=%s node/C03-n3 | grep -qx 'work C03'"
+stop5
+t02_cleanup
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
