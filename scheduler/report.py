@@ -31,7 +31,8 @@ Each run:
      then closes the home issue, the Build issue and the Resolves issues of merged nodes (one comment naming the PR)
      once every node resolving the issue is merged and none of its units holds it (open or unreleased question,
      follow-up); a new QUESTION.md of a unit whose home issue is closed reopens that issue. Issues of triages are
-     never closed. Merged nodes and PRs from before this bookkeeping are only recorded, never commented on or closed;
+     never closed. Merged nodes and PRs from before this bookkeeping are only recorded, never commented on or closed
+     (recorded at the first run whose merged-prs.tsv / closed-prs.tsv are readable; until then none of it is posted);
   7. rewrites the issue body: what waits on the owner, every running session and its latest narration,
      recent events. Body edits do not notify; comments do.
 On the first run it does not replay old comments or events. Any failure (a failed milestone post included,
@@ -888,8 +889,17 @@ def subject_numbers(a):
 
 
 def merges_unknown(a):
-    """True when merged-prs.tsv is empty although merges are known from the subjects: the loop's gh pr list failed this tick."""
-    return not tsv(a, "merged-prs.tsv") and bool(merged_ids(a.state, graph_nodes(a.state)))
+    """True when merged-prs.tsv is empty although merges are known: from the subjects, or from a merged PR in closed-prs.tsv
+    (a list made after it in the same tick, so left from an earlier one): the loop's gh pr list failed this tick."""
+    if tsv(a, "merged-prs.tsv"):
+        return False
+    return any(len(w) > 3 and w[3] == "true" for w in tsv(a, "closed-prs.tsv")) or \
+        bool(merged_ids(a.state, graph_nodes(a.state)))
+
+
+def closed_unknown(a):
+    """True when closed-prs.tsv is empty although merges are known (it lists the merged PRs too): its gh pr list failed."""
+    return not tsv(a, "closed-prs.tsv") and bool(merged_ids(a.state, graph_nodes(a.state)))
 
 
 def pr_events(a, rs=None):
@@ -966,7 +976,7 @@ def close_issues(a, rs):
     if not cands:
         return
     merged = merged_ids(a.state, graph_nodes(a.state))
-    nums = merged_numbers(a)
+    nums, subj = merged_numbers(a), subject_numbers(a)
     closed = rs.setdefault("closed", {})
     homed = home_units(a)
     for issue in sorted(cands):
@@ -978,9 +988,11 @@ def close_issues(a, rs):
         resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in homed.get(issue, []) if NODE.match(t)}
         try:
             if not c.get("commented") and gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
-                c = closed[str(issue)] = {"commented": True}  # already closed by someone: no comment
+                closed[str(issue)] = {"closed": True, "by_other": True}  # closed by someone already: left as they closed it
+                a.save()
+                continue
             if not c.get("commented"):
-                prs = sorted({n for k in resolvers for n in nums.get(k, [])})
+                prs = sorted({n for k in resolvers for n in nums.get(k) or ([subj[k]] if subj.get(k) else [])})
                 what = ", ".join("PR #%d" % n for n in prs) if prs else "the node's PR"
                 comment(a, issue, "**Stage:** merged, closing this issue\n\nMerged: %s. Closing this issue." % what)
                 c = closed[str(issue)] = {"commented": True}
@@ -993,9 +1005,10 @@ def close_issues(a, rs):
 
 
 def seed_closing(a, rs):
-    """Record the issues closable now (merged before this bookkeeping) as closed, so the loop leaves them alone; only
-    once origin/main of the clone is readable, else a Resolves issue would be missed."""
-    if rs.get("close_seed") or not rs.get("pr_seed") or merges_unknown(a):
+    """Record the issues closable now whose merged nodes were all merged at the merge seed (before this bookkeeping) as
+    closed, so the loop leaves them alone; only once origin/main of the clone is readable, else a Resolves issue would be
+    missed. An issue of a node merged since is left to the rule."""
+    if rs.get("close_seed") or rs.get("merge_seed") is None or merges_unknown(a):
         return
     if not git_lines(a.clone, "rev-parse", "--verify", "-q", "origin/main"):
         return
@@ -1003,18 +1016,42 @@ def seed_closing(a, rs):
         closed = rs.setdefault("closed", {})
         cands, res = closing_candidates(a, rs)
         merged, homed = merged_ids(a.state, graph_nodes(a.state)), home_units(a)
+        before = set(rs["merge_seed"])
         for i in cands:
-            if closable(a, i, res, merged, homed):
+            if set(cands[i]) <= before and closable(a, i, res, merged, homed):
                 closed.setdefault(str(i), {"seed": True, "closed": True})
         rs["close_seed"] = True
     except Exception as e:
         a.errors.append(str(e))
 
 
+def seed_events(a, rs, done_of):
+    """Record the merged and the closed-without-merging PRs already there as seen, each list once it is known (a failed
+    gh pr list leaves its file empty: seeding then would replay all of it later). A PR recorded open since the PR seed
+    ("pr:N") was merged or closed after it: it is not seeded, and its milestone is posted."""
+    if rs.get("merge_seed") is None and not merges_unknown(a):
+        new = set()
+        for t, key, kind, n in pr_events(a):
+            if kind != "merged":
+                continue
+            if n and "pr:%d" % n in done_of(t):
+                new.add(t)
+            elif key not in done_of(t):
+                done_of(t).append(key)
+        rs["merge_seed"] = sorted(merged_ids(a.state, graph_nodes(a.state)) - new)
+        a.save()
+    if not rs.get("closedpr_seed") and not closed_unknown(a):
+        for t, key, kind, n in pr_events(a):
+            if kind == "closed" and "pr:%d" % n not in done_of(t) and key not in done_of(t):
+                done_of(t).append(key)
+        rs["closedpr_seed"] = True
+        a.save()
+
+
 def post_prs(a, rs, pulls):
     """Milestones from the PRs: opened, the CI result per head commit, each fresh review's verdict (open node PRs), and
     merged / closed without merging (from the loop's state files). The first run with this bookkeeping only records
-    what is already there."""
+    what is already there (the merged and the closed PRs each at the first run their list is readable)."""
     tasks = set(nodes(a.state))
     units = rs.setdefault("units", {})
 
@@ -1044,7 +1081,7 @@ def post_prs(a, rs, pulls):
         m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c.get("body") or "")
         return m and m.group(1)
 
-    if not rs.get("pr_seed"):
+    if not rs.get("pr_seed"):  # the open PRs already there
         try:
             for t, pr in node_prs():
                 keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head"]["sha"]] if (pr.get("head") or {}).get("sha") else [])
@@ -1053,15 +1090,15 @@ def post_prs(a, rs, pulls):
                 if cs:
                     rs.setdefault("pr_since", {})[str(pr["number"])] = max(c.get("created_at", "") for c in cs)
                 done_of(t).extend(k for k in keys if k not in done_of(t))
-            for t, key, _, _ in pr_events(a):
-                if key not in done_of(t):
-                    done_of(t).append(key)
             rs["pr_seed"] = True
         except Exception as e:
             a.errors.append(str(e))
-        seed_closing(a, rs)
+        else:
+            seed_events(a, rs, done_of)
+            seed_closing(a, rs)
         a.save()
         return
+    seed_events(a, rs, done_of)
     seed_closing(a, rs)
 
     def post(t, key, stage, body=""):
@@ -1104,8 +1141,8 @@ def post_prs(a, rs, pulls):
         except Exception as e:
             a.errors.append(str(e))
     for t, key, kind, n in pr_events(a, rs):
-        if t not in tasks:
-            continue
+        if t not in tasks or (rs.get("merge_seed") is None if kind == "merged" else not rs.get("closedpr_seed")):
+            continue  # its list is not seeded yet: what is in it may be from before
         pr = "PR #%d" % n if n else "the node's PR"
         if kind == "merged":
             post(t, key, "%s merged" % pr, "%s was merged into the main branch." % pr)
@@ -1171,6 +1208,13 @@ def main():
         collect_starts(a, rs)
         flush(a, rs)
         post_failed(a, rs)
+        if merges_unknown(a):  # logged once per spell; the run still succeeds
+            if not rs.get("merges_unknown"):
+                print("report.py: merged-prs.tsv is empty although merges are known (its gh pr list failed?): no merged "
+                      "milestone, seeding or closing until it is filled", file=sys.stderr)
+                rs["merges_unknown"] = True
+        else:
+            rs.pop("merges_unknown", None)
         if pulls_err is None:
             post_prs(a, rs, a.pulls)
         post_questions(a, rs, issue)
