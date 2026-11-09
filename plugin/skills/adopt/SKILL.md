@@ -37,7 +37,8 @@ recommendation so a bare "yes" works. Ask what the code cannot show:
 5. open decisions that block work, with a default for each;
 6. anything in the facts that conflicts or is unclear.
 `<name>` is the repository's name, or the directory's basename for a local directory.
-Put it in the run's output folder, `out/adopt/<name>/QUESTION.md`, and tell the owner where it is.
+Put it in the run's output folder, `out/adopt/<name>/QUESTION.md` (the `--out <dir>` of a dry run:
+`<dir>/QUESTION.md`), and tell the owner where it is.
 Unattended, the run's own instructions for questions win. **Then stop**: no drafts before the owner's
 `ANSWER.md` exists (next to `QUESTION.md`, or the file given by `--answers`). On resume, read `ANSWER.md`; a question it leaves open
 becomes an open decision with your default, not a guess presented as settled.
@@ -95,7 +96,8 @@ With `--dry-run`, run sections 1 to 4 offline against a local directory or a clo
 - Issues come from `issues.json` in that directory if present (the form of
   `gh issue list --json number,title,body,labels`), else there are none.
 - The owner's answers come from the `--answers <file>` the caller names, else an `ANSWER.md` in the
-  output directory, else one in the input directory. If none exists, write `QUESTION.md` and stop as usual.
+  output directory, else one in the input directory. If none exists, write `QUESTION.md` (into the
+  output directory) and stop as usual. If one exists, `QUESTION.md` is still written there first, as the record.
 - Write the drafts into an output directory (`--out <dir>`, else `out/adopt/<name>/`) holding
   `SPEC.md`, `AGENTS.md`, `docs/graph.yaml` and `nodes/`; never write into the input directory. Run the
   checker with `--root` on it. No push, no PR, no comment.
