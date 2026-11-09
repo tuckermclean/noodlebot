@@ -1,0 +1,32 @@
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - id: T01
+    name: test-runner
+    deps: []
+    track: now
+    summary: make test runs every tests/test_*.sh, so each new option's test reaches CI.
+    decisions: [D7]
+  - id: B01
+    name: skip-binary
+    deps: []
+    track: now
+    summary: Skip binary files with a warning on stderr instead of counting their bytes as text (issue 3).
+    decisions: [D5, D8]
+  - id: F01
+    name: json-output
+    deps: []
+    track: now
+    summary: Add --json, one JSON object per file plus a total (issue 1).
+    decisions: [D1, D2]
+  - id: F02
+    name: top-words
+    deps: [F01]
+    track: now
+    summary: Add --top N, the N most frequent words of each file (issue 2).
+    decisions: [D3, D4]
+  - id: F03
+    name: config-file
+    deps: [F01, F02]
+    track: later
+    summary: Read default flags from ~/.tallyhorc as key=value lines (issue 4).
+    decisions: [D6]

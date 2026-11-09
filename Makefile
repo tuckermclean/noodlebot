@@ -12,5 +12,6 @@ test:
 	bash scheduler/loop.test.sh
 	sh scheduler/loops.test.sh
 	sh scheduler/move-runtime.test.sh
+	sh plugin/skills/adopt/adopt.test.sh
 
 .PHONY: test
