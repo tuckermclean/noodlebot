@@ -7,12 +7,76 @@ State comes from the node branches' PRs (`node/<ID>-<name>`): merged, open #N, o
 subject "<ID> <name>: ..." on HEAD also counts as merged (run it on a fresh checkout of main). --grep lists,
 for each term, the nodes whose spec mentions it (case-insensitive), most mentions first. Needs `gh`
 authenticated for the repository; without it the state column is "?".
+Also lists the open PRs whose head branch starts with spec/ (their docs/graph.yaml is read from
+origin/<branch>, so fetch first): the IDs each adds that main lacks, with its PR number; one `next free:`
+line per letter in use (the number after the highest ID on main, in those PRs and in this graph); and
+`clash` lines for a new ID that main or another open spec PR gives to a node of another name. On a spec
+branch main's graph is origin/main's and the branch's own PR is not counted as another PR. If the PR list
+or a PR's graph cannot be read it says the IDs in open spec PRs are unknown, prints no `next free:` line
+and exits 1.
 Reads the graph regime's layout: docs/graph.yaml (nodes: id, name, deps, track, summary) and
 nodes/<ID>-<name>.md (with an **Owns:** line).
 """
 import json, os, re, subprocess, sys
 
 import yaml
+
+
+def graph_names(text):
+    return {n["id"]: n["name"] for n in (yaml.safe_load(text) or {}).get("nodes", [])}
+
+
+def git_show(ref):
+    r = subprocess.run(["git", "show", ref], capture_output=True, text=True)
+    if r.returncode:
+        raise ValueError("cannot read " + ref)
+    return r.stdout
+
+
+def spec_pr_report(work):
+    """Print the open spec PRs' new IDs, clashes and next free IDs; return False if they are unknown."""
+    branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip()
+    try:
+        mainnames = work
+        if branch.startswith("spec/"):
+            mainnames = graph_names(git_show("origin/main:docs/graph.yaml"))
+        r = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", "1000", "--json",
+                            "number,headRefName"], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise ValueError("gh pr list failed")
+        prs = sorted((p for p in json.loads(r.stdout)
+                      if p["headRefName"].startswith("spec/") and p["headRefName"] != branch),
+                     key=lambda p: p["number"])
+        added = []  # (pr number, id, name)
+        allids = set(mainnames) | set(work)
+        for p in prs:
+            names = graph_names(git_show("origin/%s:docs/graph.yaml" % p["headRefName"]))
+            allids |= set(names)
+            added += [(p["number"], i, n) for i, n in names.items() if i not in mainnames]
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError, subprocess.TimeoutExpired):
+        print("IDs in open spec PRs: unknown (could not list the open PRs or read a PR's graph); no next free ID")
+        return False
+    for num, i, n in added:
+        print("open spec PR #%d adds %s %s" % (num, i, n))
+    own = [(i, n) for i, n in work.items() if mainnames.get(i) != n] if branch.startswith("spec/") else []
+    for i, n in own:
+        if i in mainnames and mainnames[i] != n:
+            print("clash: %s %s is %s on main" % (i, n, mainnames[i]))
+        for num, j, m in added:
+            if j == i and m != n:
+                print("clash: %s %s is %s in open spec PR #%d" % (i, n, m, num))
+    for k, (num, i, n) in enumerate(added):
+        for num2, j, m in added[k + 1:]:
+            if i == j and n != m:
+                print("clash: %s is %s in open spec PR #%d and %s in #%d" % (i, n, num, m, num2))
+    top = {}
+    for i in allids:
+        m = re.match(r"([A-Z])([0-9]+)$", i)
+        if m:
+            top[m.group(1)] = max(top.get(m.group(1), 0), int(m.group(2)))
+    for letter in sorted(top):
+        print("next free: %s%02d" % (letter, top[letter] + 1))
+    return True
 
 
 def main():
@@ -59,6 +123,8 @@ def main():
         print("grep %r: %s" % (t, ", ".join("%s(%d)" % (i, c) for c, i in hits if c) or "no node spec mentions it"))
     ids = [n["id"] for n in nodes]
     print("ids in use: %s" % " ".join(sorted(ids)))
+    if not spec_pr_report({n["id"]: n["name"] for n in nodes}):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
