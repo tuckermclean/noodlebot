@@ -1,4 +1,4 @@
-UNATTENDED RUN. The noodlebot scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) started this session to build node @ID@
+UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build node @ID@
 (@NAME@) of @REPO@. Nobody can answer until morning.
 
 - At a step 7 stop of the node skill, write the question, your proposed amendment and what is blocked to

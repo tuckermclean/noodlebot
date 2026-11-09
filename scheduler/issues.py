@@ -6,7 +6,7 @@
 
 `next` skips an issue unless the repository owner added the label (checked in the issue's events,
 so a collaborator, a template or a workflow cannot hand work to the bot), and skips one whose
-state/issue/<N>/ holds FAILED or an unanswered QUESTION.md. GH_TOKEN must be set; stdlib only.
+$NOODLEBOT_DATA/state/<repo>/issue/<N>/ holds FAILED or an unanswered QUESTION.md. GH_TOKEN must be set; stdlib only.
 """
 import argparse, json, os, subprocess, sys
 
