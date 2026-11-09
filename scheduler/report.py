@@ -579,6 +579,7 @@ def migrate(a, rs):
 
 
 START = re.compile(r"started (?:([A-Z][0-9][0-9]) \(|triage of (#\d+) )")
+TRIAGE_DONE = re.compile(r"triage of (#\d+) done")
 
 
 def collect_starts(a, rs):
@@ -599,6 +600,13 @@ def collect_starts(a, rs):
     for raw in data[:end].splitlines(keepends=True):
         line_off, pos = pos, pos + len(raw)
         what = event_text(raw.decode("utf-8", "replace").strip())[1]
+        d = TRIAGE_DONE.match(what)
+        if d:
+            pr = next((p for p in getattr(a, "pulls", []) if re.match(r"spec/triage-%s-" % d.group(1)[1:],
+                                                                      (p.get("head") or {}).get("ref") or "")), None)
+            queue(a, rs, d.group(1), "done:%d" % line_off, "triage done",
+                  "The triage ended done." + (" Its spec PR: %s" % pr_link(pr) if pr else ""))
+            continue
         m = START.match(what)
         if not m:
             continue
@@ -671,9 +679,14 @@ def home_units(a):
 def finished(a, n):
     """A unit nothing more is expected from: no question, no session and, for a node, merged without a follow-up
     in progress; a triage with no question. A new QUESTION.md makes it unfinished again."""
-    if has(a.state, n, "QUESTION.md") or has(a.state, n, "session.pid") or has(a.state, n, "FOLLOWUP"):
+    if held(a, n) or has(a.state, n, "session.pid"):
         return False
     return n.startswith("#") or is_merged(a.state, n)
+
+
+def held(a, n):
+    """A unit with an open or answered-but-unreleased question, or a follow-up in progress: its issue stays open."""
+    return has(a.state, n, "QUESTION.md") or has(a.state, n, "FOLLOWUP")
 
 
 ID_PREFIX = re.compile(r"\s*\**(#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
@@ -811,6 +824,8 @@ def post_questions(a, rs, issue):
             continue
         try:
             home = home_issue(a, rs, n)
+            if ("question:" + key) not in rs.get("units", {}).get(n, {}).get("done", []):
+                reopen(a, rs, home)
             if posted.get(n) != key:
                 comment(a, issue, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
                         "starting the reply with `%s:`.\n" % (n, home, n))
@@ -820,6 +835,187 @@ def post_questions(a, rs, issue):
                       (n, open(q).read().strip(), a.owner))
         except Exception as e:
             a.errors.append(str(e))
+
+
+def pr_link(pr):
+    return pr.get("html_url") or "#%s" % pr.get("number")
+
+
+def tsv(a, name):
+    return [l.split() for l in read_lines(os.path.join(a.state, name))]
+
+
+def merged_numbers(a):
+    """{node: [merged PR numbers]} from merged-prs.tsv."""
+    out = {}
+    for w in tsv(a, "merged-prs.tsv"):
+        m = len(w) > 1 and w[0].isdigit() and re.match(r"node/([A-Z][0-9][0-9])-", w[1])
+        if m:
+            out.setdefault(m.group(1), []).append(int(w[0]))
+    return out
+
+
+def pr_events(a):
+    """[(node, key, kind, PR number or None)] for the merged and closed-without-merging PRs the loop recorded."""
+    out, seen = [], set()
+    for node, nums in sorted(merged_numbers(a).items()):
+        seen.add(node)
+        out += [(node, "merged:%d" % n, "merged", n) for n in sorted(nums)]
+    for node in sorted(merged_ids(a.state, graph_nodes(a.state)) - seen):  # merged by squash subject only
+        out.append((node, "merged", "merged", None))
+    for w in tsv(a, "closed-prs.tsv"):
+        m = len(w) > 3 and w[0].isdigit() and w[3] == "false" and re.match(r"node/([A-Z][0-9][0-9])-", w[1])
+        if m:
+            out.append((m.group(1), "closed:%s" % w[0], "closed", int(w[0])))
+    return out
+
+
+def resolves_map(a):
+    """{node: [issue numbers on its Resolves line]} for every node spec on origin/main of the clone."""
+    out = {}
+    for l in git_lines(a.clone, "grep", "--no-color", "-e", r"^\*\*Resolves:\*\*", "origin/main", "--", "nodes/"):
+        m = re.match(r"origin/main:nodes/([A-Z][0-9][0-9])-[^:]*\.md:(.*)$", l)
+        if m and m.group(1) not in out:
+            out[m.group(1)] = [int(x) for x in re.findall(r"#(\d+)", m.group(2))]
+    return out
+
+
+def closing_candidates(a, rs):
+    """({issue: [merged nodes it is a candidate of]}, resolves map): the home issue and Resolves issues of the merged nodes."""
+    merged = merged_ids(a.state, graph_nodes(a.state))
+    mine = [n for n in nodes(a.state) if NODE.match(n) and n in merged]
+    if not mine:
+        return {}, {}
+    res = resolves_map(a)
+    homes = {n: i for i, ts in home_units(a).items() for n in ts}
+    out = {}
+    for n in mine:
+        for i in set(res.get(n, [])) | ({homes[n]} if n in homes else set()):
+            out.setdefault(i, []).append(n)
+    return out, res
+
+
+def reopen(a, rs, issue):
+    c = (rs.get("closed") or {}).get(str(issue))
+    if c is None:
+        return
+    if c.get("closed"):
+        gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "open"})
+    del rs["closed"][str(issue)]
+    a.save()
+
+
+def close_issues(a, rs):
+    """Close the home issue and Resolves issues of the merged nodes, each with one comment naming the PR(s), once every node
+    resolving the issue is merged and no unit homed there holds it open; the first run after that holds."""
+    cands, res = closing_candidates(a, rs)
+    if not cands:
+        return
+    merged = merged_ids(a.state, graph_nodes(a.state))
+    nums = merged_numbers(a)
+    closed = rs.setdefault("closed", {})
+    homed = home_units(a)
+    for issue in sorted(cands):
+        c = closed.get(str(issue)) or {}
+        if c.get("closed"):
+            continue
+        units = homed.get(issue, [])
+        resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in units if NODE.match(t)}
+        if not resolvers <= merged or any(held(a, t) for t in units):
+            continue
+        try:
+            if not c.get("commented"):
+                prs = sorted({n for k in resolvers for n in nums.get(k, [])})
+                what = ", ".join("PR #%d" % n for n in prs) if prs else "the node's PR"
+                comment(a, issue, "**Stage:** merged, closing this issue\n\nMerged: %s. Closing this issue." % what)
+                c = closed[str(issue)] = {"commented": True}
+                a.save()
+            gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "closed", "state_reason": "completed"})
+            c["closed"] = True
+            a.save()
+        except Exception as e:
+            a.errors.append(str(e))
+
+
+def post_prs(a, rs, pulls):
+    """Milestones from the PRs: opened, the CI result per head commit, each fresh review's verdict (open node PRs), and
+    merged / closed without merging (from the loop's state files). The first run with this bookkeeping only records
+    what is already there."""
+    tasks = set(nodes(a.state))
+    units = rs.setdefault("units", {})
+
+    def done_of(t):
+        return units.setdefault(t, {}).setdefault("done", [])
+
+    def node_prs():
+        for pr in pulls:
+            m = re.match(r"node/([A-Z][0-9][0-9])-", (pr.get("head") or {}).get("ref") or "")
+            if m and pr.get("number"):
+                yield m.group(1), pr
+
+    def reviews(pr):
+        for c in sorted(gh("GET", "repos/%s/issues/%s/comments?per_page=100" % (a.repo, pr["number"])) or [],
+                        key=lambda c: c["id"]):
+            m = re.match(r"\W*Fresh review \((\w+)\)", c.get("body") or "")
+            if m:
+                yield c, m.group(1)
+
+    if not rs.get("pr_seed"):
+        try:
+            for t, pr in node_prs():
+                keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head"]["sha"]] if (pr.get("head") or {}).get("sha") else [])
+                keys += ["review:%s" % c["id"] for c, _ in reviews(pr)]
+                done_of(t).extend(k for k in keys if k not in done_of(t))
+            for t, key, _, _ in pr_events(a):
+                if key not in done_of(t):
+                    done_of(t).append(key)
+            closed = rs.setdefault("closed", {})
+            for i in closing_candidates(a, rs)[0]:
+                closed.setdefault(str(i), {"seed": True, "closed": False})
+            rs["pr_seed"] = True
+        except Exception as e:
+            a.errors.append(str(e))
+        a.save()
+        return
+
+    def post(t, key, stage, body=""):
+        try:
+            milestone(a, rs, t, key, stage, body)
+        except Exception as e:
+            a.errors.append(str(e))
+
+    for t, pr in node_prs():
+        if t not in tasks:
+            continue
+        n = pr["number"]
+        post(t, "pr:%s" % n, "PR #%s open, final review running" % n, "The pull request: %s" % pr_link(pr))
+        sha = (pr.get("head") or {}).get("sha")
+        if sha and "ci:" + sha not in done_of(t):
+            try:
+                runs = (gh("GET", "repos/%s/commits/%s/check-runs?per_page=100" % (a.repo, sha)) or {}).get("check_runs") or []
+                if runs and all(r.get("status") == "completed" for r in runs):
+                    bad = [r.get("name") or "?" for r in runs if r.get("conclusion") not in ("success", "neutral", "skipped")]
+                    if bad:
+                        post(t, "ci:" + sha, "PR #%s: CI failed" % n,
+                             "Failing checks on %s: %s." % (sha[:7], ", ".join(bad)))
+                    else:
+                        post(t, "ci:" + sha, "PR #%s: CI passed" % n, "All %d checks on %s passed." % (len(runs), sha[:7]))
+            except Exception as e:
+                a.errors.append(str(e))
+        try:
+            for c, verdict in reviews(pr):
+                post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, verdict),
+                     "Verdict: %s%s" % (verdict, " (%s)" % c["html_url"] if c.get("html_url") else ""))
+        except Exception as e:
+            a.errors.append(str(e))
+    for t, key, kind, n in pr_events(a):
+        if t not in tasks:
+            continue
+        pr = "PR #%d" % n if n else "the node's PR"
+        if kind == "merged":
+            post(t, key, "%s merged" % pr, "%s was merged into the main branch." % pr)
+        else:
+            post(t, key, "%s closed without merging" % pr, "%s was closed without merging." % pr)
 
 
 def main():
@@ -867,6 +1063,11 @@ def main():
             old = gh("GET", "repos/%s/issues/%s/comments?per_page=100" % (a.repo, issue)) or []
             rs["comment_id"] = max([c["id"] for c in old] or [0])
         save()
+    a.pulls, pulls_err = [], None
+    try:
+        a.pulls = gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []
+    except Exception as e:  # raised after the work below, as before
+        pulls_err = e
     try:
         take_answers(a, rs, issue)
         take_home_answers(a, rs, issue)
@@ -874,11 +1075,16 @@ def main():
         collect_starts(a, rs)
         flush(a, rs)
         post_failed(a, rs)
+        if pulls_err is None:
+            post_prs(a, rs, a.pulls)
         post_questions(a, rs, issue)
+        close_issues(a, rs)
     finally:
         save()
+    if pulls_err is not None:
+        raise pulls_err
     prs = {}
-    for pr in gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []:
+    for pr in a.pulls:
         m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"]["ref"])
         if m:
             prs[m.group(1)] = pr["number"]
