@@ -12,11 +12,15 @@
 # started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
+# Escalation (SCHED_ESCALATE=0 turns it off; it needs SCHED_THROTTLE): while the throttle holds and
+# usage.py --escalate says the plan will run out first, the loop stops its own newest session when it
+# is the newest live one of all repositories (one per tick), keeping worktree, branch and commits, and
+# gives the start back; the task starts again, logged as "resumed", once the throttle opens.
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
-#                            session.pid,session.rc,starts} and the markers ready.py reads:
+#                            session.pid,session.rc,starts,paused} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
 #                            answered/ keeps released questions and spec PRs
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
@@ -227,7 +231,8 @@ start_triage() {
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
-	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
+	if [ -e "$d/paused" ]; then rm -f "$d/paused"; say "$saw; resumed triage of #$n (paused by escalation) in $wt, pid $pid, start $(starts_of "$d") of 2"
+	else say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"; fi
 }
 
 # cleanup_merged: a merged node's worktree is not needed again. Keep its evidence (out/node/<ID>)
@@ -275,7 +280,35 @@ start_node() {
 	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
 	launch "$wt" "$d" "$skill $id"
 	live+=("$pid $id")
-	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$d") of 2"
+	if [ -e "$d/paused" ]; then rm -f "$d/paused"; say "$saw; resumed $id ($name) (paused by escalation) in $wt, pid $pid, start $(starts_of "$d") of 2"
+	else say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$d") of 2"; fi
+}
+
+# escalate_pause <saw>: the throttle holds and usage.py --escalate says the plan will run out before
+# the windows reset: stop one session, the newest of all repositories' live ones, and only when it is
+# this loop's own (otherwise the loop that owns it stops it). Its worktree, branch and commits stay;
+# the "paused" file in its state dir makes the start count as not used, and the task starts again
+# (start_node/start_triage say "resumed") once the throttle opens.
+escalate_pause() {
+	local saw=$1 esc t f d p key what l=() e
+	esc=$(python3 -I "$here/usage.py" --state-root "$(dirname "$state")" --escalate 2>>"$state/report.log") || return 0
+	[[ $esc == escalate:* ]] || return 0
+	while read -r t f; do
+		d=$(dirname "$f") p=$(cat "$f" 2>/dev/null) key=$(basename "$d")
+		alive "$p" "$key" || continue
+		[[ $f == "$state"/* ]] || return 0   # the newest belongs to another repository
+		what=$key; [[ $f == */issue/* ]] && what="triage of #$key"
+		echo "${esc#escalate: }" >"$d/paused"
+		stop_group "$p" || { rm -f "$d/paused"; note "$saw; $what (pid $p) survived SIGKILL; not paused"; return 0; }
+		wait "$p" 2>/dev/null
+		rm -f "$d/session.pid"
+		not_counted "$d"
+		say "$saw; paused $what: escalating, ${esc#escalate: }; start not counted, it resumes when the throttle opens"
+		for e in "${live[@]}"; do [ "$e" = "$p $key" ] || l+=("$e"); done
+		live=("${l[@]}")
+		return 0
+	done < <(find "$(dirname "$state")"/*/node/*/session.pid "$(dirname "$state")"/*/issue/*/session.pid \
+		-maxdepth 0 -printf '%T@ %p\n' 2>/dev/null | sort -rn)
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
@@ -327,6 +360,7 @@ tick() {
 			say "$saw; throttle released: ${usage#open: }"; throttled=0
 		fi
 	fi
+	[ "$throttled" = 1 ] && [ "${SCHED_ESCALATE:-1}" != 0 ] && escalate_pause "$saw"
 	full() { [ "$throttled" = 1 ] || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
 
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
