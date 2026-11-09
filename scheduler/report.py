@@ -61,9 +61,10 @@ def event_text(line):
 
 
 def nodes(state):
-    """The tasks with a state directory: nodes ("B03", node/B03) and triaged issues ("#46", issue/46)."""
+    """The tasks with a state directory: nodes ("B03", node/B03) and triaged issues ("#46", issue/46) and spec-PR updates ("PR #12", pr/12)."""
     out = []
-    for kind, pat, fmt in (("node", NODE, "%s"), ("issue", re.compile(r"^\d+$"), "#%s")):
+    for kind, pat, fmt in (("node", NODE, "%s"), ("issue", re.compile(r"^\d+$"), "#%s"),
+                         ("pr", re.compile(r"^\d+$"), "PR #%s")):
         d = os.path.join(state, kind)
         if os.path.isdir(d):
             out += [fmt % n for n in sorted(os.listdir(d)) if pat.match(n) and os.path.isdir(os.path.join(d, n))]
@@ -71,6 +72,8 @@ def nodes(state):
 
 
 def tdir(state, task):
+    if task.startswith("PR #"):
+        return os.path.join(state, "pr", task[4:])
     return os.path.join(state, "issue", task[1:]) if task.startswith("#") else os.path.join(state, "node", task)
 
 
@@ -183,7 +186,7 @@ def sessions(state):
             cmd = open("/proc/%s/cmdline" % pid, "rb").read().replace(b"\0", b" ").decode()
         except OSError:
             continue
-        k = n.lstrip("#")
+        k = n.rsplit("#", 1)[-1]
         if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (k, k), cmd):
             out.append((n, pid, os.path.getmtime(f)))
     return out
@@ -355,7 +358,7 @@ def body_for(a, sts, prs):
         if agent:
             out += ["", "Now running subagent: **%s**" % agent]
         out += [""] + (["> %s" % t for t in texts[-4 if many else -8:]] or ["> (nothing yet)"])
-        commits = [] if n.startswith("#") else git_lines(os.path.join(a.worktrees, n), "log", "--oneline",
+        commits = [] if "#" in n else git_lines(os.path.join(a.worktrees, n), "log", "--oneline",
                                                          "-3" if many else "-8", "origin/main..HEAD")
         if commits:
             out += ["", "Latest commits:", ""] + ["- `%s`" % c for c in commits]
@@ -460,8 +463,8 @@ def post_events(a, rs, issue):
     if lines:
         text = "\n".join("- `%s` %s" % event_text(l) for l in lines)
         for l in lines:  # a session's end: add its own closing summary
-            m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)", event_text(l)[1])
-            task = m and (m.group(1) or m.group(2))
+            m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", event_text(l)[1])
+            task = m and (m.group(1) or m.group(2) or m.group(3))
             summary = task and last_result(os.path.join(tdir(a.state, task), "session.jsonl"))
             if task:
                 text += "\n\n**%s's total:** %s" % (task, cost_text(os.path.join(tdir(a.state, task), "session.jsonl")))

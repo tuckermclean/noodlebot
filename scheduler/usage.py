@@ -4,7 +4,7 @@
   usage.py --state-root DIR [--now EPOCH]
 
 All repositories' sessions run on one account, so they share one budget: this reads every
-DIR/<repo>/{node,issue}/*/session.jsonl changed in the last 7 days and merges what it finds into
+DIR/<repo>/{node,issue,pr}/*/session.jsonl changed in the last 7 days and merges what it finds into
 DIR/usage.json. Within a window usage only grows, so the current reading of a window is the highest
 utilization among the readings with the latest reset time; no timestamps are needed.
 
@@ -27,7 +27,7 @@ FIVE_H, WEEK = 5 * 3600, 7 * 86400
 def readings(root, now):
     """{window: {"resetsAt", "utilization", "status"}} from the session logs."""
     out = {}
-    pats = [os.path.join(root, "*", k, "*", "session.jsonl") for k in ("node", "issue")]
+    pats = [os.path.join(root, "*", k, "*", "session.jsonl") for k in ("node", "issue", "pr")]
     for f in [f for p in pats for f in glob.glob(p)]:
         try:
             if os.path.getmtime(f) < time.time() - WEEK:   # file age: the real clock
