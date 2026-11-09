@@ -3,7 +3,7 @@
 
   report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--owner LOGIN]
 
-Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; stdlib only, all GitHub access through `gh api`.
+Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all GitHub access through `gh api`.
 Each run:
   1. finds the open issue labelled `noodlebot-status` (creating the label and issue if there is none,
      e.g. after the owner closed it), and remembers its number in DIR/report.json;
@@ -100,10 +100,19 @@ def merged_ids(state, graph=()):
     return out
 
 
+def is_merged(state, n):
+    try:
+        return n in merged_ids(state, graph_nodes(state))
+    except Exception:
+        return False
+
+
 def graph_nodes(state):
     try:
         import yaml
-        return yaml.safe_load(open(os.path.join(state, "graph.yaml"), encoding="utf-8"))["nodes"]
+        with open(os.path.join(state, "graph.yaml"), encoding="utf-8") as fh:
+            ns = yaml.safe_load(fh)["nodes"]
+        return [n for n in ns if isinstance(n, dict) and isinstance(n.get("id"), str) and isinstance(n.get("name"), str)]
     except Exception:
         return []
 
@@ -316,7 +325,7 @@ def body_for(a, sts, prs):
             items.append("- **%s FAILED**: %s. To retry, delete `%s`." % (n, why, path))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
             items.append("- %s: %s." % (n, answered_text(state, n) if n in nodes(state) and not n.startswith("#") else "answered"))
-        elif has(state, n, "QUESTION.md") and not n.startswith("#") and n in merged_ids(state, graph_nodes(state)):
+        elif has(state, n, "QUESTION.md") and not n.startswith("#") and is_merged(state, n):
             items.append("- **%s's PR is merged; its question is still open, and an answer starts a follow-up** "
                          "(posted below as a comment). Reply to this issue to answer." % n)
         elif has(state, n, "QUESTION.md"):
@@ -426,8 +435,11 @@ def take_answers(a, rs, issue):
             f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
                     (node, a.owner, c["created_at"], c["html_url"], text))
         os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
-        what = "answered" if node.startswith("#") else answered_text(a.state, node)
-        comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
+        what = None if node.startswith("#") else answered_text(a.state, node)
+        if node.startswith("#"):
+            comment(a, issue, "Recorded as %s's ANSWER.md." % node)
+        else:
+            comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
         a.answered = True
 
 
