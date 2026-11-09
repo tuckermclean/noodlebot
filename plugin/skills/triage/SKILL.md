@@ -88,20 +88,25 @@ Resolves: line or describe what "closes" an issue next to its number.
 
 ## 4. Update a spec PR: `/triage --update <PR> [--dry-run]`
 Run by the loop for one of the bot's own open `spec/*` PRs that conflicts with `main` or whose new node
-IDs `main` has since given to another node. Work in a worktree of the PR's branch; change nothing else.
+IDs `main` has since given to another node. Work in a worktree checked out on the PR's named branch
+(`spec/...`), not a detached HEAD (`nodes.py` takes "on a spec branch" from the branch name); change
+nothing else.
 1. `git fetch origin`, then merge `origin/main` into the branch: a merge commit, never a rebase, never a
-   force push.
+   force push. If the merge conflicts and needs no judgment, resolve it by keeping both sides: both
+   graph rows, and main's header row with the branch's change put back in; leave no conflict markers.
+   The renumbering in step 2 then fixes the duplicate ID. If a conflict needs a judgment (two edits to
+   the same criterion, say), run `git merge --abort`, push nothing, comment on the PR with the
+   conflicting files and why, and end.
 2. Run `nodes.py` from the worktree. Every new node of the PR that it reports as a clash gets the next
    free ID of its letter (renumber one at a time, rerunning `nodes.py`): the spec file name, the graph
    entry, the AC IDs, the PR's own references to it, and the header rows it changes in other specs.
-   Change no criterion beyond the renumbering.
+   Change no criterion beyond the renumbering. Commit the renumbering as one commit on top of the merge
+   commit; never amend.
 3. Rerun the spec checker until it reports PROBLEMS 0.
-4. If a conflict needs a judgment (two edits to the same criterion, say), push nothing: comment on the
-   PR with the conflicting files and why, and end.
+4. With `--dry-run`, stop here (no push, no PR edit, no comment) and write `out/triage/pr-<N>/result.md`:
+   the merge, each renumbering (old -> new) and the checker's output.
 5. Push the branch. Update the PR's title and body to the new IDs. Comment on the PR with what was
    merged, each renumbering (old -> new) and the checker's result.
-With `--dry-run`, stop after the local merge and renumbering (no push, no PR edit, no comment) and write
-the result to `out/triage/pr-<N>/result.md`: the merge, each renumbering and the checker's output.
 
 ## 5. Report
 End with: the issue, the placement, the PR (or comment) URL, the nodes touched, and anything the

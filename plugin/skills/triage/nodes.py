@@ -22,8 +22,24 @@ import json, os, re, subprocess, sys
 import yaml
 
 
+def graph_pairs(text):
+    return [(n["id"], n["name"]) for n in (yaml.safe_load(text) or {}).get("nodes", [])]
+
+
 def graph_names(text):
-    return {n["id"]: n["name"] for n in (yaml.safe_load(text) or {}).get("nodes", [])}
+    return dict(graph_pairs(text))
+
+
+def pr_graph(p):
+    """A spec PR's graph text: origin/<branch>, else (fork head) the PR's head ref fetched."""
+    try:
+        return git_show("origin/%s:docs/graph.yaml" % p["headRefName"])
+    except ValueError:
+        r = subprocess.run(["git", "fetch", "-q", "origin", "pull/%d/head" % p["number"]],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise ValueError("cannot fetch PR #%d" % p["number"])
+        return git_show("FETCH_HEAD:docs/graph.yaml")
 
 
 def git_show(ref):
@@ -37,9 +53,12 @@ def spec_pr_report(work):
     """Print the open spec PRs' new IDs, clashes and next free IDs; return False if they are unknown."""
     branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip()
     try:
-        mainnames = work
+        workpairs = list(work)
+        mainpairs = workpairs
         if branch.startswith("spec/"):
-            mainnames = graph_names(git_show("origin/main:docs/graph.yaml"))
+            mainpairs = graph_pairs(git_show("origin/main:docs/graph.yaml"))
+        mainnames = dict(mainpairs)
+        work = dict(workpairs)
         r = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", "1000", "--json",
                             "number,headRefName"], capture_output=True, text=True, timeout=60)
         if r.returncode:
@@ -50,7 +69,7 @@ def spec_pr_report(work):
         added = []  # (pr number, id, name)
         allids = set(mainnames) | set(work)
         for p in prs:
-            names = graph_names(git_show("origin/%s:docs/graph.yaml" % p["headRefName"]))
+            names = graph_names(pr_graph(p))
             allids |= set(names)
             added += [(p["number"], i, n) for i, n in names.items() if i not in mainnames]
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError, subprocess.TimeoutExpired):
@@ -58,13 +77,17 @@ def spec_pr_report(work):
         return False
     for num, i, n in added:
         print("open spec PR #%d adds %s %s" % (num, i, n))
-    own = [(i, n) for i, n in work.items() if mainnames.get(i) != n] if branch.startswith("spec/") else []
+    own = [(i, n) for i, n in workpairs if (i, n) not in mainpairs] if branch.startswith("spec/") else []
     for i, n in own:
-        if i in mainnames and mainnames[i] != n:
-            print("clash: %s %s is %s on main" % (i, n, mainnames[i]))
+        for j, m in mainpairs:
+            if j == i and m != n:
+                print("clash: %s %s is %s on main" % (i, n, m))
         for num, j, m in added:
             if j == i and m != n:
                 print("clash: %s %s is %s in open spec PR #%d" % (i, n, m, num))
+        for j, m in workpairs:
+            if j == i and m != n and (j, m) in own and n < m:
+                print("clash: %s is %s and %s in this graph" % (i, n, m))
     for k, (num, i, n) in enumerate(added):
         for num2, j, m in added[k + 1:]:
             if i == j and n != m:
@@ -123,7 +146,7 @@ def main():
         print("grep %r: %s" % (t, ", ".join("%s(%d)" % (i, c) for c, i in hits if c) or "no node spec mentions it"))
     ids = [n["id"] for n in nodes]
     print("ids in use: %s" % " ".join(sorted(ids)))
-    if not spec_pr_report({n["id"]: n["name"] for n in nodes}):
+    if not spec_pr_report([(n["id"], n["name"]) for n in nodes]):
         sys.exit(1)
 
 
