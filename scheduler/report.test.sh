@@ -335,5 +335,44 @@ ok "C01-AC-3: the huge-integer status body is the normal one, not a fallback" gr
 ok "C01-AC-3: the huge-integer runs leave nothing on stderr" test ! -s "$tmp/err4"
 trap 'kill $pids $sess $pids3 $pids4 2>/dev/null; rm -rf "$tmp"' EXIT
 
+# C01-AC-3 once more: finite turns that overflow when summed must not stop the report.
+state5=$tmp/state/repo5
+mkdir -p "$state5/node/G01" "$state5/node/G02"
+pids5=
+sh "$tmp/rs/run-session.sh" --node G01 &
+echo $! >"$state5/node/G01/session.pid"
+pids5="$pids5 $!"
+trap 'kill $pids $sess $pids3 $pids4 $pids5 2>/dev/null; rm -rf "$tmp"' EXIT
+sleep 1
+run5() { python3 -I "$src/report.py" --repo owner/repo --state "$state5" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err5"; }
+dump5() {
+	python3 -I -c "
+import json
+db = json.load(open('$db'))
+open('$tmp/body5', 'w').write('\n'.join(x['body'] for x in db['issues'].values() if 'G01' in x['body']))
+open('$tmp/endcomment5', 'w').write('\n'.join(c['body'] for c in db['comments'] if 'session G02 ended' in c['body']))"
+}
+ovf() {
+	printf "$nf" 1.0 1e308
+	printf "$nf" 1.0 1e308
+	printf "$nf" 1.0 1e308
+}
+{ r 2.5 3; ovf; } >"$state5/node/G01/session.jsonl"
+{ r 6.5 4; ovf; } >"$state5/node/G02/session.jsonl"
+: >"$state5/status.log"
+run5; rc7=$?
+dump5
+echo "2026-01-06T00:00:00Z open=[] merged-prs=[]; session G02 ended (rc 0)" >>"$state5/status.log"
+run5; rc8=$?
+dump5
+ok "C01-AC-3: the report exits 0 on both overflowing-turns runs" sh -c "[ $rc7 -eq 0 ] && [ $rc8 -eq 0 ]"
+ok "C01-AC-3: the overflowing-turns runs leave nothing on stderr" test ! -s "$tmp/err5"
+ok "C01-AC-3: the overflowing-turns status body is the normal one" grep -qF 'Sessions (1 running)' "$tmp/body5"
+ok "C01-AC-3: the overflowing-turns status body has the G01 section" grep -qF '### G01,' "$tmp/body5"
+ok "C01-AC-3: the end of G02 is posted despite overflowing turns" grep -qF 'session G02 ended' "$tmp/endcomment5"
+ok "C01-AC-3: no inf or nan in the overflowing-turns status body" sh -c "! grep -qiE '\\\$-?(inf|nan)|(inf|nan) turns' '$tmp/body5'"
+ok "C01-AC-3: no inf or nan in the overflowing-turns end comment" sh -c "! grep -qiE '\\\$-?(inf|nan)|(inf|nan) turns' '$tmp/endcomment5'"
+trap 'kill $pids $sess $pids3 $pids4 $pids5 2>/dev/null; rm -rf "$tmp"' EXIT
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
