@@ -332,9 +332,16 @@ start_node() {
 	if [ "$kind" = followup ]; then
 		prompt=unattended-followup.md
 		br=$(cat "$d/FOLLOWUP" 2>/dev/null) || br=''
-		[ -n "$br" ] || { br=$(followup_branch "$id"); echo "$br" >"$d/FOLLOWUP"; }
-		if [ -d "$wt" ] && [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$br" ]; then
-			note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
+		if [ -n "$br" ]; then
+			if [ -d "$wt" ] && [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$br" ]; then
+				note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
+			fi
+		else
+			# No marker yet: a worktree here is the merged node's leftover. Leave no marker, so cleanup_merged keeps retrying.
+			if [ -d "$wt" ]; then
+				note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
+			fi
+			br=$(followup_branch "$id"); echo "$br" >"$d/FOLLOWUP"
 		fi
 	fi
 	if [ ! -d "$wt" ]; then
