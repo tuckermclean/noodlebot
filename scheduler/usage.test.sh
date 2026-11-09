@@ -60,5 +60,18 @@ reset
 run $now
 if [ $rc = 0 ] && printf '%s' "$out" | grep -q 'open: no reading yet'; then pass "no readings: open"; else fail "no readings: $out"; fi
 
+reset
+ev "$tmp/s/a/issue/7/session.jsonl" 0.20 $r5 0.30 $r7 rejected
+run $now
+issue_out=$out
+reset
+ev "$tmp/s/a/pr/12/session.jsonl" 0.20 $r5 0.30 $r7 rejected
+run $now
+if printf '%s' "$issue_out" | grep -q '^hold:' && printf '%s' "$out" | grep -q '^hold:'; then pass "G01-AC-5: a rejected window logged only by an update session (pr/<N>) holds like an issue session's"; else fail "G01-AC-5: update session rate-limit event ignored by the throttle: $out"; fi
+reset
+ev "$tmp/s/a/pr/12/session.jsonl" 0.40 $r5 0.30 $r7
+run $now
+if printf '%s' "$out" | grep -q '^hold: 5-hour window projected'; then pass "G01-AC-5: a fast burn logged only by an update session holds"; else fail "G01-AC-5: update session burn ignored by the throttle: $out"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all usage checks"

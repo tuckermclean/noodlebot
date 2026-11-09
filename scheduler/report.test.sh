@@ -426,5 +426,145 @@ ok "S01-AC-4: and the path to delete" sh -c "printf '%s\n' \"\$1\" | grep 'C05 F
 ok "S01-AC-4: and not the fixed text" sh -c "! printf '%s\n' \"\$1\" | grep 'C05 FAILED' | grep -q '2 starts with no PR'" _ "$s01body"
 ok "S01-AC-4: and not the file's later lines" sh -c "! printf '%s\n' \"\$1\" | grep -q second-line-detail" _ "$s01body"
 
+# G01-AC-7: a spec PR's update session is the task "PR #N" (state/pr/<N>/): running, it is a section of
+# the status issue; FAILED, it is an item under "Waiting on you" with the first line of its FAILED file
+# and the path to delete.
+state7=$tmp/state/repo7
+mkdir -p "$state7/pr/12" "$state7/pr/13"
+sh "$tmp/rs/run-session.sh" --update 12 &
+pids7=$!
+echo "$pids7" >"$state7/pr/12/session.pid"
+echo 1 >"$state7/pr/12/starts"
+trap 'kill $pids $sess $pids3 $pids4 $pids5 $pids6 $pids7 2>/dev/null; rm -rf "$tmp"' EXIT
+sleep 1
+printf '2026-01-08T00:00:00Z second exit (rc 1) without finishing\nsecond-line-detail-13\n' >"$state7/pr/13/FAILED"
+: >"$state7/status.log"
+python3 -I "$src/report.py" --repo owner/repo --state "$state7" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err7"
+body7=$(q "[i['body'] for i in db['issues'].values() if i['state'] == 'open'][0]")
+printf '%s\n' "$body7" >"$tmp/body7"
+awk '/^## Waiting on you/ {f=1; next} /^## / {f=0} f' "$tmp/body7" >"$tmp/waiting7"
+ok "G01-AC-7: the report runs on a state dir with pr/<N> folders without error" test ! -s "$tmp/err7"
+ok "G01-AC-7: a running update is shown as PR #12" grep -qE '^### .*PR #12' "$tmp/body7"
+ok "G01-AC-7: it counts as a running session" grep -qF 'Sessions (1 running)' "$tmp/body7"
+ok "G01-AC-7: its section says it is start 1 of 2" sh -c "grep -E '^### .*PR #12' '$tmp/body7' | grep -qF 'start 1 of 2'"
+ok "G01-AC-7: a FAILED update is under Waiting on you as PR #13" sh -c "grep 'PR #13' '$tmp/waiting7' | grep -q FAILED"
+ok "G01-AC-7: with the first line of its FAILED file" sh -c "grep 'PR #13' '$tmp/waiting7' | grep -qF 'second exit (rc 1) without finishing'"
+ok "G01-AC-7: and the path to delete" sh -c "grep 'PR #13' '$tmp/waiting7' | grep -qF '$state7/pr/13/FAILED'"
+ok "G01-AC-7: and not the file's later lines" sh -c "! grep -q second-line-detail-13 '$tmp/body7'"
+ok "G01-AC-7: the running update is not listed as waiting" sh -c "! grep -q 'PR #12' '$tmp/waiting7'"
+# (merge of G01 and S03: both cases use state7; clear it between them)
+rm -rf "$tmp/state/repo7"
+# S03-AC-7, S03-AC-8: "Waiting on you" and the reply to an answer say "within seconds" only when ready.py, run on the
+# state folder's inputs (graph.yaml, subjects.txt, merged-prs.txt, merged-prs.tsv), names the node.
+state7=$tmp/state/repo7
+mkdir -p "$state7/node"
+cat >"$state7/graph.yaml" <<'GRAPH'
+nodes:
+  - {id: K01, name: kay-one, deps: []}
+  - {id: K02, name: kay-two, deps: [K01]}
+  - {id: M01, name: merged-one, deps: []}
+  - {id: M02, name: merged-two, deps: []}
+  - {id: F01, name: failed-one, deps: []}
+  - {id: W01, name: waiting-one, deps: []}
+GRAPH
+echo "31 node/M01-merged-one" >"$state7/merged-prs.tsv"
+echo 31 >"$state7/merged-prs.txt"
+echo "M02 merged-two: the squash subject of its PR (#40)" >"$state7/subjects.txt"
+: >"$state7/status.log"
+for n in K01 K02 M01 M02 F01 W01 Z09; do
+	mkdir -p "$state7/node/$n"
+	printf 'Q1: which way for %s?\n' "$n" >"$state7/node/$n/QUESTION.md"
+done
+printf '2026-01-08T00:00:00Z 2 starts with no PR\nmore detail\n' >"$state7/node/F01/FAILED"
+echo 55 >"$state7/node/W01/WAITING-PR"
+run7() { python3 -I "$src/report.py" --repo owner/repo --state "$state7" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err7"; }
+# owner7 <text>: the owner comments on the open status issue.
+owner7() {
+	python3 -I -c "
+import json, sys
+db = json.load(open('$db'))
+n = [i['number'] for i in db['issues'].values() if i['state'] == 'open'][0]
+db['comments'].append({'id': len(db['comments']) + 1, 'issue': str(n), 'body': sys.argv[1], 'user': {'login': 'owner', 'type': 'User'},
+    'author_association': 'OWNER', 'created_at': '2026-01-09T00:00:00Z', 'html_url': 'https://x/c7'})
+json.dump(db, open('$db', 'w'))" "$1"
+}
+# dump7: the open status issue's body, and every comment of that issue, to files.
+dump7() {
+	python3 -I -c "
+import json
+db = json.load(open('$db'))
+i = [i for i in db['issues'].values() if i['state'] == 'open'][0]
+open('$tmp/body7', 'w').write(i['body'])
+open('$tmp/comments7', 'w').write('\n====\n'.join(c['body'] for c in db['comments'] if c['issue'] == str(i['number'])))"
+}
+# item7 <ID>: the node's line under "Waiting on you"; reply7 <ID>: the bot's reply recording its answer.
+item7() { awk '/^## Waiting on you/ {f=1; next} /^## / {f=0} f' "$tmp/body7" | grep -E -- "^- .{0,4}$1([^0-9A-Za-z]|\$)" | head -n 1; }
+reply7() { awk -v RS='\n====\n' -v k="Recorded as $1's ANSWER.md" 'index($0, k) { print; exit }' "$tmp/comments7"; }
+says() { printf '%s\n' "$2" | grep -qiE -- "$1"; }
+lacks_seconds() { ! printf '%s\n' "$1" | grep -qi 'within seconds'; }
+lacks() { ! printf '%s\n' "$2" | grep -qiE -- "$1"; }
+nonempty() { [ -n "$1" ]; }
+run7; rc7a=$?
+dump7
+ok "S03-AC-7: the first run exits 0 and leaves nothing on stderr" sh -c "[ $rc7a -eq 0 ] && [ ! -s '$tmp/err7' ]"
+ok "S03-AC-7: a merged node's question is posted as for any node" grep -qF '## M02 asks' "$tmp/comments7"
+ok "S03-AC-7: a merged node's unanswered question is listed under Waiting on you" nonempty "$(item7 M02)"
+ok "S03-AC-7: its item says the node's PR is merged" says "M02's PR is merged" "$(item7 M02)"
+ok "S03-AC-7: its item says its question is still open, and an answer starts a follow-up" says "its question is still open, and an answer starts a follow-up" "$(item7 M02)"
+ok "S03-AC-7: a node merged by merged-prs.tsv gets the same item" says "M01's PR is merged; its question is still open, and an answer starts a follow-up" "$(item7 M01)"
+ok "S03-AC-7: an unmerged node's open question is not said to be merged" lacks "is merged" "$(item7 K01)"
+
+for n in K01 K02 M01 M02 F01 W01 Z09; do owner7 "$n: as recommended"; done
+run7; rc7b=$?
+dump7
+ok "S03-AC-7: an answer to a merged node's question is recorded as for any node (exit 3)" test "$rc7b" = 3
+ok "S03-AC-7: its ANSWER.md is written" grep -q '^M02: as recommended$' "$state7/node/M02/ANSWER.md"
+ok "S03-AC-7: and the bot confirms it" nonempty "$(reply7 M02)"
+
+ok "S03-AC-8: an answered unmerged node that ready.py names: the item says it resumes within seconds" says "resumes within seconds" "$(item7 K01)"
+ok "S03-AC-8: and the reply says it resumes within seconds" says "K01 resumes within seconds" "$(reply7 K01)"
+ok "S03-AC-8: an answered merged node (merged-prs.tsv) that ready.py names: the item says a follow-up starts within seconds" says "follow-up starts within seconds" "$(item7 M01)"
+ok "S03-AC-8: and the reply says a follow-up starts within seconds" says "follow-up starts within seconds" "$(reply7 M01)"
+ok "S03-AC-8: the same for a node merged by its squash subject (item)" says "follow-up starts within seconds" "$(item7 M02)"
+ok "S03-AC-8: the same for a node merged by its squash subject (reply)" says "follow-up starts within seconds" "$(reply7 M02)"
+ok "S03-AC-8: the merged node's item does not say it resumes within seconds" lacks "resumes within seconds" "$(item7 M01)"
+
+ok "S03-AC-8: a FAILED node's item gives its reason" says "2 starts with no PR" "$(item7 F01)"
+ok "S03-AC-8: a FAILED node's item does not say within seconds" lacks_seconds "$(item7 F01)"
+ok "S03-AC-8: the reply for a FAILED node says it is held by FAILED" says "FAILED" "$(reply7 F01)"
+ok "S03-AC-8: and gives the FAILED reason" says "2 starts with no PR" "$(reply7 F01)"
+ok "S03-AC-8: the F01 reply does not say within seconds" lacks_seconds "$(reply7 F01)"
+
+ok "S03-AC-8: a node with a WAITING-PR not in the merged PRs: the item names the spec PR it waits for" says "spec PR #55" "$(item7 W01)"
+ok "S03-AC-8: the W01 item does not say within seconds" lacks_seconds "$(item7 W01)"
+ok "S03-AC-8: its reply names the spec PR it waits for" says "spec PR #55" "$(reply7 W01)"
+ok "S03-AC-8: the W01 reply does not say within seconds" lacks_seconds "$(reply7 W01)"
+
+ok "S03-AC-8: a node with an unmerged dep: the item names the dep" says "K01" "$(item7 K02 | sed 's/K02//')"
+ok "S03-AC-8: the K02 item does not say within seconds" lacks_seconds "$(item7 K02)"
+ok "S03-AC-8: its reply names the dep it waits for" says "K01" "$(reply7 K02 | sed 's/K02//g')"
+ok "S03-AC-8: the K02 reply does not say within seconds" lacks_seconds "$(reply7 K02)"
+
+ok "S03-AC-8: a node absent from the graph: the item says it is not in the graph" says "not in the graph" "$(item7 Z09)"
+ok "S03-AC-8: the Z09 item does not say within seconds" lacks_seconds "$(item7 Z09)"
+ok "S03-AC-8: its reply says it is not in the graph" says "not in the graph" "$(reply7 Z09)"
+ok "S03-AC-8: the Z09 reply does not say within seconds" lacks_seconds "$(reply7 Z09)"
+ok "S03-AC-8: the S03 runs leave nothing on stderr" test ! -s "$tmp/err7"
+
+# S03-AC-8 (Change 7): when ready.py cannot be run (no graph.yaml), the answer is recorded and no timing is claimed.
+state8=$tmp/state/repo8
+mkdir -p "$state8/node/R01"
+: >"$state8/status.log"
+printf 'Q1: which way?\n' >"$state8/node/R01/QUESTION.md"
+run8() { python3 -I "$src/report.py" --repo owner/repo --state "$state8" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err8"; }
+run8
+owner7 "R01: go"
+run8; rc8=$?
+dump7
+ok "S03-AC-8: with no graph.yaml the answer is still recorded" sh -c "[ $rc8 -eq 3 ] && grep -q '^R01: go\$' '$state8/node/R01/ANSWER.md'"
+ok "S03-AC-8: with no graph.yaml the reply says it is recorded" nonempty "$(reply7 R01)"
+ok "S03-AC-8: with no graph.yaml the reply claims no timing" lacks_seconds "$(reply7 R01)"
+ok "S03-AC-8: with no graph.yaml the item exists and claims no timing" sh -c "[ -n \"\$1\" ] && ! printf '%s\n' \"\$1\" | grep -qi 'within seconds'" _ "$(item7 R01)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
