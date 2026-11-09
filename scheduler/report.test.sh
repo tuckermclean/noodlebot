@@ -374,5 +374,46 @@ ok "C01-AC-3: no inf or nan in the overflowing-turns status body" sh -c "! grep 
 ok "C01-AC-3: no inf or nan in the overflowing-turns end comment" sh -c "! grep -qiE '\\\$-?(inf|nan)|(inf|nan) turns' '$tmp/endcomment5'"
 trap 'kill $pids $sess $pids3 $pids4 $pids5 2>/dev/null; rm -rf "$tmp"' EXIT
 
+# C01-AC-3 once more: a log line nested too deeply to parse must not stop the report.
+# The deep line sits more than 1 MiB before the end, so only the whole-log cost path reads it.
+state6=$tmp/state/repo6
+mkdir -p "$state6/node/H01" "$state6/node/H02"
+pids6=
+sh "$tmp/rs/run-session.sh" --node H01 &
+echo $! >"$state6/node/H01/session.pid"
+pids6="$pids6 $!"
+trap 'kill $pids $sess $pids3 $pids4 $pids5 $pids6 2>/dev/null; rm -rf "$tmp"' EXIT
+sleep 1
+run6() { python3 -I "$src/report.py" --repo owner/repo --state "$state6" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err6"; }
+dump6() {
+	python3 -I -c "
+import json
+db = json.load(open('$db'))
+open('$tmp/body6', 'w').write('\n'.join(x['body'] for x in db['issues'].values() if 'H01' in x['body']))
+open('$tmp/endcomment6', 'w').write('\n'.join(c['body'] for c in db['comments'] if 'session H02 ended' in c['body']))"
+}
+deep() { awk 'BEGIN { for (i = 0; i < 100000; i++) printf "{\"a\":"; printf "\"result\"\n" }'; }
+filler() { awk 'BEGIN { for (i = 0; i < 12000; i++) printf "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"filler line %d padding padding padding padding padding padding padding padding\"}]}}\n", i }'; }
+filler >"$tmp/filler6"
+{ r 1.0 1; deep; cat "$tmp/filler6"; r 2.5 3; } >"$state6/node/H01/session.jsonl"
+{ r 1.0 1; deep; cat "$tmp/filler6"; r 6.5 4; } >"$state6/node/H02/session.jsonl"
+: >"$state6/status.log"
+run6; rc9=$?
+dump6
+echo "2026-01-07T00:00:00Z open=[] merged-prs=[]; session H02 ended (rc 0)" >>"$state6/status.log"
+run6; rc10=$?
+dump6
+ok "C01-AC-3: the report exits 0 on both deeply-nested-line runs" sh -c "[ $rc9 -eq 0 ] && [ $rc10 -eq 0 ]"
+ok "C01-AC-3: the deeply-nested-line runs leave nothing on stderr" test ! -s "$tmp/err6"
+ok "C01-AC-3: the deeply-nested-line status body is the normal one" grep -qF 'Sessions (1 running)' "$tmp/body6"
+ok "C01-AC-3: the deeply-nested-line status body has the H01 section" grep -qF '### H01,' "$tmp/body6"
+ok "C01-AC-3: H01 shows the latest well-formed total despite a deeply nested line" grep -qF '$2.50' "$tmp/body6"
+ok "C01-AC-3: H01 shows its summed turns despite a deeply nested line" grep -qE '(^|[^0-9])4 turns' "$tmp/body6"
+ok "C01-AC-3: the end of H02 is posted despite a deeply nested line" grep -qF 'session H02 ended' "$tmp/endcomment6"
+ok "C01-AC-3: the H02 end comment (whole body) carries the well-formed total" grep -qF '$6.50' "$tmp/endcomment6"
+ok "C01-AC-3: the H02 end comment (whole body) carries the well-formed turns" grep -qE '(^|[^0-9])5 turns' "$tmp/endcomment6"
+trap 'kill $pids $sess $pids3 $pids4 $pids5 $pids6 2>/dev/null; rm -rf "$tmp"' EXIT
+
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
