@@ -196,5 +196,51 @@ ok "D01-AC-2 that line starts with 'not deployed: <sha>'" '[ "$(runs d2)" -ge 1 
 commit d3 pass
 dep >/dev/null
 
+# --- slice F (fresh review F2, F3) ---
+# waitfor <seconds> <condition>: poll until the shell condition holds or the time runs out.
+waitfor() { w=0; while [ "$w" -lt $(($1 * 10)) ]; do eval "$2" && return 0; sleep 0.1; w=$((w + 1)); done; return 1; }
+
+# F2: a TERM to deploy.sh while no make test is running must not signal its caller's process group.
+# A post-checkout hook of the live checkout holds `git worktree add` (after the traps are set, before make test starts).
+commit f2 pass
+f2=$(full "$tmp/work" HEAD)
+hook=$live/.git/hooks/post-checkout
+mkdir -p "$live/.git/hooks"
+printf '#!/bin/sh\n: >%s/hook.started\nsleep 2\n' "$tmp" >"$hook"
+chmod +x "$hook"
+rm -f "$tmp/hook.started" "$tmp/f2.pid" "$tmp/f2.survived"
+# the caller runs in its own session/process group, so a stray `kill 0` cannot reach this harness
+setsid sh -c 'sh "$1" "$2" >/dev/null 2>&1 & echo $! >"$3"; wait $!; : >"$4"; sleep 1' sh "$deploy" "$live" "$tmp/f2.pid" "$tmp/f2.survived" &
+callerpid=$!
+waitfor 5 '[ -e "$tmp/hook.started" ] && [ -s "$tmp/f2.pid" ]'
+f2guard=0; [ -e "$tmp/hook.started" ] && [ -s "$tmp/f2.pid" ] && f2guard=1
+dpid=$(cat "$tmp/f2.pid" 2>/dev/null)
+[ "$f2guard" = 1 ] && kill -TERM "$dpid" 2>/dev/null
+waitfor 5 '[ -e "$tmp/f2.survived" ]'
+ok "D01-AC-2 TERM test reached deploy.sh between traps and make test (guard)" '[ "$f2guard" = 1 ]'
+ok "D01-AC-2 deploy.sh exits on TERM" '[ "$f2guard" = 1 ] && ! kill -0 "$dpid" 2>/dev/null'
+ok "D01-AC-2 a TERM to deploy.sh does not kill its caller (no kill of the process group)" '[ "$f2guard" = 1 ] && [ -e "$tmp/f2.survived" ]'
+kill -KILL "-$callerpid" 2>/dev/null; kill -KILL "$callerpid" 2>/dev/null
+wait "$callerpid" 2>/dev/null
+sleep 2.2 # let the hook finish
+rm -f "$hook"
+git -C "$live" worktree prune
+dep >/dev/null
+ok "D01-AC-2 after the TERM a later run deploys the commit" '[ "$(head_of)" = "$f2" ]'
+
+# F3: a temporary fast-forward failure after make test passed must not reject the commit for good.
+commit f3 pass
+f3=$(full "$tmp/work" HEAD)
+before=$(head_of)
+: >"$live/.git/index.lock"
+out1=$(dep)
+during=$(head_of)
+rm -f "$live/.git/index.lock"
+out2=$(dep)
+ok "D01-AC-1 make test ran for the commit while the fast-forward is blocked (guard)" '[ "$during" = "$before" ] && [ "$(runs f3)" -ge 1 ]'
+ok "D01-AC-2 a temporarily blocked fast-forward is not reported as failing make test" '[ "$(runs f3)" -ge 1 ] && ! printf "%s\n%s\n" "$out1" "$out2" | grep -q "not deployed: $(short "$f3")[0-9a-f]* fails make test"'
+ok "D01-AC-1 once the lock is gone the next run deploys the commit" '[ "$(runs f3)" -ge 1 ] && [ "$(head_of)" = "$f3" ]'
+ok "D01-AC-1 make test is not run a second time for that sha" '[ "$(runs f3)" = 1 ]'
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
