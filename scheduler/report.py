@@ -330,6 +330,13 @@ def usage_lines(state):
     return out + [""]
 
 
+def mtime_key_of(a, task):
+    try:
+        return mtime_key(os.path.join(tdir(a.state, task), "QUESTION.md"))
+    except OSError:
+        return None
+
+
 def question_link(a, rs, task):
     """Where to read and answer a task's open question: its comment on the unit's issue, once that is posted."""
     qc = rs.get("units", {}).get(task, {}).get("qc") or {}
@@ -339,6 +346,8 @@ def question_link(a, rs, task):
         current = False
     if current and qc.get("url"):
         return "read and answer it on the unit's issue: %s" % qc["url"]
+    if (rs.get("questions") or {}).get(task) == mtime_key_of(a, task) and not qc:
+        return "answer it on this issue, starting the reply with `%s:`" % task  # posted here by the old version
     return "its comment on the unit's issue is not posted yet"
 
 
@@ -499,6 +508,8 @@ def home_issue(a, rs, task):
 
 def milestone(a, rs, task, key, stage, body=""):
     """Post one milestone comment on the unit's home issue, once per key (recorded in report.json after the post)."""
+    if task.startswith("PR #"):  # a spec-PR update is not a unit: no issue
+        return
     u = rs.setdefault("units", {}).setdefault(task, {})
     done = u.setdefault("done", [])
     if key in done:
@@ -610,7 +621,7 @@ def collect_starts(a, rs):
 
 def post_failed(a, rs):
     for n in nodes(a.state):
-        if not has(a.state, n, "FAILED"):
+        if n.startswith("PR #") or not has(a.state, n, "FAILED"):  # a spec-PR update is not a unit: no issue
             continue
         path = os.path.join(tdir(a.state, n), "FAILED")
         key = "failed:" + mtime_key(path)
@@ -648,11 +659,21 @@ def home_units(a):
     """{issue number: [tasks]} for the units whose home issue is recorded."""
     out = {}
     for n in nodes(a.state):
+        if n.startswith("PR #"):
+            continue
         try:
             out.setdefault(int(open(os.path.join(tdir(a.state, n), "issue")).read().split()[0]), []).append(n)
         except (OSError, ValueError, IndexError):
             pass
     return out
+
+
+def finished(a, n):
+    """A unit nothing more is expected from: no question, no session and, for a node, merged without a follow-up
+    in progress; a triage with no question. A new QUESTION.md makes it unfinished again."""
+    if has(a.state, n, "QUESTION.md") or has(a.state, n, "session.pid") or has(a.state, n, "FOLLOWUP"):
+        return False
+    return n.startswith("#") or is_merged(a.state, n)
 
 
 ID_PREFIX = re.compile(r"\s*\**(#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
@@ -663,7 +684,8 @@ def take_home_answers(a, rs, status_issue):
     a reply only when none is open, or several are and the comment does not start with one's ID."""
     seen = rs.setdefault("home", {})
     for issue, tasks in sorted(home_units(a).items()):
-        if issue == status_issue:
+        tasks = [t for t in tasks if not finished(a, t)]
+        if issue == status_issue or not tasks:
             continue
         units = rs.get("units", {})
         floor = min([units[t]["first_at"] for t in tasks if units.get(t, {}).get("first_at")] or [""])
@@ -678,6 +700,12 @@ def take_home_answers(a, rs, status_issue):
                     st["id"] = max([c["id"] for c in comments] or [0])
                     a.save()
                     continue
+            for rid in list(st.get("react", [])):
+                try:
+                    gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, rid), {"content": "+1"})
+                    st["react"].remove(rid)
+                except RuntimeError as e:
+                    a.errors.append(str(e))
             for c in sorted(comments, key=lambda c: c["id"]):
                 if c["id"] <= st["id"]:
                     continue
@@ -696,6 +724,9 @@ def take_home_answers(a, rs, status_issue):
                         comment(a, issue, "Not recorded as an answer: more than one unit is waiting on this issue (%s). "
                                 "Start the reply with the ID of the one you answer, e.g. `%s: ...`." %
                                 (", ".join(cands), cands[0]))
+                    elif cands and m and m.group(1) in nodes(a.state) and m.group(1) not in cands:
+                        comment(a, issue, "Not recorded as an answer: %s is not waiting on a question (waiting: %s)." %
+                                (m.group(1), ", ".join(cands)))
                     elif cands:
                         node = m.group(1) if m and m.group(1) in cands else cands[0]
                         record_answer(a, rs, node, c, text)
@@ -703,6 +734,7 @@ def take_home_answers(a, rs, status_issue):
                             gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, c["id"]), {"content": "+1"})
                         except RuntimeError as e:
                             a.errors.append(str(e))
+                            st.setdefault("react", []).append(c["id"])  # retried on the next run
                 st["id"], st["since"] = c["id"], c.get("created_at", "")
                 a.save()
         except Exception as e:  # retried on the next run, from this comment on
@@ -771,6 +803,8 @@ def post_events(a, rs, issue):
 def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
+        if n.startswith("PR #"):
+            continue
         q = os.path.join(tdir(a.state, n), "QUESTION.md")
         key = mtime_key(q)
         if posted.get(n) == key and ("question:" + key) in rs.get("units", {}).get(n, {}).get("done", []):
