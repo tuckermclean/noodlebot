@@ -246,7 +246,6 @@ deploy() {
 open='' merged='' tick_tok='' live=() throttled=0
 tick() {
 	date +%s >"$state/heartbeat"
-	deploy
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	# Keep the clone's own checkout on origin/main: sessions in its worktrees also load skills and
 	# agents from it, so a stale checkout would offer them stale ones.
@@ -347,8 +346,8 @@ while :; do
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
+	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
-		say "deployed a new checkout; loop re-execs (pid $$)"
 		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
 	fi
 	pause

@@ -46,17 +46,29 @@ do_deploy() {
 		rm -rf "$scratch"
 		die "cannot create a scratch worktree for $new"
 	fi
-	timeout 600 make -C "$scratch/wt" test >"$scratch/test.log" 2>&1 9>&- &
+	# make test runs in a clean environment: the loop's SCHED_* and NOODLEBOT_DATA are not passed on.
+	(
+		for v in $(env | sed -n 's/^\(SCHED_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+		unset NOODLEBOT_DATA
+		exec timeout 600 make -C "$scratch/wt" test >"$scratch/test.log" 2>&1 9>&-
+	) &
 	mpid=$!
-	if wait "$mpid"; then ok=1; else ok=0; fi
+	wait "$mpid"; rc=$?
 	mpid=
 	cleanup
-	if [ "$ok" = 0 ]; then
+	if [ "$rc" = 124 ] || [ "$rc" -gt 128 ]; then
+		echo "deploy.sh: make test for $new timed out or was killed (status $rc); will retry" >&2
+		return 2
+	fi
+	if [ "$rc" != 0 ]; then
 		echo "$new" >>"$sd/rejected"
 		echo "not deployed: $new fails make test"
 		return 1
 	fi
-	git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1 || die "cannot fast-forward $live to $new"
+	if ! git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1; then
+		echo "$new" >>"$sd/rejected"
+		die "cannot fast-forward $live to $new (recorded; not tried again)"
+	fi
 	echo "$old" >"$sd/previous"
 	echo "deployed $old..$new"
 }
