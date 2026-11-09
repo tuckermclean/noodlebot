@@ -13,5 +13,6 @@ test:
 	sh scheduler/loops.test.sh
 	sh scheduler/move-runtime.test.sh
 	sh plugin/skills/adopt/adopt.test.sh
+	sh plugin/skills/triage/nodes.test.sh
 
 .PHONY: test
