@@ -149,6 +149,11 @@ def num(v):
         return False
 
 
+def whole(v):
+    """A turn count: a non-negative int that fits a float (not a float, so a sum of them cannot overflow)."""
+    return isinstance(v, int) and num(v) and v >= 0
+
+
 def cost_turns(log):
     """(latest total_cost_usd, turns summed over results) of the well-formed result events in the whole log, or None.
 
@@ -164,7 +169,7 @@ def cost_turns(log):
                 except ValueError:
                     continue
                 if (isinstance(d, dict) and d.get("type") == "result" and num(d.get("total_cost_usd"))
-                        and num(d.get("num_turns"))):
+                        and whole(d.get("num_turns"))):
                     cost, turns, found = d["total_cost_usd"], turns + d["num_turns"], True
     except OSError:
         return None
