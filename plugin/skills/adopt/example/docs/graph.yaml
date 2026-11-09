@@ -1,0 +1,23 @@
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - id: T01
+    name: skip-binary-files
+    deps: []
+    track: now
+    summary: Skip binary files with a warning on stderr instead of counting their bytes as text.
+  - id: T02
+    name: json-output
+    deps: []
+    track: now
+    summary: Add --json (one object per file plus a total), and print the total row the README promises.
+  - id: T03
+    name: top-words
+    deps: []
+    track: now
+    summary: Add --top N, the N most frequent words of each file, case-insensitive, ties alphabetical.
+  - id: T04
+    name: config-file
+    deps: [T02, T03]
+    track: later
+    summary: Read default flags from ~/.tallyhorc as key=value lines.
+    decisions: [Config file format (default key=value, never sourced shell)]
