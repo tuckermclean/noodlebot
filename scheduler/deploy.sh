@@ -6,19 +6,28 @@
 # in a scratch worktree of that commit; on success it fast-forwards the live checkout and prints
 # "deployed <old>..<new>"; on failure it prints "not deployed: <sha> fails make test" once and records
 # the sha so it is not tried again. A sha whose make test passed but that cannot be fast-forwarded is
-# recorded too, with one line "not deployed: <sha> cannot fast-forward <live>". A make test that times
-# out or is killed by a signal is retried on later runs (stderr only), and after $max_tries such
-# attempts for the same sha it is recorded with one line "not deployed: <sha> make test timed out or
-# was killed <n> times". Nothing to do prints nothing; every stdout line is one status event.
-# --rollback resets to deploy/previous and records the commit it left as rejected, so the rollback sticks.
-# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries} (default ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock (waited for up to 5 minutes, so a
-# concurrent run finds nothing left to do). Nothing is written inside the live checkout. Exit:
+# remembered as passed (deploy/passed, "<sha> <failed fast-forwards>") with one line "not deployed:
+# <sha> cannot fast-forward <live> (will retry the fast-forward)"; later runs for that sha skip make
+# test and retry only the fast-forward (stderr only), and after $max_tries failed fast-forwards in all
+# it is recorded as rejected (stderr only; the status line was already given). A newer origin/main
+# supersedes it. A make test that times out or is killed by a signal is retried on later runs (stderr
+# only), and after $max_tries such attempts for the same sha it is recorded with one line "not
+# deployed: <sha> make test timed out or was killed <n> times". Nothing to do prints nothing; every
+# stdout line is one status event.
+# --rollback resets to deploy/previous and, once the reset succeeded, records the commit it left as
+# rejected, so the rollback sticks.
+# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed} (default ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock (waited for up to 5 minutes, so a
+# concurrent run finds nothing left to do; git commands that may leave a background process run with it closed).
+# Nothing is written inside the live checkout. Exit:
 # 0 nothing to do, deployed, or rolled back;
-# 1 not deployed and recorded (fails make test, cannot fast-forward, or timed out / killed $max_tries times);
-# 2 nothing recorded, retried next run: usage, not a git checkout, fetch or git failure, a live checkout
+# 1 not deployed and recorded as rejected (fails make test, $max_tries failed fast-forwards, or timed
+#   out / killed $max_tries times);
+# 2 not rejected, retried next run: usage, not a git checkout, fetch or git failure, a live checkout
 #   that cannot fast-forward or has uncommitted changes, make test timed out or killed (fewer than
-#   $max_tries times), or make could not run (status 125-127: timeout or make missing) (message on stderr).
-# The body is a function called last, so the file is fully read before the checkout changes under it.
+#   $max_tries times), make could not run (status 125-127: timeout or make missing), a fast-forward
+#   that failed after make test passed (fewer than $max_tries times; the pass is remembered), a failed
+#   rollback (nothing recorded), or a TERM/INT (message on stderr).
+# The body is in functions called last, so the file is fully read before the checkout changes under it.
 
 die() { echo "deploy.sh: $*" >&2; exit 2; }
 
@@ -29,15 +38,15 @@ rejected() { grep -qx "$1" "$sd/rejected" 2>/dev/null; }
 # reject <sha> <reason>: record the sha so it is not tried again, and print the one status line.
 reject() {
 	echo "$1" >>"$sd/rejected"
-	rm -f "$sd/tries"
+	rm -f "$sd/tries" "$sd/passed"
 	echo "not deployed: $1 $2"
 }
 
 cleanup() {
 	[ -n "${scratch:-}" ] || return 0
-	git -C "$live" worktree remove --force "$scratch/wt" >/dev/null 2>&1
+	git -C "$live" worktree remove --force "$scratch/wt" >/dev/null 2>&1 9>&-
 	rm -rf "$scratch"
-	git -C "$live" worktree prune >/dev/null 2>&1
+	git -C "$live" worktree prune >/dev/null 2>&1 9>&-
 	scratch=
 }
 
@@ -56,10 +65,24 @@ do_deploy() {
 		echo "deploy.sh: $live has uncommitted tracked changes; not deploying $new" >&2
 		return 2
 	fi
+	# A sha whose make test already passed ("<sha> <failed fast-forwards>" in $sd/passed) only retries the fast-forward.
+	pn=
+	if [ -f "$sd/passed" ] && read -r psha pn <"$sd/passed" && [ "$psha" = "$new" ]; then
+		case $pn in ''|*[!0-9]*) pn=0 ;; esac
+	else
+		pn=
+	fi
+	[ -n "$pn" ] || { run_test || return $?; }
+	fast_forward
+}
+
+# run_test: make test for $new in a scratch worktree; 0 when it passed (remembered in $sd/passed),
+# otherwise the status do_deploy returns.
+run_test() {
 	trap cleanup EXIT
-	trap 'kill "${mpid:-0}" 2>/dev/null; cleanup; exit 2' INT TERM
+	trap '[ -n "${mpid:-}" ] && kill "$mpid" 2>/dev/null; cleanup; exit 2' INT TERM
 	scratch=$(mktemp -d) || die "mktemp failed"
-	if ! git -C "$live" worktree add -q --detach "$scratch/wt" "$new" >/dev/null 2>&1; then
+	if ! git -C "$live" worktree add -q --detach "$scratch/wt" "$new" >/dev/null 2>&1 9>&-; then
 		rm -rf "$scratch"
 		die "cannot create a scratch worktree for $new"
 	fi
@@ -95,12 +118,27 @@ do_deploy() {
 		reject "$new" "fails make test"
 		return 1
 	fi
-	if ! git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1; then
-		echo "deploy.sh: cannot fast-forward $live to $new (recorded; not tried again)" >&2
-		reject "$new" "cannot fast-forward $live"
-		return 1
-	fi
 	rm -f "$sd/tries"
+	pn=0
+	echo "$new $pn" >"$sd/passed"
+}
+
+# fast_forward: move the live checkout to $new, whose make test passed; $pn fast-forwards failed before.
+fast_forward() {
+	if ! git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1 9>&-; then
+		pn=$((pn + 1))
+		[ "$pn" = 1 ] && echo "not deployed: $new cannot fast-forward $live (will retry the fast-forward)"
+		if [ "$pn" -ge "$max_tries" ]; then
+			echo "deploy.sh: cannot fast-forward $live to $new ($pn times); recorded, not tried again" >&2
+			echo "$new" >>"$sd/rejected"
+			rm -f "$sd/passed"
+			return 1
+		fi
+		echo "$new $pn" >"$sd/passed"
+		echo "deploy.sh: cannot fast-forward $live to $new (attempt $pn of $max_tries); will retry the fast-forward" >&2
+		return 2
+	fi
+	rm -f "$sd/tries" "$sd/passed"
 	echo "$old" >"$sd/previous"
 	echo "deployed $old..$new"
 }
@@ -110,8 +148,8 @@ do_rollback() {
 	prev=$(git -C "$live" rev-parse --verify -q "$prev^{commit}") || die "recorded previous commit is not in $live"
 	cur=$(git -C "$live" rev-parse --verify -q HEAD) || die "no HEAD in $live"
 	[ "$cur" = "$prev" ] && return 0
+	git -C "$live" reset -q --hard "$prev" >/dev/null 2>&1 9>&- || die "cannot reset $live to $prev"
 	echo "$cur" >>"$sd/rejected"
-	git -C "$live" reset -q --hard "$prev" >/dev/null 2>&1 || die "cannot reset $live to $prev"
 	echo "rolled back $cur..$prev"
 }
 
