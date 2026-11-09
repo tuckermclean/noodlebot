@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mirror one repository's scheduler state to a GitHub status issue, and take the owner's answers from it.
 
-  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--owner LOGIN]
+  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN]
 
 Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all GitHub access through `gh api`.
 Each run:
@@ -10,11 +10,21 @@ Each run:
   2. turns each new comment by the owner on that issue into ANSWER.md for the node waiting on a
      question (the only one waiting, or the one named first: "B03: ..."), and replies;
   3. posts new status.log events (starts, ends, releases, merges, FAILED) as one comment;
-  4. posts each new unanswered QUESTION.md in full, once;
-  5. rewrites the issue body: what waits on the owner, every running session and its latest narration,
+  4. posts each new unanswered QUESTION.md once: a short `## <ID> asks` pointer on the status issue, and
+     the whole QUESTION.md as a milestone on the unit's home issue;
+  5. posts milestones on each unit's home issue, each once, each starting with a `**Stage:**` line: a start
+     or resume (with its start count, read from new status.log lines), the question, answer received, FAILED.
+     The home issue of a triage of N is N; of a node, the first issue on the **Resolves:** line of its spec
+     (nodes/<ID>-*.md on origin/main of --clone; default <data>/repos/<basename of --worktrees>) with the
+     others linked in its first milestone, or, with no Resolves line, a new "Build <ID> <name>" issue labelled
+     `noodlebot-unit`. It is recorded in the unit's state folder (node/<ID>/issue, issue/<N>/issue). What was
+     posted per unit is in report.json, so a failed post is retried on the next run and nothing is posted twice;
+     the first run after this was added posts nothing for events, questions or FAILED from before;
+  6. rewrites the issue body: what waits on the owner, every running session and its latest narration,
      recent events. Body edits do not notify; comments do.
-On the first run it does not replay old comments or events. Any failure exits non-zero; the loop
-logs it and carries on, and the next run picks up where this one stopped.
+On the first run it does not replay old comments or events. Any failure (a failed milestone post included,
+after the other work is done) exits non-zero; the loop logs it and carries on, and the next run picks up
+where this one stopped.
 """
 import argparse, hashlib, json, math, os, re, subprocess, sys, time
 from datetime import datetime, timezone
@@ -22,6 +32,7 @@ from datetime import datetime, timezone
 LABEL = "noodlebot-status"
 EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
+UNIT_LABEL = "noodlebot-unit"
 MAX_COMMENT = 60000
 
 
@@ -406,6 +417,168 @@ def comment(a, issue, text):
     gh("POST", "repos/%s/issues/%s/comments" % (a.repo, issue), {"body": text})
 
 
+def spec_info(a, node):
+    """(name or None, [Resolves issue numbers]) of node's spec on origin/main of the clone; (None, []) when unreadable."""
+    names = [l for l in git_lines(a.clone, "ls-tree", "--name-only", "origin/main", "nodes/")
+             if re.match(r"nodes/%s-.*\.md$" % re.escape(node), l)]
+    name, issues = None, []
+    if names:
+        f = sorted(names)[0]
+        name = f[len("nodes/%s-" % node):-len(".md")]
+        for l in git_lines(a.clone, "show", "origin/main:" + f):
+            if l.startswith("**Resolves:**"):
+                issues = [int(x) for x in re.findall(r"#(\d+)", l)]
+                break
+    if name is None:
+        name = next((n["name"] for n in graph_nodes(a.state) if n["id"] == node), None)
+    return name, issues
+
+
+def home_issue(a, rs, task):
+    """The unit's home issue number: the recorded one, else decided (and for a Build issue created) and recorded."""
+    f = os.path.join(tdir(a.state, task), "issue")
+    try:
+        return int(open(f).read().split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    if task.startswith("#"):
+        n = int(task[1:])
+    else:
+        name, issues = spec_info(a, task)
+        if issues:
+            n = issues[0]
+        else:
+            title = "Build %s%s" % (task, " " + name if name else "")
+            if not getattr(a, "unit_label", False):
+                a.unit_label = True
+                try:
+                    gh("POST", "repos/%s/labels" % a.repo, {"name": UNIT_LABEL, "color": "0e8a16",
+                                                          "description": "A unit of noodlebot work, while it is built"})
+                except RuntimeError:
+                    pass  # exists already, or labels.py ensures it
+            spec = "`nodes/%s-%s.md`" % (task, name) if name else "its spec"
+            n = gh("POST", "repos/%s/issues" % a.repo, {
+                "title": title, "labels": [UNIT_LABEL],
+                "body": "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
+                        "result). Its spec is %s on the main branch. The loop closes this issue once the node is "
+                        "merged." % (task, spec)})["number"]
+    with open(f + ".tmp", "w") as fh:
+        fh.write("%d\n" % n)
+    os.replace(f + ".tmp", f)
+    return n
+
+
+def milestone(a, rs, task, key, stage, body=""):
+    """Post one milestone comment on the unit's home issue, once per key (recorded in report.json after the post)."""
+    u = rs.setdefault("units", {}).setdefault(task, {})
+    done = u.setdefault("done", [])
+    if key in done:
+        return
+    issue = home_issue(a, rs, task)
+    text = "**Stage:** " + stage
+    if not u.get("intro") and not task.startswith("#"):
+        others = [i for i in spec_info(a, task)[1] if i != issue]
+        if others:
+            text += "\n\nAlso on this node's Resolves line: " + ", ".join("#%d" % i for i in others) + "."
+    if body:
+        text += "\n\n" + body
+    comment(a, issue, text)
+    u["intro"] = True
+    done.append(key)
+    a.save()
+
+
+def flush(a, rs):
+    """Post the queued milestones; one that fails stays queued and is logged at the end of the run."""
+    left = []
+    for m in rs.get("pending", []):
+        try:
+            milestone(a, rs, m["task"], m["key"], m["stage"], m.get("body", ""))
+        except Exception as e:
+            a.errors.append(str(e))
+            left.append(m)
+    rs["pending"] = left
+    a.save()
+
+
+def queue(a, rs, task, key, stage, body=""):
+    rs.setdefault("pending", []).append({"task": task, "key": key, "stage": stage, "body": body})
+    a.save()
+
+
+def mtime_key(path):
+    return str(int(os.path.getmtime(path)))
+
+
+def migrate(a, rs):
+    """A report.json from before milestones: what is there now was seen; post no milestone for it."""
+    units = rs.setdefault("units", {})
+    for n in nodes(a.state):
+        keys = []
+        if has(a.state, n, "FAILED"):
+            keys.append("failed:" + mtime_key(os.path.join(tdir(a.state, n), "FAILED")))
+        if has(a.state, n, "QUESTION.md"):
+            keys.append("question:" + mtime_key(os.path.join(tdir(a.state, n), "QUESTION.md")))
+        if keys:
+            units.setdefault(n, {}).setdefault("done", []).extend(keys)
+    if rs.get("m_offset") is None:
+        rs["m_offset"] = rs.get("log_offset", 0)
+
+
+START = re.compile(r"started (?:([A-Z][0-9][0-9]) \(|triage of (#\d+) )")
+
+
+def collect_starts(a, rs):
+    """Queue a milestone for each new `started` line of status.log (only whole lines after the last one read)."""
+    log = os.path.join(a.state, "status.log")
+    size = os.path.getsize(log) if os.path.exists(log) else 0
+    off = rs.get("m_offset")
+    if off is None:
+        rs["m_offset"] = size  # first run: do not replay
+        return
+    if off > size:
+        off = 0
+    with open(log, "rb") as f:
+        f.seek(off)
+        data = f.read()
+    end = data.rfind(b"\n") + 1
+    pos = off
+    for raw in data[:end].splitlines(keepends=True):
+        line_off, pos = pos, pos + len(raw)
+        what = event_text(raw.decode("utf-8", "replace").strip())[1]
+        m = START.match(what)
+        if not m:
+            continue
+        task = m.group(1) or m.group(2)
+        k = re.search(r"\bstart (\d+) of (\d+)", what)
+        count = "start %s of %s" % (k.group(1), k.group(2)) if k else "start count unknown"
+        if task.startswith("#"):
+            stage = "triage started (%s)" % count
+        elif os.path.isdir(os.path.join(tdir(a.state, task), "answered")):
+            stage = "resumed after your answer (%s)" % count
+        else:
+            stage = "session started (%s)" % count
+        queue(a, rs, task, "start:%d" % line_off, stage)
+    rs["m_offset"] = off + end
+    a.save()
+
+
+def post_failed(a, rs):
+    for n in nodes(a.state):
+        if not has(a.state, n, "FAILED"):
+            continue
+        path = os.path.join(tdir(a.state, n), "FAILED")
+        key = "failed:" + mtime_key(path)
+        if key in rs.get("units", {}).get(n, {}).get("done", []):
+            continue
+        with open(path, errors="replace") as fh:
+            why = fh.readline().strip() or "no reason given"
+        try:
+            milestone(a, rs, n, key, "FAILED, held until you delete its FAILED file", "Reason: %s" % why)
+        except Exception as e:
+            a.errors.append(str(e))
+
+
 def take_answers(a, rs, issue):
     seen = rs.get("comment_id", 0)
     comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
@@ -435,10 +608,13 @@ def take_answers(a, rs, issue):
             f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
                     (node, a.owner, c["created_at"], c["html_url"], text))
         os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
+        what = None if node.startswith("#") else answered_text(a.state, node)
+        queue(a, rs, node, "answer:%s" % c["id"], "answer received" + (", " + what if what else ""),
+              "The owner's answer was recorded: %s" % c["html_url"])
+        flush(a, rs)
         if node.startswith("#"):
             comment(a, issue, "Recorded as %s's ANSWER.md." % node)
         else:
-            what = answered_text(a.state, node)
             comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
         a.answered = True
 
@@ -475,13 +651,20 @@ def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
         q = os.path.join(tdir(a.state, n), "QUESTION.md")
-        key = str(int(os.path.getmtime(q)))
-        if posted.get(n) == key:
+        key = mtime_key(q)
+        if posted.get(n) == key and ("question:" + key) in rs.get("units", {}).get(n, {}).get("done", []):
             continue
-        comment(a, issue, "## %s asks\n\n%s\n\n---\nTo answer, reply to this issue in plain words. Only %s's "
-                "replies count; if more than one node is waiting, start with `%s:`.\n" %
-                (n, open(q).read().strip(), a.owner, n))
-        posted[n] = key
+        try:
+            home = home_issue(a, rs, n)
+            if posted.get(n) != key:
+                comment(a, issue, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
+                        "starting the reply with `%s:`.\n" % (n, home, n))
+                posted[n] = key
+            milestone(a, rs, n, "question:" + key, "%s asks a question, waiting for your answer" % n,
+                      "## %s asks\n\n%s\n\n---\nTo answer, reply to this issue in plain words. Only %s's replies count.\n" %
+                      (n, open(q).read().strip(), a.owner))
+        except Exception as e:
+            a.errors.append(str(e))
 
 
 def main():
@@ -490,6 +673,7 @@ def main():
     p.add_argument("--state", required=True)
     p.add_argument("--worktrees", default="")
     p.add_argument("--owner", default="")
+    p.add_argument("--clone", default="")
     a = p.parse_args()
     a.answered = False
     a.owner = a.owner or a.repo.split("/")[0]
@@ -497,6 +681,8 @@ def main():
         os.environ.get("NOODLEBOT_DATA") or os.path.join(os.path.expanduser("~"), ".local", "share", "noodlebot"),
         "worktrees", a.repo.split("/")[1])
     a.worktrees = os.path.abspath(a.worktrees)
+    a.clone = a.clone or os.path.join(os.path.dirname(os.path.dirname(a.worktrees)), "repos", os.path.basename(a.worktrees))
+    a.errors = []
     path = os.path.join(a.state, "report.json")
     try:
         rs = json.load(open(path))
@@ -508,6 +694,10 @@ def main():
             json.dump(rs, f, indent=1)
         os.replace(path + ".tmp", path)
 
+    a.save = save
+    if rs and "units" not in rs:
+        migrate(a, rs)
+    rs.setdefault("units", {})
     issue, new = find_issue(a, rs)
     if new or rs.get("issue") != issue:
         rs["issue"] = issue
@@ -519,6 +709,9 @@ def main():
     try:
         take_answers(a, rs, issue)
         post_events(a, rs, issue)
+        collect_starts(a, rs)
+        flush(a, rs)
+        post_failed(a, rs)
         post_questions(a, rs, issue)
     finally:
         save()
@@ -538,7 +731,9 @@ def main():
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"body": body})
         rs["body_hash"], rs["body_time"] = h, time.time()
         save()
-    return 3 if a.answered else 0
+    for e in a.errors:
+        print("report.py: %s" % e, file=sys.stderr)
+    return 3 if a.answered else (1 if a.errors else 0)
 
 
 if __name__ == "__main__":
