@@ -440,12 +440,14 @@ rt_setup old "$tmp/old/data"
 mkdir -p "$nb/state/alpha"
 oldlock=$nb/state/alpha/loop.lock
 setsid "$REALFLOCK" "$oldlock" sleep 60 >/dev/null 2>&1 </dev/null &
+oldpid=$!
 i=0; while ! nl_held "$oldlock" && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
 run start
 no M01-AC-1:old-lock:start-exits-nonzero sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
 ok M01-AC-1:old-lock:output-names-the-lock sh -c "grep -qF '$oldlock' '$sc/out'"
 ok M01-AC-1:old-lock:nothing-started sh -c "[ -e '$sc/rc' ] && [ ! -e '$TMUXLOG' ]"
 touch "$HOME/STOP"
+pkill -P "$oldpid" 2>/dev/null
 pkill -f "$oldlock" 2>/dev/null
 nl_wait_free "$oldlock"
 nl_wait_free "$rt/state/alpha/loop.lock"; nl_wait_free "$rt/state/beta/loop.lock"
