@@ -2,6 +2,8 @@
 
 ## Building a node
 
+- **Building.** Build a node with `/noodlebot:node <ID>`. The role guard needs no
+  `.noodlebot/roles.yaml` here, because `tests/` matches its default test globs.
 - **Authority order.** `SPEC.md`, then `docs/graph.yaml`, then the node spec `nodes/<ID>-<name>.md`,
   then this file. When two disagree, the earlier one wins and the later one is fixed by a spec PR.
 - **Roles.** The plugin's tester writes the failing tests, the implementer makes them pass, the
