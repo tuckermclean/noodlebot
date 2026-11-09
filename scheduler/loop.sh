@@ -138,6 +138,17 @@ has_pr() {
 	fi
 }
 
+# record_stop <dir> <rc>: write <dir>/stopped, "<UTC time> <reason>", for a session that ended with no
+# PR, QUESTION.md or WAITING-PR. rc is the session.rc value, or ? when there is none.
+record_stop() {
+	local why="rc $2"
+	if [ "$2" != 0 ] && limit_exit "$1"; then why='usage limit'
+	elif [ "$2" = '?' ]; then why='stopped (no exit code)'
+	elif [[ $2 =~ ^[0-9]+$ ]] && [ "$2" -gt 128 ]; then why="stopped (signal $(($2 - 128)))"
+	fi
+	echo "$(date -u +%FT%TZ) $why" >"$1/stopped" 2>/dev/null || true
+}
+
 # ended <dir> <saw>: a recorded session is gone; report how it ended and clear its pid file.
 ended() {
 	local d=$1 saw=$2 id rc p
@@ -148,16 +159,18 @@ ended() {
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
-	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
-	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
-	elif has_pr "$d" "$id"; then say "$saw; session $id ended (rc $rc) with a PR"
+	elif [ -e "$d/QUESTION.md" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) with QUESTION.md"
+	elif [ -e "$d/WAITING-PR" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
+	elif has_pr "$d" "$id"; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) with a PR"
 	elif bg_cut_off "$d"; then
+		record_stop "$d" "$rc"
 		not_counted "$d"
 		say "$saw; session $id ended (rc $rc) with its background work cut off; start not counted"
 	elif [ "$rc" != 0 ] && limit_exit "$d"; then
+		record_stop "$d" "$rc"
 		not_counted "$d"
 		say "$saw; session $id stopped by the usage limit (rc $rc); start not counted, it resumes when the throttle opens"
-	elif [ "$(starts_of "$d")" -ge 2 ]; then
+	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) with no PR and no QUESTION.md" >"$d/FAILED"
 		set_starts "$d" 0   # deleting FAILED gives the node 2 fresh starts
 		say "$saw; session $id ended (rc $rc), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
@@ -186,7 +199,7 @@ triage_ended() {
 	elif limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; triage of #$n stopped by the usage limit (rc $rc); start not counted"
-	elif [ "$(starts_of "$d")" -ge 2 ]; then
+	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing" >"$d/FAILED"
 		set_starts "$d" 0
 		say "$saw; triage of #$n ended (rc $rc), 2 starts used: wrote FAILED"
@@ -210,7 +223,7 @@ update_ended() {
 	elif limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; update of PR #$n stopped by the usage limit (rc $rc); start not counted"
-	elif [ "$(starts_of "$d")" -ge 2 ]; then
+	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing the update" >"$d/FAILED"
 		set_starts "$d" 0
 		say "$saw; update of PR #$n ended (rc $rc), 2 starts used: wrote FAILED"
@@ -405,6 +418,32 @@ followup_branch() {
 	echo "node/$1-followup-$((${n:-0} + 1))"
 }
 
+# save_leftover <ID> <wt> <dir> <saw>: uncommitted changes in an existing worktree (modified, staged,
+# deleted, untracked and not ignored) are written to <dir>/leftover/<UTC timestamp>.patch, then the
+# worktree is reset to HEAD and the untracked files saved are removed. Sets leftover_patch to the patch
+# file name (empty when the worktree is clean). Fails, resetting nothing, if the patch cannot be written.
+leftover_patch=''
+save_leftover() {
+	local id=$1 wt=$2 d=$3 saw=$4 ts patch tmpd ex=()
+	# the node's evidence stays even where out/ is not ignored (an excluded path that is ignored makes git add fail)
+	git -C "$wt" check-ignore -q "out/node/$id/x" || ex=(":(exclude)out/node/$id")
+	leftover_patch=''
+	[ -n "$(git -C "$wt" status --porcelain -- . "${ex[@]}" 2>/dev/null)" ] || return 0
+	ts=$(date -u +%Y%m%dT%H%M%SZ) patch=$d/leftover/$ts.patch
+	if mkdir -p "$d/leftover" && tmpd=$(mktemp -d "$d/leftover/.tmp.XXXXXX") &&
+		GIT_INDEX_FILE=$tmpd/index git -C "$wt" add -A -- . "${ex[@]}" &&
+		GIT_INDEX_FILE=$tmpd/index git -C "$wt" diff --binary --cached HEAD >"$tmpd/patch" &&
+		[ -s "$tmpd/patch" ] && [ ! -e "$patch" ] && mv "$tmpd/patch" "$patch"; then
+		rm -rf "$tmpd"
+	else
+		[ -n "${tmpd:-}" ] && rm -rf "$tmpd"
+		note "$saw; $id: cannot write the leftover patch for its uncommitted changes; not started"; return 1
+	fi
+	git -C "$wt" reset -q --hard HEAD && git -C "$wt" clean -fdq -- . "${ex[@]}" || { note "$saw; $id: resetting the worktree after the leftover patch failed; not started"; return 1; }
+	leftover_patch=$ts.patch
+	say "$saw; $id: uncommitted changes of an earlier session saved as leftover/$leftover_patch and the worktree reset"
+}
+
 # start_node <ID> <name> <saw> [followup]: start a ready node's session (/node, or the plugin's skill).
 # A merged node's answer ("followup") starts on a branch of its own, node/<ID>-followup-<n>, which the
 # FOLLOWUP marker keeps until its PR is merged.
@@ -434,8 +473,21 @@ start_node() {
 		git -C "$clone" worktree add -q -b "$br" "$wt" origin/main 2>/dev/null ||
 			git -C "$clone" worktree add -q "$wt" "$br" || { note "$saw; worktree for $id failed"; return 1; }
 	fi
-	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
-		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" "$here/$prompt" >"$d/unattended.md" || { note "$saw; $id: no $prompt; not started"; return 1; }
+	local ncommits reason='' resume=0 rsed=()
+	[ -r "$here/$prompt" ] || { note "$saw; $id: no $prompt; not started"; return 1; }
+	save_leftover "$id" "$wt" "$d" "$saw" || return 1
+	ncommits=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+	if [ "${ncommits:-0}" -gt 0 ] || [ -d "$wt/out/node/$id" ]; then
+		resume=1
+		reason=$(cut -d' ' -f2- "$d/stopped" 2>/dev/null | head -n1)
+		rsed=(-e "s|@REASON@|${reason:-not recorded}|g" -e "s|@COMMITS@|${ncommits:-0}|g" -e "s|@PATCH@|$state/node/$id/leftover/$leftover_patch|g")
+	fi
+	# the resume section sits between @RESUME-BEGIN@/@RESUME-END@, the patch lines between @PATCH-BEGIN@/@PATCH-END@
+	{ if [ "$resume" = 1 ]; then cat; else sed '/^@RESUME-BEGIN@$/,/^@RESUME-END@$/d'; fi; } <"$here/$prompt" 2>/dev/null |
+	{ if [ -n "$leftover_patch" ]; then cat; else sed '/^@PATCH-BEGIN@$/,/^@PATCH-END@$/d'; fi; } |
+	sed -e '/^@\(RESUME\|PATCH\)-\(BEGIN\|END\)@$/d' "${rsed[@]}" \
+		-e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
+		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" >"$d/unattended.md" || { note "$saw; $id: rendering $prompt failed; not started"; return 1; }
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
 	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
 	launch "$wt" "$d" "$skill $id"
