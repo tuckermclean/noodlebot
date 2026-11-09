@@ -1382,5 +1382,125 @@ urun "$ustate11"; urun "$ustate11"; urun "$ustate11"; urun "$ustate11"
 ok "U01-AC-9: with the clone unreadable at the first run, a node merged before and its closed Resolves issue (85) get no comment later" test "$(unum 85)" = 0
 ok "U01-AC-9: and no PATCH of it ever, and it stays closed" test "$(upatches 85)" = 0 -a "$(ustateof 85)" = closed
 
+# U01-AC-9 + U01-AC-3 (S3d, H1a): the seed run (first run with this bookkeeping) coincides with a failed `gh pr list`
+# (merged-prs.tsv and closed-prs.tsv empty) while subjects.txt + graph.yaml show nodes merged long ago; once the files are
+# back, those nodes get no merged milestone, no Build issue, no comment on their closed Resolves issue and no PATCH.
+# Two cases: an old report.json (no pr_seed) and no report.json at all.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+for n in (91, 92, 93, 94):
+    db['issues'][str(n)] = {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'closed', 'node_id': 'I_%d' % n}
+json.dump(db, open('$udb', 'w'))"
+mkspec M01 m-one '#91'
+mkspec M02 m-two ''
+mkspec N01 n-one '#92'
+mkspec N02 n-two ''
+mkspec K01 k-one '#93'
+mkspec K02 k-two ''
+mkspec K03 k-three ''
+mkspec H01 h-one '#95, #96'
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs8 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+# uanypatch: the PATCH calls since $tmp/ucalls was emptied, other than on the status issue.
+uanypatch() { grep '^PATCH' "$tmp/ucalls" | grep -vc "issues/$ustatus\$" || true; }
+ok "U01-AC-9: (self-check) uanypatch ignores the status issue and counts another" sh -c "printf 'PATCH repos/o/r/issues/$ustatus\nPATCH repos/o/r/issues/9\n' | grep '^PATCH' | grep -vc 'issues/$ustatus\$' | grep -qx 1"
+usetpulls '[]'
+rm -f "$tmp/ufail"
+h1mk() { # <state> <A> <B> <issue of A>: nodes A (Resolves issue) and B (none), merged long ago per the subjects, graph and folders
+	mkdir -p "$1/node/$2" "$1/node/$3"
+	printf 'nodes:\n  - {id: %s, name: x-a, deps: []}\n  - {id: %s, name: x-b, deps: []}\n' "$2" "$3" >"$1/graph.yaml"
+	: >"$1/status.log"; : >"$1/merged-prs.tsv"; : >"$1/closed-prs.tsv"
+	printf '%s x-a: it (#%s)\n%s x-b: it (#%s)\n' "$2" "$4" "$3" "$(($4 + 1))" >"$1/subjects.txt"
+}
+h1back() { # <state> <A> <B> <PR of A>
+	printf '%s node/%s-x-a\n%s node/%s-x-b\n' "$4" "$2" "$(($4 + 1))" "$3" >"$1/merged-prs.tsv"
+	printf '%s node/%s-x-a 2026-01-01T00:00:00Z true\n%s node/%s-x-b 2026-01-01T00:00:00Z true\n' "$4" "$2" "$(($4 + 1))" "$3" >"$1/closed-prs.tsv"
+}
+# old report.json
+ustate12=$tmp/ustate12
+h1mk "$ustate12" M01 M02 911
+sed -i 's/x-a/m-one/g; s/x-b/m-two/g' "$ustate12/graph.yaml" "$ustate12/subjects.txt"
+h1max=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$h1max" >"$ustate12/report.json"
+h1c=$(uq "len(db['comments'])"); h1i=$(uq "len(db['issues'])")
+: >"$tmp/ucalls"
+urun "$ustate12"; urun "$ustate12"
+printf '911 node/M01-m-one\n912 node/M02-m-two\n' >"$ustate12/merged-prs.tsv"
+printf '911 node/M01-m-one 2026-01-01T00:00:00Z true\n912 node/M02-m-two 2026-01-01T00:00:00Z true\n' >"$ustate12/closed-prs.tsv"
+urun "$ustate12"; urun "$ustate12"; urun "$ustate12"; urun "$ustate12"
+ok "U01-AC-9: (H1a, old report.json) a seed run with merged-prs.tsv empty, then the file restored: no merged milestone on the closed Resolves issue (91)" test "$(ucount 91 '(?i)merged')" = 0
+ok "U01-AC-9: (H1a, old report.json) no Build issue for the node without a Resolves line (M02)" test "$(ubuilds 'Build M02 m-two')" = 0 -a ! -e "$ustate12/node/M02/issue" -a "$(uq "len(db['issues'])")" = "$h1i"
+ok "U01-AC-9: (H1a, old report.json) no comment of any kind is added anywhere" test "$(uq "len(db['comments'])")" = "$h1c"
+ok "U01-AC-9: (H1a, old report.json) no PATCH of the closed Resolves issue (91) or of any issue but the status issue, and 91 stays closed" test "$(upatches 91)" = 0 -a "$(uanypatch)" = 0 -a "$(ustateof 91)" = closed
+# no report.json at all
+ustate13=$tmp/ustate13
+h1mk "$ustate13" N01 N02 921
+sed -i 's/x-a/n-one/g; s/x-b/n-two/g' "$ustate13/graph.yaml" "$ustate13/subjects.txt"
+h1c=$(uq "len(db['comments'])"); h1i=$(uq "len(db['issues'])")
+: >"$tmp/ucalls"
+urun "$ustate13"; urun "$ustate13"
+printf '921 node/N01-n-one\n922 node/N02-n-two\n' >"$ustate13/merged-prs.tsv"
+printf '921 node/N01-n-one 2026-01-01T00:00:00Z true\n922 node/N02-n-two 2026-01-01T00:00:00Z true\n' >"$ustate13/closed-prs.tsv"
+urun "$ustate13"; urun "$ustate13"; urun "$ustate13"; urun "$ustate13"
+h1c2=$(uq "len(db['comments'])")
+ok "U01-AC-9: (H1a, no report.json) no merged milestone on the closed Resolves issue (92)" test "$(ucount 92 '(?i)merged')" = 0
+ok "U01-AC-9: (H1a, no report.json) no Build issue for the node without a Resolves line (N02)" test "$(ubuilds 'Build N02 n-two')" = 0 -a ! -e "$ustate13/node/N02/issue"
+ok "U01-AC-9: (H1a, no report.json) no PATCH of 92 or of any issue but the status issue, and no comment added by the later runs" test "$(upatches 92)" = 0 -a "$(uanypatch)" = 0 -a "$h1c2" = "$h1c" -a "$(ustateof 92)" = closed
+
+# U01-AC-9 + U01-AC-3 (S3d, H1b): the seed run happens with merged-prs.tsv filled but closed-prs.tsv empty (its call failed);
+# once it is back, with an old PR closed without merging and the merged ones, nothing is posted for them.
+ustate14=$tmp/ustate14
+mkdir -p "$ustate14/node/K01" "$ustate14/node/K02" "$ustate14/node/K03"
+printf 'nodes:\n  - {id: K01, name: k-one, deps: []}\n  - {id: K02, name: k-two, deps: []}\n  - {id: K03, name: k-three, deps: []}\n' >"$ustate14/graph.yaml"
+: >"$ustate14/status.log"
+printf 'K01 k-one: it (#931)\nK02 k-two: it (#932)\n' >"$ustate14/subjects.txt"
+printf '931 node/K01-k-one\n932 node/K02-k-two\n' >"$ustate14/merged-prs.tsv"
+: >"$ustate14/closed-prs.tsv"
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$h1max" >"$ustate14/report.json"
+h1c=$(uq "len(db['comments'])"); h1i=$(uq "len(db['issues'])")
+: >"$tmp/ucalls"
+urun "$ustate14"; urun "$ustate14"
+printf '931 node/K01-k-one 2026-01-02T00:00:00Z true\n932 node/K02-k-two 2026-01-02T00:00:00Z true\n930 node/K03-k-three 2026-01-01T00:00:00Z false\n' >"$ustate14/closed-prs.tsv"
+urun "$ustate14"; urun "$ustate14"; urun "$ustate14"; urun "$ustate14"
+ok "U01-AC-3: (H1b) a seed run with closed-prs.tsv empty, then restored: no closed-without-merging milestone for the old closed PR (930)" test "$(uq "len([c for c in db['comments'] if 'closed without' in c['body'].lower()])")" = 0
+ok "U01-AC-9: (H1b) nothing else is new: no Build issue (K03), no comment anywhere, no PATCH but the status issue's" test "$(uq "len(db['issues'])")" = "$h1i" -a "$(ubuilds 'Build K03 k-three')" = 0 -a ! -e "$ustate14/node/K03/issue" -a "$(uq "len(db['comments'])")" = "$h1c" -a "$(uanypatch)" = 0
+ok "U01-AC-9: (H1b) no merged milestone for K01 (Resolves 93, closed) either" test "$(ucount 93 '(?i)merged')" = 0 -a "$(ustateof 93)" = closed
+
+# U01-AC-6 (S3d, H2): a Resolves issue of a merged node that the owner closed as "not planned" before the loop's rule holds
+# is not patched, commented on or touched later; a sibling Resolves issue (95) still gets closed by the rule.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+for n in (95, 96):
+    db['issues'][str(n)] = {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n}
+json.dump(db, open('$udb', 'w'))"
+ustate15=$tmp/ustate15
+mkdir -p "$ustate15/node/H01"
+: >"$ustate15/status.log"
+usetpulls '[]'
+printf 'Q1: asking while merged?\nh01-unique-q-line\n' >"$ustate15/node/H01/QUESTION.md"
+echo "941 node/H01-h-one" >"$ustate15/merged-prs.tsv"
+hkey=$(stat -c %Y "$ustate15/node/H01/QUESTION.md")
+hmax=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {"H01": "%s"}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$hmax" "$hkey" >"$ustate15/report.json"
+urun "$ustate15"; urun "$ustate15"
+ok "U01-AC-6: (H2 precondition) both Resolves issues of the merged node H01 are held by its open question and untouched" test "$(ustateof 95)$(ustateof 96)" = openopen -a "$(unum 95)$(unum 96)" = 00
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+db['issues']['96'].update(state='closed', state_reason='not_planned')
+json.dump(db, open('$udb', 'w'))"
+: >"$tmp/ucalls"
+rm "$ustate15/node/H01/QUESTION.md"; mkdir "$ustate15/node/H01/answered"
+urun "$ustate15"; urun "$ustate15"; urun "$ustate15"; urun "$ustate15"
+ok "U01-AC-6: (H2) the sibling Resolves issue (95) is closed by the rule with one comment naming the PR and one PATCH" test "$(ustateof 95)" = closed -a "$(ucount 95 '(#|pull/)941\b')" = 1 -a "$(upatches 95)" = 1
+ok "U01-AC-6: (H2) the issue the owner closed as not planned (96) is not patched" test "$(upatches 96)" = 0
+ok "U01-AC-6: (H2) and its state_reason is still not_planned and it is closed" test "$(uq "db['issues']['96']['state']+db['issues']['96'].get('state_reason','')")" = closednot_planned
+ok "U01-AC-6: (H2) and it gets no comment, now or over later runs" test "$(unum 96)" = 0
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
