@@ -1,0 +1,10 @@
+#!/bin/sh
+# tallyho: count lines, words and bytes.
+. "$(dirname "$0")/../lib/count.sh"
+if [ "$#" -eq 0 ]; then
+	count_stream - 
+	exit 0
+fi
+for f in "$@"; do
+	count_stream "$f"
+done

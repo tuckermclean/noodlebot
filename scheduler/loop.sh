@@ -8,9 +8,14 @@
 #   touch ~/STOP-<name>   (only that repository's loop exits)
 # It acts as soon as something changes: it checks the node markers and the running session every
 # SCHED_POLL seconds (default 2, local only) and asks GitHub about PRs every SCHED_TICK seconds
-# (default 60); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
+# (default 60); a running session whose node's PR is merged, or closed without merging after the session
+# started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
+# Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
+# a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
+# (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
+# goes to state/<name>/deploy.log; its state and lock are $NOODLEBOT_DATA/deploy/ (the loop passes its runtime root).
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
@@ -46,6 +51,7 @@ if top=$(git -C "$probe" rev-parse --show-toplevel 2>/dev/null); then
 fi
 mkdir -p "$root" || exit 2
 mkdir -p "$state/node" "$state/issue" "$wtroot"
+start_head=$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null || true)
 pid='' node='' last_note='' last_note_t=0
 
 say() { echo "$(date -u +%FT%TZ) $*" >>"$log"; echo "$*"; }
@@ -103,6 +109,13 @@ txt = str((res or {}).get("result") or "") + " " + str((res or {}).get("subtype"
 sys.exit(0 if st != "allowed" or re.search(r"usage limit|rate limit|limit reached|hit your limit", txt, re.I) else 1)'
 }
 
+# bg_cut_off <dir>: the CLI said on session.stderr that it stopped background tasks still running
+# after the last turn (whatever the exit code). Such an end uses up no start.
+bg_cut_off() {
+	tail -c 100000 "$1/session.stderr" 2>/dev/null | tr '\n' ' ' |
+		grep -qiE 'background tasks? still running.*after the last turn.*stopping them'
+}
+
 # not_counted <dir>: give back the start a limit exit used.
 not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" $((n - 1)); }
 
@@ -114,9 +127,13 @@ ended() {
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
-	if [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
+	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
+	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif [[ " $open $merged " == *" $id "* ]]; then say "$saw; session $id ended (rc $rc) with a PR"
+	elif bg_cut_off "$d"; then
+		not_counted "$d"
+		say "$saw; session $id ended (rc $rc) with its background work cut off; start not counted"
 	elif [ "$rc" != 0 ] && limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; session $id stopped by the usage limit (rc $rc); start not counted, it resumes when the throttle opens"
@@ -134,6 +151,9 @@ triage_ended() {
 	local d=$1 saw=$2 rc=$3 n
 	n=$(basename "$d")
 	if [ -e "$d/QUESTION.md" ]; then say "$saw; triage of #$n ended (rc $rc) with QUESTION.md"
+	elif bg_cut_off "$d"; then
+		not_counted "$d"
+		say "$saw; triage of #$n ended (rc $rc) with its background work cut off; start not counted"
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
 		git -C "$clone" worktree remove --force "$wtroot/issue-$n" 2>/dev/null
@@ -152,6 +172,55 @@ triage_ended() {
 		say "$saw; triage of #$n ended (rc $rc), 2 starts used: wrote FAILED"
 	else say "$saw; triage of #$n ended (rc $rc); may start again"
 	fi
+}
+
+# stop_group <pid>: end a session's process group (setsid made its pid the pgid): SIGTERM, SIGKILL
+# after a grace of 3 s, and return once the group is gone, with the leader reaped.
+stop_group() {
+	local p=$1 i st
+	kill -TERM -- "-$p" 2>/dev/null
+	for i in $(seq 1 40); do
+		[ "$i" = 15 ] && kill -KILL -- "-$p" 2>/dev/null
+		st=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | cut -c1)
+		[ "$st" = Z ] && wait "$p" 2>/dev/null
+		kill -0 -- "-$p" 2>/dev/null || return 0
+		sleep 0.2
+	done
+	return 1
+}
+
+# pr_done <ID> <start>: a node's session started at <start> (epoch s) has no more use: sets why to the
+# reason ("merged"/"closed") and prn to the PR. Merged; or no open PR and a PR on node/<ID>-* closed
+# without merging at or after <start>.
+pr_done() {
+	local id=$1 start=$2 n br t m
+	if [[ " $merged " == *" $id "* ]]; then
+		prn=$(awk -v b="node/$id-" 'index($2, b) == 1 { print $1 }' "$state/merged-prs.tsv" | sort -n | tail -n1)
+		why=merged; return 0
+	fi
+	[[ " $open " == *" $id "* ]] && return 1
+	while read -r n br t m; do
+		[ "$m" = false ] && [[ $br == node/$id-* ]] || continue
+		t=$(date -d "$t" +%s 2>/dev/null) || continue
+		[ "$t" -ge "$start" ] && { prn=$n why=closed; return 0; }
+	done <"$state/closed-prs.tsv"
+	return 1
+}
+
+# stop_done <dir> <pid> <saw>: stop a session whose PR is done, wait until its group is gone, say so once, and reap it. A closed PR
+# holds the node (FAILED naming the PR, starts 0: deleting FAILED gives it 2 fresh starts).
+stop_done() {
+	local d=$1 p=$2 saw=$3 id prn why
+	id=$(basename "$d")
+	pr_done "$id" "$(stat -c %Y "$d/session.pid" 2>/dev/null || echo 0)" || return 1
+	if [ "$why" = closed ]; then
+		echo "$(date -u +%FT%TZ) PR #$prn was closed without merging; delete this file to start the node again" >"$d/FAILED"
+		set_starts "$d" 0
+	fi
+	# a group that survived SIGKILL is not reaped and no event is written: it stays live, retried next tick
+	stop_group "$p" || { note "$saw; session $id (pid $p) survived SIGKILL"; return 1; }
+	say "$saw; stopped session $id: its PR #$prn is $why"
+	ended "$d" "$saw"
 }
 
 # launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
@@ -227,6 +296,16 @@ start_node() {
 	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
 
+# deploy: self-deploy this checkout (deploy.sh); its stdout lines are status events, its stderr goes
+# to deploy.log. Never fails the tick; 9>&- keeps the loop's lock from deploy.sh and make test.
+deploy() {
+	[ -x "$here/deploy.sh" ] && [ -n "$start_head" ] || return 0
+	local line
+	NOODLEBOT_DATA="$root" "$here/deploy.sh" "$nb" </dev/null 9>&- 2>"$state/deploy.err" | while IFS= read -r line; do say "$line" >/dev/null; done
+	if [ -s "$state/deploy.err" ]; then sed "s/^/$(date -u +%FT%TZ) /" "$state/deploy.err" >>"$state/deploy.log"; fi
+	return 0
+}
+
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
 open='' merged='' tick_tok='' live=() throttled=0
 tick() {
@@ -243,7 +322,9 @@ tick() {
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
-		! open=$(GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' | ids); then
+		! open=$(GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json headRefName -q '.[].headRefName' | ids) ||
+		! GH_TOKEN=$tok gh pr list --repo $repo --state closed --limit 500 --json number,headRefName,closedAt,mergedAt \
+			-q '.[] | "\(.number) \(.headRefName) \(.closedAt) \(.mergedAt != null)"' >"$state/closed-prs.tsv"; then
 		note "gh pr list failed; nothing started"; return
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
@@ -256,7 +337,9 @@ tick() {
 	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 		[ -e "$f" ] || continue
 		id=$(basename "$(dirname "$f")") p=$(cat "$f")
-		if alive "$p" "$id"; then live+=("$p $id"); [[ $f == */issue/* ]] && triaging=$id
+		if alive "$p" "$id"; then
+			[[ $f == */node/* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
+			live+=("$p $id"); [[ $f == */issue/* ]] && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	cleanup_merged
@@ -331,5 +414,9 @@ while :; do
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
+	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
+	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
+		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
+	fi
 	pause
 done
