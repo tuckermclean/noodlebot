@@ -189,7 +189,7 @@ pr_done() {
 	return 1
 }
 
-# stop_done <dir> <pid> <saw>: stop a session whose PR is done, say so once, and reap it. A closed PR
+# stop_done <dir> <pid> <saw>: stop a session whose PR is done, wait until its group is gone, say so once, and reap it. A closed PR
 # holds the node (FAILED naming the PR, starts 0: deleting FAILED gives it 2 fresh starts).
 stop_done() {
 	local d=$1 p=$2 saw=$3 id prn why
@@ -199,8 +199,9 @@ stop_done() {
 		echo "$(date -u +%FT%TZ) PR #$prn was closed without merging; delete this file to start the node again" >"$d/FAILED"
 		set_starts "$d" 0
 	fi
+	# a group that survived SIGKILL is not reaped and no event is written: it stays live, retried next tick
+	stop_group "$p" || { note "$saw; session $id (pid $p) survived SIGKILL"; return 1; }
 	say "$saw; stopped session $id: its PR #$prn is $why"
-	stop_group "$p" || note "$saw; session $id (pid $p) survived SIGKILL"
 	ended "$d" "$saw"
 }
 
