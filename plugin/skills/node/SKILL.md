@@ -10,6 +10,8 @@ You are the **orchestrator**. You never write tests or implementation yourself. 
 
 **The repository's part.** Read the repository's `AGENTS.md` first, its **Building a node** section above all. It names the authority order of its documents, the role agents, the spec checker, the test, lint and CI commands, the frozen test paths, any extra precondition, and, if the repository ports code from a predecessor, its porting rules (what to port first, the baseline, the ledger). Where this skill says "the repository's …", use what that section says. Where the two differ, the repository wins.
 
+**Role agents.** Dispatch the role agents the repository's `AGENTS.md` names. If it names none of its own (no role agents), dispatch the plugin's `noodlebot:tester`, `noodlebot:implementer` and `noodlebot:reviewer`. The plugin's guard (`plugin/hooks/`) holds them to their roles: the test and spec paths come from the repository's `.noodlebot/roles.yaml`, or from its defaults.
+
 ## 0. Preconditions
 - The working tree is clean and `main` is current.
 - The node is in `docs/graph.yaml`. Each node in its `deps` has a merged PR (`gh pr list --state merged --search "head:node/<dep>-"`, or its squash commit `<ID> <name>: …` on `main`). If one is missing, stop and say which.
