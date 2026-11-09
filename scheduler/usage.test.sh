@@ -60,5 +60,64 @@ reset
 run $now
 if [ $rc = 0 ] && printf '%s' "$out" | grep -q 'open: no reading yet'; then pass "no readings: open"; else fail "no readings: $out"; fi
 
+
+# T02: usage.py --escalate. One line, "escalate: <reason>" or "no escalation: <summary>", exit 0 either way.
+# The 5-hour window here is 1 h old (fallback rate u/3600 s), 4 h from its reset; with the default 30-minute
+# margin it escalates when it is projected to reach 100% within 12600 s, i.e. from about 22% used.
+runesc() { out=$(python3 -I "$src/usage.py" --state-root "$tmp/s" --now "$1" --escalate 2>&1); rc=$?; }
+runesc_m() { out=$(USAGE_ESCALATE_MARGIN=$2 python3 -I "$src/usage.py" --state-root "$tmp/s" --now "$1" --escalate 2>&1); rc=$?; }
+is_esc() { [ $rc = 0 ] && printf '%s' "$out" | grep -q '^escalate: '; }
+is_no() { [ $rc = 0 ] && printf '%s' "$out" | grep -q '^no escalation: '; }
+
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.40 $r5 0.30 $r7
+runesc $now
+if is_esc; then pass "T02-AC-1: 40% after 1 h reaches 100% 90 min in, far more than the margin before the reset: escalate ($out)"; else fail "T02-AC-1 escalate: rc=$rc $out"; fi
+
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.21 $r5 0.30 $r7
+runesc $now
+if is_no; then pass "T02-AC-1: 21% after 1 h reaches 100% less than 30 minutes before the reset: no escalation ($out)"; else fail "T02-AC-1 within the margin: rc=$rc $out"; fi
+
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.21 $r5 0.30 $r7
+runesc_m $now 10
+if is_esc; then pass "T02-AC-1: USAGE_ESCALATE_MARGIN=10 lets the 21% projection escalate ($out)"; else fail "T02-AC-1 margin 10: rc=$rc $out"; fi
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.30 $r5 0.30 $r7
+runesc $now
+d_esc=$out d_rc=$rc
+runesc_m $now 120
+if is_no && printf '%s' "$d_esc" | grep -q '^escalate: ' && [ "$d_rc" = 0 ]; then pass "T02-AC-1: 30% escalates by default but not with USAGE_ESCALATE_MARGIN=120 ($out)"; else fail "T02-AC-1 margin 120: default=[$d_esc] rc=$rc $out"; fi
+
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.40 $r5 0.30 $r7
+run $now; run $((now + 600))
+ev "$tmp/s/a/node/X01/session.jsonl" 0.41 $r5 0.30 $r7
+runesc $((now + 1200))
+if is_no; then pass "T02-AC-1: once the burn slows (1% in 20 min) there is no escalation ($out)"; else fail "T02-AC-1 slowed burn: rc=$rc $out"; fi
+
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.99 $((now - 60)) 0.30 $r7
+runesc $now
+if is_no; then pass "T02-AC-1: a window past its reset does not escalate ($out)"; else fail "T02-AC-1 past reset: rc=$rc $out"; fi
+
+reset
+runesc $now
+if is_no; then pass "T02-AC-1: no readings, no escalation ($out)"; else fail "T02-AC-1 no readings: rc=$rc $out"; fi
+
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.05 $r5 0.75 $r7
+run $now; plain=$out
+runesc $now
+if is_no && printf '%s' "$plain" | grep -q 'hold: 7-day window'; then pass "T02-AC-1: a 7-day window ahead of pace alone does not escalate, though it holds ($out)"; else fail "T02-AC-1 7-day: plain=[$plain] rc=$rc $out"; fi
+
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.40 $r5 0.30 $r7
+run $now; before=$out
+runesc $now
+run $now
+if [ "$before" = "$out" ] && printf '%s' "$out" | grep -q '^hold: 5-hour window projected' && [ "$(field "len(d['samples5h'])")" = 1 ]; then pass "T02-AC-1: without --escalate the output is unchanged, and an --escalate run adds no sample"; else fail "T02-AC-1 unchanged: before=[$before] after=[$out]"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all usage checks"
