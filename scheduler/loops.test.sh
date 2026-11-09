@@ -281,5 +281,182 @@ touch "$HOME/STOP"
 PATH=$oldpath
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
+echo "# M01 run 3: a probe must not take a loop's lock; issue/ sessions; list hygiene; old lock; dead pids"
+export LOOPS_START_WAIT=2 LOOPS_STOP_WAIT=15
+REALFLOCK=$(command -v flock); export REALFLOCK
+# nl_setup <scenario> [list]: setup, plus a fake loop.sh that follows ${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot},
+# waits $LOOP_DELAY s between opening and locking its lock file (a slow start), and records
+# state/<name>/exits when it finds the lock taken; and a wbin/flock that, when given a loop.lock path
+# (not the fd form loop.sh uses), takes that lock and holds it 1 s before doing the real work.
+nl_setup() {
+	setup "$1" ${2:+"$2"}
+	cat >"$nb/scheduler/loop.sh" <<'EOT'
+#!/bin/sh
+name=${1#*/}
+st=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}/state/$name
+mkdir -p "$st"
+exec 9>"$st/loop.lock"
+sleep "${LOOP_DELAY:-0}"
+flock -n 9 || { echo "another loop is already running" >>"$st/exits"; exit 1; }
+echo $$ >"$st/loop.pid"
+while [ ! -e "$HOME/STOP" ] && [ ! -e "$HOME/STOP-$name" ]; do sleep 0.2; done
+EOT
+	chmod +x "$nb/scheduler/loop.sh"
+	mkdir -p "$sc/wbin"
+	cat >"$sc/wbin/flock" <<'EOT'
+#!/bin/sh
+for a in "$@"; do case $a in */loop.lock) "$REALFLOCK" -n "$a" sleep 1 ;; esac; done
+exec "$REALFLOCK" "$@"
+EOT
+	chmod +x "$sc/wbin/flock"
+}
+# run_w <args>: run with the widening flock first on PATH, for this invocation only.
+run_w() { nl_path=$PATH; PATH=$sc/wbin:$PATH; run "$@"; PATH=$nl_path; }
+# nl_pidwait <name>: waits (at most 4 s) for the loop to have taken its lock (it then writes loop.pid).
+nl_pidwait() { i=0; while [ ! -s "$nb/state/$1/loop.pid" ] && [ $i -lt 40 ]; do sleep 0.1; i=$((i + 1)); done; [ -s "$nb/state/$1/loop.pid" ]; }
+# nl_halt: stops alpha and beta loops through STOP-<name> files and waits for both locks to be free.
+nl_halt() {
+	touch "$HOME/STOP-alpha" "$HOME/STOP-beta"
+	i=0
+	while [ $i -lt 50 ]; do
+		flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/beta/loop.lock" true && break
+		sleep 0.1; i=$((i + 1))
+	done
+	rm -f "$HOME/STOP-alpha" "$HOME/STOP-beta"
+}
+# nl_held <lockfile>: the lock is held (probes by taking it, so only after the loops are up).
+nl_held() { [ -e "$1" ] && ! flock -n "$1" true 2>/dev/null; }
+# nl_wait_free <lockfile>: waits (at most 5 s) until nobody holds the lock.
+nl_wait_free() { i=0; while nl_held "$1" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+
+nl_setup race
+LOOP_DELAY=0.6; export LOOP_DELAY
+r_rc=0 r_up=0
+for it in 1 2; do
+	rm -f "$nb/state/alpha/loop.pid" "$nb/state/beta/loop.pid"
+	run_w start
+	[ "$(cat "$sc/rc")" = 0 ] || r_rc=1
+	for n in alpha beta; do
+		nl_pidwait "$n" && kill -0 "$(cat "$nb/state/$n/loop.pid")" 2>/dev/null && nl_held "$nb/state/$n/loop.lock" || r_up=1
+	done
+	nl_halt
+done
+ok M01-AC-1:probe-race:start-exits-0-every-time test "$r_rc" = 0
+ok M01-AC-1:probe-race:every-loop-holds-its-lock-after-start test "$r_up" = 0
+no M01-AC-1:probe-race:no-loop-exited-already-running sh -c "cat '$nb'/state/*/exits 2>/dev/null | grep -q ."
+
+nl_setup racest
+LOOP_DELAY=0.8; export LOOP_DELAY
+setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+sleep 0.3
+run_w status
+ok M01-AC-3:probe-race:loop-starting-during-status-takes-its-lock nl_pidwait alpha
+no M01-AC-3:probe-race:status-did-not-make-the-loop-exit test -e "$nb/state/alpha/exits"
+touch "$HOME/STOP"
+
+nl_setup racesp
+LOOP_DELAY=0.8; export LOOP_DELAY
+setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+sleep 0.3
+run_w stop
+ok M01-AC-2:probe-race:loop-starting-during-stop-takes-its-lock nl_pidwait alpha
+no M01-AC-2:probe-race:stop-did-not-make-the-loop-exit test -e "$nb/state/alpha/exits"
+touch "$HOME/STOP"
+unset LOOP_DELAY
+
+echo "# M01-AC-3: status with issue/ sessions and the answered state"
+nl_setup iss
+st=$nb/state/alpha
+mkdir -p "$st/issue/46" "$st/issue/47" "$st/issue/49" "$st/node/C07" "$st/node/C08"
+setsid "$nb/scheduler/run-session.sh" "$sc/wt" "$st/issue/46" "/noodlebot:triage 46" </dev/null >/dev/null 2>&1 &
+echo $! >"$st/issue/46/session.pid"
+echo "# Which?" >"$st/issue/47/QUESTION.md"
+echo "# Which?" >"$st/issue/49/QUESTION.md"; echo "blue" >"$st/issue/49/ANSWER.md"
+echo "# Which?" >"$st/node/C07/QUESTION.md"; echo "blue" >"$st/node/C07/ANSWER.md"
+sleep 0.3
+run status
+aline=$(grep 'alpha' "$sc/out" | head -n 1)
+asess=$(echo "$aline" | sed 's/.*sessions: *//; s/;.*//')
+await=$(echo "$aline" | sed 's/.*waiting[^:]*: *//')
+ok M01-AC-3:issue-session-shown-as-#46-in-sessions sh -c "echo '$asess' | grep -q '#46'"
+ok M01-AC-3:issue-session-not-in-waiting sh -c "[ -n '$await' ] && ! echo '$await' | grep -q '#46'"
+ok M01-AC-3:issue-QUESTION-waiting-as-#47 sh -c "echo '$await' | grep -q '#47 QUESTION'"
+ok M01-AC-3:issue-answered-waiting-as-#49 sh -c "echo '$await' | grep -q '#49 answered'"
+ok M01-AC-3:node-answered-waiting-as-C07 sh -c "echo '$await' | grep -q 'C07 answered'"
+no M01-AC-3:answered-is-not-also-a-QUESTION sh -c "echo '$await' | grep -q 'C07 QUESTION\|#49 QUESTION'"
+no M01-AC-3:node-without-marker-C08-appears-nowhere grep -q C08 "$sc/out"
+ok M01-AC-3:issue-session-one-line-per-repository sh -c "[ \$(grep -c . '$sc/out') = 2 ]"
+kill "$(cat "$st/issue/46/session.pid")" 2>/dev/null
+
+echo "# M01-AC-3: status prints no noise for a dead session pid"
+setup dead
+mkdir -p "$nb/state/alpha/node/A04" "$nb/state/alpha/issue/9"
+sh -c : &
+deadpid=$!
+wait "$deadpid"
+echo "$deadpid" >"$nb/state/alpha/node/A04/session.pid"
+echo "$deadpid" >"$nb/state/alpha/issue/9/session.pid"
+run status
+ok M01-AC-3:dead-pid:exactly-one-line-per-repository sh -c "[ \$(wc -l <'$sc/out') = 2 ]"
+no M01-AC-3:dead-pid:no-such-file-noise grep -qi 'no such file' "$sc/out"
+no M01-AC-3:dead-pid:no-line-besides-the-repositories sh -c "grep -v '^o/' '$sc/out' | grep -q ."
+ok M01-AC-3:dead-pid:status-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+
+echo "# Purpose: list hygiene"
+nl_setup hyg
+printf 'alpha\no/beta\no/beta\n' >"$HOME/.config/noodlebot/repos"
+LOOP_DELAY=0.5; export LOOP_DELAY
+run start
+sleep 1
+ok Purpose:slashless-line-ignored-with-a-message-naming-it sh -c "grep alpha '$sc/out' | grep -vi 'started' | grep -q ."
+no Purpose:slashless-line-starts-no-tmux-session sh -c "grep -q 'sched-alpha' '$TMUXLOG'"
+no Purpose:slashless-line-starts-no-loop test -e "$nb/state/alpha/loop.lock"
+ok Purpose:duplicate-line-one-tmux-call sh -c "[ \$(grep -c 'sched-beta' '$TMUXLOG') = 1 ]"
+ok Purpose:duplicate-line-one-loop-holds-its-lock sh -c "[ -e '$nb/state/beta/loop.lock' ] && ! flock -n '$nb/state/beta/loop.lock' true"
+no Purpose:duplicate-line-no-loop-exited-already-running test -e "$nb/state/beta/exits"
+ok Purpose:start-exits-0-when-the-rest-started sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+run status
+ok Purpose:duplicate-line-one-status-line sh -c "[ \$(grep -c beta '$sc/out') = 1 ]"
+touch "$HOME/STOP"
+unset LOOP_DELAY
+
+echo "# runtime root: NOODLEBOT_DATA unset, the tmux server's value is another"
+rt_setup rtd unset
+mkdir -p "$sc/bin"
+printf '#!/bin/sh\nexec env NOODLEBOT_DATA="%s/other" "%s/bin/tmux" "$@"\n' "$tmp" "$tmp" >"$sc/bin/tmux"
+chmod +x "$sc/bin/tmux"
+PATH=$sc/bin:$oldpath
+run start
+ok M01-AC-1:unset-vs-server:started-through-wrapper-tmux sh -c "grep -q 'sched-beta' '$TMUXLOG'"
+ok M01-AC-1:unset-vs-server:alpha-lock-under-default-root sh -c "sleep 0.5; [ -e '$HOME/.local/share/noodlebot/state/alpha/loop.lock' ] && ! flock -n '$HOME/.local/share/noodlebot/state/alpha/loop.lock' true"
+ok M01-AC-1:unset-vs-server:beta-lock-under-default-root sh -c "[ -e '$HOME/.local/share/noodlebot/state/beta/loop.lock' ] && ! flock -n '$HOME/.local/share/noodlebot/state/beta/loop.lock' true"
+no M01-AC-1:unset-vs-server:nothing-under-the-servers-value test -e "$tmp/other/state"
+ok M01-AC-1:unset-vs-server:start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+touch "$HOME/STOP"
+PATH=$oldpath
+
+echo "# M01-AC-1: a loop from before the D02 move holds the checkout's lock"
+rt_setup old "$tmp/old/data"
+mkdir -p "$nb/state/alpha"
+oldlock=$nb/state/alpha/loop.lock
+setsid "$REALFLOCK" "$oldlock" sleep 60 >/dev/null 2>&1 </dev/null &
+i=0; while ! nl_held "$oldlock" && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+run start
+no M01-AC-1:old-lock:start-exits-nonzero sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok M01-AC-1:old-lock:output-names-the-lock sh -c "grep -qF '$oldlock' '$sc/out'"
+ok M01-AC-1:old-lock:nothing-started sh -c "[ -e '$sc/rc' ] && [ ! -e '$TMUXLOG' ]"
+touch "$HOME/STOP"
+pkill -f "$oldlock" 2>/dev/null
+nl_wait_free "$oldlock"
+nl_wait_free "$rt/state/alpha/loop.lock"; nl_wait_free "$rt/state/beta/loop.lock"
+rm -f "$HOME/STOP" "$TMUXLOG"
+run start
+ok M01-AC-1:old-lock-free:file-left-behind-is-no-obstacle sh -c "[ -e '$oldlock' ]"
+ok M01-AC-1:old-lock-free:start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok M01-AC-1:old-lock-free:both-started sh -c "grep -q sched-alpha '$TMUXLOG' && grep -q sched-beta '$TMUXLOG'"
+ok M01-AC-1:old-lock-free:locks-under-runtime-root sh -c "sleep 0.3; [ -e '$rt/state/alpha/loop.lock' ] && ! flock -n '$rt/state/alpha/loop.lock' true && ! flock -n '$rt/state/beta/loop.lock' true"
+touch "$HOME/STOP"
+unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA REALFLOCK
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
