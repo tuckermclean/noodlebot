@@ -316,7 +316,7 @@ def usage_lines(state):
 
 def body_for(a, sts, prs):
     state = a.state
-    out = ["# noodlebot status: %s" % a.repo, "",
+    out = ["# noodlebot status: %s%s" % (a.repo, " (noodlebot %s)" % a.version if a.version else ""), "",
            "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
            "the loop is not running._" % local(), ""] + usage_lines(state) + ["## Waiting on you"]
     items = []
@@ -403,9 +403,15 @@ def find_issue(a, rs):
     return issue["number"], True
 
 
+def signed(a, text):
+    return text.rstrip("\n") + "\n\n" + a.signature + "\n" if a.signature else text
+
+
 def comment(a, issue, text):
-    if len(text) > MAX_COMMENT:
-        text = text[:MAX_COMMENT] + "\n\n(cut here: too long for one comment)"
+    room = MAX_COMMENT - (len(a.signature) + 4 if a.signature else 0)
+    if len(text) > room:
+        text = text[:room] + "\n\n(cut here: too long for one comment)"
+    text = signed(a, text)
     gh("POST", "repos/%s/issues/%s/comments" % (a.repo, issue), {"body": text})
 
 
@@ -493,6 +499,8 @@ def main():
     p.add_argument("--state", required=True)
     p.add_argument("--worktrees", default="")
     p.add_argument("--owner", default="")
+    p.add_argument("--version", default="")
+    p.add_argument("--signature", default="")
     a = p.parse_args()
     a.answered = False
     a.owner = a.owner or a.repo.split("/")[0]
@@ -535,7 +543,10 @@ def main():
     except Exception as e:  # show the failure on the issue rather than leave it silently stale
         body = ("# noodlebot status: %s\n\n_Updated %s. The scheduler loop is running, but building this "
                 "status failed: `%s`. See report.log._\n" % (a.repo, local(), str(e)[:300]))
+        if a.version:
+            body = body.replace("status: %s\n" % a.repo, "status: %s (noodlebot %s)\n" % (a.repo, a.version), 1)
         print("report.py: status body failed: %s" % e, file=sys.stderr)
+    body = signed(a, body)
     h = hashlib.sha256(re.sub(r"_Updated .*?_", "", body).encode()).hexdigest()
     if h != rs.get("body_hash") or time.time() - rs.get("body_time", 0) >= 900:
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"body": body})
