@@ -11,7 +11,10 @@
 # It acts as soon as something changes: it checks the node markers and the running session every
 # SCHED_POLL seconds (default 2, local only) and asks GitHub about PRs every SCHED_TICK seconds
 # (default 60); a running session whose node's PR is merged, or closed without merging after the session
-# started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
+# started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED;
+# a node that main's graph no longer has and whose spec a commit on main deleted is wound down instead (removed_step: its
+# session stopped, its open PR and the open issues its spec resolved closed with one comment each, its worktree and state
+# removed, never held by FAILED; progress kept in state/<name>/removed/); after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
 # Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
@@ -147,7 +150,7 @@ ended() {
 	rm -f "$d/session.pid"
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
-	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
+	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by its failure marker"
 	elif [ -e "$d/QUESTION.md" ]; then say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif has_pr "$d" "$id"; then say "$saw; session $id ended (rc $rc) with a PR"
@@ -386,6 +389,99 @@ cleanup_merged() {
 	done
 }
 
+# removed_step: wind down every node the loop has something of (an open PR on node/<ID>-*, state/node/<ID> or the
+# worktree <ID>) that origin/main's graph no longer has and whose spec a commit on origin/main deleted (see
+# wind_down). Sets removed_ids. Touches nothing when the graph or the history cannot be read.
+removed_ids=''
+removed_step() {
+	local id g cands h f
+	removed_ids=''
+	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.rm.yaml" 2>/dev/null || return 0
+	g=$(python3 -I -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+print(" ".join(n["id"] for n in d["nodes"]))' "$state/graph.rm.yaml" 2>/dev/null) && [ -n "$g" ] || return 0
+	cands=$({ echo "$open" | tr ' ' '\n'
+		for f in "$state"/node/* "$wtroot"/*; do [ -d "$f" ] && basename "$f"; done; } | grep -E '^[A-Z][0-9][0-9]$' | sort -u)
+	for id in $cands; do
+		[[ " $g " == *" $id "* ]] && continue
+		h=$(git -C "$clone" log --format=%H --diff-filter=D origin/main -- "nodes/$id-*.md") || continue
+		h=$(sed -n 1p <<<"$h"); [ -n "$h" ] || continue
+		wind_down "$id" "$h"
+	done
+}
+
+# wind_down <ID> <commit>: <commit> deleted the spec of removed node <ID>. Stop its session, close its open PRs
+# and its spec's open issues (one comment each), then archive its evidence and remove its worktree and state.
+# Each step is recorded in state/removed/<ID>-<short hash>/ so a failed gh call is retried at the next tick
+# without repeating a comment or close, and an issue the owner reopens is not closed again.
+wind_down() {
+	local id=$1 h=$2 subj short by rd ok=1 p f spec iss onmain rc i s wt arch msg
+	removed_ids+="$id "
+	subj=$(git -C "$clone" log -1 --format=%s "$h") short=$(git -C "$clone" log -1 --format=%h "$h")
+	by=$(sed -n 's/.*(#\([0-9][0-9]*\))$/#\1/p' <<<"$subj"); [ -n "$by" ] || by=$short
+	rd=$state/removed/$id-$short; mkdir -p "$rd"
+	msg="Node $id was removed from the graph by $by; its reason is in that PR's description."
+	[ "$by" = "$short" ] && msg="Node $id was removed from the graph by commit $short."
+	f=$state/node/$id/session.pid   # stopped before its PR is closed; no FAILED is written
+	if [ -e "$f" ]; then
+		p=$(cat "$f")
+		if alive "$p" "$id"; then
+			stop_group "$p" || { say "$id removed by $by: its session (pid $p) survived SIGKILL; tried again next tick"; return 0; }
+		fi
+		wait "$p" 2>/dev/null; rm -f "$f"
+	fi
+	for p in $(awk -v b="node/$id-" 'index($2, b) == 1 { print $1 }' "$state/open-prs.tsv"); do
+		[ -e "$rd/pr-$p.closed" ] && continue
+		if [ ! -e "$rd/pr-$p.commented" ]; then
+			if GH_TOKEN=$tick_tok gh pr comment "$p" --repo "$repo" --body "$msg Closing this PR without merging; its branch is kept." 2>>"$state/report.log"; then
+				touch "$rd/pr-$p.commented"
+			else say "$id removed by $by: commenting on its PR #$p failed; tried again next tick"; ok=0; continue; fi
+		fi
+		if GH_TOKEN=$tick_tok gh pr close "$p" --repo "$repo" 2>>"$state/report.log"; then
+			touch "$rd/pr-$p.closed"; say "$id removed by $by: closed its PR #$p without merging"
+		else say "$id removed by $by: closing its PR #$p failed; tried again next tick"; ok=0; fi
+	done
+	spec=$(git -C "$clone" diff-tree --no-commit-id --name-only -r --diff-filter=D "$h" -- "nodes/$id-*.md" | sed -n 1p)
+	if [ -n "$spec" ] && spec=$(git -C "$clone" show "$h^:$spec" 2>/dev/null); then
+		iss=$(grep -m1 '^\*\*Resolves:\*\*' <<<"$spec" | grep -o '#[0-9][0-9]*' | tr -d '#')
+		onmain=$(git -C "$clone" grep -h '^\*\*Resolves:\*\*' origin/main -- nodes/); rc=$?
+		if [ "$rc" -gt 1 ]; then ok=0; iss=''; fi
+		onmain=$(grep -o '#[0-9][0-9]*' <<<"$onmain" | tr -d '#')
+		for i in $iss; do
+			[ -e "$rd/issue-$i.done" ] && continue
+			if grep -qxF "$i" <<<"$onmain"; then touch "$rd/issue-$i.done"; continue; fi
+			s=$(GH_TOKEN=$tick_tok gh issue view "$i" --repo "$repo" --json state -q .state 2>>"$state/report.log") ||
+				{ say "$id removed by $by: reading issue #$i failed; tried again next tick"; ok=0; continue; }
+			[ "$s" = OPEN ] || { touch "$rd/issue-$i.done"; continue; }
+			if [ ! -e "$rd/issue-$i.commented" ]; then
+				if GH_TOKEN=$tick_tok gh issue comment "$i" --repo "$repo" --body "$msg Closing this issue as not planned." 2>>"$state/report.log"; then
+					touch "$rd/issue-$i.commented"
+				else say "$id removed by $by: commenting on issue #$i failed; tried again next tick"; ok=0; continue; fi
+			fi
+			if GH_TOKEN=$tick_tok gh issue close "$i" --repo "$repo" --reason "not planned" 2>>"$state/report.log"; then
+				touch "$rd/issue-$i.done"; say "$id removed by $by: marked issue #$i not planned"
+			else say "$id removed by $by: closing issue #$i failed; tried again next tick"; ok=0; fi
+		done
+	else say "$id removed by $by: its deleted spec could not be read; tried again next tick"; ok=0
+	fi
+	[ "$ok" = 1 ] || return 0
+	wt=$wtroot/$id
+	[ -d "$wt" ] || [ -d "$state/node/$id" ] || return 0   # nothing left: not looked at again
+	arch=''
+	if [ -d "$wt/out/node/$id" ]; then
+		mkdir -p "$state/archive"
+		arch=$id-out
+		[ -e "$state/archive/$arch" ] && arch=$id-out-$(date -u +%Y%m%dT%H%M%SZ)
+		mv "$wt/out/node/$id" "$state/archive/$arch" 2>/dev/null || arch=''
+	fi
+	rm -rf "$wt" 2>/dev/null || podman unshare rm -rf "$wt" 2>/dev/null
+	git -C "$clone" worktree prune
+	rm -rf "$state/node/$id"
+	if [ -d "$wt" ] || [ -d "$state/node/$id" ]; then say "$id removed by $by: removing its worktree and state failed; tried again next tick"
+	else say "$id removed by $by: removed its worktree and state${arch:+, evidence kept in state/archive/$arch}"; fi
+}
+
 # report: after each tick (reusing its token, so no extra token request), mirror the state to the GitHub status issue and take the owner's answers
 # from it (report.py). Returns 3 when it wrote an ANSWER.md, so the loop ticks again at once. Its
 # failures go to report.log only: the scheduler never depends on it.
@@ -482,13 +578,15 @@ tick() {
 	local saw="open=[${open% }] merged-prs=[${merged% }]" f id name triaging='' p
 	tok=''
 
+	# A removed node is wound down first (its session stopped), so stop_done never holds it with FAILED.
+	removed_step
 	# Running sessions: recorded in pid files, so this works after a restart too.
 	live=()
 	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
 		[ -e "$f" ] || continue
 		id=$(basename "$(dirname "$f")") p=$(cat "$f")
 		if alive "$p" "$id"; then
-			[[ $f == */node/* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
+			[[ $f == */node/* && " $removed_ids " != *" $id "* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
 			live+=("$p $id"); [[ $f == */issue/* || $f == */pr/* ]] && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
