@@ -20,7 +20,7 @@ import argparse, hashlib, json, os, re, subprocess, sys, time
 from datetime import datetime, timezone
 
 LABEL = "noodlebot-status"
-EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|found ~/STOP")
+EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|found ~/STOP|throttle |usage limit")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
 MAX_COMMENT = 60000
 
@@ -179,11 +179,40 @@ def git_lines(wt, *args):
         return []
 
 
+def bar(u, width=20):
+    n = max(0, min(width, int(round(u * width))))
+    return "`" + "█" * n + "░" * (width - n) + "`"
+
+
+def usage_lines(state):
+    """The plan's usage from usage.py's file (shared by every repository's loop), or nothing."""
+    try:
+        u = json.load(open(os.path.join(os.path.dirname(state), "usage.json")))
+    except (OSError, ValueError):
+        return []
+    w = u.get("windows") or {}
+    out = ["## Usage", ""]
+    names = {"five_hour": "5-hour", "seven_day": "7-day"}
+    for k in ("five_hour", "seven_day"):
+        if k not in w:
+            continue
+        x = w[k]
+        line = "- **%s** %s %.0f%%, resets %s" % (names[k], bar(x["utilization"]), x["utilization"] * 100, local(x["resetsAt"]))
+        if k == "five_hour" and u.get("projected5h") is not None:
+            line += " (projected %.0f%% at the reset)" % (min(u["projected5h"], 9.99) * 100)
+        if k == "seven_day" and u.get("weekElapsed") is not None:
+            line += " (%.0f%% of the week gone)" % (u["weekElapsed"] * 100)
+        out.append(line)
+    out.append("- **Throttle:** " + ("**holding new sessions**: " + u["reason"] if u.get("hold")
+                                    else "open (new sessions start)"))
+    return out + [""]
+
+
 def body_for(a, sts, prs):
     state = a.state
     out = ["# noodlebot status: %s" % a.repo, "",
            "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
-           "the loop is not running._" % local(), "", "## Waiting on you"]
+           "the loop is not running._" % local(), ""] + usage_lines(state) + ["## Waiting on you"]
     items = []
     for n in nodes(state):
         if has(state, n, "FAILED"):
@@ -352,8 +381,10 @@ def main():
     a = p.parse_args()
     a.answered = False
     a.owner = a.owner or a.repo.split("/")[0]
-    a.worktrees = a.worktrees or os.path.join(os.path.dirname(os.path.dirname(a.state)), "worktrees",
-                                              a.repo.split("/")[1])
+    a.worktrees = a.worktrees or os.path.join(
+        os.environ.get("NOODLEBOT_DATA") or os.path.join(os.path.expanduser("~"), ".local", "share", "noodlebot"),
+        "worktrees", a.repo.split("/")[1])
+    a.worktrees = os.path.abspath(a.worktrees)
     path = os.path.join(a.state, "report.json")
     try:
         rs = json.load(open(path))

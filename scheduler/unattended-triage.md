@@ -1,4 +1,4 @@
-UNATTENDED RUN. The noodlebot scheduler (~/gitrepos/noodlebot/scheduler/loop.sh) started this session to
+UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to
 triage issue #@N@ of @REPO@: the owner labelled it `noodlebot`. No human is watching.
 
 - Follow /noodlebot:triage @N@ (not a dry run). You start in a scratch worktree of origin/main, @WT@;
