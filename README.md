@@ -41,18 +41,20 @@ issue into the graph, or a comment that answers it. Then the label becomes `nood
 Merge the spec PR and the new or amended node is built like any other.
 
 Each issue the bot works on is its unit's home: the loop posts that unit's milestones there as comments,
-each starting with a `**Stage:**` line (a start or resume, a question, an answer received, the PR and its
-CI, FAILED, triage done). The home issue of a triage is the issue itself; of a node, the first issue on the
+each starting with a `**Stage:**` line (a start or resume, a question, an answer received, the PR opened,
+the CI result per pushed head commit, the fresh-review verdicts, merged or closed without merging, FAILED;
+a triage's done). The home issue of a triage is the issue itself; of a node, the first issue on the
 **Resolves:** line of its spec, and a node with none gets a new "Build <ID> <name>" issue labelled
-`noodlebot-unit`. The PRs only say `Refs #N`; once the nodes that resolve an issue are merged, the loop
-closes it, and reopens it if you add the `noodlebot` label again. A question shows on the status issue
+`noodlebot-unit`. The PRs only say `Refs #N`; the loop closes an issue once every node
+resolving it is merged and no unit whose home it is has a question open (or answered but not yet released) or a
+follow-up in progress, and reopens it when a unit whose home it is asks a new question. A question shows on the status issue
 as a short pointer to its comment on the home issue.
 
 ## Answering a node's question
 
 Reply on the unit's issue (the home issue where the loop posted the question), in plain words. Only the repository
 owner's comments count. No prefix is needed: your comment answers the one question open there, gets a +1
-and becomes that node's `ANSWER.md`. Only if several questions are open on that issue, start with the ID
+and becomes that unit's `ANSWER.md` (a triage's too). Only if several questions are open on that issue, start with the ID
 (`B03: ...`). You can also still reply on the status issue (start with the ID, or `#<N>:` for a triage
 when more than one is waiting). A question is answered once, from whichever issue you replied on.
 Or, locally:

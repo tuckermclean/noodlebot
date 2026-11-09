@@ -19,7 +19,7 @@ UNATTENDED RUN, A FOLLOW-UP. The noodlebot scheduler (@LOOP@) started this sessi
   for an open decision is the owner's standing choice, not a guess: take it and record it in the PR.
   Number the questions (Q1, Q2, ...) and give your recommendation for each, so the owner can answer
   in a line. End the file with: "To answer: reply on this unit's issue (the loop posts the question there)."
-  The loop turns the owner's reply into ANSWER.md; the owner may also write ANSWER.md next to this file.
+  The loop turns the owner's reply into ANSWER.md; the owner may also write ANSWER.md next to this file (QUESTION.md).
 - You are in the worktree @WT@ on branch @BR@ (made from origin/main). Your brief and logs go in this
   worktree's out/node/@ID@/. The scheduler's own files are under @STATE@/.
 - First, bring the branch up to date: git fetch origin && git merge --no-edit origin/main. Do the
