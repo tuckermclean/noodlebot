@@ -126,5 +126,52 @@ ok "D01-AC-1 the live checkout has no untracked or ignored file after all runs" 
 ok "D01-AC-1 the deploy state is under NOODLEBOT_DATA/deploy" '[ -s "$NOODLEBOT_DATA/deploy/previous" ]'
 ok "D01-AC-4 the lock is NOODLEBOT_DATA/deploy/lock (a held lock makes a run wait or skip, deploying nothing)" 'lockheld'
 
+# --- slice D review findings (A1 clean environment, A2 unfast-forwardable, A3 killed make test) ---
+# commitm <label> <Makefile recipe line> [extra file]: a new commit on main whose make test runs that recipe line.
+commitm() {
+	printf 'test:\n\t%s\n' "$2" >"$tmp/work/Makefile"
+	echo "$1" >"$tmp/work/file"
+	[ -n "${3:-}" ] && echo "$1" >"$tmp/work/$3"
+	g add -A && g commit -q -m "$1" && g push -q "$tmp/remote.git" HEAD:main 2>/dev/null
+}
+# Settle the pending commit from the lock test so the cases below start from a deployed state.
+dep >/dev/null
+
+# A1: make test runs in a clean environment; the loop's own variables must not reach it.
+commitm a1 "@echo a1 >>$log; [ -z \"\$\$SCHED_MAX\" ] && [ -z \"\$\$SCHED_TICK\" ] && [ -z \"\$\$SCHED_POLL\" ] && [ -z \"\$\$SCHED_REPORT\" ] && [ -z \"\$\$SCHED_THROTTLE\" ] && [ -z \"\$\$NOODLEBOT_DATA\" ]"
+a1=$(full "$tmp/work" HEAD)
+out=$(SCHED_MAX=1 SCHED_TICK=7 SCHED_POLL=9 SCHED_REPORT=0 SCHED_THROTTLE=1 sh "$deploy" "$live" 2>&1)
+ok "D01-AC-1 make test ran for a commit that fails when the loop's variables are set" '[ "$(runs a1)" = 1 ]'
+ok "D01-AC-1 a commit whose make test needs a clean environment is deployed (SCHED_*/NOODLEBOT_DATA not passed on)" '[ "$(head_of)" = "$a1" ]'
+ok "D01-AC-1 and it is not reported as failing make test" '[ "$(runs a1)" = 1 ] && ! printf "%s\n" "$out" | grep -q "not deployed"'
+
+# A2: make test passes but the live checkout cannot be fast-forwarded (untracked file where the commit adds one).
+echo mine >"$live/a2.txt"
+commitm a2 "@echo a2 >>$log" a2.txt
+a2=$(full "$tmp/work" HEAD)
+before=$(head_of)
+out=$(sh "$deploy" "$live" 2>/dev/null)
+ok "D01-AC-2 make test ran once for the commit that cannot be fast-forwarded" '[ "$(runs a2)" = 1 ]'
+ok "D01-AC-2 the live checkout stays on the old commit when the fast-forward fails" '[ "$(runs a2)" = 1 ] && [ "$(head_of)" = "$before" ]'
+ok "D01-AC-2 the failed fast-forward prints at most one stdout line (a status event)" '[ "$(runs a2)" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c .)" -le 1 ]'
+out=$(sh "$deploy" "$live" 2>/dev/null)
+ok "D01-AC-2 the same commit is not tried again: make test is not rerun" '[ "$(runs a2)" = 1 ]'
+ok "D01-AC-2 the later run prints nothing on stdout" '[ "$(runs a2)" = 1 ] && [ -z "$out" ]'
+ok "D01-AC-2 the live checkout still on the old commit after the later run" '[ "$(runs a2)" = 1 ] && [ "$(head_of)" = "$before" ]'
+rm -f "$live/a2.txt"
+
+# A3: a make test killed by a signal is temporary: nothing is recorded, a later run retries.
+a3m=$tmp/a3.marker
+commitm a3 "@echo a3 >>$log; if [ ! -e $a3m ]; then : >$a3m; kill -KILL \$\$PPID; fi"
+a3=$(full "$tmp/work" HEAD)
+before=$(head_of)
+out=$(sh "$deploy" "$live" 2>/dev/null)
+ok "D01-AC-2 make test ran and was killed by a signal" '[ "$(runs a3)" = 1 ] && [ -e "$a3m" ]'
+ok "D01-AC-2 a killed make test does not print not deployed" '[ "$(runs a3)" = 1 ] && ! printf "%s\n" "$out" | grep -q "not deployed"'
+ok "D01-AC-2 a killed make test leaves the live checkout alone" '[ "$(runs a3)" = 1 ] && [ "$(head_of)" = "$before" ]'
+out=$(dep)
+ok "D01-AC-2 a later run retries the commit (make test runs again)" '[ "$(runs a3)" = 2 ]'
+ok "D01-AC-2 and deploys it once make test passes" '[ "$(runs a3)" = 2 ] && [ "$(head_of)" = "$a3" ]'
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
