@@ -426,5 +426,32 @@ ok "S01-AC-4: and the path to delete" sh -c "printf '%s\n' \"\$1\" | grep 'C05 F
 ok "S01-AC-4: and not the fixed text" sh -c "! printf '%s\n' \"\$1\" | grep 'C05 FAILED' | grep -q '2 starts with no PR'" _ "$s01body"
 ok "S01-AC-4: and not the file's later lines" sh -c "! printf '%s\n' \"\$1\" | grep -q second-line-detail" _ "$s01body"
 
+# G01-AC-7: a spec PR's update session is the task "PR #N" (state/pr/<N>/): running, it is a section of
+# the status issue; FAILED, it is an item under "Waiting on you" with the first line of its FAILED file
+# and the path to delete.
+state7=$tmp/state/repo7
+mkdir -p "$state7/pr/12" "$state7/pr/13"
+sh "$tmp/rs/run-session.sh" --update 12 &
+pids7=$!
+echo "$pids7" >"$state7/pr/12/session.pid"
+echo 1 >"$state7/pr/12/starts"
+trap 'kill $pids $sess $pids3 $pids4 $pids5 $pids6 $pids7 2>/dev/null; rm -rf "$tmp"' EXIT
+sleep 1
+printf '2026-01-08T00:00:00Z second exit (rc 1) without finishing\nsecond-line-detail-13\n' >"$state7/pr/13/FAILED"
+: >"$state7/status.log"
+python3 -I "$src/report.py" --repo owner/repo --state "$state7" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err7"
+body7=$(q "[i['body'] for i in db['issues'].values() if i['state'] == 'open'][0]")
+printf '%s\n' "$body7" >"$tmp/body7"
+awk '/^## Waiting on you/ {f=1; next} /^## / {f=0} f' "$tmp/body7" >"$tmp/waiting7"
+ok "G01-AC-7: the report runs on a state dir with pr/<N> folders without error" test ! -s "$tmp/err7"
+ok "G01-AC-7: a running update is shown as PR #12" grep -qE '^### .*PR #12' "$tmp/body7"
+ok "G01-AC-7: it counts as a running session" grep -qF 'Sessions (1 running)' "$tmp/body7"
+ok "G01-AC-7: its section says it is start 1 of 2" sh -c "grep -E '^### .*PR #12' '$tmp/body7' | grep -qF 'start 1 of 2'"
+ok "G01-AC-7: a FAILED update is under Waiting on you as PR #13" sh -c "grep 'PR #13' '$tmp/waiting7' | grep -q FAILED"
+ok "G01-AC-7: with the first line of its FAILED file" sh -c "grep 'PR #13' '$tmp/waiting7' | grep -qF 'second exit (rc 1) without finishing'"
+ok "G01-AC-7: and the path to delete" sh -c "grep 'PR #13' '$tmp/waiting7' | grep -qF '$state7/pr/13/FAILED'"
+ok "G01-AC-7: and not the file's later lines" sh -c "! grep -q second-line-detail-13 '$tmp/body7'"
+ok "G01-AC-7: the running update is not listed as waiting" sh -c "! grep -q 'PR #12' '$tmp/waiting7'"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
