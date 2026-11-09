@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | none | M |
+| now | none | V01 | M |
 
 **Owns:** `scheduler/deploy.sh`, `scheduler/deploy.test.sh`, the deploy step and re-exec in `scheduler/loop.sh`, their cases in `scheduler/loop.test.sh`.
 
