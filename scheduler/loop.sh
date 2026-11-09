@@ -12,6 +12,10 @@
 # started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
+# Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
+# a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
+# (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
+# goes to state/<name>/deploy.log; its state and lock are $NOODLEBOT_DATA/deploy/ (the loop passes its runtime root).
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
@@ -47,6 +51,7 @@ if top=$(git -C "$probe" rev-parse --show-toplevel 2>/dev/null); then
 fi
 mkdir -p "$root" || exit 2
 mkdir -p "$state/node" "$state/issue" "$wtroot"
+start_head=$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null || true)
 pid='' node='' last_note='' last_note_t=0
 
 say() { echo "$(date -u +%FT%TZ) $*" >>"$log"; echo "$*"; }
@@ -278,6 +283,16 @@ start_node() {
 	say "$saw; started $id ($name) in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
 
+# deploy: self-deploy this checkout (deploy.sh); its stdout lines are status events, its stderr goes
+# to deploy.log. Never fails the tick; 9>&- keeps the loop's lock from deploy.sh and make test.
+deploy() {
+	[ -x "$here/deploy.sh" ] && [ -n "$start_head" ] || return 0
+	local line
+	NOODLEBOT_DATA="$root" "$here/deploy.sh" "$nb" </dev/null 9>&- 2>"$state/deploy.err" | while IFS= read -r line; do say "$line" >/dev/null; done
+	if [ -s "$state/deploy.err" ]; then sed "s/^/$(date -u +%FT%TZ) /" "$state/deploy.err" >>"$state/deploy.log"; fi
+	return 0
+}
+
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
 open='' merged='' tick_tok='' live=() throttled=0
 tick() {
@@ -386,5 +401,9 @@ while :; do
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
+	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
+	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
+		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
+	fi
 	pause
 done
