@@ -2444,6 +2444,7 @@ ok "W02-AC-6: visibility is asked with gh api repos/o/sp --jq .private and the l
 ok "W02-AC-6: a known visibility is asked once, not on every tick" test "$(w02_cnt . "$W02/vis.sp.log")" = 1
 
 # W02-AC-5: the first failure after the start is one line, repeated failures add none, the recovery is one line
+rm -rf "$W02/data/site"   # the sf case starts with no publish record: the 60 s min-interval spans all loops of the machine
 w02_run sf both 500 false
 w02_wait 20 w02_ge '^publish' "$W02/order.log" 4
 failed_lines=$(w02_n 'status site: publish failed (')
