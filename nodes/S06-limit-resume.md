@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | T01, S04 | none | M |
+| now | T01, S04 | S07 | M |
 
 **Owns:** the check for idle sessions stopped by the usage limit and the conversation resume in `scheduler/loop.sh`, the resume mode of `scheduler/run-session.sh` (`claude -p --resume <session id>`), the resume prompt `scheduler/limit-resume.md`, their cases in `scheduler/loop.test.sh`.
 **Resolves:** #45

@@ -18,7 +18,8 @@ UNATTENDED RUN, A FOLLOW-UP. The noodlebot scheduler (@LOOP@) started this sessi
   @STATE@/node/@ID@/QUESTION.md, then end the run. Never continue on a guess. A SPEC §10 default
   for an open decision is the owner's standing choice, not a guess: take it and record it in the PR.
   Number the questions (Q1, Q2, ...) and give your recommendation for each, so the owner can answer
-  in a line. End the file with: "To answer: write ANSWER.md next to this file."
+  in a line. End the file with: "To answer: reply on this unit's issue (the loop posts the question there)."
+  The loop turns the owner's reply into ANSWER.md; the owner may also write ANSWER.md next to this file (QUESTION.md).
 - You are in the worktree @WT@ on branch @BR@ (made from origin/main). Your brief and logs go in this
   worktree's out/node/@ID@/. The scheduler's own files are under @STATE@/.
 - First, bring the branch up to date: git fetch origin && git merge --no-edit origin/main. Do the
@@ -29,6 +30,25 @@ UNATTENDED RUN, A FOLLOW-UP. The noodlebot scheduler (@LOOP@) started this sessi
   docs/migration.tsv, docs/capabilities.md). For those, git merge --abort, write QUESTION.md and end
   the run. After resolving, rerun the quick test gate and every red target of this node, and list
   each resolved file in the PR under Deviations.
+@RESUME-BEGIN@
+- RESUMING AFTER A STOP. This branch already has work (commits past origin/main: @COMMITS@), and the
+  worktree may hold out/node/@ID@/.
+@REASON-BEGIN@
+  The last session ended: @REASON@.
+@REASON-END@
+  - Read out/node/@ID@/ (brief, logs) and git log origin/main..HEAD first. Keep the existing brief and
+    add to it rather than rewrite it. Carry on from the last reviewed slice; do not redo a slice that
+    is already committed and reviewed.
+  - The earlier session may have started CI runs on this branch. Run gh run list --branch @BR@ and wait
+    for or read those before starting a new one.
+@PATCH-BEGIN@
+  - Each line below names a leftover patch: uncommitted changes an earlier session left, saved
+    before the worktree was reset to HEAD.
+@PATCH@
+    Examine each listed patch (git apply --stat, read it); never apply or commit one unexamined.
+    List each in the PR under Deviations with what you did with it.
+@PATCH-END@
+@RESUME-END@
 - RESUMING. @STATE@/node/@ID@/answered/ holds what earlier runs of this node stopped on. Read every
   file in it, oldest first (the names start with a UTC timestamp): <ts>-QUESTION.md is what a run
   asked, <ts>-ANSWER.md is the owner's answer, <ts>-SPEC-PR holds the number of a spec PR the owner
@@ -69,16 +89,16 @@ UNATTENDED RUN, A FOLLOW-UP. The noodlebot scheduler (@LOOP@) started this sessi
   done yet": a loop that caches the token spins forever once it expires and never sees the run end.
 - GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
   closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
-  without a colon) followed by its number. Write one only where closing is intended (a node PR's
-  "Fixes #N" lines); everywhere else write "issue #N" or "Refs #N", and never quote a spec's
+  without a colon) followed by its number. Write no closing keyword before an issue number anywhere
+  (the loop closes the issues once the nodes are merged); write "issue #N" or "Refs #N", and never quote a spec's
   Resolves: line or describe what "closes" an issue next to its number.
 - Never merge, approve, push to main, or change branch protection or repository settings.
 - CI flakes seen so far: snapshot.debian.org outages while building the toolbox (the toolbox image
   is now pulled from GHCR, so rare), and an intermittent perl segfault in rc1's uefi boot test. Re-run
   a failed job once (gh run rerun <id> --failed) before treating it as real.
 - If the node's spec has a **Resolves:** line (issues it was created or amended for), the PR body
-  says "Fixes #N" for each issue on it, so GitHub closes them when the PR merges. If an issue turns
-  out not to be resolved by this node, say so in the PR and write "Refs #N" instead.
+  says "Refs #N" for each issue on it; the loop closes them once the nodes are merged. If an issue turns
+  out not to be resolved by this node, say so in the PR.
 - When the follow-up PR is open, CI is green and the fresh reviewer's comment is on it (/node step 6),
   or you have written QUESTION.md or WAITING-PR, end the run.
 

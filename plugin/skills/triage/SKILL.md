@@ -6,7 +6,7 @@ description: Fit one GitHub issue into a graph-regime repository's plan (docs/gr
 # /triage <issue number> [--dry-run]  |  /triage --update <PR> [--dry-run] (section 4)
 
 You turn one issue into **plan**, not code. The graph is the only work queue: once your spec PR is
-merged, the scheduler builds the node with `/node` as usual, and that node's PR fixes the issue.
+merged, the scheduler builds the node with `/node` as usual, and the loop closes the issue once the nodes are merged.
 
 **Never** write implementation or tests, edit a merged node's criteria, or change the repository's
 principles. With `--dry-run`, do everything up to a local commit, then stop: no push, no PR, no
@@ -56,7 +56,7 @@ to the deps of any node that must not pass without it. Size it honestly.
 
 Every node you create or amend gets the issue on a **Resolves:** line in its spec, right after the
 **Owns:** line: `**Resolves:** #<issue>` (append `, #<issue>` if the line exists). The session that
-builds the node puts `Fixes #<issue>` in its PR for each one, so merging the node closes the issue.
+builds the node puts `Refs #<issue>` in its PR for each one; the loop closes the issue once the nodes are merged.
 
 Criteria state observable outcomes, each testable as the template requires. When the cause is not
 known yet (an intermittent failure, say), the criteria are the outcome (e.g. "passes N consecutive
@@ -77,14 +77,14 @@ a new open decision. Interactive: ask. Unattended: follow the run's instructions
 - One commit, subject `Spec: <what changes>, for #<issue>`, body: the placement (1–4) and why, the
   alternatives you rejected, the nodes touched.
 - Push the branch and open the PR (`gh pr create`). Body: the placement and reasoning, the new or
-  changed criteria, `Refs #<issue>` (not `Fixes`: the node's PR fixes it). Remove the worktree.
+  changed criteria, `Refs #<issue>`. Remove the worktree.
 - Comment on the issue: the placement in one or two sentences and the PR link. For placement 1, the
   comment is the whole result.
 
 **Closing keywords.** GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
 closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
-without a colon) followed by its number. Write one only where closing is intended (a node PR's
-"Fixes #N" lines); everywhere else write "issue #N" or "Refs #N", and never quote a spec's
+without a colon) followed by its number. Write no closing keyword before an issue number
+(the loop closes the issues once the nodes are merged); write "issue #N" or "Refs #N", and never quote a spec's
 Resolves: line or describe what "closes" an issue next to its number.
 
 ## 4. Update a spec PR: `/triage --update <PR> [--dry-run]`

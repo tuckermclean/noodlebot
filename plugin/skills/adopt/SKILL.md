@@ -76,7 +76,7 @@ Only after `ANSWER.md`. Order: the graph first, then the specs, so they agree.
   as one line `- **<ID>-AC-<n>** — … *Verify:* …`, and IDs of a capital letter and two digits. Work already done is not a node: say in `SPEC.md` that it exists, or note it in the
   Purpose of the node that builds on it. Size nodes honestly (S under a day, M two or three, L more).
   Open issues become nodes or criteria (closed ones are history only). A node drafted from an issue gets `**Resolves:** #<n>` right after
-  its **Owns:** line, so the node's PR fixes it; this PR itself only says `Refs #N`.
+  its **Owns:** line; the loop closes the issue once the nodes resolving it are merged, and this PR itself only says `Refs #N`.
   Drafts name no repository (no owner/name of any, not even the plugin's own). They do name the
   plugin's node skill directly as `/noodlebot:node <ID>` and the guard's config file as
   `.noodlebot/roles.yaml`; the checker is `<plugin dir>/skills/node/check-regime.py`.
@@ -119,7 +119,7 @@ fixing the drafts (not the checker). Also check the drafted `AGENTS.md` commands
 **Closing keywords.** GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
 closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
 without a colon) followed by its number. Write none here: use "issue #N" or "Refs #N", because the
-node that builds the work, not this PR, fixes the issue.
+loop closes the issue once the nodes that build the work are merged.
 
 ## Dry run
 With `--dry-run`, run sections 1 to 4 offline against a local directory or a clone:
