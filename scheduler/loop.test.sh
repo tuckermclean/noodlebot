@@ -6,6 +6,7 @@
 # the start count over, writes FAILED, and resumes a node after its spec PR merges.
 #   bash scheduler/loop.test.sh   (make test)
 set -u
+unset NOODLEBOT_VERSION   # V01: run from a clean environment, even inside a noodlebot session
 src=$(cd "$(dirname "$0")" && pwd -P)
 tmp=$(mktemp -d)
 pids=()
@@ -1359,6 +1360,17 @@ Noodlebot-Version: $v"; echo "$1-trailer $(git rev-parse HEAD)" >>"$V01/commits"
 mk own a
 git -C "$V01_CLONE" worktree add -q --detach "$V01/wt2" HEAD
 ( cd "$V01/wt2" && mk second b )
+# V01-AC-6, real-world shape: the session's own trailer (the right one, then another value) followed by Co-Authored-By.
+mk2() {
+	echo "$2" >"$2.3"; git add "$2.3"
+	g commit -q -m "$1 trailer then co-author
+
+Noodlebot-Version: $3
+Co-Authored-By: Claude <noreply@anthropic.com>"; echo "$1 $(git rev-parse HEAD)" >>"$V01/commits2"
+}
+mk2 own-same a "$v"
+mk2 own-other a "different-value"
+( cd "$V01/wt2" && mk2 second-same b "$v" && mk2 second-other b "different-value" )
 echo "Q1: x" >"$V01_STATE/node/$id/QUESTION.md"
 touch "$V01/done.node"
 exit 0
@@ -1398,6 +1410,7 @@ for k in "node:$statev/node/C01/unattended.md" "triage:$statev/issue/46/unattend
 	ok "V01-AC-5: the rendered ${k%%:*} prompt contains the loop's version" grep -qF "$v01_ver" "$f"
 	ok "V01-AC-5: the rendered ${k%%:*} prompt contains the signature line" grep -qF -- "$v01_sig" "$f"
 	ok "V01-AC-5: the rendered ${k%%:*} prompt tells the session to end PR bodies and comments with the signature line" sh -c "grep -qiE 'pr body|pr bodies' '$f' && grep -qi 'comment' '$f' && grep -qF -- '$v01_sig' '$f'"
+	ok "V01-AC-5: the rendered ${k%%:*} prompt, in one instruction, says to end every PR body and every comment with the signature line" sh -c "grep -qi 'end every PR body and every comment' '$f' && grep -i -A3 'end every PR body and every comment' '$f' | grep -qF -- '$v01_sig'"
 done
 ok "V01-AC-5: the node session's environment has NOODLEBOT_VERSION equal to the version" sh -c "[ \"\$(cat '$V01/env.node' 2>/dev/null)\" = '$v01_ver' ]"
 ok "V01-AC-5: the triage session's environment has NOODLEBOT_VERSION equal to the version" sh -c "[ \"\$(cat '$V01/env.triage' 2>/dev/null)\" = '$v01_ver' ]"
@@ -1408,6 +1421,10 @@ while read -r lbl sha; do
 	case $lbl in *plain) how="without a trailer of its own" ;; *) how="with a trailer of its own" ;; esac
 	ok "V01-AC-6: a commit in the session's $where, $how, ends with exactly one Noodlebot-Version trailer for the session's version" sh -c "[ \"\$(git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -c '^Noodlebot-Version:')\" = 1 ] && git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -qx 'Noodlebot-Version: $v01_ver'"
 done <"$V01/commits"
+ok "V01-AC-6: the fake session made its four commits with a Co-Authored-By after the trailer" sh -c "[ \$(wc -l <'$V01/commits2' 2>/dev/null || echo 0) = 4 ]"
+while read -r lbl sha; do
+	ok "V01-AC-6: a session commit '$lbl' (its own trailer, then Co-Authored-By) ends with exactly one Noodlebot-Version trailer, the session's version" sh -c "[ \"\$(git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -c '^Noodlebot-Version:')\" = 1 ] && git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -qx 'Noodlebot-Version: $v01_ver'"
+done <"$V01/commits2"
 git -C "$V01_CLONE" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "outside any session" 2>/dev/null
 ok "V01-AC-6: a commit in the clone outside any session gets no Noodlebot-Version trailer" sh -c "[ -x '$V01_CLONE/.git/hooks/commit-msg' ] && ! git -C '$V01_CLONE' log -1 --format=%B | git interpret-trailers --parse | grep -q '^Noodlebot-Version:'"
 NOODLEBOT_VERSION=probe git -C "$V01_CLONE" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "inside a session" 2>/dev/null
