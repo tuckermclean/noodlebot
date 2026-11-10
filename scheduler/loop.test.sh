@@ -1507,6 +1507,20 @@ s5ok "S05-AC-4: a failing gh pr close is tried (and fails)" waitf 5 sh -c "grep 
 s5ok "S05-AC-4: and logged in the status log" sh -c "grep -v FAILED '$s5st/status.log' | grep -i fail | grep -qE '(#|PR |close )25([^0-9]|\$)'"
 s5ok "S05-AC-4: the tick carries on: the other removed nodes were wound down meanwhile" test ! -d "$s5st/node/R03"
 s5ok "S05-AC-4: PR #25 stays open and the state of R05 stays while the close fails" sh -c "grep -q '^25 ' '$S5/open.tsv' && [ -d '$s5st/node/R05' ]"
+# the failing close does not stop the step (R11 sorts after R05) nor the tick (R12, a ready node, is started): R11 is
+# removed and R12 added by commits pushed while fail.prclose still holds 25
+mkdir -p "$s5st/node/R11"; echo 1 >"$s5st/node/R11/starts"; echo OPEN >"$S5/issue.131"
+s5spec R11 '#131' >"$tmp/s05work/nodes/R11-n11.md"
+git -C "$tmp/s05work" add -A && git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m 'Add R11'
+git -C "$tmp/s05work" rm -q nodes/R11-n11.md; s5spec R12 '#140' >"$tmp/s05work/nodes/R12-n12.md"
+printf 'nodes:\n  - {id: R08, name: n8, deps: []}\n  - {id: R09, name: n9, deps: []}\n  - {id: R12, name: n12, deps: []}\n' >"$tmp/s05work/docs/graph.yaml"
+git -C "$tmp/s05work" add -A && git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m 'Remove R11 (#79), add R12'
+git -C "$tmp/s05work" push -q "$tmp/s05remote.git" HEAD:main
+s5ok "S05-AC-4: a failing gh call does not stop the step: a removed node after R05 (R11) is wound down meanwhile, its issue #131 closed" waitf 8 sh -c "grep -qE '^issue-close 131 reason=not planned\$' '$S5/calls.log' && [ ! -d '$s5st/node/R11' ]"
+s5ok "S05-AC-4: and the failure is still unresolved at that point (fail.prclose holds 25, PR #25 open)" sh -c "[ \"\$(cat '$S5/fail.prclose')\" = 25 ] && grep -q '^25 ' '$S5/open.tsv'"
+s5ok "S05-AC-4: a failing gh call does not stop the tick: a ready node pushed to main (R12) is started meanwhile" waitf 8 sh -c "[ -s '$S5/runs.R12' ]"
+# R11's events are not R01..R05's: drop them so the event counts below stay about R01..R05
+grep -v 'R11 removed by' "$s5st/status.log" >"$tmp/s05-status.keep"; cat "$tmp/s05-status.keep" >"$s5st/status.log"
 n=0; while [ "$n" -lt 25 ] && [ "$(cat "$S5/issue.104")" = OPEN ]; do sleep 0.2; n=$((n + 1)); done
 if [ "$(cat "$S5/issue.104")" = CLOSED ]; then echo OPEN >"$S5/issue.104"; s5reopened=1; else s5reopened=0; fi
 sleep 2
