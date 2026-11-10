@@ -2,20 +2,23 @@
 # deploy.sh <live checkout>        deploy origin/main into the live checkout if it passes make test
 # deploy.sh --rollback <live>      return the live checkout to the recorded previous commit
 #
-# Fetches origin, and when origin/main is a new commit that has not been rejected, runs `make test`
+# Fetches origin main (fatal on failure) and then origin's tags, forced (non-fatal: a failure only
+# notes "could not fetch tags" on stderr and versions may be stale). Every status line names the
+# version of its commit, <v> = git describe --tags --always ("unknown" if that fails).
+# When origin/main is a new commit that has not been rejected, runs `make test`
 # in a scratch worktree of that commit; on success it fast-forwards the live checkout and prints
-# "deployed <old>..<new>"; on failure it prints "not deployed: <sha> fails make test" once and records
+# "deployed <old>..<new> (version <v>)"; on failure it prints "not deployed: <sha> (version <v>) fails make test" once and records
 # the sha so it is not tried again. A sha whose make test passed but that cannot be fast-forwarded is
 # remembered as passed (deploy/passed, "<sha> <failed fast-forwards>") with one line "not deployed:
-# <sha> cannot fast-forward <live> (will retry the fast-forward)"; later runs for that sha skip make
+# <sha> (version <v>) cannot fast-forward <live> (will retry the fast-forward)"; later runs for that sha skip make
 # test and retry only the fast-forward (stderr only), and after $max_tries failed fast-forwards in all
 # it is recorded as rejected (stderr only; the status line was already given). A newer origin/main
 # supersedes it. A make test that times out or is killed by a signal is retried on later runs (stderr
 # only), and after $max_tries such attempts for the same sha it is recorded with one line "not
-# deployed: <sha> make test timed out or was killed <n> times". Nothing to do prints nothing; every
-# stdout line is one status event.
+# deployed: <sha> (version <v>) make test timed out or was killed <n> times". Nothing to do prints
+# nothing; every stdout line is one status event.
 # --rollback resets to deploy/previous and, once the reset succeeded, records the commit it left as
-# rejected, so the rollback sticks.
+# rejected, so the rollback sticks, and prints "rolled back <cur>..<prev> (version <v>)".
 # State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed} (default ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock (waited for up to 5 minutes, so a
 # concurrent run finds nothing left to do; git commands that may leave a background process run with it closed).
 # Nothing is written inside the live checkout. Exit:
@@ -56,7 +59,10 @@ cleanup() {
 }
 
 do_deploy() {
-	timeout 60 git -C "$live" fetch -q --tags origin main >/dev/null 2>&1 9>&- || die "git fetch failed in $live"
+	timeout 60 git -C "$live" fetch -q origin main >/dev/null 2>&1 9>&- || die "git fetch failed in $live"
+	# Tags only name versions: a failed tag fetch (moved or conflicting tag) never stops a deploy; +refs/tags force moved ones.
+	timeout 60 git -C "$live" fetch -q origin '+refs/tags/*:refs/tags/*' >/dev/null 2>&1 9>&- ||
+		echo "deploy.sh: could not fetch tags in $live; versions may be stale" >&2
 	new=$(git -C "$live" rev-parse --verify -q origin/main^{commit}) || die "no origin/main in $live"
 	old=$(git -C "$live" rev-parse --verify -q HEAD) || die "no HEAD in $live"
 	[ "$new" = "$old" ] && return 0
