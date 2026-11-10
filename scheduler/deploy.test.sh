@@ -256,5 +256,36 @@ ok "D01-AC-2 a temporarily blocked fast-forward is not reported as failing make 
 ok "D01-AC-1 once the lock is gone the next run deploys the commit" '[ "$(runs f3)" -ge 1 ] && [ "$(head_of)" = "$f3" ]'
 ok "D01-AC-1 make test is not run a second time for that sha" '[ "$(runs f3)" = 1 ]'
 
+# --- V01-AC-4 robustness: a moved or conflicting tag must not stop a deploy ---
+# tagcase <name> <moved|local>: a fresh remote and live clone, both having tag v1 on the first commit.
+# moved: origin's v1 is then moved to the new commit. local: the live checkout's own v1 points elsewhere than origin's.
+tagcase() {
+	tn=$1; tw=$tmp/tw-$tn; tr=$tmp/tr-$tn; tl=$tmp/tl-$tn
+	tg() { git -C "$tw" -c user.name=t -c user.email=t@t "$@"; }
+	git init -q -b main "$tw"
+	printf 'test:\n\t@true\n' >"$tw/Makefile"; echo t0 >"$tw/file"
+	tg add -A && tg commit -q -m t0 && tg tag v1
+	git clone -q --bare "$tw" "$tr"
+	git clone -q "$tr" "$tl"
+	echo t1 >"$tw/file"; tg add -A && tg commit -q -m t1
+	t0=$(git -C "$tl" rev-parse HEAD); t1=$(git -C "$tw" rev-parse HEAD)
+	if [ "$2" = moved ]; then
+		tg tag -f v1 "$t1" >/dev/null && tg push -q --force "$tr" HEAD:main v1 2>/dev/null
+	else
+		tg tag v2 "$t1" && tg push -q "$tr" HEAD:main v2 2>/dev/null
+		git -C "$tl" tag v2 "$t0"
+	fi
+	tout=$(NOODLEBOT_DATA=$tmp/data-$tn sh "$deploy" "$tl" 2>"$tmp/err-$tn"); trc=$?
+	thead=$(git -C "$tl" rev-parse HEAD)
+}
+tagcase moved moved
+ok "V01-AC-4 a tag moved on origin: the new commit is still deployed (live checkout moves)" '[ "$thead" = "$t1" ]'
+ok "V01-AC-4 a tag moved on origin: exit status 0 as for a normal deploy" '[ "$trc" = 0 ]'
+ok "V01-AC-4 a tag moved on origin: exactly one line 'deployed <old>..<new> (version <v>)'" 'printf "%s\n" "$tout" | grep -Eq "^deployed $t0\.\.$t1 \(version [^)]+\)\$" && [ "$(printf "%s\n" "$tout" | grep -c .)" = 1 ]'
+tagcase local local
+ok "V01-AC-4 a conflicting local tag: the new commit is still deployed (live checkout moves)" '[ "$thead" = "$t1" ]'
+ok "V01-AC-4 a conflicting local tag: exit status 0 as for a normal deploy" '[ "$trc" = 0 ]'
+ok "V01-AC-4 a conflicting local tag: exactly one line 'deployed <old>..<new> (version <v>)'" 'printf "%s\n" "$tout" | grep -Eq "^deployed $t0\.\.$t1 \(version [^)]+\)\$" && [ "$(printf "%s\n" "$tout" | grep -c .)" = 1 ]'
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
