@@ -426,6 +426,7 @@ ok "V01-AC-3: the deploy's restart makes two start lines in all, the first namin
 ok "V01-AC-3: and state/dep/version now holds the deployed version" sh -c "[ \"\$(cat '$stated/version' 2>/dev/null)\" = '$v01_v2' ]"
 ok "D01-AC-1: the deploy is one status-log event" sh -c "[ \$(grep -cE 'deployed ${c1:0:7}[0-9a-f]*\.\.${c2:0:7}' '$stated/status.log') = 1 ]"
 ok "D01-AC-1: a deploy is exactly one status-log line in total (no second 're-execs' line)" sh -c "[ \$(grep -c 'deployed' '$stated/status.log') = 1 ] && [ \$(grep -cE 'deployed ${c1:0:7}[0-9a-f]*\.\.${c2:0:7}' '$stated/status.log') = 1 ]"
+ok "V01-AC-4: the status log's deploy line names the deployed commit's version" withind 5 "deployed ${c1:0:7}[0-9a-f]*\.\.${c2:0:7}[0-9a-f]* \(version ${v01_v2}\)\$"
 ok "D01-AC-1: the re-exec'd loop still owns the session (reported running)" afterd 4 "$n0" "running: .*B01 \(pid $sp\)"
 ok "D01-AC-1: the session is alive with the same pid" kill -0 "$sp"
 ok "D01-AC-1: the session was started once, not again after the re-exec" sh -c "[ \$(grep -c '^start B01' '$tmp/claudel.log') = 1 ] && [ \$(grep -c 'started B01' '$stated/status.log') = 1 ]"
@@ -437,7 +438,10 @@ mkloop v3 >"$tmp/nbwork/scheduler/loop.sh"
 printf 'test:\n\t@echo stub test fails; false\n\n.PHONY: test\n' >"$tmp/nbwork/Makefile"
 pushd c3
 c3=$(git -C "$tmp/nbwork" rev-parse HEAD)
-ok "D01-AC-2: a commit failing make test is one status-log event" withind 5 "not deployed: ${c3:0:7}[0-9a-f]* fails make test"
+ok "D01-AC-2: a commit failing make test is one status-log event" withind 5 "not deployed: ${c3:0:7}[0-9a-f]* \(version [^)]+\) fails make test"
+v01_v3=$(git -C "$nbd" describe --tags --always "$c3" 2>/dev/null)
+ok "V01-AC-4: the refused commit's version is tag-based, not a bare sha (guard)" sh -c "case '$v01_v3' in v1.0-*-g*) true ;; *) false ;; esac"
+ok "V01-AC-4: the status log's not-deployed line names the refused commit's version" withind 5 "not deployed: ${c3:0:7}[0-9a-f]* \(version ${v01_v3}\) fails make test\$"
 sleep 4
 ok "D01-AC-2: it stays one event across several ticks" test "$(countd 'not deployed')" = 1
 ok "D01-AC-2: the checkout stays on the old commit" test "$(headd)" = "$c2"
