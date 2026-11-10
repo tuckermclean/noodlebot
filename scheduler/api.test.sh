@@ -294,7 +294,7 @@ cp "$tmp/resp" "$tmp/nodes.json"
 if [ "$(jx "[n['id'] for n in d['nodes']]")" = "['N01', 'N02', 'N03', 'N04', 'N05', 'N06', 'N07', 'N08', 'N09', 'N10', 'N11']" ]; then pass "P01-AC-4: /nodes gives each node of the graph once, in graph order"; else fail "P01-AC-4: /nodes ids: $(jx "[n.get('id') for n in d['nodes']]")"; fi
 if [ "$(jx "[(n['name'], n['deps'], n['track']) for n in d['nodes'] if n['id'] in ('N10', 'N02')]")" = "[('pr-open-one', ['N01'], 'now'), ('waiting-one', ['N09', 'N03'], 'later')]" ]; then pass "P01-AC-4: nodes give name, deps and track"; else fail "P01-AC-4: name, deps, track: $(jx "[(n.get('name'), n.get('deps'), n.get('track')) for n in d['nodes']]")"; fi
 nodefield() { # nodefield <ID> <python expr over n, the node>: true when the node's entry in the list satisfies it
-	jx "[n for n in d['nodes'] if n['id'] == '$1'][0] and ($2)"
+	jx "(lambda n: $2)([n for n in d['nodes'] if n['id'] == '$1'][0])"
 }
 node_is() { # node_is <ID> <python expr over n> <what>: checks the list entry and GET .../nodes/<ID>
 	cp "$tmp/nodes.json" "$tmp/resp"
