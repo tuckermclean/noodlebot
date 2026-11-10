@@ -158,7 +158,7 @@ ended() {
 	rm -f "$d/session.pid"
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
-	if [ -e "$d/FAILED" ]; then say "$saw; session $id ended (rc $rc), held by FAILED"
+	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; session $id ended (rc $rc), held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif has_pr "$d" "$id"; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) with a PR"
@@ -199,7 +199,7 @@ triage_ended() {
 	elif limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; triage of #$n stopped by the usage limit (rc $rc); start not counted"
-	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
+	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing" >"$d/FAILED"
 		set_starts "$d" 0
 		say "$saw; triage of #$n ended (rc $rc), 2 starts used: wrote FAILED"
@@ -223,7 +223,7 @@ update_ended() {
 	elif limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; update of PR #$n stopped by the usage limit (rc $rc); start not counted"
-	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
+	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing the update" >"$d/FAILED"
 		set_starts "$d" 0
 		say "$saw; update of PR #$n ended (rc $rc), 2 starts used: wrote FAILED"
@@ -431,6 +431,7 @@ save_leftover() {
 	[ -n "$(git -C "$wt" status --porcelain -- . "${ex[@]}" 2>/dev/null)" ] || return 0
 	ts=$(date -u +%Y%m%dT%H%M%SZ) patch=$d/leftover/$ts.patch
 	if mkdir -p "$d/leftover" && tmpd=$(mktemp -d "$d/leftover/.tmp.XXXXXX") &&
+		GIT_INDEX_FILE=$tmpd/index git -C "$wt" read-tree HEAD &&
 		GIT_INDEX_FILE=$tmpd/index git -C "$wt" add -A -- . "${ex[@]}" &&
 		GIT_INDEX_FILE=$tmpd/index git -C "$wt" diff --binary --cached HEAD >"$tmpd/patch" &&
 		[ -s "$tmpd/patch" ] && [ ! -e "$patch" ] && mv "$tmpd/patch" "$patch"; then
@@ -439,7 +440,7 @@ save_leftover() {
 		[ -n "${tmpd:-}" ] && rm -rf "$tmpd"
 		note "$saw; $id: cannot write the leftover patch for its uncommitted changes; not started"; return 1
 	fi
-	git -C "$wt" reset -q --hard HEAD && git -C "$wt" clean -fdq -- . "${ex[@]}" || { note "$saw; $id: resetting the worktree after the leftover patch failed; not started"; return 1; }
+	git -C "$wt" restore -q --source=HEAD --staged --worktree -- . "${ex[@]}" && git -C "$wt" clean -fdq -- . "${ex[@]}" || { note "$saw; $id: resetting the worktree after the leftover patch failed; not started"; return 1; }
 	leftover_patch=$ts.patch
 	say "$saw; $id: uncommitted changes of an earlier session saved as leftover/$leftover_patch and the worktree reset"
 }
