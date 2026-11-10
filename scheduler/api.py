@@ -711,7 +711,6 @@ def r_issues(m, req):
 # ---- control requests (node P03) ----
 
 CTL_LOCK = threading.Lock()   # one control at a time: records get their names in request order, and a check and its write are one step
-CTL_COUNT = [0]
 SHA = re.compile(r"[0-9a-f]{4,40}\Z")
 
 
@@ -738,12 +737,55 @@ def put_file(path, text):
 
 
 def put_record(repo, control, target, now):
-    """The request record state/<name>/requests/<time>-<n>.json; its name sorts in request order (the caller holds CTL_LOCK)."""
-    CTL_COUNT[0] += 1
-    path = os.path.join(root, "state", repo.split("/", 1)[1], "requests",
-                        "%s-%06d.json" % (now.strftime("%Y%m%dT%H%M%SZ"), CTL_COUNT[0]))
-    put_file(path, json.dumps({"control": control, "target": target, "time": now.strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n")
-    return path
+    """The request record state/<name>/requests/<time>-<n>.json; its name sorts in request order (the caller holds CTL_LOCK).
+    The counter continues from the highest name there for the same second (so it survives a re-exec), and the name is taken
+    with a hard link, which fails rather than overwrite: on a collision the next number is tried."""
+    d = os.path.join(root, "state", repo.split("/", 1)[1], "requests")
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    text = json.dumps({"control": control, "target": target, "time": now.strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n"
+    tmp = os.path.join(d, ".tmp-%d-%d" % (os.getpid(), threading.get_ident()))
+    try:
+        os.makedirs(d, exist_ok=True)
+        last = 0
+        for name in os.listdir(d):
+            m = re.fullmatch(re.escape(stamp) + r"-([0-9]{6})\.json", name)
+            if m:
+                last = max(last, int(m.group(1)))
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        for n in range(last + 1, last + 1000):
+            path = os.path.join(d, "%s-%06d.json" % (stamp, n))
+            try:
+                os.link(tmp, path)
+                return path
+            except FileExistsError:
+                continue
+        raise OSError("no free record name")
+    except OSError as e:
+        log("could not write a request record in %s: %r" % (d, e))
+        raise Err(500, "could not write the request record")
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def with_record(repo, control, target, now, change):
+    """Write the record, then make the change (the marker); if the change fails, remove the record again."""
+    rec = put_record(repo, control, target, now)
+    try:
+        change()
+    except BaseException as e:
+        try:
+            os.unlink(rec)
+        except OSError:
+            pass
+        if isinstance(e, OSError):
+            log("could not change the marker for %s: %r" % (control, e))
+            raise Err(500, "could not change the marker")
+        raise
+    return rec
 
 
 def accepted(control, target, wrote, when):
@@ -773,8 +815,7 @@ def c_node_failed(m, req):
         f = os.path.join(sd, "node", node, "FAILED")
         if not os.path.exists(f):
             raise Err(409, "node %s has no FAILED" % node)
-        os.unlink(f)
-        rec = put_record(repo, "delete-failed", "node/" + node, utc_now())
+        rec = with_record(repo, "delete-failed", "node/" + node, utc_now(), lambda: os.unlink(f))
     return accepted("delete-failed", "node/" + node, [f, rec], LOOP_WHEN % repo)
 
 
@@ -788,8 +829,7 @@ def c_issue_failed(m, req):
         f = os.path.join(sd, "issue", n, "FAILED")
         if not os.path.exists(f):
             raise Err(409, "issue %s has no FAILED" % n)
-        os.unlink(f)
-        rec = put_record(repo, "delete-failed", "issue/" + n, utc_now())
+        rec = with_record(repo, "delete-failed", "issue/" + n, utc_now(), lambda: os.unlink(f))
     return accepted("delete-failed", "issue/" + n, [f, rec], LOOP_WHEN % repo)
 
 
@@ -799,11 +839,8 @@ def stop_request(repo, on):
     with CTL_LOCK:
         if os.path.exists(f) == on:
             raise Err(409, "%s is already %s" % (f, "there" if on else "absent"))
-        if on:
-            put_file(f, "")
-        else:
-            os.unlink(f)
-        rec = put_record(repo, "stop" if on else "unstop", repo, utc_now())
+        rec = with_record(repo, "stop" if on else "unstop", repo, utc_now(),
+                          (lambda: put_file(f, "")) if on else (lambda: os.unlink(f)))
     when = LOOP_WHEN % repo
     if on:
         when += "; a running loop then exits"
@@ -830,8 +867,8 @@ def c_release(m, req):
     with CTL_LOCK:
         now = utc_now()
         f = os.path.join(sd, "node", node, "RELEASE")
-        put_file(f, now.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
-        rec = put_record(repo, "release", "node/" + node, now)
+        rec = with_record(repo, "release", "node/" + node, now,
+                          lambda: put_file(f, now.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n"))
     return accepted("release", "node/" + node, [f, rec],
                     "the loop for %s consumes the release at its next tick and logs what it did" % repo)
 
@@ -1061,10 +1098,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.close_connection = True
         if status == 405:
-            self.send_header("Allow", "GET, POST, PUT, DELETE")
+            self.send_header("Allow", self.allowed())
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def allowed(self):
+        path = getattr(self, "path", "").split("?", 1)[0].split("#", 1)[0]
+        ms = {mt for mt, rx, _ in ROUTES if rx.match(path)}
+        return ", ".join(x for x in ("GET", "POST", "PUT", "DELETE") if x in ms) or "GET, POST, PUT, DELETE"
 
     def send_error(self, code, message=None, explain=None):
         """Malformed requests get a JSON body too, never the stdlib's HTML."""
@@ -1090,13 +1132,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if method != "GET":
                 if not any(mt == method and rx.match(path) for mt, rx, _ in ROUTES):
                     return self.other()
-                try:
-                    n = int(self.headers.get("Content-Length") or 0)
-                except ValueError:
-                    n = 0
-                self.body = self.rfile.read(min(max(n, 0), 65536))
-                if n > 65536:
-                    self.close_connection = True
+                self.read_body()
             for mt, rx, fn in ROUTES:
                 m = rx.match(path) if mt == method else None
                 if m:
@@ -1113,6 +1149,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             log("error on %s %s: %r" % (method, path, e))
             self.send_obj(500, {"version": VERSION, "error": "internal error"})
+
+    def read_body(self):
+        """The body of a write: Content-Length bytes, at most 64 KiB. Anything else is refused and the connection closed,
+        so unread bytes are never taken for the next request."""
+        if self.headers.get("Transfer-Encoding") is not None:
+            self.close_connection = True
+            raise Err(411, "chunked bodies are not accepted: send Content-Length")
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.close_connection = True
+            raise Err(400, "bad Content-Length")
+        if n < 0:
+            self.close_connection = True
+            raise Err(400, "bad Content-Length")
+        if n > 65536:
+            self.close_connection = True
+            raise Err(413, "body too large")
+        if n:
+            old = self.connection.gettimeout()
+            self.connection.settimeout(10)   # a client that sends less than it announced lets go of the thread
+            try:
+                self.body = self.rfile.read(n)
+            except OSError:
+                self.close_connection = True
+                raise Err(408, "request body not received")
+            finally:
+                self.connection.settimeout(old)
+            if len(self.body) < n:
+                self.close_connection = True
+                raise Err(400, "request body shorter than Content-Length")
 
     def other(self):
         self.close_connection = True   # an unread body must not be taken for the next request
