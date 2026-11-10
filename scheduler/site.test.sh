@@ -177,6 +177,12 @@ snap >"$res/before3"
 build "$tmp/out3" "$res/rc3" --throttle "open: usage is fine"
 build "$tmp/out4" "$res/rc4"
 snap >"$res/after3"
+# out5: full 40-character commit hashes in the deploy record (cut to 12 characters before the filter)
+H1=0123456789abcdef0123456789abcdef01234567 H2=fedcba9876543210fedcba9876543210fedcba98 H3=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+mkdir -p "$tmp/out5"
+printf '%s\n' "$H1" >"$root/deploy/previous"
+printf '%s\n%s\n' "$H2" "$H3" >"$root/deploy/rejected"
+build "$tmp/out5" "$res/rc5"
 echo "$tmp" >"$res/tmp"
 
 cat >"$res/check.py" <<'EOF'
@@ -337,6 +343,7 @@ check("W01-AC-5 a triage's spec PR from WAITING-PR (state idle there)", lambda: 
 dep = lambda: act()["deploy"]
 check("W01-AC-5 deploy version: the first published repository's state/<name>/version", lambda: dep()["version"] == "v1.0-7-gabc1234")
 check("W01-AC-5 deploy previous (first line) and rejected (file order)", lambda: (dep()["previous"], dep()["rejected"]) == ("abc123def456", ["0badc0de1234", "5eed5eed5678"]))
+check("W01-AC-5 deploy previous and rejected full hashes are cut to their first 12 characters", lambda: rc(5) == "0" and (lambda d: (d["previous"], d["rejected"]))(J(tmp + "/out5", "activity.json")["deploy"]) == ("0123456789ab", ["fedcba987654", "a1b2c3d4e5f6"]))
 def dexp(i):
     return ["deployed c%d..d%d (version v0.%d)", "not deployed: make test failed on d%d", "rolled back d%d..c%d (version v0.%d)"][i % 3].replace("%d", "{}").format(*([i] * 3))
 check("W01-AC-5 the last 10 deploy events of the whole log (deployed, not deployed, rolled back), newest first", lambda: [e["text"] for e in dep()["events"]] == [dexp(i) for i in range(13, 3, -1)])
