@@ -29,7 +29,7 @@
 #                            issue/<N>/ (a triage) and pr/<N>/ (a spec-PR update: also from, done) hold the same files
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
-# At start, once, it makes sure the labels noodlebot, noodlebot-triaged and noodlebot-status exist (labels.py).
+# At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
 set -u -o pipefail
