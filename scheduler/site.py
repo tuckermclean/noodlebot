@@ -13,15 +13,35 @@ length cuts apply. Node states: ready.py is run over the files the loop cached (
 a loop's lock is read from /proc/locks as loops.sh does. Session logs, session.stderr, environment
 files, prompts and ~/.config/noodlebot/ (but for the --repos list) are never opened.
 Exits 1 when the list is unreadable or --out is unwritable; a repository's own bad files give defaults.
+
+  site.py publish --data-root DIR --repos FILE --gist ID [--throttle LINE] [--now EPOCH]
+                  [--min-interval SECONDS] [--keepalive SECONDS]
+
+Builds into DIR/site/out/ and sends what changed to the gist in one `gh api -X PATCH gists/ID --input
+FILE` (GH_TOKEN is inherited from the environment, never an argument, output or file; gists are never
+created). Changed files go as {"content": ...}, files no longer built as null, plus manifest.json:
+{version (site-schema.json), updated (when the content last changed), seen (this publish), files
+{name: sha256}}. DIR/site/published.json holds the last manifest sent, written (temp file and rename)
+only after a 2xx answer. A change is sent at most every --min-interval seconds (60); with nothing
+changed a manifest-only keepalive goes every --keepalive seconds (900). DIR/site/lock is held
+non-blocking: a publish that finds it held does nothing and exits 0. A 404 or any other failed call
+logs one stderr line `site.py: publish failed (<status>)` (status: 404 with the gist ID, HTTP code, or
+`no answer: <reason>`; never the response body) and exits 1, published.json untouched. build's own
+warnings during a publish go to DIR/site/build.log; a fatal build error is the one line
+`publish failed (build: <reason>)`, so that line is the only stderr output.
+--keepalive 0 turns the keepalive off.
 """
 import argparse
 import collections
+import fcntl
+import hashlib
 import json
 import math
 import os
 import re
 import subprocess
 import sys
+import time
 
 import yaml
 
@@ -37,8 +57,18 @@ HOLD = re.compile(r"hold:\s*")  # the throttle line's hold prefix
 LOCAL = []  # literal strings (runtime root, HOME) the filter removes
 
 
+LOGFILE = [None]  # during a publish, build's warnings go to DIR/site/build.log, not stderr
+
+
 def log(msg):
-    print("site.py: " + msg, file=sys.stderr)
+    print("site.py: " + msg, file=LOGFILE[0] or sys.stderr)
+
+
+def fatal(msg):
+    if LOGFILE[0]:  # during a publish: publish() reports it as its one stderr line
+        raise RuntimeError(msg)
+    log(msg)
+    sys.exit(1)
 
 
 def text(s):
@@ -473,8 +503,7 @@ def read_repos(path):
         with open(path, encoding="utf-8") as f:
             raw = f.read().splitlines()
     except OSError as e:
-        log("cannot read the repository list: %s" % e)
-        sys.exit(1)
+        fatal("cannot read the repository list: %s" % e)
     repos = []
     for line in raw:
         line = re.sub(r"\s+", "", line.split("#")[0])
@@ -496,8 +525,7 @@ def write_out(out, files):
             if e not in files and (os.path.isfile(p) or os.path.islink(p)):
                 os.unlink(p)
     except OSError as e:
-        log("cannot write %s: %s" % (out, e))
-        sys.exit(1)
+        fatal("cannot write %s: %s" % (out, e))
 
 
 def build(a):
@@ -528,6 +556,105 @@ def build(a):
         files["throttle.json"] = jdump({"windows": [], "updated": None, "held": False, "reason": None, "history": []})
     files["activity.json"] = jdump(activity_file(root, published))
     write_out(a.out, files)
+    return files
+
+
+# ---- publish
+
+def gh_patch(gist, body_path):
+    """One PATCH of the gist; None on a 2xx answer, else the one line to log (never the response body)."""
+    cmd = ["gh", "api", "-X", "PATCH", "gists/" + gist, "--input", body_path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return "publish failed (no answer: %s)" % type(e).__name__
+    if r.returncode == 0:
+        return None
+    m = re.search(r"\bHTTP (\d{3})\b", r.stderr)
+    if m and m.group(1) == "404":
+        return "publish failed (404): gist %s not found or not writable with this token" % gist
+    if m:
+        return "publish failed (HTTP %s)" % m.group(1)
+    return "publish failed (no answer: exit %d)" % r.returncode
+
+
+def publish(a):
+    root = os.path.abspath(a.data_root)
+    site = os.path.join(root, "site")
+    now = a.now if a.now is not None else int(time.time())
+    try:
+        os.makedirs(site, exist_ok=True)
+        lk = open(os.path.join(site, "lock"), "a")
+        fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0
+    except OSError as e:
+        log("cannot lock %s: %s" % (site, e))
+        return 1
+    a.out = os.path.join(site, "out")
+    a.now = now
+    try:
+        LOGFILE[0] = open(os.path.join(site, "build.log"), "w", encoding="utf-8")
+    except OSError:
+        LOGFILE[0] = open(os.devnull, "w")
+    try:
+        files = build(a)
+    except RuntimeError as e:
+        err = "publish failed (build: %s)" % e
+        files = None
+    finally:
+        LOGFILE[0].close()
+        LOGFILE[0] = None
+    if files is None:
+        log(err)
+        return 1
+    hashes = {n: hashlib.sha256(d).hexdigest() for n, d in files.items()}
+    prev = None
+    try:
+        with open(os.path.join(site, "published.json"), encoding="utf-8") as f:
+            prev = json.load(f)
+        old, seen, updated = prev["files"], int(prev["seen"]), int(prev["updated"])
+        if not isinstance(old, dict):
+            raise ValueError("files")
+    except (OSError, ValueError, KeyError, TypeError):
+        prev, old, seen, updated = None, {}, None, None
+    send = {n: {"content": files[n].decode("utf-8")} for n in files if old.get(n) != hashes[n]}
+    send.update({n: None for n in old if n not in files})
+    if send:
+        if seen is not None and now - seen < a.min_interval:
+            return 0
+        updated = now
+    elif seen is None or a.keepalive <= 0 or now - seen < a.keepalive:
+        return 0
+    with open(os.path.join(HERE, "site-schema.json"), encoding="utf-8") as f:
+        version = json.load(f)["version"]
+    manifest = {"version": version, "updated": updated, "seen": now, "files": hashes}
+    mdata = jdump(manifest)
+    send["manifest.json"] = {"content": mdata.decode("utf-8")}
+    body = os.path.join(site, "request.json")
+    try:
+        with open(body, "w", encoding="utf-8") as f:
+            json.dump({"files": send}, f, ensure_ascii=False)
+        err = gh_patch(a.gist, body)
+    except OSError as e:
+        err = "publish failed (no answer: cannot write the request)"
+    finally:
+        try:
+            os.unlink(body)
+        except OSError:
+            pass
+    if err:
+        log(err)
+        return 1
+    try:
+        tmp = os.path.join(site, "published.json.tmp")
+        with open(tmp, "wb") as f:
+            f.write(mdata)
+        os.replace(tmp, os.path.join(site, "published.json"))
+    except OSError as e:
+        log("cannot write published.json: %s" % e)
+        return 1
+    return 0
 
 
 def main():
@@ -539,7 +666,20 @@ def main():
     b.add_argument("--out", required=True)
     b.add_argument("--throttle")
     b.add_argument("--now", type=int)
+    p = sub.add_parser("publish")
+    p.add_argument("--data-root", required=True)
+    p.add_argument("--repos", required=True)
+    p.add_argument("--gist", required=True)
+    p.add_argument("--throttle")
+    p.add_argument("--now", type=int)
+    p.add_argument("--min-interval", type=int, default=60)
+    p.add_argument("--keepalive", type=int, default=900)
     a = ap.parse_args()
+    if a.cmd == "publish":
+        if not re.fullmatch(r"[A-Za-z0-9]+", a.gist):
+            log("bad gist ID")
+            return 1
+        return publish(a)
     build(a)
     return 0
 
