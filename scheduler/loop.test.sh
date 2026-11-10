@@ -2339,5 +2339,174 @@ x6ok "S06-AC-4: update of PR #102 starts again by the usual path (run 2, no --re
 rm -f "$S06/hold.pr-102" "$S06/hold.L01"
 kill "$lp06b"; wait "$lp06b" 2>/dev/null
 for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
+# ---- W02: the visibility record (W02-AC-6) and the publish step (W02-AC-5) ----
+# A fresh scheduler copy (own data root, own HOME config). The fake report.py and a wrapper around the
+# real site.py log their calls, in order, to $W02/order.log; the wrapper also logs GH_TOKEN and then
+# runs the real publish ("site-real.py") against the fake gh, which answers the gist PATCH as $W02/patch-mode
+# says (ok, or 500) and "repos/o/<name> --jq .private" as $W02/vis-mode.<name> says (false, true, fail).
+W02=$tmp/w02
+nbw=$W02/nb
+mkdir -p "$nbw/scheduler" "$nbw/plugin" "$W02/bin"
+cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
+	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/usage.py "$nbw/scheduler/"
+[ -f "$src/labels.py" ] && cp "$src/labels.py" "$nbw/scheduler/"
+[ -f "$src/site-schema.json" ] && cp "$src/site-schema.json" "$nbw/scheduler/"
+[ -f "$src/site.py" ] && cp "$src/site.py" "$nbw/scheduler/site-real.py"
+cat >"$nbw/scheduler/report.py" <<'EOF'
+import sys
+open(sys.argv[0].rsplit("/", 1)[0] + "/../../order.log", "a").write("report\n")
+EOF
+cat >"$nbw/scheduler/site.py" <<'EOF'
+import os, sys
+d = os.path.dirname(os.path.abspath(__file__))
+w = os.path.join(d, "..", "..")
+open(os.path.join(w, "order.log"), "a").write("publish " + " ".join(sys.argv[1:]) + "\n")
+open(os.path.join(w, "ghtok.log"), "a").write(os.environ.get("GH_TOKEN", "<unset>") + "\n")
+os.execv(sys.executable, [sys.executable, "-I", os.path.join(d, "site-real.py")] + sys.argv[1:])
+EOF
+W02TOK=ghp_W02gistTOKENvalue0123456789abcd
+cat >"$W02/bin/gh" <<EOF
+#!/bin/sh
+W=$W02
+EOF
+cat >>"$W02/bin/gh" <<'EOF'
+case " $* " in
+*" --state merged "*) echo "1 node/A01-first-node" ;;
+*" -X PATCH gists/"*)
+	echo "patch GH_TOKEN=${GH_TOKEN:-<unset>}" >>"$W/order.log"; echo "$*" >>"$W/gh-args.log"
+	prev=; for a in "$@"; do [ "$prev" = --input ] && cp "$a" "$W/body.$(date +%s%N)" 2>/dev/null; prev=$a; done
+	case $(cat "$W/patch-mode" 2>/dev/null) in
+	500) echo '{"message":"Server Error"}'; echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;;
+	*) echo '{"id":"x"}' ;;
+	esac ;;
+*" repos/o/"*" --jq .private "*)
+	n=${*#* repos/o/}; n=${n%% *}
+	echo "$* GH_TOKEN=${GH_TOKEN:-<unset>}" >>"$W/vis.$n.log"
+	case $(cat "$W/vis-mode.$n" 2>/dev/null) in
+	true) echo true ;; fail) echo 'gh: Bad Gateway (HTTP 502)' >&2; exit 1 ;; *) echo false ;;
+	esac ;;
+*" repos/"*"/labels"*) cat >/dev/null; echo '[{"name": "noodlebot"}, {"name": "noodlebot-triaged"}, {"name": "noodlebot-status"}, {"name": "noodlebot-unit"}]' ;;
+esac
+echo "$*" >>"$W/gh-args.log"
+exit 0
+EOF
+cat >"$W02/bin/claude" <<'EOF'
+#!/bin/sh
+id=${2##* }
+env >"$W02_DIR/env.$id"; printf '%s\n' "$@" >"$W02_DIR/prompt.$id"
+echo "Q1: x" >"$W02_STATE/node/$id/QUESTION.md"
+exit 0
+EOF
+chmod +x "$W02/bin/gh" "$W02/bin/claude"
+# w02_run <name> <gistfiles: both|gist|none> <patch-mode> <vis-mode> [<env assignment>...]: starts a loop
+# for o/<name> with a 1 s tick and leaves its pid in $w02_pid.
+w02_run() {
+	local name=$1 files=$2 root=$W02/data
+	w02_name=$name; w02_state=$root/state/$name
+	rm -f "$HOME/.config/noodlebot/gist" "$HOME/.config/noodlebot/gist-token"
+	case $files in both|gist) echo "w02gistid" >"$HOME/.config/noodlebot/gist" ;; esac
+	case $files in both) printf '%s' "$W02TOK" >"$HOME/.config/noodlebot/gist-token"; chmod 600 "$HOME/.config/noodlebot/gist-token" ;; esac
+	echo "$3" >"$W02/patch-mode"; echo "$4" >"$W02/vis-mode.$name"
+	rm -f "$W02/order.log" "$W02/ghtok.log" "$W02/gh-args.log"; : >"$W02/order.log"
+	mkdir -p "$root/repos" "$w02_state/node/A02"
+	git clone -q "$tmp/remote.git" "$root/repos/$name"
+	shift 4
+	env "$@" W02_DIR="$W02" W02_STATE="$w02_state" NOODLEBOT_DATA=$root PATH=$W02/bin:$PATH SCHED_THROTTLE=0 SCHED_TICK=1 SCHED_POLL=0.2 \
+		bash "$nbw/scheduler/loop.sh" "o/$name" >"$W02/$name.out" 2>&1 &
+	w02_pid=$!; pids+=("$w02_pid")
+}
+w02_stop() { touch "$HOME/STOP-$w02_name"; timeout 8 sh -c "while kill -0 $w02_pid 2>/dev/null; do sleep 0.1; done"; kill "$w02_pid" 2>/dev/null; wait "$w02_pid" 2>/dev/null; true; }
+# w02_wait <seconds> <command...>
+w02_wait() { local n=$1; shift; timeout "$n" sh -c 'while :; do "$@" && exit 0; sleep 0.1; done' _ "$@"; }
+w02_cnt() { grep -c "$1" "$2" 2>/dev/null || true; }
+w02_ge() { [ "$(w02_cnt "$1" "$2")" -ge "$3" ]; }
+w02_sl() { cat "$w02_state/status.log" 2>/dev/null; }
+w02_n() { w02_sl | grep -cF "$1" || true; }
+
+# W02-AC-5: both files present, patches succeed
+w02_run sp both ok false
+w02_wait 20 w02_ge '^publish' "$W02/order.log" 3
+w02_wait 10 sh -c "ls '$W02'/env.* >/dev/null 2>&1"
+w02_stop
+ok "W02-AC-5: every tick runs the publish (at least three publish calls in three ticks)" w02_ge '^publish' "$W02/order.log" 3
+ok "W02-AC-5: the publish runs after report on every tick (each report line is followed by a publish line)" sh -c "
+	[ \"\$(grep -c '^report' '$W02/order.log')\" -ge 3 ] && grep -v '^patch' '$W02/order.log' | awk '/^report/ {if (want) bad=1; want=1; next} /^publish/ {if (!want) bad=1; want=0; next} END {exit bad}'"
+ok "W02-AC-5: the publish step is site.py publish for --gist w02gistid" sh -c "grep '^publish' '$W02/order.log' | grep -q -- 'publish .*--gist w02gistid'"
+ok "W02-AC-5: GH_TOKEN of every publish equals the token file's contents" sh -c "[ -s '$W02/ghtok.log' ] && ! grep -vxF -- '$W02TOK' '$W02/ghtok.log'"
+ok "W02-AC-5: the gist PATCH is made with that GH_TOKEN" sh -c "grep '^patch' '$W02/order.log' | grep -qxF 'patch GH_TOKEN=$W02TOK' && ! grep '^patch' '$W02/order.log' | grep -vxF 'patch GH_TOKEN=$W02TOK'"
+ok "W02-AC-5: the token is on no command line (publish arguments, gh arguments)" sh -c "[ -s '$W02/gh-args.log' ] && ! grep -qF -- '$W02TOK' '$W02/gh-args.log' && ! grep -E '^publish' '$W02/order.log' | grep -qF -- '$W02TOK'"
+ok "W02-AC-5: the token is in nothing under the runtime root (status.log, site.log, report.log, sessions)" sh -c "[ -s '$w02_state/status.log' ] && ! grep -rqF -- '$W02TOK' '$W02/data'"
+ok "W02-AC-5: a node session started in that loop ran, and its environment and prompt lack the gist token" sh -c "ls '$W02'/env.* >/dev/null 2>&1 && ls '$W02'/prompt.* >/dev/null 2>&1 && ! grep -qF -- '$W02TOK' '$W02'/env.* '$W02'/prompt.*"
+ok "W02-AC-5: no failure and no 'publishing again' line when every publish succeeds" sh -c "! grep -qE 'status site: (publish failed|publishing again)' '$w02_state/status.log'"
+ok "W02-AC-5: with both files present the loop does not say the site is off" sh -c "! grep -qF 'status site off' '$w02_state/status.log'"
+ok "W02-AC-6: a public repository is recorded as public" test "$(cat "$w02_state/visibility" 2>/dev/null)" = public
+ok "W02-AC-6: visibility is asked with gh api repos/o/sp --jq .private and the label step's App token" sh -c "grep -qxF 'api repos/o/sp --jq .private GH_TOKEN=fake-token' '$W02/vis.sp.log'"
+ok "W02-AC-6: a known visibility is asked once, not on every tick" test "$(w02_cnt . "$W02/vis.sp.log")" = 1
+
+# W02-AC-5: the first failure after the start is one line, repeated failures add none, the recovery is one line
+w02_run sf both 500 false
+w02_wait 20 w02_ge '^publish' "$W02/order.log" 4
+failed_lines=$(w02_n 'status site: publish failed (')
+sitelog_lines=$(wc -l <"$w02_state/site.log" 2>/dev/null || echo 0)
+echo ok >"$W02/patch-mode"
+w02_wait 15 sh -c "grep -qF 'status site: publishing again' '$w02_state/status.log'"
+sleep 2
+w02_stop
+ok "W02-AC-5: the first failure is one status line 'status site: publish failed (<status>)' naming the status" sh -c "[ '$failed_lines' = 1 ] && grep -qE 'status site: publish failed \(.*500.*\)\$' '$w02_state/status.log'"
+ok "W02-AC-5: repeated failures add no status line (four ticks failed, one line in all)" sh -c "[ \"\$(grep -c '^patch' '$W02/order.log')\" -ge 5 ] && [ \"\$(grep -cF 'status site: publish failed (' '$w02_state/status.log')\" = 1 ]"
+ok "W02-AC-5: repeated failures are in site.log (stderr of the publish)" test "$sitelog_lines" -ge 2
+ok "W02-AC-5: the recovery is one 'status site: publishing again' line" test "$(w02_n 'status site: publishing again')" = 1
+ok "W02-AC-5: the recovery line comes after the failure line" sh -c "[ \"\$(grep -nF 'status site: publish failed (' '$w02_state/status.log' | head -1 | cut -d: -f1)\" -lt \"\$(grep -nF 'status site: publishing again' '$w02_state/status.log' | head -1 | cut -d: -f1)\" ]"
+ok "W02-AC-5: the failing loop kept working (a node session started)" sh -c "ls '$W02'/env.* >/dev/null 2>&1 && grep -qE 'started A02' '$w02_state/status.log'"
+ok "W02-AC-5: the token is in nothing under the runtime root after failures" sh -c "! grep -rqF -- '$W02TOK' '$W02/data'"
+
+# W02-AC-5: a missing file: one line per start, no publish
+for mode in none gist; do
+	w02_run "sn$mode" "$mode" ok false
+	w02_wait 20 sh -c "[ \"\$(grep -c 'state/sn$mode' /dev/null)\" = 0 ] && grep -q 'started A02' '$w02_state/status.log' 2>/dev/null"
+	sleep 3
+	w02_stop
+	ok "W02-AC-5: with files '$mode' the status log says once: status site off: no gist configured" test "$(w02_n 'status site off: no gist configured')" = 1
+	ok "W02-AC-5: with files '$mode' the loop ticked and made no publish and no gist PATCH" sh -c "! grep -qE '^(publish|patch)' '$W02/order.log' && ! grep -q 'gists/' '$W02/gh-args.log'"
+done
+# a restart writes one more line
+w02_run snnone none ok false
+w02_wait 10 sh -c "grep -qF 'status site off' '$w02_state/status.log' 2>/dev/null"
+w02_stop; rm -f "$HOME/STOP-snnone"
+w02_run snnone none ok false
+sleep 3; w02_stop
+ok "W02-AC-5: a second start gives a second 'site off' line (one line per start)" test "$(w02_n 'status site off: no gist configured')" = 2
+
+# W02-AC-5: SCHED_SITE=0 runs no publish
+w02_run s0 both ok false SCHED_SITE=0
+w02_wait 20 sh -c "grep -q 'started A02' '$w02_state/status.log' 2>/dev/null"
+sleep 3
+w02_stop
+ok "W02-AC-5: SCHED_SITE=0 runs no publish (and no gist PATCH) although both files exist" sh -c "! grep -qE '^(publish|patch)' '$W02/order.log' && ! grep -q 'gists/' '$W02/gh-args.log'"
+ok "W02-AC-5: SCHED_SITE=0: the loop still ticked, report ran each tick" w02_ge '^report' "$W02/order.log" 2
+
+# W02-AC-5: the README
+ok "W02-AC-5: README names ~/.config/noodlebot/gist" grep -Eq '~/\.config/noodlebot/gist([^-]|$)' "$src/../README.md"
+ok "W02-AC-5: README names ~/.config/noodlebot/gist-token" grep -q '~/\.config/noodlebot/gist-token' "$src/../README.md"
+ok "W02-AC-5: README names the token's only scope, gist" grep -Eiq '(only|just).{0,40}`?gist`? (scope|permission)|`gist` scope|scope.{0,30}`gist`' "$src/../README.md"
+
+# W02-AC-6: private, unknown (asked again on the next tick), public
+w02_run svp none ok true
+w02_wait 15 sh -c "[ -s '$w02_state/visibility' ]"
+sleep 3
+w02_stop
+ok "W02-AC-6: a private repository is recorded as private" test "$(cat "$w02_state/visibility" 2>/dev/null)" = private
+ok "W02-AC-6: a known (private) visibility is asked once only" test "$(w02_cnt . "$W02/vis.svp.log")" = 1
+w02_run svu none ok fail
+w02_wait 15 sh -c "[ -s '$w02_state/visibility' ]"
+sleep 2
+unknown_v=$(cat "$w02_state/visibility" 2>/dev/null)
+asked_while_unknown=$(w02_cnt . "$W02/vis.svu.log")
+echo false >"$W02/vis-mode.svu"
+w02_wait 10 sh -c "[ \"\$(cat '$w02_state/visibility' 2>/dev/null)\" = public ]"
+w02_stop
+ok "W02-AC-6: a failed call is recorded as unknown" test "$unknown_v" = unknown
+ok "W02-AC-6: an unknown is asked again on the next tick (asked more than once while it failed)" test "$asked_while_unknown" -ge 2
+ok "W02-AC-6: once the call succeeds the record becomes public" test "$(cat "$w02_state/visibility" 2>/dev/null)" = public
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
