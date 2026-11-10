@@ -366,7 +366,160 @@ timeout 15 python3 "$co/scheduler/api.py" >/dev/null 2>&1 </dev/null; rc=$?
 if [ $rc = 2 ] && [ $moved2 = 1 ]; then pass "P01-AC-1: after the code move a second api.py exits 2"; else fail "P01-AC-1: after the code move a second api.py exited $rc (want 2; move seen: $moved2)"; fi
 req GET /v1/repos
 if [ "$code" = 200 ] && [ $moved2 = 1 ]; then pass "P01-AC-1: after the code move the server answers 200"; else fail "P01-AC-1: after the code move GET /v1/repos answered $code (want 200; move seen: $moved2)"; fi
+# ================= P01-AC-5: sessions =================
+# S3 contract (fields named once here; the schema "sessions" declares them; read from the loop's session files, never from gh):
+#  Resource "sessions"  GET /v1/repos/<owner>/<name>/sessions  ->  {"version":1, "sessions":[<session>...]}: every node/<ID>,
+#    issue/<N> and pr/<N> folder of state/<name>/ that has a session.pid (order not specified; [] when none). An unlisted
+#    repo is 404, POST is 405. There is no one-session resource.
+#  <session> fields: "kind" ("node" | "triage" (issue/<N>) | "update" (pr/<N>)), "subject" (STRING: the node ID, or the
+#    issue or PR number as a string, "9"), "pid" (int, session.pid), "alive" (bool, as loop.sh's alive()), "started"
+#    (int epoch, session.pid's mtime), "log_size" (int bytes of session.jsonl), "log_modified" (int epoch, its mtime),
+#    "events" (list, OLDEST FIRST, the last at most 10 of the log's tool uses and results, in log order; assistant text,
+#    tool results, rate_limit_events and system lines are not events), "rc" (int, session.rc, once ended; null/absent while live).
+#    An event: {"type": "tool_use"|"result", "time": int epoch of its line, and
+#      for tool_use: "tool" (name), "text" (the first line of input.description, else input.command, else input.path or
+#        input.file_path, redacted, cut to 200 chars; absent/null when the tool has none of them),
+#        "subagent" (true when the line has parent_tool_use_id, i.e. it ran inside a subagent; false/absent otherwise);
+#      for result: "subtype" (the result line's subtype)}.
+#    "wakeup_at" (int epoch: the time of the last ScheduleWakeup tool use plus its input.delaySeconds, when no later line
+#      of the log is an assistant tool use or a result; absent/null otherwise),
+#    "bg_commands" and "bg_agents" (lists of {"id": the background ID from the tool result "...ID: <id>", "text": as an
+#      event's text}: Bash tool uses with run_in_background, and Agent tool uses with run_in_background, whose ID has no
+#      later system/task_notification line with that task_id; absent/null/[] when none),
+#    "limit" ({"at": int epoch of the last rate_limit_event whose rate_limit_info.status is not "allowed", "resets_at": its
+#      rate_limit_info.resetsAt}; absent/null when none, wherever in the log it sits).
+#  Redaction: [redacted] replaces a token-shaped string inside any text served (P01-AC-9).
+#  Size: no response carries more than the last 10 events of a log; the test checks a 2000-event log (about 450 KB) against
+#    a bound of 60000 bytes for the whole response (at most 10 sessions x 10 events x about 400 bytes is 40 KB).
+ep() { date -u -d "$1" +%s; }
+# From here every response is also appended to $tmp/allresp, which the P01-AC-9 final check below scans.
+: >"$tmp/allresp"
+if command -v curl >/dev/null 2>&1; then
+	req() { : >"$tmp/resp"; code=$(curl -s --max-time 10 --unix-socket "$sock" -X "$1" -o "$tmp/resp" -D "$tmp/hdr" -w '%{http_code}' "http://localhost$2" 2>/dev/null); [ -n "$code" ] || code=000; cat "$tmp/resp" >>"$tmp/allresp"; }
+else
+	req() { code=$(python3 -I "$tmp/client.py" "$sock" "$1" "$2" "$tmp/resp" 2>/dev/null); : >"$tmp/hdr"; cat "$tmp/resp" >>"$tmp/allresp"; }
+fi
+get P01-AC-5 /v1/repos/acme/alpha/sessions sessions; cp "$tmp/resp" "$tmp/sessions.json"
+sess_is() { # sess_is <kind> <subject> <python expr over s> <what>: the session's entry satisfies the expression
+	cp "$tmp/sessions.json" "$tmp/resp"
+	if [ "$(jx "(lambda s: $3)(next(x for x in d['sessions'] if x['kind'] == '$1' and x['subject'] == '$2'))")" = True ]; then pass "P01-AC-5: /sessions: $1 $2 $4"; else fail "P01-AC-5: /sessions: $1 $2 $4; got $(jx "[x for x in d['sessions'] if x.get('subject') == '$2']" | head -c 500)"; fi
+}
+if [ "$(jx "len(d['sessions']) == 7 and sorted((x['kind'], x['subject']) for x in d['sessions'])")" = "[('node', 'N01'), ('node', 'N03'), ('node', 'N04'), ('node', 'N11'), ('triage', '8'), ('triage', '9'), ('update', '15')]" ]; then pass "P01-AC-5: /sessions gives each of the 7 sessions with a session.pid (and no node without one), by kind and subject"; else fail "P01-AC-5: /sessions kinds and subjects: $(jx "[(x.get('kind'), x.get('subject')) for x in d['sessions']]")"; fi
+for k in N03:node N04:node N01:node N11:node 9:triage 8:triage 15:update; do
+	sub=${k%%:*}; kind=${k##*:}
+	case $kind in node) dir=node/$sub ;; triage) dir=issue/$sub ;; update) dir=pr/$sub ;; esac
+	spid=$(cat "$a/$dir/session.pid"); ssize=$(stat -c %s "$a/$dir/session.jsonl"); smt=$(stat -c %Y "$a/$dir/session.jsonl")
+	walive=True; [ -f "$a/$dir/session.rc" ] && walive=False
+	sess_is $kind $sub "s['pid'] == $spid and s['alive'] is $walive and s['started'] == $(ep 2026-11-09T09:01:00Z)" "has its pid, alive ($walive) and start time (session.pid's mtime)"
+	sess_is $kind $sub "s['log_size'] == $ssize and abs(s['log_modified'] - $smt) <= 1" "has its log's size and last write"
+done
+# node N03: tool uses, a pending ScheduleWakeup, an unfinished command and agent, no limit, still running
+sess_is node N03 "len(s['events']) == 10 and [e['tool'] for e in s['events']] == ['Bash', 'Bash', 'Bash', 'Bash', 'Agent', 'Agent', 'Grep', 'Edit', 'Bash', 'ScheduleWakeup'] and all(e['type'] == 'tool_use' and isinstance(e['time'], int) for e in s['events'])" "has the last 10 of its 16 tool uses, oldest first, each with type, tool and time"
+sess_is node N03 "[e['text'] for e in s['events'][:8]] == ['Run the tests, round 7', 'Run the tests, round 8', 'Watch CI in the background', 'tail -f build.log', 'Review the diff for style', 'Check the docs', '/w/alpha/N03/scheduler', '/w/alpha/N03/scheduler/x.py']" "gives a tool use's first line of description, else command, else path"
+sess_is node N03 "[e['time'] for e in s['events'][:2]] == [$(ep 2026-11-09T09:09:00Z), $(ep 2026-11-09T09:10:00Z)]" "gives each event its time"
+sess_is node N03 "[bool(e.get('subagent')) for e in s['events']] == [False] * 6 + [True] + [False] * 3" "marks the tool use that ran inside a subagent"
+sess_is node N03 "'[redacted]' in s['events'][8]['text'] and 'sk-ant-api03' not in s['events'][8]['text']" "shows [redacted] where a tool use's description held an API key"
+sess_is node N03 "s['wakeup_at'] == $(ep 2026-11-09T09:15:00Z) + 1800" "has the pending ScheduleWakeup time (tool use time plus delaySeconds)"
+sess_is node N03 "[c['id'] for c in s['bg_commands']] == ['bg-ci-1'] and s['bg_commands'][0]['text'] == 'Watch CI in the background'" "has the unfinished background command only (bg-tail-2 completed)"
+sess_is node N03 "[g['id'] for g in s['bg_agents']] == ['ag-review-1'] and s['bg_agents'][0]['text'] == 'Review the diff for style'" "has the unfinished background agent only (ag-docs-2 completed)"
+sess_is node N03 "s.get('limit') is None and s.get('rc') is None" "has no limit rejection (only allowed events) and no rc"
+if [ "$(cp "$tmp/sessions.json" "$tmp/resp"; jx "len(d['sessions']) == 7")" = True ] && ! grep -q 'round 2' "$tmp/sessions.json" && ! grep -q 'round 6' "$tmp/sessions.json" && ! grep -q 'N03-running-one' "$tmp/sessions.json" && [ -s "$tmp/sessions.json" ]; then pass "P01-AC-5: N03's early events (rounds 2 to 6, the first Read) appear nowhere in the response"; else fail "P01-AC-5: the response holds events older than the last 10 of N03"; fi
+# node N04: live, the log ends with a rejected rate_limit_event
+sess_is node N04 "s['limit'] == {'at': $(ep 2026-11-09T10:40:00Z), 'resets_at': 1794236400}" "has its limit rejection and reset time"
+sess_is node N04 "[(e['type'], e['tool'], e['text']) for e in s['events']] == [('tool_use', 'Bash', 'Run the tests')] and not s.get('wakeup_at') and not s.get('bg_commands') and not s.get('bg_agents') and s.get('rc') is None" "has one event and no wakeup, background tasks or rc"
+# node N01 and N11: ended
+sess_is node N01 "[(e['type'], e.get('subtype'), e.get('text')) for e in s['events']] == [('tool_use', None, 'Push'), ('result', 'success', None)] and s['rc'] == 0 and s.get('limit') is None" "ended: its events end in a result with its subtype, and rc is 0"
+sess_is node N11 "[(e['type'], e.get('subtype')) for e in s['events']] == [('tool_use', None), ('result', 'error_during_execution')] and s['rc'] == 1" "ended: its result's subtype and rc 1"
+sess_is node N11 "s['limit'] == {'at': $(ep 2026-11-09T07:30:00Z), 'resets_at': 1794225600}" "has the last limit rejection although it is not the log's last line"
+# triage and update
+sess_is triage 9 "s['kind'] == 'triage' and [(e['tool'], e['text'], bool(e.get('subagent'))) for e in s['events']] == [('Bash', 'Read the issue', False), ('Agent', 'Explore the export code', False)] and s.get('rc') is None" "has its events (a token in a tool result is not served)"
+sess_is triage 9 "[g['id'] for g in s['bg_agents']] == ['ag-i9-1'] and s['bg_agents'][0]['text'] == 'Explore the export code' and not s.get('bg_commands') and not s.get('wakeup_at')" "has its unfinished background agent"
+sess_is triage 8 "[(e['type'], e.get('tool'), e.get('text'), e.get('subtype')) for e in s['events']] == [('tool_use', 'Write', '/w/alpha/issue-8/nodes/Z01-dark-mode.md', None), ('result', None, None, 'success')] and s['rc'] == 0" "ended: its Write path, its result and rc 0"
+sess_is update 15 "s['kind'] == 'update' and [e['text'] for e in s['events']] == ['Merge main', 'Run the checker'] and s.get('limit') is None" "has its events"
+get P01-AC-5 /v1/repos/acme/beta/sessions sessions
+if [ "$(jx "d['sessions']")" = "[]" ]; then pass "P01-AC-5: beta, with no session.pid, has no sessions"; else fail "P01-AC-5: beta's sessions: $(head -c 200 "$tmp/resp")"; fi
+err P01-AC-5 GET /v1/repos/acme/ghost/sessions 404
+err P01-AC-5 POST /v1/repos/acme/alpha/sessions 405
+req GET /v1/schema/sessions
+if [ "$code" = 200 ] && [ -f "$schemas/sessions.json" ] && python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])) else 1)' "$tmp/resp" "$schemas/sessions.json" 2>/dev/null; then pass "P01-AC-8: /v1/schema/sessions serves scheduler/api-schema/v1/sessions.json"; else fail "P01-AC-8: /v1/schema/sessions answered $code or differs from the committed schema"; fi
+
+# Two more sessions, made here and removed below (the baseline of the AC-2 snapshot is not re-taken: the folders are gone again
+# before the final check): update PR 16 whose ScheduleWakeup was followed by a later tool use, and triage issue 20 with a
+# 2000-event log (an early marker, a last event whose first line is 300 characters).
+mkdir -p "$a/pr/16" "$a/issue/20"
+cat >"$a/pr/16/session.jsonl" <<'EOF'
+{"type":"system","subtype":"init","timestamp":"2026-11-09T08:00:00Z"}
+{"type":"assistant","timestamp":"2026-11-09T08:01:00Z","message":{"content":[{"type":"tool_use","id":"w1","name":"ScheduleWakeup","input":{"delaySeconds":600,"reason":"wait","prompt":"go on"}}]}}
+{"type":"assistant","timestamp":"2026-11-09T08:11:00Z","message":{"content":[{"type":"tool_use","id":"w2","name":"Bash","input":{"command":"git status","description":"Went on after the wakeup"}}]}}
+EOF
+python3 -I -c '
+import json, sys
+out = open(sys.argv[1], "w")
+out.write(json.dumps({"type": "system", "subtype": "init", "timestamp": "2026-11-09T06:00:00Z"}) + "\n")
+for i in range(1, 2001):
+    inp = {"command": "EARLYMARKER-%d " % i + "p" * 150 if i <= 5 else "step %d " % i + "q" * 150, "description": "late-%d" % i if i > 1990 else "early-%d" % i}
+    if i == 2000:
+        inp = {"command": "z" * 300 + "\nSECONDLINE"}
+    out.write(json.dumps({"type": "assistant", "timestamp": "2026-11-09T07:%02d:%02dZ" % (i // 60 % 60, i % 60), "message": {"content": [{"type": "tool_use", "id": "x%d" % i, "name": "Bash", "input": inp}]}}) + "\n")
+' "$a/issue/20/session.jsonl"
+ended "$a/pr/16"; ended "$a/issue/20"
+touch -d 2026-11-09T08:00:00Z "$a/pr/16/session.pid" "$a/issue/20/session.pid"
+get P01-AC-5 /v1/repos/acme/alpha/sessions sessions; cp "$tmp/resp" "$tmp/sessions.json"
+sess_is update 16 "s.get('wakeup_at') is None and [e.get('text') for e in s['events']] == [None, 'Went on after the wakeup'] and s['alive'] is False and s['started'] == $(ep 2026-11-09T08:00:00Z)" "has no pending wakeup when a later tool use shows the session went on"
+sess_is triage 20 "len(s['events']) == 10 and [e['text'] for e in s['events'][:9]] == ['late-%d' % i for i in range(1991, 2000)] and s['log_size'] > 300000" "of a 2000-event log has exactly its last 10 events"
+sess_is triage 20 "s['events'][9]['text'] == 'z' * 200" "gives the first line of a long command cut to 200 characters"
+if [ "$(cp "$tmp/sessions.json" "$tmp/resp"; jx "len(d['sessions']) == 9")" = True ] && ! grep -q 'EARLYMARKER' "$tmp/sessions.json" && ! grep -q 'SECONDLINE' "$tmp/sessions.json" && ! grep -q 'early-' "$tmp/sessions.json"; then pass "P01-AC-5: a marker only in the early events of a long log, and a second line, appear nowhere in the response"; else fail "P01-AC-5: the response holds early events of the 2000-event log or a second line"; fi
+sz=$(wc -c <"$tmp/sessions.json")
+if [ "$sz" -gt 500 ] && [ "$sz" -lt 60000 ]; then pass "P01-AC-5: the response ($sz bytes) stays under 60000 bytes though a log is about 450 KB"; else fail "P01-AC-5: the response is $sz bytes (want a real answer under 60000)"; fi
+rm -rf "$a/pr/16" "$a/issue/20"
+
 # AC-2 end-of-test checks: later slices append their cases ABOVE this block (marked by the line below).
+# ================= P01-AC-9: no tokens (FINAL CHECK: later slices put their cases ABOVE this block) =================
+# What it fixes: the tokens of scheduler/testdata/api/tokens.txt (planted in session logs and status logs) appear in no
+# response of the whole test (every response made since the sessions cases is in $tmp/allresp; the block re-requests every
+# resource of the slices so far, and probes /v1/events, the status-log-backed resource a later slice adds) and not in the
+# server's output; [redacted] shows where a token was; the token script was never run; and the server never reads a file
+# under ~/.config/noodlebot/ other than repos. Slices that add resources append their requests to the list below.
+# How "never reads" is checked: the server is restarted, and two FIFOs (credentials, github-token) are created next to
+# repos in ~/.config/noodlebot/. A process opening a FIFO for reading releases a writer that waits on it; the writer then
+# creates a marker file. So any open() of those files, at start or while serving, shows. (A mode 000 file would only make
+# a read fail quietly; and a FIFO may not be left for the AC-2 snapshot, whose cksum would block on it: the FIFOs are
+# removed again before the snapshot below.) The fixture's token script is checked by its never-run marker.
+kill -9 "$srv_pid" 2>/dev/null; wait "$srv_pid" 2>/dev/null; srv_pid=''
+cfg=$home/.config/noodlebot; fifo_pids=''
+for f in credentials github-token; do
+	mkfifo "$cfg/$f"
+	( : >"$cfg/$f"; : >"$tmp/fifo-read-$f" ) </dev/null >/dev/null 2>&1 &
+	fifo_pids="$fifo_pids $!"
+done
+if start_server; then pass "P01-AC-9: api.py starts with unreadable-by-blocking files next to repos"; else fail "P01-AC-9: api.py did not start (or blocked) with the FIFOs in ~/.config/noodlebot: $(tail -c 200 "$tmp/api.out")"; fi
+for path in /v1/repos /v1/repos/acme/alpha /v1/repos/acme/beta /v1/repos/acme/alpha/nodes /v1/repos/acme/beta/nodes /v1/repos/acme/alpha/sessions /v1/repos/acme/beta/sessions /v1/schema/repos /v1/schema/repo /v1/schema/nodes /v1/schema/node /v1/schema/sessions; do
+	req GET $path
+done
+for id in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11; do req GET /v1/repos/acme/alpha/nodes/$id; done
+for id in B01 B02; do req GET /v1/repos/acme/beta/nodes/$id; done
+req GET /v1/nothing; req POST /v1/repos
+# the event stream stays open: read it for 2 seconds from the first line of each status log (a later slice's resource)
+if command -v curl >/dev/null 2>&1; then
+	for q in 'since=0' 'repo=acme/alpha&since=0' 'repo=acme/beta&since=0'; do
+		curl -s --max-time 2 --unix-socket "$sock" "http://localhost/v1/events?$q" >>"$tmp/allresp" 2>/dev/null
+	done
+fi
+sleep 1
+for f in credentials github-token; do
+	if [ ! -e "$tmp/fifo-read-$f" ]; then pass "P01-AC-9: the server never opened ~/.config/noodlebot/$f"; else fail "P01-AC-9: the server opened ~/.config/noodlebot/$f"; fi
+done
+for p in $fifo_pids; do kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+rm -f "$cfg/credentials" "$cfg/github-token"
+if [ ! -e "$home/token-was-run" ]; then pass "P01-AC-9: the token script ~/.config/noodlebot/token was never run"; else fail "P01-AC-9: the token script was run"; fi
+if [ -s "$tmp/allresp" ] && grep -q 'ScheduleWakeup' "$tmp/allresp" && grep -q 'Run the tests' "$tmp/allresp"; then pass "P01-AC-9: the responses were recorded ($(wc -c <"$tmp/allresp") bytes, served session events among them)"; else fail "P01-AC-9: no recorded responses to scan"; fi
+while IFS= read -r tok; do
+	[ -n "$tok" ] || continue
+	if grep -F -q -e "$tok" "$tmp/allresp" "$tmp/api.out" "$tmp/second.out"; then fail "P01-AC-9: token ${tok%"${tok#????}"}... appears in a response or in the server's output"; else pass "P01-AC-9: token ${tok%"${tok#????}"}... appears in no response and not in the server's output"; fi
+done <"$fix/tokens.txt"
+# the redaction shows: the response that held the key (re-requested here) has [redacted] where it was
+req GET /v1/repos/acme/alpha/sessions
+if [ "$(jx "any('[redacted]' in (e.get('text') or '') for x in d['sessions'] for e in x['events'])")" = True ]; then pass "P01-AC-9: [redacted] replaces the token where a session log held one"; else fail "P01-AC-9: no [redacted] in the sessions response"; fi
 # --- end of cases; the final checks follow ---
 snap >"$tmp/snap.after"
 if [ $up = 1 ] && cmp -s "$tmp/snap.before" "$tmp/snap.after"; then pass "P01-AC-2: no file under the runtime root or HOME changed except the socket and the locks"; else fail "P01-AC-2: files changed or no server: $(diff "$tmp/snap.before" "$tmp/snap.after" | head -n 6 | tr '\n' ' ')"; fi
