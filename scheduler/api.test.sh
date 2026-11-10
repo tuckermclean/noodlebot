@@ -339,6 +339,33 @@ for res in nodes node; do
 done
 # Not encoded: the question URL falling back to the status issue (no fixture node has a QUESTION.md without node/<ID>/issue).
 
+
+# ================= P01-AC-1: HEAD moves, the server's own code changes (a second move) =================
+# A schema file is read from disk per request, so the first move above cannot tell a re-exec from no re-exec.
+# Here api.py itself changes: the text of the 404 for an unknown path gets a marker, which only a server that
+# re-executed the new api.py can show. The anchor is the literal "not found: " in api.py; if it is missing the
+# case fails (it does not crash and it does not pass).
+srv_before=$srv_pid
+if grep -q '"not found: "' "$co/scheduler/api.py" && sed -i 's/"not found: "/"not found [head-moved-marker]: "/' "$co/scheduler/api.py" && grep -q 'head-moved-marker' "$co/scheduler/api.py"; then
+	git -C "$co" add -A >/dev/null 2>&1
+	git -C "$co" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m "moved api.py" >/dev/null 2>&1
+	moved2=0; i=0
+	while [ $i -lt 100 ] && [ $up = 1 ]; do   # up to 20 s
+		req GET /v1/head-moved-probe
+		if [ "$code" = 404 ] && [ "$(jx "'head-moved-marker' in d.get('error', '')")" = True ]; then moved2=1; break; fi
+		sleep 0.2; i=$((i + 1))
+	done
+	if [ $moved2 = 1 ]; then pass "P01-AC-1: after HEAD moved with a new api.py, the server answers with the new code"; else fail "P01-AC-1: the server still runs the old api.py after HEAD moved (no marker in the 404 text)"; fi
+else
+	moved2=0
+	fail "P01-AC-1: could not change api.py in the checkout copy (anchor \"not found: \" missing); the HEAD-move code test did not run"
+fi
+if [ -n "$srv_before" ] && kill -0 "$srv_before" 2>/dev/null && [ "$srv_pid" = "$srv_before" ] && [ $moved2 = 1 ]; then pass "P01-AC-1: the server process is the same (re-executed in place) after the move"; else fail "P01-AC-1: the server process $srv_before is gone or the move did not happen"; fi
+if [ -S "$sock" ] && [ "$(stat -c %a "$sock" 2>/dev/null)" = 600 ]; then pass "P01-AC-1: the socket has mode 0600 after the code move"; else fail "P01-AC-1: socket mode after the code move: $(stat -c %a "$sock" 2>/dev/null)"; fi
+timeout 15 python3 "$co/scheduler/api.py" >/dev/null 2>&1 </dev/null; rc=$?
+if [ $rc = 2 ] && [ $moved2 = 1 ]; then pass "P01-AC-1: after the code move a second api.py exits 2"; else fail "P01-AC-1: after the code move a second api.py exited $rc (want 2; move seen: $moved2)"; fi
+req GET /v1/repos
+if [ "$code" = 200 ] && [ $moved2 = 1 ]; then pass "P01-AC-1: after the code move the server answers 200"; else fail "P01-AC-1: after the code move GET /v1/repos answered $code (want 200; move seen: $moved2)"; fi
 # AC-2 end-of-test checks: later slices append their cases ABOVE this block (marked by the line below).
 # --- end of cases; the final checks follow ---
 snap >"$tmp/snap.after"
