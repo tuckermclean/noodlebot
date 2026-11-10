@@ -501,12 +501,8 @@ def find_issue(a, rs):
         except RuntimeError:
             pass
     prev = next((num for d, num in log_issues(a, "all") if d < today), None)
-    found = [i for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []
-             if "pull_request" not in i]
-    found.sort(key=lambda i: not (i.get("title") or "") == "noodlebot log " + today)  # today's title first
-    for i in found:
-        m = LOG_TITLE.match(i.get("title") or "")
-        if not m or m.group(1) == today:  # an open issue the label query names, but not another day's log (the old sticky one too)
+    for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []:
+        if "pull_request" not in i and i.get("title") == "noodlebot log " + today:
             rs["log"], rs["issue"] = {"date": today, "issue": i["number"], "prev": prev, "overview": True}, i["number"]
             a.save()  # found, not opened by us: no overview
             return i["number"], True
