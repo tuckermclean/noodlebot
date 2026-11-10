@@ -61,5 +61,30 @@ python3 -I "$src/issues.py" done --repo owner/repo --number 11
 ok "done creates the triaged label, adds it and removes noodlebot" sh -c "python3 -I -c \"import json; print('\\n'.join(json.load(open('$tmp/db.json'))['calls'][-3:]))\" | tr '\n' ',' | grep -qx 'POST repos/owner/repo/labels,POST repos/owner/repo/issues/11/labels,DELETE repos/owner/repo/issues/11/labels/noodlebot,'"
 ok "a second done does not fail on the existing label" python3 -I "$src/issues.py" done --repo owner/repo --number 12
 
+# --- P01-AC-6: `next` also writes $state/issues.json, a cache of the open issues it read (for the API) ---
+# Format: {"updated": <epoch int>, "issues": [{"number": N, "title": "<title>", "labelled": <true when the owner labelled it>}...]}
+# for every non-PR issue gh listed (10 by mallory is labelled false), written to a temporary file and renamed, so no other
+# file is left in the state folder. A failure to write it goes to stderr and changes neither stdout nor the exit status.
+python3 -I -c "
+import json
+db = json.load(open('$tmp/db.json'))
+for i, t in zip(db['issues'], ['Stranger idea', 'Fix the bug', 'Add the feature', 'A pull request']): i['title'] = t
+json.dump(db, open('$tmp/db.json', 'w'))"
+state2=$tmp/state2; mkdir -p "$state2"
+next2() { python3 -I "$src/issues.py" next --repo owner/repo --state "$1" 2>"$tmp/next.err"; }
+out2=$(next2 "$state2"); rc2=$?
+ok "P01-AC-6: next with a cache to write still prints the first issue the owner labelled" test "$out2" = 11 -a "$rc2" = 0
+ok "P01-AC-6: next writes \$state/issues.json with each non-PR open issue: number, title, labelled" python3 -I -c "
+import json, sys
+d = json.load(open('$state2/issues.json'))
+sys.exit(0 if isinstance(d.get('updated'), int) and [(i['number'], i['title'], i['labelled']) for i in d['issues']] == [(10, 'Stranger idea', False), (11, 'Fix the bug', True), (12, 'Add the feature', True)] else 1)"  2>/dev/null
+ok "P01-AC-6: issues.json is written by rename (no other file is left in the state folder)" test "$(ls -A "$state2")" = issues.json
+ok "P01-AC-6: next logs nothing on stderr when it can write the cache" test ! -s "$tmp/next.err"
+mkdir -p "$tmp/state3/issues.json/keep"   # a non-empty folder where the file goes: the rename fails
+out3=$(next2 "$tmp/state3"); rc3=$?
+ok "P01-AC-6: a failure to write issues.json does not change what next prints or its exit status" test "$out3" = 11 -a "$rc3" = 0
+ok "P01-AC-6: a failure to write issues.json is logged on stderr" grep -q 'issues.json' "$tmp/next.err"
+ok "P01-AC-6: a failed write leaves the state folder holding only what it held" test "$(ls -A "$tmp/state3")" = issues.json -a "$(ls -A "$tmp/state3/issues.json")" = keep
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all issues checks"
