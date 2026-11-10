@@ -5,15 +5,18 @@
 
 Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all GitHub access through `gh api`.
 Each run:
-  1. finds the open issue labelled `noodlebot-status` (creating the label and issue if there is none,
-     e.g. after the owner closed it), and remembers its number in DIR/report.json;
+  1. finds today's log issue, "noodlebot log <local date>" labelled `noodlebot-status` (creating the label and
+     issue, linking the previous day's, if there is none, e.g. after the owner closed it), and remembers it in
+     DIR/report.json ("log"); when it is opened, its first comment is the morning overview (the previous day's
+     summary, what waits on the owner, the nodes ready next), posted once before any event;
   2. turns each new comment by the owner on that issue into ANSWER.md for the unit waiting on a
      question (the only one waiting, or the one named first: "B03: ..."), and replies; likewise each new
      owner comment on a unit's home issue, posted after the unit's question comment (no ID needed when one
      question is open there; it gets a +1 and the answer-received milestone, no reply). It replies only when no
      question is open there, or several are and the comment starts with none of their IDs. A question answered
      on one issue is not answered again from the other;
-  3. posts new status.log events (starts, ends, releases, merges, FAILED) as one comment;
+  3. posts new status.log events (starts, ends, releases, merges, FAILED) as one comment, one line each (an
+     ended session's line with its total cost; no closing summary);
   4. posts each new unanswered QUESTION.md once: a short `## <ID> asks` pointer on the status issue (its
      Waiting on you item links the question's comment on the unit's issue), and
      the whole QUESTION.md as a milestone on the unit's home issue;
@@ -33,14 +36,16 @@ Each run:
      follow-up); a new QUESTION.md of a unit whose home issue is closed reopens that issue. Issues of triages are
      never closed. Merged nodes and PRs from before this bookkeeping are only recorded, never commented on or closed
      (recorded at the first run whose merged-prs.tsv / closed-prs.tsv are readable; until then none of it is posted);
-  7. rewrites the issue body: what waits on the owner, every running session and its latest narration,
-     recent events. Body edits do not notify; comments do.
+  7. rewrites the issue body: usage and throttle, what waits on the owner (each item linking the unit's issue),
+     every running session and its latest narration, the deployed commit (HEAD of the live checkout, or of
+     $NOODLEBOT_LIVE). Body edits do not notify; comments do. ($NOODLEBOT_NOW, an ISO local datetime, replaces
+     the clock; for tests.)
 On the first run it does not replay old comments or events. Any failure (a failed milestone post included,
 after the other work is done) exits non-zero; the loop logs it and carries on, and the next run picks up
 where this one stopped.
 """
 import argparse, hashlib, json, math, os, re, subprocess, sys, time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 LABEL = "noodlebot-status"
 EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
@@ -60,8 +65,28 @@ def gh(method, path, body=None):
     return json.loads(r.stdout) if r.stdout.strip() else None
 
 
+def now():
+    """The local time now; $NOODLEBOT_NOW (an ISO local datetime) replaces the clock, for tests."""
+    v = os.environ.get("NOODLEBOT_NOW")
+    if v:
+        try:
+            return datetime.fromisoformat(v).astimezone()
+        except ValueError:
+            pass
+    return datetime.now().astimezone()
+
+
 def local(ts=None):
-    return datetime.fromtimestamp(ts if ts is not None else time.time()).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    d = datetime.fromtimestamp(ts).astimezone() if ts is not None else now()
+    return d.strftime("%Y-%m-%d %H:%M %Z")
+
+
+def local_date(stamp):
+    """'2026-03-09T22:00:00Z' (a status.log stamp) -> the local date '2026-03-09', or None."""
+    try:
+        return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d")
+    except ValueError:
+        return None
 
 
 def tail_lines(path, nbytes):
@@ -359,32 +384,65 @@ def question_link(a, rs, task):
     return "its comment on the unit's issue is not posted yet"
 
 
-def body_for(a, sts, prs, rs=None):
+def unit_ref(a, n):
+    """' Unit issue: #N.' for a unit whose home issue is recorded, else ''."""
+    try:
+        return " Unit issue: #%d." % int(open(os.path.join(tdir(a.state, n), "issue")).read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return ""
+
+
+def waiting_items(a, sts, prs, rs):
+    """The Markdown items for what waits on the owner (none when nothing does), each linking the unit's issue."""
     state = a.state
-    rs = rs or {}
-    out = ["# noodlebot status: %s%s" % (a.repo, " (noodlebot %s)" % a.version if a.version else ""), "",
-           "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
-           "the loop is not running._" % local(), ""] + usage_lines(state) + ["## Waiting on you"]
     items = []
     for n in nodes(state):
         if has(state, n, "FAILED"):
             path = os.path.join(tdir(state, n), "FAILED")
             with open(path, errors="replace") as fh:
                 why = fh.readline().strip() or "no reason given"
-            items.append("- **%s FAILED**: %s. To retry, delete `%s`." % (n, why, path))
+            items.append("- **%s FAILED**: %s. To retry, delete `%s`.%s" % (n, why, path, unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
-            items.append("- %s: %s." % (n, answered_text(state, n) if n in nodes(state) and not n.startswith("#") else "answered"))
+            items.append("- %s: %s.%s" % (n, answered_text(state, n) if n in nodes(state) and not n.startswith("#") else "answered",
+                                         unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and not n.startswith("#") and is_merged(state, n):
             items.append("- **%s's PR is merged; its question is still open, and an answer starts a follow-up** "
-                         "(%s)." % (n, question_link(a, rs, n)))
+                         "(%s).%s" % (n, question_link(a, rs, n), unit_ref(a, n)))
         elif has(state, n, "QUESTION.md"):
-            items.append("- **%s asks a question** (%s)." % (n, question_link(a, rs, n)))
+            items.append("- **%s asks a question** (%s).%s" % (n, question_link(a, rs, n), unit_ref(a, n)))
         elif has(state, n, "WAITING-PR"):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
-            items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after." % (n, pr))
+            items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after.%s" % (n, pr, unit_ref(a, n)))
     for n, pr in sorted(prs.items()):
         if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in [t[0] for t in sts]:
-            items.append("- %s's PR #%s: open, no session running on it (review or merge it)." % (n, pr))
+            items.append("- %s's PR #%s: open, no session running on it (review or merge it).%s" % (n, pr, unit_ref(a, n)))
+    return items
+
+
+def live_checkout():
+    return os.environ.get("NOODLEBOT_LIVE") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def deployed_commit():
+    """'abc1234 subject' of HEAD of the live checkout, or 'unknown'."""
+    out = git_lines(live_checkout(), "log", "-1", "--abbrev=7", "--format=%h %s")
+    return out[0] if out else "unknown"
+
+
+def body_for(a, sts, prs, rs=None):
+    state = a.state
+    rs = rs or {}
+    log = rs.get("log") or {}
+    out = ["# noodlebot log %s: %s%s" % (log.get("date") or now().strftime("%Y-%m-%d"), a.repo,
+                                       " (noodlebot %s)" % a.version if a.version else ""), "",
+           "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
+           "the loop is not running._" % local(), "",
+           "**Deployed:** `%s`" % deployed_commit()]
+    if log.get("prev"):
+        out.append("")
+        out.append("Previous day's log: #%s" % log["prev"])
+    out += [""] + usage_lines(state) + ["## Waiting on you"]
+    items = waiting_items(a, sts, prs, rs)
     out += items or ["- nothing"]
 
     out += ["", "## Sessions (%d running)" % len(sts),
@@ -392,7 +450,7 @@ def body_for(a, sts, prs, rs=None):
     many = len(sts) > 1
     for n, pid, started in sts:
         label = "triage of %s" % n if n.startswith("#") else n
-        mins = int((time.time() - started) // 60)
+        mins = max(0, int((now().timestamp() - started) // 60))
         starts = (open(os.path.join(tdir(state, n), "starts")).read().strip()
                   if has(state, n, "starts") else "?")
         line = "### %s, running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
@@ -411,9 +469,6 @@ def body_for(a, sts, prs, rs=None):
     if not sts:
         out.append("No session running.")
 
-    events = [l for l in tail_lines(os.path.join(state, "status.log"), 64 << 10) if EVENT.search(event_text(l)[1])]
-    out += ["", "## Recent events", ""]
-    out += ["- `%s` %s" % event_text(l) for l in events[-10:]] or ["- none yet"]
     out += ["", "---", "Answer a question on the unit's issue (the link is in its item above) in plain words (e.g. "
             "\"Q1 approve, Q2 as recommended\"). Only %s's replies count; if more than one unit on that issue is "
             "waiting, start with its ID or issue number. A reply here still works if it starts with the ID "
@@ -422,32 +477,118 @@ def body_for(a, sts, prs, rs=None):
     return "\n".join(out) + "\n"
 
 
+LOG_TITLE = re.compile(r"^noodlebot log (\d{4}-\d\d-\d\d)$")
+
+
+def log_issues(a, state):
+    """[(date, number)] of the issues labelled `noodlebot-status` whose title is a day's log title, newest date first."""
+    found = gh("GET", "repos/%s/issues?labels=%s&state=%s&per_page=100" % (a.repo, LABEL, state)) or []
+    out = [(LOG_TITLE.match(i.get("title") or "").group(1), i["number"]) for i in found
+           if "pull_request" not in i and LOG_TITLE.match(i.get("title") or "")]
+    return sorted(out, reverse=True)
+
+
 def find_issue(a, rs):
+    """(number, new) of today's log issue: the recorded one while open, else the open one with today's title, else a
+    new one (label created if needed) linking the previous day's. Recorded in rs["log"] and rs["issue"]."""
+    today = a.today
+    log = rs.get("log") or {}
     n = rs.get("issue")
-    if n:
+    if n and log.get("date") == today and log.get("issue") == n:
         try:
             if gh("GET", "repos/%s/issues/%s" % (a.repo, n)).get("state") == "open":
                 return n, False
         except RuntimeError:
             pass
-    found = gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=10" % (a.repo, LABEL)) or []
-    found = [i for i in found if "pull_request" not in i]
-    if found:
-        return found[0]["number"], True
+    prev = next((num for d, num in log_issues(a, "all") if d < today), None)
+    found = [i for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []
+             if "pull_request" not in i]
+    found.sort(key=lambda i: not (i.get("title") or "") == "noodlebot log " + today)  # today's title first
+    for i in found:
+        m = LOG_TITLE.match(i.get("title") or "")
+        if not m or m.group(1) == today:  # an open issue the label query names, but not another day's log (the old sticky one too)
+            rs["log"], rs["issue"] = {"date": today, "issue": i["number"], "prev": prev, "overview": True}, i["number"]
+            a.save()  # found, not opened by us: no overview
+            return i["number"], True
     try:
         gh("POST", "repos/%s/labels" % a.repo, {"name": LABEL, "color": "5319e7",
                                               "description": "Kept up to date by the noodlebot scheduler"})
     except RuntimeError as e:
         if "already_exists" not in str(e) and "422" not in str(e):
             raise
-    issue = gh("POST", "repos/%s/issues" % a.repo, {"title": "noodlebot status", "labels": [LABEL],
-                                                  "body": "Starting up..."})
+    issue = gh("POST", "repos/%s/issues" % a.repo, {"title": "noodlebot log " + today, "labels": [LABEL],
+                                                  "body": "Starting up..." + ("\n\nPrevious day's log: #%s" % prev if prev else "")})
+    rs["log"], rs["issue"] = {"date": today, "issue": issue["number"], "prev": prev, "overview": False}, issue["number"]
+    a.save()
     try:
         gh("POST", "graphql", {"query": "mutation($id:ID!){pinIssue(input:{issueId:$id}){issue{number}}}",
                                "variables": {"id": issue["node_id"]}})
     except RuntimeError:
         pass  # pinning is a nicety
     return issue["number"], True
+
+
+def day_summary(a, date):
+    """(tasks whose session ended on the local date, their summed total cost) from status.log; the cost is each task's
+    latest total, so a task that ended twice counts once."""
+    ended = set()
+    for l in read_lines(os.path.join(a.state, "status.log")):
+        stamp, what = event_text(l)
+        m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", what)
+        if m and local_date(stamp) == date:
+            ended.add(m.group(1) or m.group(2) or m.group(3))
+    cost = 0.0
+    for t in ended:
+        ct = cost_turns(os.path.join(tdir(a.state, t), "session.jsonl"))
+        cost += ct[0] if ct else 0.0
+    return sorted(ended), cost
+
+
+def ready_next(a, prs):
+    """['ID name', ...]: the nodes ready.py would start next (all of them, in graph order), [] when it cannot tell."""
+    graph = os.path.join(a.state, "graph.yaml")
+    if not os.path.exists(graph):
+        return []
+    try:
+        cmd = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ready.py"),
+               "--graph", graph, "--markers", os.path.join(a.state, "node"), "--all",
+               "--merged-prs", os.path.join(a.state, "merged-prs.txt")]
+        if os.path.exists(os.path.join(a.state, "subjects.txt")):
+            cmd += ["--subjects", os.path.join(a.state, "subjects.txt")]
+        for i in sorted(merged_ids(a.state, graph_nodes(a.state))):
+            cmd += ["--merged", i]
+        for i in sorted(prs):
+            cmd += ["--open", i]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            print("report.py: ready.py failed: %s" % r.stderr.strip()[:200], file=sys.stderr)
+            return []
+        return [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print("report.py: ready.py failed: %s" % e, file=sys.stderr)
+        return []
+
+
+def post_overview(a, rs, issue, prs):
+    """The log issue's first comment, once: the previous day's summary, what waits on the owner, the nodes ready next."""
+    log = rs["log"]
+    prev_date = (datetime.strptime(log["date"], "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    tasks, cost = day_summary(a, prev_date)
+    out = ["## Morning overview, %s" % log["date"], "", "**Yesterday (%s):** " % prev_date +
+           ("%d session%s ended (%s), $%.2f total cost (list-price estimate)." %
+            (len(tasks), "" if len(tasks) == 1 else "s", ", ".join(tasks), cost) if tasks else "no session ended.")]
+    if log.get("prev"):
+        out += ["", "Previous day's log: #%s" % log["prev"]]
+    try:
+        items = waiting_items(a, sessions(a.state), prs, rs) or ["- nothing"]
+    except Exception as e:  # the body shows the failure too; the overview is still posted
+        items = ["- (cannot be listed: %s)" % str(e)[:200]]
+    out += ["", "**Waiting on you:**", ""] + items
+    ready = ready_next(a, prs)
+    out += ["", "**Ready to start next:**", ""] + (["- " + r for r in ready] or ["- nothing"])
+    comment(a, issue, "\n".join(out) + "\n")
+    log["overview"] = True
+    a.save()
 
 
 def signed(a, text):
@@ -825,15 +966,14 @@ def post_events(a, rs, issue):
     end = data.rfind(b"\n") + 1  # only whole lines
     lines = [l for l in data[:end].decode("utf-8", "replace").splitlines() if EVENT.search(event_text(l)[1])]
     if lines:
-        text = "\n".join("- `%s` %s" % event_text(l) for l in lines)
-        for l in lines:  # a session's end: add its own closing summary
-            m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", event_text(l)[1])
+        out = []
+        for l in lines:  # a session's end: its total cost on its own line
+            stamp, what = event_text(l)
+            m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", what)
             task = m and (m.group(1) or m.group(2) or m.group(3))
-            summary = task and last_result(os.path.join(tdir(a.state, task), "session.jsonl"))
-            if task:
-                text += "\n\n**%s's total:** %s" % (task, cost_text(os.path.join(tdir(a.state, task), "session.jsonl")))
-            if summary:
-                text += "\n\n**%s's closing summary:**\n\n%s" % (task, summary[:20000])
+            ct = task and cost_turns(os.path.join(tdir(a.state, task), "session.jsonl"))
+            out.append("- `%s` %s" % (stamp, what) + (" (total $%.2f, %d turns)" % ct if ct else ""))
+        text = "\n".join(out)
         comment(a, issue, text)
     rs["log_offset"] = off + end
 
@@ -1192,6 +1332,7 @@ def main():
 
     a.save = save
     a.first_run = not rs  # no (readable) report.json: what is on disk now was seen, not new
+    a.today = now().strftime("%Y-%m-%d")
     if rs and "units" not in rs:
         migrate(a, rs)
     rs.setdefault("units", {})
@@ -1209,7 +1350,14 @@ def main():
         a.pulls = gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []
     except Exception as e:  # raised after the work below, as before
         pulls_err, a.pulls_ok = e, False
+    prs = {}
+    for pr in a.pulls:
+        m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"]["ref"])
+        if m:
+            prs[m.group(1)] = pr["number"]
     try:
+        if not rs["log"].get("overview"):  # before any other comment on the issue; a failure ends the run, the next retries
+            post_overview(a, rs, issue, prs)
         take_answers(a, rs, issue)
         take_home_answers(a, rs, issue)
         post_events(a, rs, issue)
@@ -1231,18 +1379,13 @@ def main():
         save()
     if pulls_err is not None:
         raise pulls_err
-    prs = {}
-    for pr in a.pulls:
-        m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"]["ref"])
-        if m:
-            prs[m.group(1)] = pr["number"]
     try:
         body = body_for(a, sessions(a.state), prs, rs)
     except Exception as e:  # show the failure on the issue rather than leave it silently stale
-        body = ("# noodlebot status: %s\n\n_Updated %s. The scheduler loop is running, but building this "
-                "status failed: `%s`. See report.log._\n" % (a.repo, local(), str(e)[:300]))
+        body = ("# noodlebot log %s: %s\n\n_Updated %s. The scheduler loop is running, but building this "
+                "status failed: `%s`. See report.log._\n" % (a.today, a.repo, local(), str(e)[:300]))
         if a.version:
-            body = body.replace("status: %s\n" % a.repo, "status: %s (noodlebot %s)\n" % (a.repo, a.version), 1)
+            body = body.replace("log %s: %s\n" % (a.today, a.repo), "log %s: %s (noodlebot %s)\n" % (a.today, a.repo, a.version), 1)
         print("report.py: status body failed: %s" % e, file=sys.stderr)
     body = signed(a, body)
     h = hashlib.sha256(re.sub(r"_Updated .*?_", "", body).encode()).hexdigest()
