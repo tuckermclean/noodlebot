@@ -2436,6 +2436,12 @@ p3ok "P03-AC-4: the RELEASE of the nodes that are not ready are removed at that 
 p3ok "P03-AC-4: the ready node nobody released (R4) is still held by the throttle" test "$(p3runs R4)" = 0
 p3ok "P03-AC-3: each record was logged once, still, after all those ticks" sh -c "[ '$(p3ev delete-failed node/R6)' = 1 ] && [ '$(p3ev release node/R9)' = 1 ]"
 kill "$loopa"; wait "$loopa" 2>/dev/null
+# the harness kill above reaches only the p3loop subshell: end the real loop.sh and wait for it to release loop.lock
+p3reap() { pkill -f "$tmp/nb-p3/scheduler/loop.sh" 2>/dev/null; n=0
+	while pgrep -f "$tmp/nb-p3/scheduler/loop.sh" >/dev/null 2>&1 && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+	if pgrep -f "$tmp/nb-p3/scheduler/loop.sh" >/dev/null 2>&1; then pkill -9 -f "$tmp/nb-p3/scheduler/loop.sh" 2>/dev/null; sleep 0.3
+		pgrep -f "$tmp/nb-p3/scheduler/loop.sh" >/dev/null 2>&1 && { echo "FAIL: P03 harness: $1 loop.sh is still running after kill"; fails=$((fails+1)); }; fi; }
+p3reap "loop A"
 
 # loop B: ~/STOP-pthree present at the start; the records made while it was stopped (created in reverse name order)
 p3rec 20300101T000003Z-000003 release node/R8
@@ -2477,5 +2483,6 @@ p3ok "P03-AC-3: its request is one event, logged before the node started" sh -c 
 	[ \"\$(grep -w delete-failed '$st3/status.log' | grep -cF node/R5)\" = 1 ] && [ -n \"\$a\" ] && [ -n \"\$b\" ] && [ \"\$a\" -lt \"\$b\" ]"
 p3ok "P03-AC-3: that record is removed" p3gone
 kill "$loopc"; wait "$loopc" 2>/dev/null
+p3reap "loop C"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
