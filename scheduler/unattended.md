@@ -18,7 +18,10 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   each resolved file in the PR under Deviations.
 @RESUME-BEGIN@
 - RESUMING AFTER A STOP. This branch already has work (commits past origin/main: @COMMITS@), and the
-  worktree may hold out/node/@ID@/. The last session ended: @REASON@.
+  worktree may hold out/node/@ID@/.
+@REASON-BEGIN@
+  The last session ended: @REASON@.
+@REASON-END@
   - Read out/node/@ID@/ (brief, logs) and git log origin/main..HEAD first. Keep the existing brief and
     add to it rather than rewrite it. Carry on from the last reviewed slice; do not redo a slice that
     is already committed and reviewed.

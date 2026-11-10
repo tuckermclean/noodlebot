@@ -418,31 +418,62 @@ followup_branch() {
 	echo "node/$1-followup-$((${n:-0} + 1))"
 }
 
+# wt_gitpath <wt> <name>: the absolute path of <name> in the worktree's git dir (index.lock, rebase-merge, ...).
+wt_gitpath() {
+	local p; p=$(git -C "$1" rev-parse --git-path "$2" 2>/dev/null) || return 1
+	case $p in /*) echo "$p" ;; *) echo "$1/$p" ;; esac
+}
+
+# index_only <wt> <temp index> <tmp dir> <pathspec...>: content only in the real index (a staged edit or new
+# file whose worktree copy equals HEAD or is missing) goes into the temp index, which holds the worktree.
+index_only() {
+	local wt=$1 ti=$2 t=$3 p take=(); shift 3
+	local -A wtc=()
+	GIT_INDEX_FILE=$ti git -C "$wt" diff --cached --name-only -z --no-renames --diff-filter=d HEAD >"$t/wtc" &&
+		git -C "$wt" diff --cached --name-only -z --no-renames --diff-filter=AMT HEAD -- "$@" >"$t/staged" || return 1
+	while IFS= read -r -d '' p; do wtc[$p]=1; done <"$t/wtc"
+	while IFS= read -r -d '' p; do [ -n "${wtc[$p]:-}" ] || take+=("$p"); done <"$t/staged"
+	[ "${#take[@]}" -gt 0 ] || return 0
+	git -C "$wt" --literal-pathspecs ls-files -s -z -- "${take[@]}" >"$t/entries" &&
+		GIT_INDEX_FILE=$ti git -C "$wt" update-index -z --index-info <"$t/entries"
+}
+
 # save_leftover <ID> <wt> <dir> <saw>: uncommitted changes in an existing worktree (modified, staged,
 # deleted, untracked and not ignored) are written to <dir>/leftover/<UTC timestamp>.patch, then the
 # worktree is reset to HEAD and the untracked files saved are removed. Sets leftover_patch to the patch
 # file name (empty when the worktree is clean). Fails, resetting nothing, if the patch cannot be written.
+# out/node/<ID>/ is never saved, reset or cleaned. A stale index.lock is removed first; a rebase in
+# progress is aborted after its changes are saved. A patch equal to the newest one is not written again.
 leftover_patch=''
 save_leftover() {
-	local id=$1 wt=$2 d=$3 saw=$4 ts patch tmpd='' ex=() g w=0 ti='' empty=0
-	# the node's evidence stays even where out/ is not ignored (an excluded path that is ignored makes git add fail)
-	git -C "$wt" check-ignore -q "out/node/$id/x" || ex=(":(exclude)out/node/$id")
-	leftover_patch=''
-	# a rebase in progress (HEAD detached) is not ours to undo: hold the node
-	for g in rebase-merge rebase-apply; do
-		[ -e "$(git -C "$wt" rev-parse --git-path $g 2>/dev/null | sed "s|^[^/]|$wt/&|")" ] && w=1
-	done
-	if [ "$w" = 1 ]; then note "$saw; $id: a rebase is in progress in its worktree; not started"; return 1; fi
+	local id=$1 wt=$2 d=$3 saw=$4 ts patch tmpd='' ex=() addex=() g rb='' ti='' empty=0 last again='' head
+	ex=(":(exclude)out/node/$id") leftover_patch=''
+	# git add -A fails on an excluded path that is ignored: there it adds out/node/<ID> and the temp index drops it again
+	git -C "$wt" check-ignore -q "out/node/$id/x" || addex=("${ex[@]}")
+	# no session of the node is alive here, so an index.lock is a stale one left by a killed git
+	g=$(wt_gitpath "$wt" index.lock)
+	if [ -n "$g" ] && [ -e "$g" ]; then
+		rm -f "$g" || { note "$saw; $id: cannot remove a stale index.lock in its worktree; not started"; return 1; }
+		say "$saw; $id: removed a stale index.lock in its worktree"
+	fi
+	for g in rebase-merge rebase-apply; do g=$(wt_gitpath "$wt" $g) && [ -e "$g" ] && rb=$g; done
+	head=$(git -C "$wt" rev-parse --short HEAD 2>/dev/null)
 	if [ -n "$(git -C "$wt" status --porcelain -- . "${ex[@]}" 2>/dev/null)" ]; then
 		ts=$(date -u +%Y%m%dT%H%M%SZ) patch=$d/leftover/$ts.patch
-		# a temporary index: HEAD plus everything in the real index (a force-added ignored file, a tracked file
-		# matching an ignore pattern) plus the worktree (modified, deleted, untracked and not ignored)
+		# a temporary index: HEAD plus the worktree (modified, deleted, untracked and not ignored) plus what is
+		# in the real index only (a force-added ignored file, a tracked file matching an ignore pattern, a
+		# staged edit or new file whose worktree copy is HEAD's or gone)
 		if mkdir -p "$d/leftover" && tmpd=$(mktemp -d "$d/leftover/.tmp.XXXXXX") && ti=$tmpd/index &&
 			GIT_INDEX_FILE=$ti git -C "$wt" read-tree HEAD &&
-			GIT_INDEX_FILE=$ti git -C "$wt" add -A -- . "${ex[@]}" &&
+			GIT_INDEX_FILE=$ti git -C "$wt" add -A -- . "${addex[@]}" &&
+			GIT_INDEX_FILE=$ti git -C "$wt" reset -q HEAD -- "out/node/$id" &&
 			git -C "$wt" ls-files -z -- . "${ex[@]}" | GIT_INDEX_FILE=$ti git -C "$wt" update-index --add --remove -z --stdin &&
+			index_only "$wt" "$ti" "$tmpd" . "${ex[@]}" &&
 			GIT_INDEX_FILE=$ti git -C "$wt" diff --binary --cached HEAD >"$tmpd/patch" &&
-			{ [ ! -s "$tmpd/patch" ] && empty=1 || { [ ! -e "$patch" ] && mv "$tmpd/patch" "$patch"; }; }; then
+			{ if [ ! -s "$tmpd/patch" ]; then empty=1
+			elif last=$(ls "$d/leftover" | grep '\.patch$' | tail -n1) && [ -n "$last" ] && cmp -s "$tmpd/patch" "$d/leftover/$last"; then
+				ts=${last%.patch} again=1   # an earlier tick saved these very changes and could not reset
+			else [ ! -e "$patch" ] && mv "$tmpd/patch" "$patch"; fi; }; then
 			rm -rf "$tmpd"
 		else
 			[ -n "$tmpd" ] && rm -rf "$tmpd"
@@ -454,12 +485,19 @@ save_leftover() {
 	# then brings index and worktree back to HEAD
 	git -C "$wt" merge --quit >/dev/null 2>&1; git -C "$wt" cherry-pick --quit >/dev/null 2>&1; git -C "$wt" revert --quit >/dev/null 2>&1
 	[ -n "$leftover_patch" ] || [ "$empty" = 1 ] || [ -z "$(git -C "$wt" status --porcelain -- . "${ex[@]}" 2>/dev/null)" ] || empty=1
-	[ -n "$leftover_patch" ] || [ "$empty" = 1 ] || return 0
-	git -C "$wt" restore -q --source=HEAD --staged --worktree -- . "${ex[@]}" && git -C "$wt" clean -fdq -e "/out/node/$id/" -- . || { note "$saw; $id: resetting the worktree after the leftover patch failed; not started"; return 1; }
+	[ -n "$leftover_patch" ] || [ "$empty" = 1 ] || [ -n "$rb" ] || return 0
+	git -C "$wt" restore -q --source=HEAD --staged --worktree -- . "${ex[@]}" && git -C "$wt" clean -fdq -e "/out/node/$id/" -- . "${ex[@]}" || { note "$saw; $id: resetting the worktree after the leftover patch failed; not started"; return 1; }
 	if [ -n "$leftover_patch" ]; then
-		say "$saw; $id: uncommitted changes of an earlier session saved as leftover/$leftover_patch and the worktree reset"
-	else
+		say "$saw; $id: uncommitted changes of an earlier session ${again:+already }saved as leftover/$leftover_patch${rb:+ (against $head, the HEAD of a rebase in progress)} and the worktree reset"
+	elif [ "$empty" = 1 ]; then
 		say "$saw; $id: the staged changes of an earlier session left nothing to save; the worktree reset"
+	fi
+	# a rebase in progress (HEAD detached) is aborted: HEAD goes back to the branch, its tip unchanged; an am in
+	# progress (it moves the branch itself) is only dropped
+	if [ -n "$rb" ]; then
+		if [ -e "$rb/applying" ]; then git -C "$wt" am --quit; else git -C "$wt" rebase --abort; fi >/dev/null 2>&1 ||
+			{ note "$saw; $id: aborting the rebase in progress in its worktree failed; not started"; return 1; }
+		say "$saw; $id: aborted the rebase in progress in its worktree; HEAD is $(git -C "$wt" symbolic-ref -q --short HEAD || echo detached) at $(git -C "$wt" rev-parse --short HEAD 2>/dev/null)"
 	fi
 }
 
@@ -499,12 +537,14 @@ start_node() {
 	if [ "${ncommits:-0}" -gt 0 ] || [ -d "$wt/out/node/$id" ]; then
 		resume=1
 		reason=$(cut -d' ' -f2- "$d/stopped" 2>/dev/null | head -n1)
-		rsed=(-e "s|@REASON@|${reason:-not recorded}|g" -e "s|@COMMITS@|${ncommits:-0}|g" -e "s|@PATCH@|$state/node/$id/leftover/$leftover_patch|g")
+		rsed=(-e "s|@REASON@|$reason|g" -e "s|@COMMITS@|${ncommits:-0}|g" -e "s|@PATCH@|$state/node/$id/leftover/$leftover_patch|g")
 	fi
-	# the resume section sits between @RESUME-BEGIN@/@RESUME-END@, the patch lines between @PATCH-BEGIN@/@PATCH-END@
+	# the resume section sits between @RESUME-BEGIN@/@RESUME-END@, the patch lines between @PATCH-BEGIN@/@PATCH-END@,
+	# the reason between @REASON-BEGIN@/@REASON-END@
 	{ if [ "$resume" = 1 ]; then cat; else sed '/^@RESUME-BEGIN@$/,/^@RESUME-END@$/d'; fi; } <"$here/$prompt" 2>/dev/null |
 	{ if [ -n "$leftover_patch" ]; then cat; else sed '/^@PATCH-BEGIN@$/,/^@PATCH-END@$/d'; fi; } |
-	sed -e '/^@\(RESUME\|PATCH\)-\(BEGIN\|END\)@$/d' "${rsed[@]}" \
+	{ if [ -n "$reason" ]; then cat; else sed '/^@REASON-BEGIN@$/,/^@REASON-END@$/d'; fi; } |
+	sed -e '/^@\(RESUME\|PATCH\|REASON\)-\(BEGIN\|END\)@$/d' "${rsed[@]}" \
 		-e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
 		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" >"$d/unattended.md" || { note "$saw; $id: rendering $prompt failed; not started"; return 1; }
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
