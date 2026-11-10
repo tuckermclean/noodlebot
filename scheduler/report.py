@@ -511,9 +511,9 @@ def home_issue(a, rs, task):
             if n is None:
                 n = gh("POST", "repos/%s/issues" % a.repo, {
                     "title": title, "labels": [UNIT_LABEL],
-                    "body": "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
-                            "result). Its spec is %s on the main branch. The loop closes this issue once the node is "
-                            "merged." % (task, spec)})["number"]
+                    "body": signed(a, "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
+                                      "result). Its spec is %s on the main branch. The loop closes this issue once "
+                                      "the node is merged." % (task, spec))})["number"]
     with open(f + ".tmp", "w") as fh:
         fh.write("%d\n" % n)
     os.replace(f + ".tmp", f)
