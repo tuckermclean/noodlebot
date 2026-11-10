@@ -611,5 +611,56 @@ no P01-AC-10:no-api-py-status-no-api-line sh -c "grep -qi 'api' '$sc/out'"
 api_end
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
+echo "# T03-AC-4: start passes its USAGE_* and SCHED_* variables to each loop, though the tmux server's environment lacks them"
+export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+unset USAGE_7D_PACE USAGE_7D_MARGIN USAGE_5H_LIMIT SCHED_TICK SCHED_NOTE SCHED_OTHER USAGE_OTHER
+setup t03env
+cat >"$nb/scheduler/loop.sh" <<'EOT'
+#!/bin/sh
+name=${1#*/}
+mkdir -p "$HOME/seen"
+nb=$(cd "$(dirname "$0")/.." && pwd -P)
+mkdir -p "$nb/state/$name"
+exec 9>"$nb/state/$name/loop.lock"
+flock -n 9 || exit 1
+env >"$HOME/seen/$name.env"
+printf '%s' "${SCHED_NOTE-unset}" >"$HOME/seen/$name.note"
+while [ ! -e "$HOME/STOP" ] && [ ! -e "$HOME/STOP-$name" ]; do sleep 0.2; done
+EOT
+chmod +x "$nb/scheduler/loop.sh"
+mkdir -p "$sc/bin"
+# a tmux whose started command runs with a server's older environment (without the settings), arguments kept as given
+cat >"$sc/bin/tmux" <<'EOT'
+#!/bin/sh
+echo "$*" >>"$TMUXLOG"
+case $1 in
+new | new-session)
+	shift
+	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
+	setsid env -u USAGE_7D_PACE -u USAGE_7D_MARGIN -u USAGE_5H_LIMIT -u USAGE_OTHER -u SCHED_TICK -u SCHED_NOTE -u SCHED_OTHER "$@" >/dev/null 2>&1 </dev/null &
+	exit 0 ;;
+esac
+exit 1
+EOT
+chmod +x "$sc/bin/tmux"
+oldpath=$PATH
+PATH=$sc/bin:$oldpath
+USAGE_7D_PACE=1 USAGE_7D_MARGIN=0.2 SCHED_TICK=7 SCHED_NOTE="two words  here" run start
+sleep 1
+for n in alpha beta; do
+	ok "T03-AC-4:start-exits-0" sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+	ok "T03-AC-4:$n:USAGE_7D_PACE-reaches-the-loop" sh -c "grep -qx 'USAGE_7D_PACE=1' '$HOME/seen/$n.env'"
+	ok "T03-AC-4:$n:USAGE_7D_MARGIN-reaches-the-loop" sh -c "grep -qx 'USAGE_7D_MARGIN=0.2' '$HOME/seen/$n.env'"
+	ok "T03-AC-4:$n:SCHED_TICK-reaches-the-loop" sh -c "grep -qx 'SCHED_TICK=7' '$HOME/seen/$n.env'"
+	ok "T03-AC-4:$n:value-with-a-space-unchanged" sh -c "[ \"\$(cat '$HOME/seen/$n.note')\" = 'two words  here' ]"
+	no "T03-AC-4:$n:USAGE_5H_LIMIT-not-set-not-added" sh -c "grep -q '^USAGE_5H_LIMIT=' '$HOME/seen/$n.env'"
+	no "T03-AC-4:$n:SCHED_OTHER-not-set-not-added" sh -c "grep -q '^SCHED_OTHER=' '$HOME/seen/$n.env'"
+	ok "T03-AC-4:$n:NOODLEBOT_DATA-still-passed" sh -c "grep -q '^NOODLEBOT_DATA=' '$HOME/seen/$n.env'"
+done
+touch "$HOME/STOP"
+sleep 0.5
+PATH=$oldpath
+unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"

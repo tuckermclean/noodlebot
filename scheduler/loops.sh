@@ -11,7 +11,9 @@
 # scheduler/loop.sh. Locks, sessions and markers are read under the runtime root,
 # $NOODLEBOT_DATA/state/<name> (default ~/.local/share/noodlebot, as in loop.sh); start passes that
 # root to each loop as NOODLEBOT_DATA, since a tmux server keeps its own environment and the loop
-# would otherwise use another root and another lock.
+# would otherwise use another root and another lock. Likewise every USAGE_* and SCHED_* variable set in
+# start's environment is passed to each loop (one argument each, whatever the value holds; unset ones are
+# not passed), e.g. `USAGE_7D_PACE=1 scheduler/loops.sh start`.
 # A loop runs when its loop.lock is held. That is read from /proc/locks, never by taking the lock:
 # a probe holding it even for an instant makes a starting loop's own `flock -n` fail.
 # When $nb/scheduler/api.py exists, the read-only API server (P01) is managed too: start runs it in tmux
@@ -106,6 +108,8 @@ start)
 		done
 		[ $old = 0 ] || { echo "Nothing started." >&2; exit 1; }
 	fi
+	pass=()
+	for v in $(compgen -v | grep -E '^(USAGE|SCHED)_[A-Za-z0-9_]*$'); do pass+=("$v=${!v}"); done
 	launched=()
 	for repo in "${repos[@]}"; do
 		name=${repo#*/}
@@ -117,7 +121,7 @@ start)
 				rm -f "$HOME/STOP-$name"
 				echo "$repo: removed stale $HOME/STOP-$name"
 			fi
-			if tmux new -d -s "sched-$name" env NOODLEBOT_DATA="$root" "$nb/scheduler/loop.sh" "$repo"; then
+			if tmux new -d -s "sched-$name" env NOODLEBOT_DATA="$root" ${pass[@]+"${pass[@]}"} "$nb/scheduler/loop.sh" "$repo"; then
 				echo "$repo: started in tmux session sched-$name"
 				launched+=("$repo")
 			else
