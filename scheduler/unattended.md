@@ -16,6 +16,25 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   docs/migration.tsv, docs/capabilities.md). For those, git merge --abort, write QUESTION.md and end
   the run. After resolving, rerun the quick test gate and every red target of this node, and list
   each resolved file in the PR under Deviations.
+@RESUME-BEGIN@
+- RESUMING AFTER A STOP. This branch already has work (commits past origin/main: @COMMITS@), and the
+  worktree may hold out/node/@ID@/.
+@REASON-BEGIN@
+  The last session ended: @REASON@.
+@REASON-END@
+  - Read out/node/@ID@/ (brief, logs) and git log origin/main..HEAD first. Keep the existing brief and
+    add to it rather than rewrite it. Carry on from the last reviewed slice; do not redo a slice that
+    is already committed and reviewed.
+  - The earlier session may have started CI runs on this branch. Run gh run list --branch @BR@ and wait
+    for or read those before starting a new one.
+@PATCH-BEGIN@
+  - Each line below names a leftover patch: uncommitted changes an earlier session left, saved
+    before the worktree was reset to HEAD.
+@PATCH@
+    Examine each listed patch (git apply --stat, read it); never apply or commit one unexamined.
+    List each in the PR under Deviations with what you did with it.
+@PATCH-END@
+@RESUME-END@
 - RESUMING. If @STATE@/node/@ID@/answered/ exists, an earlier run of this node stopped. Read every
   file in it, oldest first (the names start with a UTC timestamp): <ts>-QUESTION.md is what a run
   asked, <ts>-ANSWER.md is the owner's answer, <ts>-SPEC-PR holds the number of a spec PR the owner
