@@ -506,6 +506,7 @@ def find_issue(a, rs):
             if st == "open":
                 return n, False
             if st == "closed" and (rs.get("roll") or {}).get("old") != n:  # the owner closed today's issue: a new one, linked from it
+                park_link(rs)
                 rs["roll"] = {"old": n, "date": today, "summary": True, "closed": True}
                 a.save()
         except RuntimeError:
@@ -541,11 +542,11 @@ def adopt(a, rs, number, node_id, pin):
     the rollover's record. Saved by the caller, with rs["log"]."""
     roll = rs.get("roll")
     pins = rs.setdefault("pins", [])
-    if pin:
-        pins.append({"op": "pin", "number": number, "node_id": node_id})
     if roll and not roll.get("new"):
         roll["new"] = number
-        pins.append({"op": "unpin", "number": roll["old"]})
+        pins.append({"op": "unpin", "number": roll["old"]})  # before the pin: GitHub allows three
+    if pin:
+        pins.append({"op": "pin", "number": number, "node_id": node_id})
 
 
 def run_pins(a, rs):
@@ -572,29 +573,72 @@ def rollover(a, rs):
     on the old one and the pins follow in find_issue, finish_roll and run_pins)."""
     log = rs.get("log") or {}
     roll = rs.get("roll")
+    if roll and roll.get("new") and not roll.get("linked") and log.get("issue") == roll["new"] and log.get("date", a.today) < a.today:
+        park_link(rs)  # the link is still pending at the next midnight: keep it apart, start the pending day's rollover
+        roll = None
     if roll is None:
         if not (log.get("issue") and log.get("date") and log["date"] < a.today):
             return
         roll = rs["roll"] = {"old": log["issue"], "date": log["date"]}
         a.save()
     if not roll.get("summary"):
-        comment(a, roll["old"], "\n".join(["## End-of-day summary, %s" % roll["date"], ""] +
-                                          summary_lines(a, rs, roll["date"], "The day") + [""]))
+        try:
+            comment(a, roll["old"], "\n".join(["## End-of-day summary, %s" % roll["date"], ""] +
+                                              summary_lines(a, rs, roll["date"], "The day") + [""]))
+        except RuntimeError as e:
+            if not gone(e):
+                raise
+            print("report.py: issue #%s is gone; no summary on it" % roll["old"], file=sys.stderr)
         roll["summary"] = True
         a.save()
     if not roll.get("closed"):
-        gh("PATCH", "repos/%s/issues/%s" % (a.repo, roll["old"]), {"state": "closed", "state_reason": "completed"})
+        try:
+            gh("PATCH", "repos/%s/issues/%s" % (a.repo, roll["old"]), {"state": "closed", "state_reason": "completed"})
+        except RuntimeError as e:
+            if not gone(e):
+                raise
+            print("report.py: issue #%s is gone; not closed" % roll["old"], file=sys.stderr)
         roll["closed"] = True
         a.save()
 
 
+def gone(e):
+    return bool(re.search(r"HTTP (404|410)", str(e)))
+
+
+def park_link(rs):
+    """Move a rollover's pending link step to rs["links"], where finish_roll retries it until done, whatever the roll."""
+    roll = rs.get("roll")
+    if roll and roll.get("new") and not roll.get("linked"):
+        rs.setdefault("links", []).append({"old": roll["old"], "new": roll["new"]})
+        rs.pop("roll", None)
+
+
+def put_link(a, old, new):
+    try:
+        comment(a, old, "Next log issue: #%s" % new)
+    except RuntimeError as e:
+        if not gone(e):
+            raise
+        print("report.py: issue #%s is gone; no link on it" % old, file=sys.stderr)
+
+
 def finish_roll(a, rs):
     """Put the link to the new issue on the old one, once; then the rollover is done."""
+    for l in list(rs.get("links") or []):
+        try:
+            put_link(a, l["old"], l["new"])
+            rs["links"].remove(l)
+            a.save()
+        except Exception as e:
+            a.errors.append(str(e))
+    if not rs.get("links"):
+        rs.pop("links", None)
     roll = rs.get("roll")
     if not roll or not roll.get("new"):
         return
     if not roll.get("linked"):
-        comment(a, roll["old"], "Next log issue: #%s" % roll["new"])
+        put_link(a, roll["old"], roll["new"])
         roll["linked"] = True
         a.save()
     rs.pop("roll", None)
@@ -620,7 +664,9 @@ def close_old_status(a, rs, log_issue):
             if not st.get("closed"):
                 gh("PATCH", "repos/%s/issues/%s" % (a.repo, n), {"state": "closed", "state_reason": "completed"})
                 st["closed"] = True
+                rs.setdefault("pins", []).append({"op": "unpin", "number": n})
                 a.save()
+                run_pins(a, rs)
         except Exception as e:
             a.errors.append(str(e))
 
@@ -686,7 +732,7 @@ def failed_on(a, date):
     for l in read_lines(os.path.join(a.state, "status.log")):
         stamp, what = event_text(l)
         m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", what)
-        if m and "wrote FAILED" in what and local_date(stamp) == date:
+        if m and ("wrote FAILED" in what or "held by FAILED" in what) and local_date(stamp) == date:
             out.add(m.group(1) or m.group(2) or m.group(3))
     return sorted(out)
 
@@ -1514,7 +1560,10 @@ def main():
     if opened != rs.get("pr_opened", {}):
         rs["pr_opened"] = opened
         save()
-    rollover(a, rs)
+    try:
+        rollover(a, rs)
+    except Exception as e:  # the rest of the run does not depend on it; its record makes the next run finish it
+        a.errors.append(str(e))
     issue, new = find_issue(a, rs)
     if new or rs.get("issue") != issue:
         rs["issue"] = issue
