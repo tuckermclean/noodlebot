@@ -14,6 +14,9 @@
 # would otherwise use another root and another lock.
 # A loop runs when its loop.lock is held. That is read from /proc/locks, never by taking the lock:
 # a probe holding it even for an instant makes a starting loop's own `flock -n` fail.
+# When $nb/scheduler/api.py exists, the read-only API server (P01) is managed too: start runs it in tmux
+# session sched-api unless its $root/api.lock is held, stop ends it after the loops have exited, status
+# adds a line with its socket $root/api.sock. Without api.py nothing about it is done or shown.
 # start refuses (exit 1, nothing started) while ~/STOP exists, and while a loop from before the D02
 # move still holds <checkout>/state/<name>/loop.lock: run scheduler/move-runtime.sh first.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -58,7 +61,8 @@ fi
 # "N: FLOCK ADVISORY WRITE <pid> <major>:<minor>:<inode> ...", major and minor in hex; lines with
 # "->" are blocked waiters). Inode and device must match; where stat's device is not the one the
 # kernel shows there (btrfs subvolumes, overlayfs), the device of the file's mount is tried. The pid
-# is of no use: it is the short-lived `flock` command's, not the loop's.
+# is of no use for a loop: it is the short-lived `flock` command's, not the loop's. For the API server, which
+# takes the lock itself, it is the server (left in $hpid), and stop sends it TERM.
 held() {
 	local f=$1 st ino dev mdev='' n type adv rw pid id rest lino ldev
 	[ -e "$f" ] || return 1
@@ -70,9 +74,9 @@ held() {
 		lino=${id##*:} ldev=${id%:*}
 		[ "$lino" = "$ino" ] || continue
 		ldev=$((16#${ldev%%:*})):$((16#${ldev#*:}))
-		[ "$ldev" = "$dev" ] && return 0
+		[ "$ldev" = "$dev" ] && { hpid=$pid; return 0; }
 		[ -n "$mdev" ] || { mdev=$(findmnt -n -o MAJ:MIN -T "$f" 2>/dev/null | tr -d ' '); mdev=${mdev:-none}; }
-		[ "$ldev" = "$mdev" ] && return 0
+		[ "$ldev" = "$mdev" ] && { hpid=$pid; return 0; }
 	done </proc/locks
 	return 1
 }
@@ -119,7 +123,26 @@ start)
 			fi
 		fi
 	done
+	api_launched=0
+	if [ -e "$nb/scheduler/api.py" ]; then
+		if held "$root/api.lock"; then
+			echo "api: server already running"
+		elif tmux new -d -s sched-api env NOODLEBOT_DATA="$root" python3 "$nb/scheduler/api.py"; then
+			echo "api: started in tmux session sched-api"
+			api_launched=1
+		else
+			echo "api: could not start tmux session sched-api" >&2
+			rc=1
+		fi
+	fi
 	deadline=$((SECONDS + start_wait))
+	if [ $api_launched = 1 ]; then
+		while ! held "$root/api.lock" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
+		if ! held "$root/api.lock"; then
+			echo "api: server did not take its lock within ${start_wait}s; run $nb/scheduler/api.py directly" >&2
+			rc=1
+		fi
+	fi
 	for repo in ${launched[@]+"${launched[@]}"}; do
 		name=${repo#*/}
 		while ! running "$name" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
@@ -151,7 +174,22 @@ stop)
 			rm -f "$HOME/STOP-$name"
 			echo "$repo: loop stopped"
 		fi
-	done ;;
+	done
+	if [ -e "$nb/scheduler/api.py" ]; then
+		if held "$root/api.lock"; then
+			kill -TERM "$hpid" 2>/dev/null
+			deadline=$((SECONDS + 10))
+			while held "$root/api.lock" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
+			if held "$root/api.lock"; then
+				echo "api: server still running after 10s" >&2
+				rc=1
+			else
+				echo "api: server stopped"
+			fi
+		else
+			echo "api: server not running"
+		fi
+	fi ;;
 status)
 	for repo in "${repos[@]}"; do
 		name=${repo#*/}
@@ -183,6 +221,10 @@ status)
 		[ ${#live[@]} -gt 0 ] && s=$(IFS=,; echo "${live[*]}")
 		[ ${#wait[@]} -gt 0 ] && w=$(IFS=,; echo "${wait[*]}" | sed 's/,/, /g')
 		echo "$repo: $loop; sessions: $s; waiting on you: $w"
-	done ;;
+	done
+	if [ -e "$nb/scheduler/api.py" ]; then
+		if held "$root/api.lock"; then echo "api: server running; socket $root/api.sock"
+		else echo "api: server not running; socket $root/api.sock"; fi
+	fi ;;
 esac
 exit $rc
