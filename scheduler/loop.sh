@@ -139,6 +139,7 @@ alive() {
 # limit_exit <dir>: the session ended because of the plan's usage limit: its last rate_limit_event is
 # not "allowed", or its last result names a usage or rate limit. Such an end uses up no start.
 limit_exit() {
+	[ -e "$1/force-limit" ] && return 0   # the loop itself stopped it, or the resume failed (see ended)
 	tail -c 400000 "$1/session.jsonl" 2>/dev/null | python3 -I -c '
 import json, re, sys
 ev = res = None
@@ -157,6 +158,21 @@ sys.exit(0 if st != "allowed" or re.search(r"usage limit|rate limit|limit reache
 # whose status is not "allowed", or a result naming the limit) and has a reset time. Prints
 # "<reset epoch> <session id of the last system/init line, or ->". A log that moved on is not idle.
 idle_by_limit() {
+	local out sid
+	out=$(idle_tail "$1") || return 1
+	sid=${out#* }
+	if [ "$sid" = - ]; then   # the init line may lie before the tail window: look in the whole log
+		sid=$(grep -a '"subtype": *"init"' "$1/session.jsonl" 2>/dev/null | tail -n 1 | python3 -I -c '
+import json, sys
+try: print(json.loads(sys.stdin.read()).get("session_id") or "-")
+except ValueError: print("-")') || sid=-
+		[ -n "$sid" ] || sid=-
+	fi
+	echo "${out%% *} $sid"
+}
+
+# idle_tail <dir>: the check of idle_by_limit on the last 400 KB of the log.
+idle_tail() {
 	tail -c 400000 "$1/session.jsonl" 2>/dev/null | python3 -I -c '
 import json, re, sys
 last = reset = sid = None
@@ -221,10 +237,14 @@ ended() {
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
 	if [ -e "$d/resume.size" ]; then
-		tail -c +$(($(cat "$d/resume.size") + 1)) "$d/session.jsonl" 2>/dev/null | grep -q '"subtype": *"init"' ||
+		tail -c +$(($(cat "$d/resume.size") + 1)) "$d/session.jsonl" 2>/dev/null | grep -q '"subtype": *"init"' || {
 			say "$saw; session $(task_name "$d") could not be resumed: the resumed claude wrote no init line (rc $rc)"
+			: >"$d/force-limit"
+		}
 		rm -f "$d/resume.size"
 	fi
+	# a failed resume is a limit exit whatever claude's exit code was
+	if [ -e "$d/force-limit" ]; then [ "$rc" != 0 ] || rc=143; fi
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; session $id ended (rc $rc), held by FAILED"
@@ -338,7 +358,7 @@ stop_idle() {
 # resumed (claude -p --resume) in the same worktree, appending to the same log; no start is counted.
 # With no session id to resume, it is stopped and ends as a limit exit (ended); live is kept in step.
 resume_idle() {
-	local saw=$1 f d p id rs reset sid a wt nl e name pr
+	local saw=$1 f d p id rs reset sid a wt nl e name pr why
 	[ "$throttled" = 1 ] && return
 	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
 		[ -e "$f" ] || continue
@@ -357,7 +377,11 @@ resume_idle() {
 		for e in "${live[@]}"; do [ "${e#* }" = "$id" ] || nl+=("$e"); done
 		live=("${nl[@]}")
 		if [ "$sid" = - ] || [ -z "${a[4]:-}" ] || [ ! -d "$wt" ]; then
-			say "$saw; session $name was idle by the usage limit and could not be resumed: no session id in its log"
+			if [ "$sid" = - ]; then why='no session id in its log'
+			elif [ -z "${a[4]:-}" ]; then why='its command line could not be read'
+			else why='its worktree is missing'; fi
+			say "$saw; session $name was idle by the usage limit and could not be resumed: $why"
+			: >"$d/force-limit"
 			ended "$d" "$saw"
 			[ "$triaging" = "$id" ] && triaging=''
 			continue
@@ -416,7 +440,7 @@ stop_done() {
 # launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
 # prompt's last word: a node ID or an issue number).
 launch() {
-	rm -f "$2/session.rc"
+	rm -f "$2/session.rc" "$2/resumed" "$2/resume.size" "$2/force-limit"
 	# 9>&-: the session must not hold the loop's lock.
 	NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
 	pid=$! node=${3##* }
