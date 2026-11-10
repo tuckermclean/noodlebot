@@ -198,6 +198,34 @@ open(p, "w").write(s)
 EOF
 mkdir -p "$tmp/out7"
 build "$tmp/out7" "$res/rc7" --throttle "$HOLD"
+# out8: free texts in which a URL runs into a local path (a node's FAILED line and a status-log line)
+mark P01 FAILED "see https://x.com/a,$HOME/.local/x.log and https://y.org/b;$root/state/alpha/z.log plain https://plain.example/ok"
+printf '2026-11-01T11:00:00Z glued https://x.com/a,%s/.local/x.log and https://y.org/b;%s/state/alpha/z.log plain https://plain.example/ev\n' "$HOME" "$root" >>"$sa/status.log"
+mkdir -p "$tmp/out8"
+build "$tmp/out8" "$res/rc8" --throttle "$HOLD"
+# out9: session.pid files holding a huge number and a Unicode digit
+mkdir -p "$sa/issue/27" "$sa/issue/28"
+echo 99999999999999999999 >"$sa/issue/27/session.pid"
+printf '²\n' >"$sa/issue/28/session.pid"
+mkdir -p "$tmp/out9"
+build "$tmp/out9" "$res/rc9" --throttle "$HOLD"
+rm -rf "$sa/issue/27" "$sa/issue/28"
+# out10: usage.json whose samples5h is not a list and whose windows is not an object
+cp "$root/state/usage.json" "$res/usage.keep"
+printf '{"updated": 1700000950, "windows": [1, 2], "samples5h": 5}\n' >"$root/state/usage.json"
+mkdir -p "$tmp/out10"
+build "$tmp/out10" "$res/rc10" --throttle "$HOLD"
+cp "$res/usage.keep" "$root/state/usage.json"
+# out11: a node's FAILED that is a symlink to a file holding a secret
+rm -f "$sa/node/P01/FAILED"
+echo "SYMLINK-SECRET" >"$tmp/symlink-target.txt"
+ln -s "$tmp/symlink-target.txt" "$sa/node/P01/FAILED"
+mkdir -p "$tmp/out11"
+build "$tmp/out11" "$res/rc11" --throttle "$HOLD"
+rm -f "$sa/node/P01/FAILED"
+# out12: a throttle line "hold:x" without the space
+mkdir -p "$tmp/out12"
+build "$tmp/out12" "$res/rc12" --throttle 'hold:x'
 echo "$tmp" >"$res/tmp"
 
 cat >"$res/check.py" <<'EOF'
@@ -410,6 +438,32 @@ check("W01-AC-4 non-finite usage values: build exits 0 and writes all four files
 check("W01-AC-4 every output file is strict JSON (no NaN or Infinity)", lambda: len(os.listdir(o7)) >= 4 and all(strict(o7 + "/" + f) for f in os.listdir(o7)))
 check("W01-AC-4 a NaN window utilization comes out as null", lambda: J(o7, "throttle.json")["windows"][0]["utilization"] is None)
 check("W01-AC-4 an Infinity sample is dropped or null, never non-finite", lambda: all(h.get("u") is None or abs(h["u"]) < float("inf") for h in hist7()))
+# ---- review additions: glued URL paths, bad pid and usage files, symlinked marker, bare hold:
+files4 = ("activity.json", "throttle.json", "repo.acme.alpha.json", "repo.acme.bravo.json")
+def four(i): return rc(i) == "0" and all(os.path.exists("%s/out%d/%s" % (tmp, i, f)) for f in files4)
+o8 = tmp + "/out8"
+b8 = lambda: allbytes(o8)
+check("W01-AC-6 glued URL and path: build exits 0, output has neither the runtime root nor HOME", lambda: rc(8) == "0" and bool(b8()) and root.encode() not in b8() and home.encode() not in b8() and tmp.encode() not in b8())
+check("W01-AC-6 glued URL and path in a node's FAILED line: neither path appears in the node's text", lambda: (lambda t: bool(t) and root not in t and home not in t)(node(o8, "alpha", "P01")["text"]))
+check("W01-AC-6 glued URL and path in a status-log line: neither path appears in the events", lambda: (lambda ev: any("glued" in e["text"] for e in ev) and not any(root in e["text"] or home in e["text"] for e in ev))(J(o8, "activity.json")["events"]))
+check("W01-AC-6 a plain URL elsewhere in the same free text stays intact", lambda: "https://plain.example/ok" in node(o8, "alpha", "P01")["text"] and any("https://plain.example/ev" in e["text"] for e in J(o8, "activity.json")["events"]))
+o9 = tmp + "/out9"
+tr9 = lambda: {x["number"]: x for x in J(o9, "activity.json")["triage"]}
+check("W01-AC-1 session.pid holding 99999999999999999999 and one holding a Unicode digit: build exits 0 and writes all four files", lambda: four(9))
+check("W01-AC-1 a triage with an out-of-range session.pid is not running", lambda: tr9()[27]["state"] != "running")
+check("W01-AC-1 a triage with a Unicode-digit session.pid is not running", lambda: tr9()[28]["state"] != "running")
+o10 = tmp + "/out10"
+def hist10():
+    d = J(o10, "throttle.json")
+    return next(v for k, v in d.items() if isinstance(v, list) and k != "windows")
+check("W01-AC-1 usage.json with samples5h not a list and windows not an object: build exits 0 and writes all four files", lambda: four(10))
+check("W01-AC-4 such a usage.json gives throttle.json an empty history and no windows", lambda: hist10() == [] and J(o10, "throttle.json")["windows"] == [])
+o11 = tmp + "/out11"
+check("W01-AC-6 a symlinked FAILED: build exits 0 and the target's content appears nowhere in the output", lambda: rc(11) == "0" and len(os.listdir(o11)) >= 4 and b"SYMLINK-SECRET" not in allbytes(o11))
+check("W01-AC-6 a symlinked FAILED still marks the node failed, with text null", lambda: (lambda n: (n["state"], n["text"]))(node(o11, "alpha", "P01")) == ("failed", None))
+o12 = tmp + "/out12"
+check("W01-AC-4 --throttle 'hold:x': build exits 0 and throttle.json says held true", lambda: rc(12) == "0" and J(o12, "throttle.json")["held"] is True)
+check("W01-AC-4 --throttle 'hold:x': a node ready.py would start is held in the same build", lambda: node(o12, "alpha", "Y01")["state"] == "held")
 sys.exit(1 if fails else 0)
 EOF
 python3 -I "$res/check.py" "$src" "$tmp" "$root" "$HOME" "$GH" "$ANT" >"$res/checks.out" 2>&1
