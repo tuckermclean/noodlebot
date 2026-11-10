@@ -9,6 +9,12 @@ Each run:
      issue, linking the previous day's, if there is none, e.g. after the owner closed it), and remembers it in
      DIR/report.json ("log"); when it is opened, its first comment is the morning overview (the previous day's
      summary, what waits on the owner, the nodes ready next), posted once before any event;
+     at the first run on a later date it posts one summary of the day (PRs merged and opened, units that wrote FAILED,
+     the cost of the sessions that ended) on the old issue, closes it, opens the new one, links them both ways and
+     tries to pin the new and unpin the old, each step recorded in report.json ("roll", "pins") and done once; an
+     open `noodlebot-status` issue that is not a log issue (the old sticky one) is closed with one comment linking
+     the log issue, and the owner's prefixed answers on it count while the question they name was posted there
+     ("qissue") and is open;
   2. turns each new comment by the owner on that issue into ANSWER.md for the unit waiting on a
      question (the only one waiting, or the one named first: "B03: ..."), and replies; likewise each new
      owner comment on a unit's home issue, posted after the unit's question comment (no ID needed when one
@@ -496,11 +502,16 @@ def find_issue(a, rs):
     n = rs.get("issue")
     if n and log.get("date") == today and log.get("issue") == n:
         try:
-            if gh("GET", "repos/%s/issues/%s" % (a.repo, n)).get("state") == "open":
+            st = gh("GET", "repos/%s/issues/%s" % (a.repo, n)).get("state")
+            if st == "open":
                 return n, False
+            if st == "closed" and (rs.get("roll") or {}).get("old") != n:  # the owner closed today's issue: a new one, linked from it
+                rs["roll"] = {"old": n, "date": today, "summary": True, "closed": True}
+                a.save()
         except RuntimeError:
             pass
-    prev = next((num for d, num in log_issues(a, "all") if d < today), None)
+    roll = rs.get("roll") or {}
+    prev = roll.get("old") or next((num for d, num in log_issues(a, "all") if d < today), None)
     for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []:
         if "pull_request" not in i and i.get("title") == "noodlebot log " + today:
             if log.get("date") == today and log.get("issue") == i["number"]:
@@ -508,6 +519,7 @@ def find_issue(a, rs):
                 a.save()
                 return i["number"], False
             rs["log"], rs["issue"] = {"date": today, "issue": i["number"], "prev": prev, "overview": True}, i["number"]
+            adopt(a, rs, i["number"], i.get("node_id"), False)
             a.save()  # found, not opened by us: no overview
             return i["number"], True
     try:
@@ -519,13 +531,131 @@ def find_issue(a, rs):
     issue = gh("POST", "repos/%s/issues" % a.repo, {"title": "noodlebot log " + today, "labels": [LABEL],
                                                   "body": "Starting up..." + ("\n\nPrevious day's log: #%s" % prev if prev else "")})
     rs["log"], rs["issue"] = {"date": today, "issue": issue["number"], "prev": prev, "overview": False}, issue["number"]
+    adopt(a, rs, issue["number"], issue.get("node_id"), True)
     a.save()
-    try:
-        gh("POST", "graphql", {"query": "mutation($id:ID!){pinIssue(input:{issueId:$id}){issue{number}}}",
-                               "variables": {"id": issue["node_id"]}})
-    except RuntimeError:
-        pass  # pinning is a nicety
     return issue["number"], True
+
+
+def adopt(a, rs, number, node_id, pin):
+    """A new log issue is today's: queue its pin (when opened by us) and the unpin of the one it replaces, and note it in
+    the rollover's record. Saved by the caller, with rs["log"]."""
+    roll = rs.get("roll")
+    pins = rs.setdefault("pins", [])
+    if pin:
+        pins.append({"op": "pin", "number": number, "node_id": node_id})
+    if roll and not roll.get("new"):
+        roll["new"] = number
+        pins.append({"op": "unpin", "number": roll["old"]})
+
+
+def run_pins(a, rs):
+    """Try each queued pin and unpin once. A refusal (the pin cap, no permission) is logged and dropped; a server error
+    or timeout is tried again on the next run (twice at most). Nothing else depends on it."""
+    left = []
+    for p in rs.get("pins") or []:
+        try:
+            node_id = p.get("node_id") or gh("GET", "repos/%s/issues/%s" % (a.repo, p["number"]))["node_id"]
+            gh("POST", "graphql", {"query": "mutation($id:ID!){%sIssue(input:{issueId:$id}){issue{number}}}" % p["op"],
+                                   "variables": {"id": node_id}})
+        except Exception as e:
+            print("report.py: %s of #%s failed: %s" % (p["op"], p["number"], e), file=sys.stderr)
+            if re.search(r"HTTP 5\d\d|timed out|Timeout", str(e)) and p.get("tries", 0) < 2:
+                p["tries"] = p.get("tries", 0) + 1
+                left.append(p)
+    rs["pins"] = left
+    a.save()
+
+
+def rollover(a, rs):
+    """The first run on a date after the open log issue's: one summary of that day on it, then close it. Each step is
+    recorded in rs["roll"] so that a failed run finishes the rest on the next, repeating none (the new issue, its link
+    on the old one and the pins follow in find_issue, finish_roll and run_pins)."""
+    log = rs.get("log") or {}
+    roll = rs.get("roll")
+    if roll is None:
+        if not (log.get("issue") and log.get("date") and log["date"] < a.today):
+            return
+        roll = rs["roll"] = {"old": log["issue"], "date": log["date"]}
+        a.save()
+    if not roll.get("summary"):
+        comment(a, roll["old"], "\n".join(["## End-of-day summary, %s" % roll["date"], ""] +
+                                          summary_lines(a, rs, roll["date"], "The day") + [""]))
+        roll["summary"] = True
+        a.save()
+    if not roll.get("closed"):
+        gh("PATCH", "repos/%s/issues/%s" % (a.repo, roll["old"]), {"state": "closed", "state_reason": "completed"})
+        roll["closed"] = True
+        a.save()
+
+
+def finish_roll(a, rs):
+    """Put the link to the new issue on the old one, once; then the rollover is done."""
+    roll = rs.get("roll")
+    if not roll or not roll.get("new"):
+        return
+    if not roll.get("linked"):
+        comment(a, roll["old"], "Next log issue: #%s" % roll["new"])
+        roll["linked"] = True
+        a.save()
+    rs.pop("roll", None)
+    a.save()
+
+
+def close_old_status(a, rs, log_issue):
+    """Close each open `noodlebot-status` issue that is not a log issue (the old sticky one), once, with one comment linking
+    today's log issue; the owner's answers on it are taken while its question is open (take_old_answers)."""
+    old = rs.setdefault("old_status", {})
+    for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []:
+        n = i["number"]
+        if "pull_request" in i or LOG_TITLE.match(i.get("title") or "") or n == log_issue:
+            continue
+        try:
+            st = old.setdefault(str(n), {})
+            if not st.get("commented"):
+                c = comment(a, n, "This status issue is replaced by the daily log, #%s. Closing it. A reply that starts with a "
+                            "unit's ID still works here while that unit's question was asked here and is open; "
+                            "otherwise answer on the unit's issue or on the log issue." % log_issue)
+                st.update({"commented": True, "cursor": c.get("id") or 0, "since": c.get("created_at") or ""})
+                a.save()
+            if not st.get("closed"):
+                gh("PATCH", "repos/%s/issues/%s" % (a.repo, n), {"state": "closed", "state_reason": "completed"})
+                st["closed"] = True
+                a.save()
+        except Exception as e:
+            a.errors.append(str(e))
+
+
+def take_old_answers(a, rs):
+    """The owner's new prefixed comments on a closed old status issue: recorded as an answer only when the question the
+    prefix names was posted on that issue (rs["qissue"]) and is still open; refused, with a reply, otherwise."""
+    for num, st in sorted((rs.get("old_status") or {}).items()):
+        if st.get("cursor") is None:
+            continue
+        try:
+            comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
+                          (a.repo, num, "&since=" + st["since"] if st.get("since") else "")) or []
+            for c in sorted(comments, key=lambda c: c["id"]):
+                if c["id"] <= st["cursor"]:
+                    continue
+                user = c.get("user") or {}
+                text = c.get("body") or ""
+                if user.get("type") != "Bot" and user.get("login") == a.owner and c.get("author_association") == "OWNER":
+                    m = ID_PREFIX.match(text)
+                    node = m.group(1) if m else None
+                    q = os.path.join(tdir(a.state, node), "QUESTION.md") if node and node in nodes(a.state) else None
+                    live = bool(q) and node in waiting(a.state) and (rs.get("qissue") or {}).get(node) == int(num) \
+                        and (rs.get("questions") or {}).get(node) == mtime_key(q)
+                    if live:
+                        what = record_answer(a, rs, node, c, text)
+                        comment(a, num, "Recorded as %s's ANSWER.md%s." % (node, "" if what is None else "; " + what))
+                    else:
+                        comment(a, num, "Not recorded as an answer: this issue is closed, and %s. Answer on the unit's issue "
+                                "or on the log issue (#%s)." % ("no reply starting with a unit's ID" if not node else
+                                "%s has no question asked here that is still open" % node, rs.get("issue")))
+                st["cursor"], st["since"] = c["id"], c.get("created_at", "")
+                a.save()
+        except Exception as e:
+            a.errors.append(str(e))
 
 
 def day_summary(a, date):
@@ -542,6 +672,39 @@ def day_summary(a, date):
         ct = cost_turns(os.path.join(tdir(a.state, t), "session.jsonl"))
         cost += ct[0] if ct else 0.0
     return sorted(ended), cost
+
+
+def merged_on(a, date):
+    """PR numbers merged on the local date: the loop's closed-prs.tsv ("<n> <branch> <closedAt> <merged>")."""
+    return sorted(int(w[0]) for w in tsv(a, "closed-prs.tsv")
+                  if len(w) > 3 and w[0].isdigit() and w[3] == "true" and local_date(w[2]) == date)
+
+
+def failed_on(a, date):
+    """Units whose session ended on the local date with the loop writing FAILED (status.log)."""
+    out = set()
+    for l in read_lines(os.path.join(a.state, "status.log")):
+        stamp, what = event_text(l)
+        m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", what)
+        if m and "wrote FAILED" in what and local_date(stamp) == date:
+            out.add(m.group(1) or m.group(2) or m.group(3))
+    return sorted(out)
+
+
+def summary_lines(a, rs, date, label):
+    """One day's summary, for the closing summary and for the morning overview: the sessions that ended and their summed
+    cost, the PRs merged and opened that day, the units that wrote FAILED. PRs opened are those seen open (rs["pr_opened"],
+    recorded each run from the open PR list with GitHub's created_at)."""
+    tasks, cost = day_summary(a, date)
+    merged = merged_on(a, date)
+    opened = sorted(int(n) for n, d in (rs.get("pr_opened") or {}).items() if d == date)
+    failed = failed_on(a, date)
+    nums = lambda ns: ", ".join("#%d" % n for n in ns) or "none"
+    return ["**%s (%s):** " % (label, date) +
+            ("%d session%s ended (%s), $%.2f total cost (list-price estimate)." %
+             (len(tasks), "" if len(tasks) == 1 else "s", ", ".join(tasks), cost) if tasks else "no session ended."),
+            "", "- PRs merged: " + nums(merged), "- PRs opened: " + nums(opened),
+            "- Units that wrote FAILED: " + (", ".join(failed) or "none")]
 
 
 def ready_next(a, prs):
@@ -573,10 +736,7 @@ def post_overview(a, rs, issue, prs):
     """The log issue's first comment, once: the previous day's summary, what waits on the owner, the nodes ready next."""
     log = rs["log"]
     prev_date = (datetime.strptime(log["date"], "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-    tasks, cost = day_summary(a, prev_date)
-    out = ["## Morning overview, %s" % log["date"], "", "**Yesterday (%s):** " % prev_date +
-           ("%d session%s ended (%s), $%.2f total cost (list-price estimate)." %
-            (len(tasks), "" if len(tasks) == 1 else "s", ", ".join(tasks), cost) if tasks else "no session ended.")]
+    out = ["## Morning overview, %s" % log["date"], ""] + summary_lines(a, rs, prev_date, "Yesterday")
     if log.get("prev"):
         out += ["", "Previous day's log: #%s" % log["prev"]]
     try:
@@ -995,6 +1155,7 @@ def post_questions(a, rs, issue):
                 comment(a, issue, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
                         "starting the reply with `%s:`.\n" % (n, home, n))
                 posted[n] = key
+                rs.setdefault("qissue", {})[n] = issue  # where it was posted: an answer on a closed old issue counts only there
             milestone(a, rs, n, "question:" + key, "%s asks a question, waiting for your answer" % n,
                       "## %s asks\n\n%s\n\n---\nTo answer, reply to this issue in plain words. Only %s's replies count.\n" %
                       (n, open(q).read().strip(), a.owner))
@@ -1336,6 +1497,24 @@ def main():
     if rs and "units" not in rs:
         migrate(a, rs)
     rs.setdefault("units", {})
+    if "qissue" not in rs:  # questions posted before this was recorded were posted on the issue then in use
+        rs["qissue"] = {n: rs["issue"] for n in rs.get("questions") or {}} if rs.get("issue") else {}
+    a.rs = rs
+    a.pulls, pulls_err, a.pulls_ok = [], None, True
+    try:
+        a.pulls = gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []
+    except Exception as e:  # raised after the work below, as before
+        pulls_err, a.pulls_ok = e, False
+    keep = (now() - timedelta(days=4)).strftime("%Y-%m-%d")
+    opened = {k: d for k, d in (rs.get("pr_opened") or {}).items() if d >= keep}
+    for pr in a.pulls:
+        d = local_date(pr.get("created_at") or "")
+        if d and pr.get("number"):
+            opened[str(pr["number"])] = d
+    if opened != rs.get("pr_opened", {}):
+        rs["pr_opened"] = opened
+        save()
+    rollover(a, rs)
     issue, new = find_issue(a, rs)
     if new or rs.get("issue") != issue:
         rs["issue"] = issue
@@ -1344,12 +1523,15 @@ def main():
             old = gh("GET", "repos/%s/issues/%s/comments?per_page=100" % (a.repo, issue)) or []
             rs["comment_id"] = max([c["id"] for c in old] or [0])
         save()
-    a.rs = rs
-    a.pulls, pulls_err, a.pulls_ok = [], None, True
+    for step in (finish_roll, run_pins):
+        try:
+            step(a, rs)
+        except Exception as e:
+            a.errors.append(str(e))
     try:
-        a.pulls = gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []
-    except Exception as e:  # raised after the work below, as before
-        pulls_err, a.pulls_ok = e, False
+        close_old_status(a, rs, issue)
+    except Exception as e:
+        a.errors.append(str(e))
     prs = {}
     for pr in a.pulls:
         m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"]["ref"])
@@ -1360,6 +1542,7 @@ def main():
             post_overview(a, rs, issue, prs)
         take_answers(a, rs, issue)
         take_home_answers(a, rs, issue)
+        take_old_answers(a, rs)
         post_events(a, rs, issue)
         collect_starts(a, rs)
         flush(a, rs)
