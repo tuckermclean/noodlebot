@@ -2736,5 +2736,70 @@ qok "S07-AC-5: the update's event names the unit that waited longer and still wa
 qok "S07-AC-5: B01's event names A04, which waited longer and still waited" qev_has 'B01 ' 'ahead of .*qa/A04'
 qok "S07-AC-5: A04's event, the last, names nobody ahead" qev_hasnt 'A04 ' 'ahead of'
 qstop
+
+# -- Phase R: S06's resume takes a turn (S07-AC-6). A02 (qa) starts first and goes idle by the usage limit (its fake claude writes
+# an init line and a rejected rate_limit_event that reset 300 s ago, and waits); B01 (qb) is a fresh S node. Gap 4 s.
+# A resume (claude --resume, found by its argument) is logged as "<ID>.r" in $q/starts.log.
+qresetup() { # <tag> : as qsetup A02:S / B01:S, with a claude that can go idle and resume
+	qsetup "$1" "A02:S" "B01:S"
+	cp "$src"/limit-resume.md "$qnb/scheduler/"
+	sed "s|@Q@|$q|g" >"$q/bin/claude" <<'EOF'
+#!/bin/sh
+q=@Q@
+r=$(pwd -P | sed 's#.*/worktrees/\([^/]*\)/.*#\1#')
+case " $* " in
+*" --resume "*) id=$(basename "$(pwd -P)").r; res=1 ;;
+*) id=${2##* }; res=0 ;;
+esac
+echo "$(date +%s.%N) $r $id" >>"$q/starts.log"
+if [ $res = 1 ]; then
+	echo '{"type":"system","subtype":"init","session_id":"sid-resumed","resumed_run":true}'
+elif [ "$id" = A02 ]; then
+	echo '{"type":"system","subtype":"init","session_id":"sid-A02"}'
+	t=$(( $(date +%s) - 300 ))
+	echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":'$t',"rateLimitType":"five_hour"}}'
+fi
+while [ ! -e "$q/end" ] && [ ! -e "$q/end.$id" ]; do sleep 0.2; done
+exit 0
+EOF
+	chmod +x "$q/bin/claude"
+}
+qpid() { cat "$qd/state/qa/node/A02/session.pid" 2>/dev/null; }
+qresev() { grep -E 'resuming session A02' "$(qlog qa)"; }
+qres_has() { qresev | grep -qE "$1"; }
+
+# R1: neither the competing fresh node nor the starvation limit is in play: the resume goes before B01. While the gap has
+# not passed after A02's start, the idle session is neither stopped nor resumed.
+qresetup R1
+qseed qa node/A02 100; qseed qb node/B01 50
+qboth 1 1 SCHED_START_GAP=4 SCHED_STARVE=3600
+qopen
+qwait_n 10 1; sleep 2.2
+pid_a=$(qpid)
+qok "S07-AC-6: (precondition) A02 started first, and its log has the usage-limit rejection" sh -c "[ \"\$(sed -n 1p '$q/starts.log' | awk '{ print \$3 }')\" = A02 ] && grep -q rate_limit_event '$qd/state/qa/node/A02/session.jsonl'"
+qok "S07-AC-6: while the gap has not passed the idle session is not resumed (no resume start)" test "$(qn)" = 1
+qok "S07-AC-6: while the gap has not passed the idle session is not stopped (same process, still alive, no session.rc)" sh -c "[ -n '$pid_a' ] && kill -0 '$pid_a' 2>/dev/null && [ ! -e '$qd/state/qa/node/A02/session.rc' ] && [ ! -e '$qd/state/qa/node/A02/resumed' ]"
+qwait_n 14 3; sleep 0.5
+qok "S07-AC-6: the resume goes before the fresh node (resumed unit before fresh S): A02, then its resume, then B01" test "$(qseq)" = "A02 A02.r B01"
+qok "S07-AC-6: the resume start is a gap (4 s) after A02's start, and B01 a gap after the resume" qgap_n 3 3.6
+qok "S07-AC-6: the idle session was resumed in its own process: a new session pid" sh -c "[ -n '$pid_a' ] && [ \"\$(cat '$qd/state/qa/node/A02/session.pid')\" != '$pid_a' ]"
+qok "S07-AC-6: the node's starts is unchanged by the resume (1)" test "$(cat "$qd/state/qa/node/A02/starts" 2>/dev/null)" = 1
+qok "S07-AC-6: the resume was done as S06 says (status log: resuming session A02 ... start not counted)" qres_has 'after the usage limit.*start not counted'
+qok "S07-AC-6: the resume's event carries the turn text: kind resumed and its wait" qres_has '; turn: resumed, waited [^,;]+'
+qok "S07-AC-6: the resume's event names the unit that waited longer and still waited (B01)" qres_has 'ahead of .*qb/B01'
+qok "S07-AC-6: the resume event has no starvation note (nobody was past the limit)" test -n "$(qresev)" -a -z "$(qresev | grep -i starvation)"
+qstop
+
+# R2: B01 has waited longer than SCHED_STARVE: it goes before the resume.
+qresetup R2
+qseed qa node/A02 200; qseed qb node/B01 100
+qboth 1 1 SCHED_START_GAP=4 SCHED_STARVE=60
+qopen
+qwait_n 14 3; sleep 0.5
+qok "S07-AC-6: a fresh node past the starvation limit goes before the resume: A02, B01, then the resume" test "$(qseq)" = "A02 B01 A02.r"
+qok "S07-AC-6: the starved node's start is a gap after A02's, the resume a gap after that" qgap_n 3 3.6
+qok "S07-AC-6: the resume still leaves the node's starts unchanged (1)" test "$(cat "$qd/state/qa/node/A02/starts" 2>/dev/null)" = 1
+qok "S07-AC-6: the resume's event carries the turn text (kind resumed, its wait)" qres_has '; turn: resumed, waited [^,;]+'
+qstop
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
