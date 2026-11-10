@@ -278,6 +278,67 @@ err P01-AC-2 GET /v1/nothing 404
 err P01-AC-2 GET /nothing 404
 err P01-AC-2 GET /v1/repos/acme/alpha/nothing 404
 
+# ================= P01-AC-4: nodes =================
+# S2 contract (fields named once here; the schemas "nodes" and "node" declare them):
+#  Resource "nodes"  GET /v1/repos/<owner>/<name>/nodes  ->  {"version":1, "nodes":[<node>...]}, in graph order.
+#  Resource "node"   GET /v1/repos/<owner>/<name>/nodes/<ID>  ->  {"version":1, <node fields flat>}; unknown ID is 404.
+#  <node> fields: "id", "name", "deps" (list of IDs), "track" ("now"|"later"), "starts" (int, starts used, 0 if none),
+#    "state" (merged|pr-open|running|idle-limit|failed|question|answered|waiting-pr|held|ready|waiting), and always:
+#    "pr" (int or null: the open PR's number, pr-open only), "mergeable" (string or null: MERGEABLE, CONFLICTING...,
+#    pr-open only), "reason" (string or null: first line of FAILED, failed only), "question" (string or null: first
+#    line of QUESTION.md, question only), "issue_url" (string or null: https://github.com/<owner>/<name>/issues/<N>,
+#    the home issue from node/<ID>/issue else the status issue, question only), "spec_pr" (int or null: WAITING-PR's
+#    number, waiting-pr only), "waiting_on" (list of dep IDs not yet merged; [] unless state is waiting).
+get P01-AC-4 /v1/repos/acme/alpha/nodes nodes
+cp "$tmp/resp" "$tmp/nodes.json"
+if [ "$(jx "[n['id'] for n in d['nodes']]")" = "['N01', 'N02', 'N03', 'N04', 'N05', 'N06', 'N07', 'N08', 'N09', 'N10', 'N11']" ]; then pass "P01-AC-4: /nodes gives each node of the graph once, in graph order"; else fail "P01-AC-4: /nodes ids: $(jx "[n.get('id') for n in d['nodes']]")"; fi
+if [ "$(jx "[(n['name'], n['deps'], n['track']) for n in d['nodes'] if n['id'] in ('N10', 'N02')]")" = "[('pr-open-one', ['N01'], 'now'), ('waiting-one', ['N09', 'N03'], 'later')]" ]; then pass "P01-AC-4: nodes give name, deps and track"; else fail "P01-AC-4: name, deps, track: $(jx "[(n.get('name'), n.get('deps'), n.get('track')) for n in d['nodes']]")"; fi
+nodefield() { # nodefield <ID> <python expr over n, the node>: true when the node's entry in the list satisfies it
+	jx "[n for n in d['nodes'] if n['id'] == '$1'][0] and ($2)"
+}
+node_is() { # node_is <ID> <python expr over n> <what>: checks the list entry and GET .../nodes/<ID>
+	cp "$tmp/nodes.json" "$tmp/resp"
+	if [ "$(nodefield "$1" "$2")" = True ]; then pass "P01-AC-4: /nodes: $1 $3"; else fail "P01-AC-4: /nodes: $1 $3; got $(jx "[n for n in d['nodes'] if n.get('id') == '$1']")"; fi
+	if get P01-AC-4 /v1/repos/acme/alpha/nodes/$1 node; then
+		if [ "$(jx "(lambda n: $2)(d)")" = True ]; then pass "P01-AC-4: /nodes/$1: $3"; else fail "P01-AC-4: /nodes/$1: $3; got $(head -c 300 "$tmp/resp")"; fi
+	fi
+}
+set_usage open
+get P01-AC-4 /v1/repos/acme/alpha/nodes nodes; cp "$tmp/resp" "$tmp/nodes.json"
+node_is N01 "n['state'] == 'merged' and n['starts'] == 1 and n['pr'] is None" "is merged, 1 start"
+node_is N02 "n['state'] == 'pr-open' and n['pr'] == 12 and n['mergeable'] == 'MERGEABLE' and n['starts'] == 1" "is pr-open, PR 12 MERGEABLE"
+node_is N11 "n['state'] == 'pr-open' and n['pr'] == 14 and n['mergeable'] == 'CONFLICTING' and n['starts'] == 2" "is pr-open, PR 14 CONFLICTING, 2 starts"
+node_is N03 "n['state'] == 'running' and n['starts'] == 1" "is running (a live session)"
+node_is N04 "n['state'] == 'idle-limit' and n['starts'] == 1" "is idle-limit (a live session whose log ends at the usage limit)"
+node_is N05 "n['state'] == 'failed' and n['reason'] == 'tests do not pass after 2 starts' and n['starts'] == 2" "is failed with the first line of FAILED"
+node_is N06 "n['state'] == 'question' and n['question'] == 'Which database should the cache use?' and n['issue_url'] == 'https://github.com/acme/alpha/issues/77'" "is a question with the first line of QUESTION.md and its home issue's URL"
+node_is N07 "n['state'] == 'answered'" "is answered"
+node_is N08 "n['state'] == 'waiting-pr' and n['spec_pr'] == 90" "is waiting-pr with spec PR 90"
+node_is N09 "n['state'] == 'ready' and n['starts'] == 0" "is ready with 0 starts while the throttle is open"
+node_is N10 "n['state'] == 'waiting' and sorted(n['waiting_on']) == ['N03', 'N09']" "is waiting on N03 and N09"
+node_is N01 "n['waiting_on'] == [] and n['reason'] is None and n['question'] is None and n['issue_url'] is None and n['spec_pr'] is None" "has the state-specific fields empty"
+set_usage holding
+get P01-AC-4 /v1/repos/acme/alpha/nodes nodes; cp "$tmp/resp" "$tmp/nodes.json"
+node_is N09 "n['state'] == 'held'" "is held while usage.json holds"
+node_is N10 "n['state'] == 'waiting'" "stays waiting while usage.json holds"
+node_is N02 "n['state'] == 'pr-open'" "stays pr-open while usage.json holds"
+set_usage open
+get P01-AC-4 /v1/repos/acme/alpha/nodes nodes; cp "$tmp/resp" "$tmp/nodes.json"
+node_is N09 "n['state'] == 'ready'" "is ready again once usage.json is open"
+# beta
+get P01-AC-4 /v1/repos/acme/beta/nodes nodes
+if [ "$(jx "[(n['id'], n['state'], n['starts'], n['waiting_on']) for n in d['nodes']]")" = "[('B01', 'ready', 0, []), ('B02', 'waiting', 0, ['B01'])]" ]; then pass "P01-AC-4: beta's nodes are B01 ready and B02 waiting on B01"; else fail "P01-AC-4: beta's nodes: $(jx "d.get('nodes')")"; fi
+get P01-AC-4 /v1/repos/acme/beta/nodes/B02 node
+err P01-AC-4 GET /v1/repos/acme/alpha/nodes/N99 404
+err P01-AC-4 GET /v1/repos/acme/alpha/nodes/B01 404
+err P01-AC-4 GET /v1/repos/acme/ghost/nodes 404
+err P01-AC-4 POST /v1/repos/acme/alpha/nodes 405
+for res in nodes node; do
+	req GET /v1/schema/$res
+	if [ "$code" = 200 ] && [ -f "$schemas/$res.json" ] && python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])) else 1)' "$tmp/resp" "$schemas/$res.json" 2>/dev/null; then pass "P01-AC-8: /v1/schema/$res serves scheduler/api-schema/v1/$res.json"; else fail "P01-AC-8: /v1/schema/$res answered $code or differs from the committed schema"; fi
+done
+# Not encoded: the question URL falling back to the status issue (no fixture node has a QUESTION.md without node/<ID>/issue).
+
 # AC-2 end-of-test checks: later slices append their cases ABOVE this block (marked by the line below).
 # --- end of cases; the final checks follow ---
 snap >"$tmp/snap.after"
