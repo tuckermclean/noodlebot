@@ -33,13 +33,18 @@ die() { echo "deploy.sh: $*" >&2; exit 2; }
 
 max_tries=3
 
+# version <sha>: the version of a commit, git describe --tags --always; "unknown" when that fails.
+version() {
+	v=$(git -C "$live" describe --tags --always "$1" 2>/dev/null 9>&-) && [ -n "$v" ] && echo "$v" || echo unknown
+}
+
 rejected() { grep -qx "$1" "$sd/rejected" 2>/dev/null; }
 
 # reject <sha> <reason>: record the sha so it is not tried again, and print the one status line.
 reject() {
 	echo "$1" >>"$sd/rejected"
 	rm -f "$sd/tries" "$sd/passed"
-	echo "not deployed: $1 $2"
+	echo "not deployed: $1 (version $(version "$1")) $2"
 }
 
 cleanup() {
@@ -51,7 +56,7 @@ cleanup() {
 }
 
 do_deploy() {
-	timeout 60 git -C "$live" fetch -q origin main >/dev/null 2>&1 9>&- || die "git fetch failed in $live"
+	timeout 60 git -C "$live" fetch -q --tags origin main >/dev/null 2>&1 9>&- || die "git fetch failed in $live"
 	new=$(git -C "$live" rev-parse --verify -q origin/main^{commit}) || die "no origin/main in $live"
 	old=$(git -C "$live" rev-parse --verify -q HEAD) || die "no HEAD in $live"
 	[ "$new" = "$old" ] && return 0
@@ -127,7 +132,7 @@ run_test() {
 fast_forward() {
 	if ! git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1 9>&-; then
 		pn=$((pn + 1))
-		[ "$pn" = 1 ] && echo "not deployed: $new cannot fast-forward $live (will retry the fast-forward)"
+		[ "$pn" = 1 ] && echo "not deployed: $new (version $(version "$new")) cannot fast-forward $live (will retry the fast-forward)"
 		if [ "$pn" -ge "$max_tries" ]; then
 			echo "deploy.sh: cannot fast-forward $live to $new ($pn times); recorded, not tried again" >&2
 			echo "$new" >>"$sd/rejected"
@@ -140,7 +145,7 @@ fast_forward() {
 	fi
 	rm -f "$sd/tries" "$sd/passed"
 	echo "$old" >"$sd/previous"
-	echo "deployed $old..$new"
+	echo "deployed $old..$new (version $(version "$new"))"
 }
 
 do_rollback() {
@@ -150,7 +155,7 @@ do_rollback() {
 	[ "$cur" = "$prev" ] && return 0
 	git -C "$live" reset -q --hard "$prev" >/dev/null 2>&1 9>&- || die "cannot reset $live to $prev"
 	echo "$cur" >>"$sd/rejected"
-	echo "rolled back $cur..$prev"
+	echo "rolled back $cur..$prev (version $(version "$prev"))"
 }
 
 main() {
