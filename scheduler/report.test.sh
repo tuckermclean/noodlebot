@@ -566,6 +566,942 @@ ok "S03-AC-8: with no graph.yaml the reply says it is recorded" nonempty "$(repl
 ok "S03-AC-8: with no graph.yaml the reply claims no timing" lacks_seconds "$(reply7 R01)"
 ok "S03-AC-8: with no graph.yaml the item exists and claims no timing" sh -c "[ -n \"\$1\" ] && ! printf '%s\n' \"\$1\" | grep -qi 'within seconds'" _ "$(item7 R01)"
 
+# U01-AC-1, U01-AC-2, U01-AC-9: each unit's home issue and its milestones. Own database, own fake gh (it keeps issue
+# labels, honours the label query, and fails a call on demand: $tmp/ufail holds a regex matched against
+# "METHOD path title-or-first-body-line"), and a fixture clone whose origin/main has node specs with zero, one and two
+# issues on their **Resolves:** line.
+ubin=$tmp/ubin udb=$tmp/ugh.json uclone=$tmp/uclone
+mkdir -p "$ubin" "$uclone/nodes"
+python3 -I -c "
+import json
+issues = {str(n): {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n} for n in range(41, 51)}
+json.dump({'issues': issues, 'comments': [], 'labels': [], 'pulls': [], 'checks': {}, 'reactions': [], 'next': 200}, open('$udb', 'w'))"
+cat >"$ubin/gh" <<EOF
+#!/usr/bin/env python3
+import json, os, re, sys
+db = json.load(open("$udb"))
+a = sys.argv[1:]
+assert a[0] == "api" and a[1] == "-X", a
+method, path = a[2], a[3]
+body = json.load(sys.stdin) if "--input" in a else None
+p = path.split("?")[0]
+open("$tmp/ucalls", "a").write("%s %s\n" % (method, p))
+mode = open("$tmp/ufail").read().strip() if os.path.exists("$tmp/ufail") else ""
+desc = "%s %s" % (method, p)
+if body and "title" in body: desc += " " + body["title"]
+elif body and "body" in body: desc += " " + body["body"].split("\n")[0]
+if mode and re.search(mode, desc):
+    print("HTTP 502: injected failure for " + desc, file=sys.stderr); sys.exit(1)
+out = None
+if method == "POST" and p.endswith("/labels"):
+    if body["name"] in db["labels"]:
+        print("HTTP 422: already_exists", file=sys.stderr); sys.exit(1)
+    db["labels"].append(body["name"]); out = {}
+elif method == "POST" and p.endswith("/issues"):
+    n = str(db["next"]); db["next"] += 1
+    db["issues"][n] = dict(body, number=int(n), state="open", node_id="I_" + n)
+    db["issues"][n].setdefault("labels", []); out = db["issues"][n]
+elif method == "GET" and re.search(r"/issues\?labels=", path):
+    lab = re.search(r"labels=([^&]+)", path).group(1)
+    out = [i for i in db["issues"].values() if i["state"] == "open" and lab in i["labels"]]
+elif re.search(r"/issues/\d+$", p):
+    n = p.rsplit("/", 1)[1]
+    if n not in db["issues"]:
+        print("HTTP 404: no issue " + n, file=sys.stderr); sys.exit(1)
+    if method == "PATCH": db["issues"][n].update(body)
+    out = db["issues"][n]
+elif method == "POST" and p.endswith("/comments"):
+    n = p.split("/")[-2]
+    c = {"id": len(db["comments"]) + 1, "issue": n, "body": body["body"], "user": {"login": "bot", "type": "Bot"},
+         "author_association": "NONE", "created_at": "2026-02-01T00:00:00Z", "html_url": "https://x/%s/%d" % (n, len(db["comments"]) + 1)}
+    db["comments"].append(c); out = c
+elif method == "POST" and p.endswith("/reactions"):
+    db["reactions"].append([p, body]); out = {}
+elif method == "GET" and "/comments" in p:
+    n = p.split("/")[-2]
+    out = [c for c in db["comments"] if c["issue"] == n]
+elif method == "GET" and re.search(r"/commits/[^/]+/check-runs$", p):
+    out = {"check_runs": db["checks"].get(p.split("/")[-2], [])}
+elif method == "GET" and p.endswith("/pulls"):
+    out = db["pulls"]
+elif p == "graphql":
+    out = {}
+else:
+    print("unexpected " + method + " " + path, file=sys.stderr); sys.exit(1)
+json.dump(db, open("$udb", "w"))
+print(json.dumps(out))
+EOF
+chmod +x "$ubin/gh"
+mkspec() { # <ID> <name> <resolves text or empty>
+	{
+		printf '# %s - %s\n\n| Track | Deps | Unlocks | Size |\n|---|---|---|---|\n| now | none | none | S |\n\n**Owns:** nothing\n' "$1" "$2"
+		if [ -n "$3" ]; then printf '**Resolves:** %s\n' "$3"; fi
+		printf '\n## Purpose\nx\n'
+	} >"$uclone/nodes/$1-$2.md"
+}
+mkspec T01 zero-issues ''
+mkspec T02 one-issue '#41'
+mkspec T03 two-issues '#42, #43'
+mkspec T05 zero-again ''
+mkspec T06 six-one '#46'
+mkspec T07 seven-one '#47'
+mkspec T08 eight-one '#48'
+mkspec T09 nine-one '#50'
+git -C "$uclone" init -q -b main && git -C "$uclone" add nodes &&
+	git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+urun() { env PATH="$ubin:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$1" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"; }
+uq() { python3 -I -c "import json,sys; db=json.load(open('$udb')); print(eval(sys.argv[1]))" "$1" 2>/dev/null; }
+# ucount <issue> <regex>: the comments on the issue matching the regex (re.search, no flags; \A is the start of the body).
+ucount() { P="$2" python3 -I -c "
+import json, os, re
+db = json.load(open('$udb'))
+print(len([c for c in db['comments'] if c['issue'] == '$1' and re.search(os.environ['P'], c['body'])]))"; }
+# ucontains <issue> <file>: the comments on the issue holding the file's whole text.
+ucontains() { P=$(cat "$2") python3 -I -c "
+import json, os
+db = json.load(open('$udb'))
+print(len([c for c in db['comments'] if c['issue'] == '$1' and os.environ['P'].strip() in c['body']]))"; }
+unum() { ucount "$1" ''; }
+ulast() { uq "[c['body'] for c in db['comments'] if c['issue'] == '$1'][-1]"; }
+ufirst() { uq "[c['body'] for c in db['comments'] if c['issue'] == '$1'][0]"; }
+ubuilds() { uq "len([i for i in db['issues'].values() if i['title'] == '$1'])"; }
+ustage_all() { [ -n "$1" ] && [ "$(unum "$1")" -gt 0 ] && [ "$(unum "$1")" = "$(ucount "$1" '\A\*\*Stage:\*\*')" ]; }
+uowner() {
+	python3 -I -c "
+import json, sys
+db = json.load(open('$udb'))
+db['comments'].append({'id': len(db['comments']) + 1, 'issue': sys.argv[1], 'body': sys.argv[2], 'user': {'login': 'owner', 'type': 'User'},
+    'author_association': 'OWNER', 'created_at': '2026-02-02T00:00:00Z', 'html_url': 'https://x/u'})
+json.dump(db, open('$udb', 'w'))" "$1" "$2"
+}
+ev() { echo "2026-02-01T00:00:00Z open=[] merged-prs=[]; $1" >>"$2/status.log"; }
+
+ustate=$tmp/ustate
+mkdir -p "$ustate/node/T01" "$ustate/node/T02" "$ustate/node/T03" "$ustate/issue/45"
+: >"$ustate/status.log"
+urun "$ustate"
+ustatus=$(uq "[i['number'] for i in db['issues'].values() if 'noodlebot-status' in i['labels']][0]"); ustatus=${ustatus:-200}
+ev "started T01 (zero-issues) in /wt, pid 1, start 1 of 2" "$ustate"
+ev "started T02 (one-issue) in /wt, pid 2, start 1 of 2" "$ustate"
+ev "started T03 (two-issues) in /wt, pid 3, start 1 of 2" "$ustate"
+ev "started triage of #45 in /wt, pid 4, start 1 of 2" "$ustate"
+ev "session T01 (pid 1) running, log 5 bytes" "$ustate"
+ev "usage ok, nothing to do" "$ustate"
+ev "stopped session T04 (pid 9)" "$ustate"
+ev "released T04 (answered)" "$ustate"
+ev "throttle hold: 5-hour window projected high" "$ustate"
+urun "$ustate"; rc1=$?
+urun "$ustate"; urun "$ustate"
+build1=$(cat "$ustate/node/T01/issue" 2>/dev/null)
+ok "U01-AC-1: the runs succeed" test "$rc1" = 0
+ok "U01-AC-1: a triage's home issue is the issue it triages (issue/45/issue holds 45)" test "$(cat "$ustate/issue/45/issue" 2>/dev/null)" = 45
+ok "U01-AC-1: a node with one Resolves issue has it as home (node/T02/issue holds 41)" test "$(cat "$ustate/node/T02/issue" 2>/dev/null)" = 41
+ok "U01-AC-1: a node with two Resolves issues has the first as home (node/T03/issue holds 42)" test "$(cat "$ustate/node/T03/issue" 2>/dev/null)" = 42
+ok "U01-AC-1: the other issue on the line is linked in the first milestone comment" sh -c "printf '%s\n' \"\$1\" | grep -qF '#43'" _ "$(ufirst 42)"
+ok "U01-AC-1: a node with no Resolves line gets one Build issue, over three runs" test "$(ubuilds 'Build T01 zero-issues')" = 1
+ok "U01-AC-1: the Build issue is labelled noodlebot-unit" test "$(uq "[i['labels'] for i in db['issues'].values() if i['title'] == 'Build T01 zero-issues'][0]")" = "['noodlebot-unit']"
+ok "U01-AC-1: the Build issue is the node's home (node/T01/issue)" test -n "$build1" -a "$build1" = "$(uq "[i['number'] for i in db['issues'].values() if i['title'] == 'Build T01 zero-issues'][0]")"
+ok "U01-AC-1: no Build issue for a node that has a Resolves issue" test "$(uq "len([i for i in db['issues'].values() if i['title'].startswith('Build T02') or i['title'].startswith('Build T03')])")" = 0
+ok "U01-AC-2: a start is one comment on the node's home issue (one Resolves issue)" test "$(unum 41)" = 1
+ok "U01-AC-2: a start is one comment on the home issue (two Resolves issues)" test "$(unum 42)" = 1
+ok "U01-AC-2: a start is one comment on the Build issue" test "$(unum "$build1")" = 1
+ok "U01-AC-2: a triage's start is one comment on the triaged issue" test "$(unum 45)" = 1
+ok "U01-AC-2: each start comment begins with a Stage line" test "$(ucount 41 '\A\*\*Stage:\*\*')" = 1
+ok "U01-AC-2: the start comment says its start count" test "$(ucount 41 '1 of 2')" = 1
+ok "U01-AC-2: ticks, notes and other units' events add no other comment (all home issues, three runs)" test "$(unum 41)$(unum 42)$(unum 45)$(unum "$build1")" = "1111"
+for i in 41 42 45 "$build1"; do ok "U01-AC-2: every comment on issue $i starts with a Stage line" ustage_all "$i"; done
+
+printf 'Q1: which way?\nRecommendation: left.\nQ2: unique-t02-line\n' >"$ustate/node/T02/QUESTION.md"
+printf 'Q1: triage question?\nq-unique-triage-line\n' >"$ustate/issue/45/QUESTION.md"
+ev "session T02 ended (rc 0) with QUESTION.md" "$ustate"
+ev "triage of #45 ended (rc 0) with QUESTION.md" "$ustate"
+urun "$ustate"; urun "$ustate"; urun "$ustate"
+ok "U01-AC-2: the question is one comment on the home issue holding the whole QUESTION.md, over three runs" test "$(ucontains 41 "$ustate/node/T02/QUESTION.md")" = 1
+ok "U01-AC-2: the question comment begins with a Stage line" test "$(ucount 41 '\A\*\*Stage:\*\*(?s:.*)Q2: unique-t02-line')" = 1
+ok "U01-AC-2: the question comment has the heading '## T02 asks'" test "$(ucount 41 '(?m)^## T02 asks$')" = 1
+ok "U01-AC-2: the node's issue holds the start and the question, nothing else" test "$(unum 41)" = 2
+ok "U01-AC-2: a triage's question is one comment on the triaged issue with the whole QUESTION.md" test "$(ucontains 45 "$ustate/issue/45/QUESTION.md")" = 1
+ok "U01-AC-2: a triage's question has the heading '## #45 asks'" test "$(ucount 45 '(?m)^## #45 asks$')" = 1
+ok "U01-AC-2: the triaged issue holds the start and the question, nothing else" test "$(unum 45)" = 2
+for i in 41 45; do ok "U01-AC-2: every comment on issue $i starts with a Stage line (question)" ustage_all "$i"; done
+
+uowner "$ustatus" "T02: go ahead"
+urun "$ustate"; rc2=$?
+urun "$ustate"; urun "$ustate"
+ok "U01-AC-2: an answer on the status issue is recorded (exit 3)" sh -c "[ $rc2 = 3 ] && [ -e '$ustate/node/T02/ANSWER.md' ]"
+ok "U01-AC-2: answer received is one comment on the home issue, over three runs" test "$(unum 41)" = 3
+ok "U01-AC-2: the answer-received comment begins with a Stage line and is not the question" sh -c "printf '%s\n' \"\$1\" | head -n 1 | grep -q '^\*\*Stage:\*\*' && ! printf '%s\n' \"\$1\" | grep -q unique-t02-line" _ "$(ulast 41)"
+
+rm "$ustate/node/T02/QUESTION.md" "$ustate/node/T02/ANSWER.md"; mkdir "$ustate/node/T02/answered"
+ev "started T02 (one-issue) in /wt, pid 5, start 2 of 2" "$ustate"
+urun "$ustate"; urun "$ustate"; urun "$ustate"
+ok "U01-AC-2: a resume is one comment on the home issue, over three runs" test "$(unum 41)" = 4
+ok "U01-AC-2: the resume comment begins with a Stage line, says resumed and its start count" sh -c "printf '%s\n' \"\$1\" | head -n 1 | grep -q '^\*\*Stage:\*\*' && printf '%s\n' \"\$1\" | grep -qi resum && printf '%s\n' \"\$1\" | grep -q '2 of 2'" _ "$(ulast 41)"
+ok "U01-AC-2: the first start comment still says 1 of 2 and is not repeated" test "$(ucount 41 '1 of 2')" = 1
+
+printf '2026-02-03T00:00:00Z 2 starts with no PR\nsecond-line-detail-two\n' >"$ustate/node/T03/FAILED"
+ev "session T03 ended (rc 0), no PR, no QUESTION.md, 2 starts used: wrote FAILED" "$ustate"
+urun "$ustate"; urun "$ustate"; urun "$ustate"
+ok "U01-AC-2: FAILED is one comment on the home issue, over three runs" test "$(unum 42)" = 2
+ok "U01-AC-2: the FAILED comment begins with a Stage line and holds the first line of FAILED, not the others" sh -c "printf '%s\n' \"\$1\" | head -n 1 | grep -q '^\*\*Stage:\*\*' && printf '%s\n' \"\$1\" | grep -qF '2 starts with no PR' && ! printf '%s\n' \"\$1\" | grep -q second-line-detail-two" _ "$(ulast 42)"
+ok "U01-AC-2: the other homes got nothing from the FAILED event or the ticks" test "$(unum 41)$(unum 45)$(unum "$build1")" = "421"
+ok "U01-AC-1: the recorded homes are kept after all the runs" test "$(cat "$ustate/node/T02/issue")$(cat "$ustate/node/T03/issue")$(cat "$ustate/issue/45/issue")$(cat "$ustate/node/T01/issue")" = "414245$build1"
+ok "U01-AC-1: still one Build issue after all the runs" test "$(ubuilds 'Build T01 zero-issues')" = 1
+for i in 41 42 45 "$build1"; do ok "U01-AC-2: every comment on issue $i starts with a Stage line (all milestones)" ustage_all "$i"; done
+
+# U01-AC-9: a failed GitHub call while creating a Build issue or posting a milestone: logged, non-zero, retried once.
+ustate2=$tmp/ustate2
+mkdir -p "$ustate2/node/T05" "$ustate2/node/T06" "$ustate2/node/T07"
+: >"$ustate2/status.log"
+rm -f "$tmp/ufail"
+urun "$ustate2"
+ev "started T05 (zero-again) in /wt, pid 1, start 1 of 2" "$ustate2"
+ev "started T06 (six-one) in /wt, pid 2, start 1 of 2" "$ustate2"
+echo '/issues Build T05' >"$tmp/ufail"
+urun "$ustate2"; rcb=$?
+ok "U01-AC-9: a failing Build issue creation exits non-zero" test "$rcb" != 0
+ok "U01-AC-9: and logs the error on stderr" test -s "$tmp/uerr"
+ok "U01-AC-9: and no Build issue exists yet" test "$(ubuilds 'Build T05 zero-again')" = 0
+rm -f "$tmp/ufail"
+urun "$ustate2"; rcb2=$?
+urun "$ustate2"
+ok "U01-AC-9: the next run succeeds and creates the Build issue once" sh -c "[ $rcb2 = 0 ] && [ \"\$1\" = 1 ]" _ "$(ubuilds 'Build T05 zero-again')"
+b5=$(cat "$ustate2/node/T05/issue" 2>/dev/null)
+ok "U01-AC-9: its start milestone is posted once, over the runs" test "$(unum "$b5")" = 1
+ok "U01-AC-9: the other node's start milestone is posted once, over the runs" test "$(unum 46)" = 1
+
+printf 'Q1: retry me?\nretry-unique-line\n' >"$ustate2/node/T06/QUESTION.md"
+ev "session T06 ended (rc 0) with QUESTION.md" "$ustate2"
+echo 'issues/46/comments' >"$tmp/ufail"
+urun "$ustate2"; rcq=$?
+ok "U01-AC-9: a failing question post exits non-zero with the error on stderr" sh -c "[ $rcq != 0 ] && [ -s '$tmp/uerr' ]"
+ok "U01-AC-9: the question is not on the issue yet" test "$(ucontains 46 "$ustate2/node/T06/QUESTION.md")" = 0
+rm -f "$tmp/ufail"
+urun "$ustate2"; rcq2=$?
+urun "$ustate2"
+ok "U01-AC-9: the next run posts the question once" sh -c "[ $rcq2 = 0 ] && [ \"\$1\" = 1 ]" _ "$(ucontains 46 "$ustate2/node/T06/QUESTION.md")"
+
+ev "started T07 (seven-one) in /wt, pid 3, start 1 of 2" "$ustate2"
+echo 'issues/47/comments' >"$tmp/ufail"
+urun "$ustate2"; rcm=$?
+ok "U01-AC-9: a failing start post exits non-zero with the error on stderr" sh -c "[ $rcm != 0 ] && [ -s '$tmp/uerr' ]"
+ok "U01-AC-9: the start milestone is not on the issue yet" test "$(unum 47)" = 0
+rm -f "$tmp/ufail"
+urun "$ustate2"; rcm2=$?
+urun "$ustate2"; urun "$ustate2"
+ok "U01-AC-9: the next run posts the start once, over three runs" sh -c "[ $rcm2 = 0 ] && [ \"\$1\" = 1 ]" _ "$(unum 47)"
+
+# U01-AC-9: the first run after the change, from a report.json of the old version, posts no milestone for what came before.
+ustate3=$tmp/ustate3
+mkdir -p "$ustate3/node/T08" "$ustate3/node/T09"
+ev "started T08 (eight-one) in /wt, pid 1, start 1 of 2" "$ustate3"
+ev "session T08 ended (rc 0) with QUESTION.md" "$ustate3"
+printf 'Q1: from before?\nbefore-unique-line\n' >"$ustate3/node/T08/QUESTION.md"
+qkey=$(stat -c %Y "$ustate3/node/T08/QUESTION.md")
+maxid=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": %s, "questions": {"T08": "%s"}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$maxid" "$(wc -c <"$ustate3/status.log")" "$qkey" >"$ustate3/report.json"
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+db['pulls'] = [{'number': 9, 'head': {'ref': 'node/T08-eight-one', 'sha': 'abc123'}}]
+db['checks'] = {'abc123': [{'name': 'test', 'status': 'completed', 'conclusion': 'failure'}]}
+db['comments'].append({'id': len(db['comments']) + 1, 'issue': '9', 'body': 'Fresh review (approve)\nfine', 'user': {'login': 'bot', 'type': 'Bot'},
+    'author_association': 'NONE', 'created_at': '2026-01-01T00:00:00Z', 'html_url': 'u'})
+json.dump(db, open('$udb', 'w'))"
+urun "$ustate3"; rc3=$?
+urun "$ustate3"
+ok "U01-AC-9: the first run after the change succeeds" test "$rc3" = 0
+ok "U01-AC-9: it posts no milestone for a start, a question or an open PR from before (nothing on #48)" test "$(unum 48)" = 0
+ok "U01-AC-9: and nothing on the PR (its one earlier comment only)" test "$(unum 9)" = 1
+ev "started T09 (nine-one) in /wt, pid 2, start 1 of 2" "$ustate3"
+urun "$ustate3"
+ok "U01-AC-9: a start after the change is posted on its home issue" test "$(unum 50)" = 1
+rm -f "$tmp/ufail"
+
+# U01-AC-4, U01-AC-5, U01-AC-7: answers on home issues, answers on the status issue, the status issue linking questions.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+for n in range(51, 55):
+    db['issues'][str(n)] = {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n}
+json.dump(db, open('$udb', 'w'))"
+mkspec V04 share-a '#51'
+mkspec V05 share-b '#51'
+mkspec V06 share-triage '#52'
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs2 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+# ubcount <issue> <regex>: the comments by the bot (not the owner or others) on the issue matching the regex.
+ubcount() { P="$2" python3 -I -c "
+import json, os, re
+db = json.load(open('$udb'))
+print(len([c for c in db['comments'] if c['issue'] == '$1' and c['user']['login'] == 'bot' and re.search(os.environ['P'], c['body'])]))"; }
+ubn() { ubcount "$1" ''; }
+# ucomment <issue> <body> <created_at> <login> <association> <type> <url>: a comment by anyone.
+ucomment() {
+	python3 -I -c "
+import json, sys
+db = json.load(open('$udb'))
+db['comments'].append({'id': len(db['comments']) + 1, 'issue': sys.argv[1], 'body': sys.argv[2], 'user': {'login': sys.argv[4], 'type': sys.argv[6]},
+    'author_association': sys.argv[5], 'created_at': sys.argv[3], 'html_url': sys.argv[7]})
+json.dump(db, open('$udb', 'w'))" "$@"
+}
+# ureact <url>: the +1 reactions on the comment with that URL.
+ureact() { uq "len([r for r in db['reactions'] if r[0].endswith('/issues/comments/%d/reactions' % [c['id'] for c in db['comments'] if c['html_url'] == '$1'][0]) and r[1].get('content') == '+1'])"; }
+uowned() { # <issue> <body> <url>: the owner's comment, after every question
+	ucomment "$1" "$2" 2026-02-02T00:00:00Z owner OWNER User "$3"
+}
+
+ustate4=$tmp/ustate4
+mkdir -p "$ustate4/node/V01" "$ustate4/node/V02" "$ustate4/node/V04" "$ustate4/node/V05" "$ustate4/node/V06" "$ustate4/issue/52" \
+	"$ustate4/node/V07" "$ustate4/node/V08" "$ustate4/node/V09" "$ustate4/issue/53"
+: >"$ustate4/status.log"
+rm -f "$tmp/ufail"
+urun "$ustate4"
+printf 'Q1: which way?\nv01-unique-q-line\n' >"$ustate4/node/V01/QUESTION.md"
+ev "session V01 ended (rc 0) with QUESTION.md" "$ustate4"
+urun "$ustate4"; urun "$ustate4"
+h1=$(cat "$ustate4/node/V01/issue" 2>/dev/null)
+ucomment "$h1" "early answer" 2026-01-15T00:00:00Z owner OWNER User https://x/v01-early
+ucomment "$h1" "stranger answer" 2026-02-02T00:00:00Z mallory NONE User https://x/v01-other
+ucomment "$h1" "member answer" 2026-02-02T00:00:00Z owner MEMBER User https://x/v01-member
+ucomment "$h1" "bot answer" 2026-02-02T00:00:00Z owner OWNER Bot https://x/v01-bot
+urun "$ustate4"; urun "$ustate4"; rcv=$?
+ok "U01-AC-4: a comment from before the question, or by someone else (login, association, Bot), is not recorded" test -n "$h1" -a ! -e "$ustate4/node/V01/ANSWER.md"
+ok "U01-AC-4: and gets no reply and no reaction (the home issue holds only the question)" sh -c "[ \"\$1\" = 1 ] && [ \"\$2\" = 0 ]" _ "$(ubn "$h1")" "$(uq "len(db['reactions'])")"
+uowned "$h1" "go left" https://x/v01-own
+urun "$ustate4"; rcv=$?
+urun "$ustate4"; urun "$ustate4"
+ok "U01-AC-4: an owner comment after the question becomes ANSWER.md without an ID prefix, exit 3" sh -c "[ $rcv = 3 ] && grep -q '^go left\$' '$ustate4/node/V01/ANSWER.md'"
+ok "U01-AC-4: ANSWER.md carries the comment's URL" grep -qF 'https://x/v01-own' "$ustate4/node/V01/ANSWER.md"
+ok "U01-AC-4: the comment gets one +1 reaction over three runs" test "$(ureact https://x/v01-own)" = 1
+ok "U01-AC-4: and nothing else gets a reaction" test "$(uq "len(db['reactions'])")" = 1
+ok "U01-AC-4: the answer-received milestone is one comment (with the URL), and there is no other reply" sh -c "[ \"\$1\" = 1 ] && [ \"\$2\" = 2 ]" _ "$(ubcount "$h1" 'https://x/v01-own')" "$(ubn "$h1")"
+ok "U01-AC-4: the answer-received milestone begins with a Stage line" test "$(ubcount "$h1" '\A\*\*Stage:\*\*(?s:.*)https://x/v01-own')" = 1
+
+ev "started V02 (no-question) in /wt, pid 1, start 1 of 2" "$ustate4"
+urun "$ustate4"
+h2=$(cat "$ustate4/node/V02/issue" 2>/dev/null)
+uowned "$h2" "answer to nothing" https://x/v02-own
+urun "$ustate4"; urun "$ustate4"; urun "$ustate4"
+ok "U01-AC-4: with no question open, an owner comment is not recorded" test -n "$h2" -a ! -e "$ustate4/node/V02/ANSWER.md"
+ok "U01-AC-4: and gets exactly one reply saying so (start + one reply), over three runs" sh -c "[ \"\$1\" = 2 ] && [ \"\$2\" = 1 ]" _ "$(ubn "$h2")" "$(ubcount "$h2" '\A(?!\*\*Stage:)(?i:(?s:.*)(not recorded|no question|not waiting|nothing))')"
+ok "U01-AC-4: and gets no reaction" test "$(ureact https://x/v02-own)" = 0
+
+printf 'Q1: share a?\nv04-unique-q-line\n' >"$ustate4/node/V04/QUESTION.md"
+printf 'Q1: share b?\nv05-unique-q-line\n' >"$ustate4/node/V05/QUESTION.md"
+ev "session V04 ended (rc 0) with QUESTION.md" "$ustate4"
+ev "session V05 ended (rc 0) with QUESTION.md" "$ustate4"
+urun "$ustate4"; urun "$ustate4"
+uowned 51 "approve" https://x/share-plain
+urun "$ustate4"; urun "$ustate4"; urun "$ustate4"
+ok "U01-AC-4: two units share issue 51 (the first Resolves issue)" test "$(cat "$ustate4/node/V04/issue" 2>/dev/null)$(cat "$ustate4/node/V05/issue" 2>/dev/null)" = 5151
+ok "U01-AC-4: two waiting units: an unprefixed comment is not recorded for either" sh -c "[ ! -e '$ustate4/node/V04/ANSWER.md' ] && [ ! -e '$ustate4/node/V05/ANSWER.md' ]"
+ok "U01-AC-4: and gets one reply naming both units, over three runs" test "$(ubcount 51 '\A(?!\*\*Stage:)(?s:.*V04.*V05|.*V05.*V04)')" = 1
+ok "U01-AC-4: and no reaction" test "$(ureact https://x/share-plain)" = 0
+uowned 51 "V05: yes" https://x/share-v05
+urun "$ustate4"; rcs=$?
+urun "$ustate4"; urun "$ustate4"
+ok "U01-AC-4: a comment starting with an ID is that unit's answer (V05), exit 3" sh -c "[ $rcs = 3 ] && grep -q '^V05: yes\$' '$ustate4/node/V05/ANSWER.md' && [ ! -e '$ustate4/node/V04/ANSWER.md' ]"
+ok "U01-AC-4: it gets one +1 reaction and the URL in ANSWER.md" sh -c "[ \"\$1\" = 1 ] && grep -qF https://x/share-v05 '$ustate4/node/V05/ANSWER.md'" _ "$(ureact https://x/share-v05)"
+ok "U01-AC-4: no second reply was posted (2 questions, 1 reply, 1 answer milestone)" test "$(ubn 51)" = 4
+
+printf 'Q1: triage shared?\nt52-unique-q-line\n' >"$ustate4/issue/52/QUESTION.md"
+printf 'Q1: node shared?\nv06-unique-q-line\n' >"$ustate4/node/V06/QUESTION.md"
+ev "triage of #52 ended (rc 0) with QUESTION.md" "$ustate4"
+ev "session V06 ended (rc 0) with QUESTION.md" "$ustate4"
+urun "$ustate4"; urun "$ustate4"
+uowned 52 "looks fine" https://x/tri-plain
+urun "$ustate4"; urun "$ustate4"
+ok "U01-AC-4: a triage of 52 and a node resolving 52: an unprefixed comment is not recorded" sh -c "[ ! -e '$ustate4/issue/52/ANSWER.md' ] && [ ! -e '$ustate4/node/V06/ANSWER.md' ]"
+ok "U01-AC-4: and gets one reply naming both, over repeated runs" test "$(ubcount 52 '\A(?!\*\*Stage:)(?s:.*V06.*#52|.*#52.*V06)')" = 1
+uowned 52 "**V06**: go" https://x/tri-v06
+urun "$ustate4"; rct=$?
+urun "$ustate4"
+ok "U01-AC-4: a comment starting with **V06** is V06's answer and not the triage's, exit 3" sh -c "[ $rct = 3 ] && grep -qF '**V06**: go' '$ustate4/node/V06/ANSWER.md' && [ ! -e '$ustate4/issue/52/ANSWER.md' ]"
+ok "U01-AC-4: it gets one +1 reaction" test "$(ureact https://x/tri-v06)" = 1
+
+# U01-AC-5
+printf 'Q1: status first?\n' >"$ustate4/node/V07/QUESTION.md"
+printf 'Q1: home first?\n' >"$ustate4/node/V08/QUESTION.md"
+ev "session V07 ended (rc 0) with QUESTION.md" "$ustate4"
+ev "session V08 ended (rc 0) with QUESTION.md" "$ustate4"
+urun "$ustate4"; urun "$ustate4"
+h7=$(cat "$ustate4/node/V07/issue" 2>/dev/null); h8=$(cat "$ustate4/node/V08/issue" 2>/dev/null)
+uowner "$ustatus" "V07: via status"
+urun "$ustate4"; rc7=$?
+cp "$ustate4/node/V07/ANSWER.md" "$tmp/v07.answer" 2>/dev/null
+ok "U01-AC-5: a prefixed answer on the status issue is still recorded (exit 3)" sh -c "[ $rc7 = 3 ] && grep -q '^V07: via status\$' '$ustate4/node/V07/ANSWER.md'"
+uowned "$h7" "later on home" https://x/v07-later
+urun "$ustate4"; urun "$ustate4"
+ok "U01-AC-5: answered on the status issue, a later comment on the home issue is not recorded" sh -c "cmp -s '$tmp/v07.answer' '$ustate4/node/V07/ANSWER.md' && ! grep -q 'later on home' '$ustate4/node/V07/ANSWER.md'"
+uowned "$h8" "home answer" https://x/v08-home
+urun "$ustate4"; rc8h=$?
+cp "$ustate4/node/V08/ANSWER.md" "$tmp/v08.answer" 2>/dev/null
+uowner "$ustatus" "V08: later on status"
+urun "$ustate4"; urun "$ustate4"
+ok "U01-AC-5: answered on the home issue (exit 3), a later prefixed comment on the status issue is not written over ANSWER.md" sh -c "[ $rc8h = 3 ] && cmp -s '$tmp/v08.answer' '$ustate4/node/V08/ANSWER.md' && grep -q '^home answer\$' '$ustate4/node/V08/ANSWER.md'"
+
+# U01-AC-7
+printf 'Q1: status link?\nv09-unique-q-line\n' >"$ustate4/node/V09/QUESTION.md"
+printf 'Q1: triage link?\nt53-unique-q-line\n' >"$ustate4/issue/53/QUESTION.md"
+ev "session V09 ended (rc 0) with QUESTION.md" "$ustate4"
+ev "triage of #53 ended (rc 0) with QUESTION.md" "$ustate4"
+urun "$ustate4"; urun "$ustate4"
+h9=$(cat "$ustate4/node/V09/issue" 2>/dev/null)
+sbody=$(uq "db['issues']['$ustatus']['body']")
+url9=$(uq "[c['html_url'] for c in db['comments'] if c['issue'] == '$h9' and '## V09 asks' in c['body']][0]")
+url53=$(uq "[c['html_url'] for c in db['comments'] if c['issue'] == '53' and '## #53 asks' in c['body']][0]")
+ok "U01-AC-7: the node's question is on its home issue (precondition)" test -n "$url9" -a -n "$h9"
+ok "U01-AC-7: the status issue has no comment with the node's QUESTION.md in full (nor its text)" test "$(ucontains "$ustatus" "$ustate4/node/V09/QUESTION.md")$(ucount "$ustatus" 'v09-unique-q-line')" = 00
+ok "U01-AC-7: nor the triage's" test "$(ucontains "$ustatus" "$ustate4/issue/53/QUESTION.md")$(ucount "$ustatus" 't53-unique-q-line')" = 00
+ok "U01-AC-7: nor any earlier question (T02, V01)" test "$(ucount "$ustatus" 'unique-t02-line|v01-unique-q-line|v04-unique-q-line')" = 0
+ok "U01-AC-7: the Waiting on you item for the node's question links its comment on the home issue" sh -c "printf '%s\n' \"\$1\" | grep V09 | grep -qF \"\$2\"" _ "$sbody" "$url9"
+ok "U01-AC-7: the item for the triage's question links its comment on the triaged issue" sh -c "printf '%s\n' \"\$1\" | grep '#53' | grep -qF \"\$2\"" _ "$sbody" "$url53"
+ok "U01-AC-7: the status issue's events are still posted (session V09 ended, once)" test "$(ucount "$ustatus" 'session V09 ended')" = 1
+ok "U01-AC-7: the footer says to answer on the unit's issue" sh -c "printf '%s\n' \"\$1\" | grep -qi \"unit's issue\"" _ "$sbody"
+ok "U01-AC-7: the footer says a prefixed reply on the status issue still works" sh -c "printf '%s\n' \"\$1\" | grep -qi 'prefix'" _ "$sbody"
+rm -f "$tmp/ufail"
+
+# U01-AC-3, U01-AC-6: the PR milestones on a node's home issue, a triage's done, and the loop closing (and reopening) the
+# issues a merged node resolves.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+for n in range(55, 71):
+    db['issues'][str(n)] = {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n}
+json.dump(db, open('$udb', 'w'))"
+mkspec W01 pr-one '#55'
+mkspec W02 pr-two '#55'
+mkspec W03 closer '#56'
+mkspec X01 solo '#58'
+mkspec X02 pair '#59, #60'
+mkspec X03 build-me ''
+mkspec X06 asks '#62'
+mkspec X07 follows '#63'
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs3 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+# usetpulls <json list>: the open PRs the fake lists. usetchecks <sha> <json list>: the check runs of that head commit.
+usetpulls() { python3 -I -c "
+import json, sys
+db = json.load(open('$udb')); db['pulls'] = json.loads(sys.argv[1]); json.dump(db, open('$udb', 'w'))" "$1"; }
+usetchecks() { python3 -I -c "
+import json, sys
+db = json.load(open('$udb')); db['checks'][sys.argv[1]] = json.loads(sys.argv[2]); json.dump(db, open('$udb', 'w'))" "$1" "$2"; }
+upull() { # <number> <branch> <sha>: one open PR as JSON
+	printf '{"number": %s, "html_url": "https://github.com/owner/repo/pull/%s", "state": "open", "head": {"ref": "%s", "sha": "%s"}}' "$1" "$1" "$2" "$3"
+}
+ustateof() { uq "db['issues']['$1']['state']"; }
+# umatch <regex> <text>: re.search (flags inline) of the text; used on the last comment of an issue.
+umatch() { P="$1" python3 -I -c "
+import os, re, sys
+sys.exit(0 if re.search(os.environ['P'], sys.argv[1]) else 1)" "$2"; }
+ur3() { urun "$ustate5"; urun "$ustate5"; urun "$ustate5"; }
+# self-check of the patterns used below against the text they are meant to match
+ok "U01-AC-3: (self-check) the Stage pattern matches a stage line" umatch '\A\*\*Stage:\*\*' '**Stage:** PR #312 open, final review running'
+ok "U01-AC-3: (self-check) the PR-naming pattern matches '#312' and a pull URL" sh -c "P='(#|pull/)312\\b'; python3 -I -c \"import re,sys; sys.exit(0 if re.search(sys.argv[1], '#312') and re.search(sys.argv[1], 'https://github.com/owner/repo/pull/312.') and not re.search(sys.argv[1], '#3120') else 1)\" \"\$P\""
+
+ustate5=$tmp/ustate5
+mkdir -p "$ustate5/node/W01" "$ustate5/node/W02" "$ustate5/node/W03" "$ustate5/issue/57" "$ustate5/issue/69" \
+	"$ustate5/node/X01" "$ustate5/node/X02" "$ustate5/node/X03" "$ustate5/node/X06" "$ustate5/node/X07"
+: >"$ustate5/status.log"
+rm -f "$tmp/ufail"
+usetpulls '[]'
+urun "$ustate5"
+ev "started W01 (pr-one) in /wt, pid 1, start 1 of 2" "$ustate5"
+ev "started W03 (closer) in /wt, pid 2, start 1 of 2" "$ustate5"
+ur3
+ok "U01-AC-3: (precondition) W01's start is the one comment on its home issue (55)" test "$(unum 55)" = 1
+ok "U01-AC-3: (precondition) W03's start is the one comment on its home issue (56)" test "$(unum 56)" = 1
+
+# the PR opened, with its link, once; no CI result while a check run is still running
+usetchecks s1 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "build", "status": "in_progress", "conclusion": null}]'
+usetpulls "[$(upull 312 node/W01-pr-one s1), $(upull 314 node/W03-closer s3)]"
+usetchecks s3 '[{"name": "test", "status": "completed", "conclusion": "success"}]'
+ur3
+ok "U01-AC-3: the PR opened is one comment on the home issue, over three runs (CI still running adds none)" test "$(unum 55)" = 2
+ok "U01-AC-3: the PR-opened comment has the PR's link" test "$(ucount 55 'github\.com/owner/repo/pull/312\b')" = 1
+ok "U01-AC-3: the PR-opened comment begins with a Stage line" test "$(ucount 55 '\A\*\*Stage:\*\*(?s:.*)pull/312\b')" = 1
+ok "U01-AC-3: the other node's PR opened is on its own home issue (56), with its CI result (all check runs complete)" test "$(ucount 56 'pull/314\b')" = 1 -a "$(unum 56)" = 3
+
+# the CI result once all check runs are complete: passed
+usetchecks s1 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "build", "status": "completed", "conclusion": "success"}]'
+ur3
+ok "U01-AC-3: the CI result is posted once all check runs are complete, once over three runs" test "$(unum 55)" = 3
+ok "U01-AC-3: it says the checks passed and begins with a Stage line" umatch '(?is)\A\*\*Stage:\*\*.*(pass|success|green)' "$(ulast 55)"
+ok "U01-AC-3: the other node's CI result says passed" test "$(ucount 56 '(?is)\A\*\*Stage:\*\*.*(pass|success|green)')" = 1
+
+# a new head commit: one more CI result, with the failing checks' names, after all its check runs complete
+usetchecks s2 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "lint", "status": "completed", "conclusion": "failure"}, {"name": "unit", "status": "queued", "conclusion": null}]'
+usetpulls "[$(upull 312 node/W01-pr-one s2), $(upull 314 node/W03-closer s3)]"
+ur3
+ok "U01-AC-3: a new head commit with a check run still queued adds no CI result" test "$(unum 55)" = 3
+usetchecks s2 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "lint", "status": "completed", "conclusion": "failure"}, {"name": "unit", "status": "completed", "conclusion": "failure"}]'
+ur3
+ok "U01-AC-3: once the new head's check runs are complete its CI result is posted once (a CI result per head commit)" test "$(unum 55)" = 4
+ok "U01-AC-3: the failed CI result names the failing checks (lint, unit)" sh -c "printf '%s\n' \"\$1\" | grep -q 'lint' && printf '%s\n' \"\$1\" | grep -q 'unit' && printf '%s\n' \"\$1\" | head -n 1 | grep -q '^\*\*Stage:\*\*'" _ "$(ulast 55)"
+ok "U01-AC-3: the earlier head's CI result is not repeated" test "$(ucount 55 '(?is)\A\*\*Stage:\*\*.*(pass|success|green)')" = 1
+
+# each Fresh review verdict once
+ucomment 312 $'Fresh review (approve)\nlooks fine' 2026-02-03T00:00:00Z bot NONE Bot https://x/312/1
+ucomment 312 $'Thanks, will look later' 2026-02-03T00:01:00Z owner OWNER User https://x/312/2
+ur3
+ok "U01-AC-3: a Fresh review (approve) PR comment gives one milestone with its verdict, once over three runs" test "$(unum 55)" = 5 -a "$(ucount 55 '(?i)approve')" = 1
+ok "U01-AC-3: another PR comment adds nothing (the owner's thanks)" test "$(ucount 55 'Thanks, will look later|will look later')" = 0
+ucomment 312 $'Fresh review (request_changes)\nthe lint failure' 2026-02-03T00:02:00Z bot NONE Bot https://x/312/3
+ur3
+ok "U01-AC-3: a second Fresh review (request_changes) gives one more milestone with its verdict, once" test "$(unum 55)" = 6 -a "$(ucount 55 '(?i)request.changes')" = 1
+ok "U01-AC-3: the verdict milestone begins with a Stage line" umatch '(?is)\A\*\*Stage:\*\*.*request.changes' "$(ulast 55)"
+ok "U01-AC-3: every milestone comment on W01's home issue begins with a Stage line" ustage_all 55
+ok "U01-AC-3: every milestone comment on W03's home issue begins with a Stage line" ustage_all 56
+
+# merged once (the issue is also on W02's Resolves line, so it stays open: no closing comment mixes in)
+usetpulls "[$(upull 314 node/W03-closer s3)]"
+echo "312 node/W01-pr-one" >"$ustate5/merged-prs.tsv"
+echo "312 node/W01-pr-one 2026-02-04T00:00:00Z true" >"$ustate5/closed-prs.tsv"
+ur3
+ok "U01-AC-3: a merged PR gives one merged milestone naming the PR, once over three runs" test "$(unum 55)" = 7 -a "$(ucount 55 '(?i)merged')" -ge 1
+ok "U01-AC-3: the merged milestone names the PR and begins with a Stage line" umatch '(?is)\A\*\*Stage:\*\*.*(#|pull/)312\b' "$(ulast 55)"
+ok "U01-AC-3: a merged PR is not reported as closed without merging" test "$(ucount 55 '(?i)closed without')" = 0
+ok "U01-AC-6: the issue stays open while another node resolving it (W02) is not merged" test "$(ustateof 55)" = open
+
+# closed without merging once (the issue is not closed: the node is not merged)
+usetpulls '[]'
+echo "314 node/W03-closer 2026-02-04T00:00:00Z false" >>"$ustate5/closed-prs.tsv"
+ur3
+ok "U01-AC-3: a PR closed without merging gives one milestone, once over three runs" test "$(unum 56)" = 4
+ok "U01-AC-3: the closed milestone says closed and names the PR, with a Stage line" umatch '(?is)\A\*\*Stage:\*\*.*clos.*' "$(ulast 56)"
+ok "U01-AC-3: and names the PR number" umatch '(#|pull/)314\b' "$(ulast 56)"
+ok "U01-AC-6: a PR closed without merging does not close its home issue" test "$(ustateof 56)" = open
+
+# a triage that ends done: done once, with its spec PR when there is one
+ev "started triage of #57 in /wt, pid 9, start 1 of 2" "$ustate5"
+ev "started triage of #69 in /wt, pid 10, start 1 of 2" "$ustate5"
+ur3
+usetpulls "[$(upull 320 spec/triage-57-foo s9)]"
+ev "triage of #57 done (rc 0); its label is now noodlebot-triaged" "$ustate5"
+ev "triage of #69 done (rc 0); its label is now noodlebot-triaged" "$ustate5"
+ur3
+ok "U01-AC-3: a triage that ends done posts done once, with its spec PR (over three runs)" test "$(ucount 57 '(?is)\A(?=.*pull/320\b)(?=.*\bdone\b)')" = 1
+ok "U01-AC-3: that comment begins with a Stage line" test "$(ucount 57 '(?is)\A\*\*Stage:\*\*(?=.*pull/320\b)(?=.*\bdone\b)')" = 1
+ok "U01-AC-3: a triage that ends done with no spec PR posts done once, without a PR link" test "$(ucount 69 '(?i)\bdone\b')" = 1 -a "$(ucount 69 'pull/')" = 0
+ok "U01-AC-3: its comment begins with a Stage line" test "$(ucount 69 '(?is)\A\*\*Stage:\*\*(?=.*\bdone\b)')" = 1
+ok "U01-AC-6: a triage never closes its issue (57 and 69 stay open, nothing else closes them)" test "$(ustateof 57)$(ustateof 69)" = openopen
+usetpulls '[]'
+
+# U01-AC-6: closing. A node's last issue closes after the merge, with one comment naming the PR.
+# The shared issue (55): W02 merged too -> closed at the first run after that holds.
+echo "313 node/W02-pr-two" >>"$ustate5/merged-prs.tsv"
+urun "$ustate5"
+ok "U01-AC-6: when the last node resolving the issue is merged, the next run closes it" test "$(ustateof 55)" = closed
+ok "U01-AC-6: and the closing comment names the merged PR (313)" test "$(ucount 55 '(#|pull/)313\b')" -ge 1
+n55=$(unum 55)
+urun "$ustate5"; urun "$ustate5"
+ok "U01-AC-6: the close is not repeated (no further comment, still closed)" test "$(unum 55)" = "$n55" -a "$(ustateof 55)" = closed
+
+# a node with one Resolves issue
+ev "started X01 (solo) in /wt, pid 3, start 1 of 2" "$ustate5"
+ev "started X02 (pair) in /wt, pid 4, start 1 of 2" "$ustate5"
+ev "started X03 (build-me) in /wt, pid 5, start 1 of 2" "$ustate5"
+ev "started X06 (asks) in /wt, pid 6, start 1 of 2" "$ustate5"
+ev "started X07 (follows) in /wt, pid 7, start 1 of 2" "$ustate5"
+ur3
+xb=$(cat "$ustate5/node/X03/issue" 2>/dev/null)
+ok "U01-AC-6: (precondition) the homes exist and are open before any merge" test "$(ustateof 58)$(ustateof 59)$(ustateof 60)" = openopenopen -a -n "$xb" -a "$(ustateof "${xb:-0}")" = open
+printf 'Q1: hold the issue?\nx06-unique-q-line\n' >"$ustate5/node/X06/QUESTION.md"
+ev "session X06 ended (rc 0) with QUESTION.md" "$ustate5"
+mkdir "$ustate5/node/X07/answered"
+echo node/X07-followup-1 >"$ustate5/node/X07/FOLLOWUP"
+ur3
+ok "U01-AC-6: (precondition) X06's question is posted on its home issue" test "$(ucontains 62 "$ustate5/node/X06/QUESTION.md")" = 1
+printf '%s\n' "331 node/X01-solo" "332 node/X02-pair" "333 node/X03-build-me" "336 node/X06-asks" "337 node/X07-follows" >>"$ustate5/merged-prs.tsv"
+urun "$ustate5"
+ok "U01-AC-6: a merged node's home issue (the only Resolves issue) is closed" test "$(ustateof 58)" = closed
+ok "U01-AC-6: it has a comment naming the merged PR (331)" test "$(ucount 58 '(#|pull/)331\b')" -ge 1
+ok "U01-AC-6: both issues on a Resolves line are closed (home 59)" test "$(ustateof 59)" = closed
+ok "U01-AC-6: and the other issue on the line (60)" test "$(ustateof 60)" = closed
+ok "U01-AC-6: each of them has a comment naming the PR (332)" test "$(ucount 59 '(#|pull/)332\b')" -ge 1 -a "$(ucount 60 '(#|pull/)332\b')" -ge 1
+ok "U01-AC-6: a merged node's Build issue is closed" test "$(ustateof "${xb:-0}")" = closed
+ok "U01-AC-6: and has a comment naming the PR (333)" test "$(ucount "${xb:-0}" '(#|pull/)333\b')" -ge 1
+ok "U01-AC-6: an issue whose unit has an open question stays open" test "$(ustateof 62)" = open
+ok "U01-AC-6: an issue whose unit has a follow-up in progress (FOLLOWUP marker) stays open" test "$(ustateof 63)" = open
+urun "$ustate5"; urun "$ustate5"
+c58=$(ucount 58 '(#|pull/)331\b')
+ok "U01-AC-6: over more runs the held issues stay open and the closed ones get no further comments" test "$(ustateof 62)$(ustateof 63)" = openopen -a "$(ucount 58 '(#|pull/)331\b')" = "$c58" -a "$(ucount 60 '(#|pull/)332\b')" = 1
+
+# the question is answered but not released: still held
+echo "Q1: go" >"$ustate5/node/X06/ANSWER.md"
+urun "$ustate5"
+ok "U01-AC-6: an answered question not yet released (QUESTION.md and ANSWER.md both there) still holds the issue open" test "$(ustateof 62)" = open
+# released: QUESTION.md and ANSWER.md moved into answered/
+mkdir "$ustate5/node/X06/answered" && rm "$ustate5/node/X06/QUESTION.md" "$ustate5/node/X06/ANSWER.md"
+urun "$ustate5"
+ok "U01-AC-6: once the answer is released, the first run after closes the issue" test "$(ustateof 62)" = closed
+ok "U01-AC-6: with a comment naming the PR (336)" test "$(ucount 62 '(#|pull/)336\b')" -ge 1
+# follow-up done: FOLLOWUP marker moved into answered/
+mv "$ustate5/node/X07/FOLLOWUP" "$ustate5/node/X07/answered/FOLLOWUP"
+urun "$ustate5"
+ok "U01-AC-6: once the follow-up is done (no FOLLOWUP marker), the first run after closes the issue" test "$(ustateof 63)" = closed
+ok "U01-AC-6: with a comment naming the PR (337)" test "$(ucount 63 '(#|pull/)337\b')" -ge 1
+
+# a new QUESTION.md of a unit whose home issue is closed reopens the issue and posts the question there
+printf 'Q1: one more thing?\nreopen-unique-line\n' >"$ustate5/node/X01/QUESTION.md"
+ev "session X01 ended (rc 0) with QUESTION.md" "$ustate5"
+urun "$ustate5"; urun "$ustate5"; urun "$ustate5"
+ok "U01-AC-6: a new question on a closed home issue reopens it" test "$(ustateof 58)" = open
+ok "U01-AC-6: and the question is posted there once, whole, with its heading" test "$(ucontains 58 "$ustate5/node/X01/QUESTION.md")" = 1 -a "$(ucount 58 '(?m)^## X01 asks$')" = 1
+ok "U01-AC-6: the reopened issue is not closed again while the question is open" test "$(ustateof 58)" = open
+rm "$ustate5/node/X01/QUESTION.md"; mkdir "$ustate5/node/X01/answered"
+urun "$ustate5"
+ok "U01-AC-6: and it closes again at the first run after the question is released" test "$(ustateof 58)" = closed
+ok "U01-AC-6: no node or triage issue other than the resolved ones was closed (triage issues 57 and 69 stay open)" test "$(ustateof 57)$(ustateof 69)" = openopen
+ok "U01-AC-6: the status issue is still open" test "$(ustateof "$ustatus")" = open
+
+# U01-AC-4 (S2b): an owner comment led by the ID of a unit that is not waiting is not the waiting unit's answer.
+mkspec V10 share-wait '#54'
+mkspec V11 share-done '#54'
+mkspec V12 lone-asker ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs3 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+ustate6=$tmp/ustate6
+mkdir -p "$ustate6/node/V10" "$ustate6/node/V11" "$ustate6/node/V12"
+: >"$ustate6/status.log"
+urun "$ustate6"
+printf 'Q1: wait?\nv10-unique-q-line\n' >"$ustate6/node/V10/QUESTION.md"
+printf 'Q1: done?\nv11-unique-q-line\n' >"$ustate6/node/V11/QUESTION.md"
+printf 'Q1: lone?\nv12-unique-q-line\n' >"$ustate6/node/V12/QUESTION.md"
+ev "session V10 ended (rc 0) with QUESTION.md" "$ustate6"
+ev "session V11 ended (rc 0) with QUESTION.md" "$ustate6"
+ev "session V12 ended (rc 0) with QUESTION.md" "$ustate6"
+urun "$ustate6"; urun "$ustate6"
+uowned 54 "V11: yes" https://x/s6-v11
+urun "$ustate6"; urun "$ustate6"
+ok "U01-AC-4: (precondition) V10 and V11 share issue 54 and V11 is answered by its ID prefix, V10 still waits" sh -c "[ \"\$(cat '$ustate6/node/V10/issue' 2>/dev/null)\$(cat '$ustate6/node/V11/issue' 2>/dev/null)\" = 5454 ] && grep -q '^V11: yes\$' '$ustate6/node/V11/ANSWER.md' && [ ! -e '$ustate6/node/V10/ANSWER.md' ]"
+uowned 54 "V11: actually no" https://x/s6-v11-again
+urun "$ustate6"; urun "$ustate6"; urun "$ustate6"
+ok "U01-AC-4: a comment led by the ID of a unit that is not waiting (V11, answered) is not recorded as the waiting unit's (V10) answer" sh -c "[ ! -e '$ustate6/node/V10/ANSWER.md' ] && ! grep -q 'actually no' '$ustate6/node/V11/ANSWER.md'"
+ok "U01-AC-4: and gets one reply over repeated runs, saying it is not recorded" test "$(ubcount 54 '\A(?!\*\*Stage:)Not recorded')" = 1
+ok "U01-AC-4: and no reaction" test "$(ureact https://x/s6-v11-again)" = 0
+h12=$(cat "$ustate6/node/V12/issue" 2>/dev/null)
+uowned "$h12" "Q12: go ahead" https://x/s6-q12
+urun "$ustate6"; urun "$ustate6"
+ok "U01-AC-4: a leading token that only looks like an ID (Q12:, no such unit) with one waiting unit is that unit's answer" sh -c "grep -q '^Q12: go ahead\$' '$ustate6/node/V12/ANSWER.md'"
+ok "U01-AC-4: and it gets one +1 reaction" test -n "$h12" -a "$(ureact https://x/s6-q12)" = 1
+
+# Risks (S2b): a spec-PR update task (state pr/<N>/) is not a unit and has no home issue.
+nis6=$(uq "len(db['issues'])")
+mkdir -p "$ustate6/pr/77"
+printf '2026-02-04T00:00:00Z second exit (rc 1) without finishing\npr77-detail\n' >"$ustate6/pr/77/FAILED"
+printf 'Q1: update?\npr77-unique-q-line\n' >"$ustate6/pr/77/QUESTION.md"
+urun "$ustate6"; urun "$ustate6"; urun "$ustate6"
+ok "Risks: a pr/<N> folder with FAILED and QUESTION.md creates no issue (no Build PR issue, issue count unchanged)" test "$(uq "len(db['issues'])")" = "$nis6" -a "$(uq "len([i for i in db['issues'].values() if 'PR #' in i['title']])")" = 0
+ok "Risks: and no pr/<N>/issue file is written" test ! -e "$ustate6/pr/77/issue"
+ok "Risks: and no comment (milestone or question) names PR #77 or its question" test "$(uq "len([c for c in db['comments'] if 'PR #77' in c['body'] or 'pr77-unique-q-line' in c['body']])")" = 0
+
+# U01-AC-9 + U01-AC-6 (S3b): the first run of this version on a report.json of the old version closes nothing that was
+# merged before it, comments on nothing, and still closes a candidate held at that run once the hold ends.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+for n in range(71, 77):
+    db['issues'][str(n)] = {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n}
+db['issues']['71']['state'] = 'closed'
+json.dump(db, open('$udb', 'w'))"
+mkspec Y01 old-merged '#71, #72'
+mkspec Y02 old-asking '#73'
+mkspec Y03 old-shared-a '#74'
+mkspec Y04 old-shared-b '#74'
+mkspec Z01 reopened ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs4 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+# upatches <issue>: the PATCH calls on the issue since $tmp/ucalls was last emptied.
+upatches() { grep -c "^PATCH repos/owner/repo/issues/$1\$" "$tmp/ucalls" || true; }
+ok "U01-AC-6: (self-check) the PATCH pattern matches a logged call and not another issue's" sh -c "printf 'PATCH repos/owner/repo/issues/73\nPATCH repos/owner/repo/issues/730\n' | grep -c '^PATCH repos/owner/repo/issues/73\$' | grep -qx 1"
+
+ustate7=$tmp/ustate7
+mkdir -p "$ustate7/node/Y01" "$ustate7/node/Y02" "$ustate7/node/Y03" "$ustate7/node/Y04"
+: >"$ustate7/status.log"
+usetpulls '[]'
+printf 'Q1: asking when merged?\ny02-unique-q-line\n' >"$ustate7/node/Y02/QUESTION.md"
+printf '401 node/Y01-old-merged\n402 node/Y02-old-asking\n403 node/Y03-old-shared-a\n' >"$ustate7/merged-prs.tsv"
+yqkey=$(stat -c %Y "$ustate7/node/Y02/QUESTION.md")
+ymax=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {"Y02": "%s"}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$ymax" "$yqkey" >"$ustate7/report.json"
+: >"$tmp/ucalls"
+urun "$ustate7"; rcy=$?
+ok "U01-AC-9: the first run on an old report.json succeeds" test "$rcy" = 0
+ok "U01-AC-9: it posts no comment on an already-closed Resolves issue of a node merged before (71)" test "$(unum 71)" = 0
+ok "U01-AC-9: nor on the still-open one (72)" test "$(unum 72)" = 0
+ok "U01-AC-9: it makes no PATCH of the closed Resolves issue (71)" test "$(upatches 71)" = 0
+ok "U01-AC-9: nor of the open one (72)" test "$(upatches 72)" = 0
+ok "U01-AC-9: and 72 is still open, 71 still closed" test "$(ustateof 72)$(ustateof 71)" = openclosed
+urun "$ustate7"; urun "$ustate7"; urun "$ustate7"
+ok "U01-AC-9: over further runs nothing is posted on 71 or 72" test "$(unum 71)$(unum 72)" = 00
+ok "U01-AC-9: over further runs nothing is closed or changed for them (no PATCH of 71 or 72, 72 open)" test "$(upatches 71)$(upatches 72)" = 00 -a "$(ustateof 72)" = open
+ok "U01-AC-6: a candidate held at that first run (73: its unit's question is open) is not closed and has no comment" test "$(ustateof 73)" = open -a "$(unum 73)" = 0 -a "$(upatches 73)" = 0
+ok "U01-AC-6: a candidate held by another node not merged (74: Y04) is not closed and has no comment" test "$(ustateof 74)" = open -a "$(unum 74)" = 0 -a "$(upatches 74)" = 0
+rm "$ustate7/node/Y02/QUESTION.md"; mkdir "$ustate7/node/Y02/answered"
+urun "$ustate7"; urun "$ustate7"; urun "$ustate7"
+ok "U01-AC-6: at the first run after the question is released, the held candidate (73) is closed" test "$(ustateof 73)" = closed
+ok "U01-AC-6: with one comment naming the PR (402), once over three runs" test "$(ucount 73 '(#|pull/)402\b')" = 1
+ok "U01-AC-6: and one PATCH closing it" test "$(upatches 73)" = 1
+ok "U01-AC-6: the other held candidate (74) still waits for Y04" test "$(ustateof 74)" = open -a "$(unum 74)" = 0
+echo "404 node/Y04-old-shared-b" >>"$ustate7/merged-prs.tsv"
+urun "$ustate7"
+ok "U01-AC-6: at the first run after the other node is merged, 74 is closed" test "$(ustateof 74)" = closed
+n74=$(unum 74)
+urun "$ustate7"; urun "$ustate7"
+ok "U01-AC-6: with a comment naming a merged PR (403 or 404), none added over further runs" test "$(ucount 74 '(#|pull/)40[34]\b')" -ge 1 -a "$(unum 74)" = "$n74"
+ok "U01-AC-6: the closing is one comment (the merged milestone of Y04 and the closing comment: two at most)" test "$n74" -ge 1 -a "$n74" -le 2
+ok "U01-AC-6: and one PATCH closing it" test "$(upatches 74)" = 1
+ok "U01-AC-9: and still nothing for the issues of the node merged before (71, 72)" test "$(unum 71)$(unum 72)$(upatches 71)$(upatches 72)" = 0000
+
+# U01-AC-6 (S3b): a home issue closed by someone else is reopened by the unit's new QUESTION.md, which is posted there once.
+ustate8=$tmp/ustate8
+mkdir -p "$ustate8/node/Z01"
+: >"$ustate8/status.log"
+urun "$ustate8"
+ev "started Z01 (reopened) in /wt, pid 1, start 1 of 2" "$ustate8"
+urun "$ustate8"; urun "$ustate8"
+z1=$(cat "$ustate8/node/Z01/issue" 2>/dev/null)
+ok "U01-AC-6: (precondition) Z01 has a Build issue as home with its start posted" test -n "$z1" -a "$(unum "$z1")" = 1
+python3 -I -c "
+import json
+db = json.load(open('$udb')); db['issues']['$z1']['state'] = 'closed'; json.dump(db, open('$udb', 'w'))"
+printf 'Q1: reopen me?\nz01-unique-q-line\n' >"$ustate8/node/Z01/QUESTION.md"
+ev "session Z01 ended (rc 0) with QUESTION.md" "$ustate8"
+urun "$ustate8"; urun "$ustate8"; urun "$ustate8"
+ok "U01-AC-6: a new QUESTION.md of a unit whose home issue was closed by someone else reopens that issue" test "$(ustateof "$z1")" = open
+ok "U01-AC-6: and the question is posted there once, in full" test "$(ucontains "$z1" "$ustate8/node/Z01/QUESTION.md")" = 1
+ok "U01-AC-6: the reopened issue is not closed again by the loop and holds the start and the question only" test "$(unum "$z1")" = 2
+
+# U01-AC-3 "merged once" + U01-AC-9 (S3c, G1): a failed `gh pr list` leaves merged-prs.tsv empty (the loop truncates it first)
+# while subjects.txt + graph.yaml still show the merges; the node's merged milestone is not posted again, no issue is created,
+# nothing is closed or commented, once the file is back.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+db['issues']['81'] = {'number': 81, 'title': 'Seeded 81', 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_81'}
+json.dump(db, open('$udb', 'w'))"
+mkspec P01 p-one '#81'
+mkspec P02 p-two ''
+mkspec P03 p-three ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs5 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+ustate9=$tmp/ustate9
+mkdir -p "$ustate9/node/P01" "$ustate9/node/P02" "$ustate9/node/P03"
+cat >"$ustate9/graph.yaml" <<'GRAPH'
+nodes:
+  - {id: P01, name: p-one, deps: []}
+  - {id: P02, name: p-two, deps: []}
+  - {id: P03, name: p-three, deps: []}
+GRAPH
+: >"$ustate9/status.log"
+usetpulls '[]'
+rm -f "$tmp/ufail"
+# P03 was merged long ago: known from both sources at the seed run, no home issue
+echo "703 node/P03-p-three" >"$ustate9/merged-prs.tsv"
+echo "P03 p-three: long ago (#703)" >"$ustate9/subjects.txt"
+: >"$ustate9/closed-prs.tsv"
+urun "$ustate9"
+ev "started P01 (p-one) in /wt, pid 1, start 1 of 2" "$ustate9"
+ev "started P02 (p-two) in /wt, pid 2, start 1 of 2" "$ustate9"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+p1=$(cat "$ustate9/node/P01/issue" 2>/dev/null); p2=$(cat "$ustate9/node/P02/issue" 2>/dev/null)
+printf '701 node/P01-p-one\n702 node/P02-p-two\n703 node/P03-p-three\n' >"$ustate9/merged-prs.tsv"
+printf 'P01 p-one: it (#701)\nP02 p-two: it (#702)\nP03 p-three: long ago (#703)\n' >"$ustate9/subjects.txt"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+ok "U01-AC-3: (precondition G1) P01 (Resolves #81) and P02 (no Resolves line) each have one merged milestone naming their PR" test "$p1" = 81 -a -n "$p2" -a "$(ucount 81 '(?i)merged.*701|701.*merged')" -ge 1 -a "$(ucount "${p2:-0}" '(?i)merged.*702|702.*merged')" -ge 1
+ok "U01-AC-6: (precondition G1) P01's issue 81 is closed" test "$(ustateof 81)" = closed
+g1c=$(uq "len(db['comments'])"); g1i=$(uq "len(db['issues'])")
+g1m1=$(ucount 81 '(?i)\bmerged\b'); g1m2=$(ucount "${p2:-0}" '(?i)\bmerged\b')
+: >"$tmp/ucalls"
+: >"$ustate9/merged-prs.tsv"; : >"$ustate9/closed-prs.tsv"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+printf '701 node/P01-p-one\n702 node/P02-p-two\n703 node/P03-p-three\n' >"$ustate9/merged-prs.tsv"
+urun "$ustate9"; urun "$ustate9"; urun "$ustate9"
+ok "U01-AC-3: a run with merged-prs.tsv empty (failed gh pr list) and the file restored post no second merged milestone for P01 (Resolves line)" test "$(ucount 81 '(?i)\bmerged\b')" = "$g1m1"
+ok "U01-AC-3: nor for P02 (no Resolves line)" test "$(ucount "${p2:-0}" '(?i)\bmerged\b')" = "$g1m2"
+ok "U01-AC-9: no issue is created (no Build issue for P03, merged long ago with no home issue)" test "$(uq "len(db['issues'])")" = "$g1i" -a "$(ubuilds 'Build P03 p-three')" = 0 -a ! -e "$ustate9/node/P03/issue"
+ok "U01-AC-9: no comment of any kind is added anywhere" test "$(uq "len(db['comments'])")" = "$g1c"
+ok "U01-AC-6: nothing is closed or reopened again (no PATCH of 81, of P02's home or of any issue but the status body)" test "$(upatches 81)" = 0 -a "$(upatches "${p2:-0}")" = 0 -a "$(grep -c '^PATCH' "$tmp/ucalls" || true)" -le 3
+
+# U01-AC-3 "the CI result once per PR head commit" (S3c, G2): a transient failure of the check-runs call (its message names the
+# path, and so the sha, which here holds 404 / 403) is retried; the CI result is posted once after it succeeds.
+mkspec Q01 q-one ''
+mkspec Q02 q-two ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs6 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+ustate10=$tmp/ustate10
+mkdir -p "$ustate10/node/Q01" "$ustate10/node/Q02"
+: >"$ustate10/status.log"
+usetpulls '[]'
+urun "$ustate10"
+ev "started Q01 (q-one) in /wt, pid 1, start 1 of 2" "$ustate10"
+ev "started Q02 (q-two) in /wt, pid 2, start 1 of 2" "$ustate10"
+urun "$ustate10"; urun "$ustate10"
+q1=$(cat "$ustate10/node/Q01/issue" 2>/dev/null); q2=$(cat "$ustate10/node/Q02/issue" 2>/dev/null)
+usetchecks c0404de '[{"name": "test", "status": "completed", "conclusion": "success"}]'
+usetchecks c0403de '[{"name": "test", "status": "completed", "conclusion": "failure"}]'
+usetpulls "[$(upull 604 node/Q01-q-one c0404de), $(upull 603 node/Q02-q-two c0403de)]"
+echo 'GET .*check-runs' >"$tmp/ufail"
+urun "$ustate10"
+urun "$ustate10"
+ok "U01-AC-3: (precondition G2) while the check-runs call fails no CI result is posted" test "$(ucount "${q1:-0}" '(?i)CI (passed|failed)')" = 0
+rm -f "$tmp/ufail"
+urun "$ustate10"; urun "$ustate10"; urun "$ustate10"
+ok "U01-AC-3: after a transient HTTP 502 on the check-runs call of a head commit whose sha holds 404, its CI result is posted once" test -n "$q1" -a "$(ucount "$q1" '(?i)CI passed')" = 1
+ok "U01-AC-3: likewise for a sha holding 403 (a failed result naming its failing check), once" test -n "$q2" -a "$(ucount "$q2" '(?is)CI failed.*test')" = 1
+ok "U01-AC-3: and the PR opened is still posted once on each" test "$(ucount "${q1:-0}" 'pull/604\b')" = 1 -a "$(ucount "${q2:-0}" 'pull/603\b')" = 1
+
+# U01-AC-9 (S3c, G3): the first run on an old report.json happens while the clone cannot be read; the issue of a node merged
+# before, already closed, is never commented on or patched by later runs with the clone readable.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+db['issues']['85'] = {'number': 85, 'title': 'Seeded 85', 'body': '', 'labels': [], 'state': 'closed', 'node_id': 'I_85'}
+json.dump(db, open('$udb', 'w'))"
+mkspec R01 r-one '#85'
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs7 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+urun_noclone() { env PATH="$ubin:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$1" --worktrees "$tmp/worktrees/repo" --clone "$tmp/no-such-clone" --owner owner 2>"$tmp/uerr"; }
+ustate11=$tmp/ustate11
+mkdir -p "$ustate11/node/R01"
+: >"$ustate11/status.log"
+usetpulls '[]'
+echo "801 node/R01-r-one" >"$ustate11/merged-prs.tsv"
+rmax=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$rmax" >"$ustate11/report.json"
+: >"$tmp/ucalls"
+urun_noclone "$ustate11"
+urun_noclone "$ustate11"
+urun "$ustate11"; urun "$ustate11"; urun "$ustate11"; urun "$ustate11"
+ok "U01-AC-9: with the clone unreadable at the first run, a node merged before and its closed Resolves issue (85) get no comment later" test "$(unum 85)" = 0
+ok "U01-AC-9: and no PATCH of it ever, and it stays closed" test "$(upatches 85)" = 0 -a "$(ustateof 85)" = closed
+
+# U01-AC-9 + U01-AC-3 (S3d, H1a): the seed run (first run with this bookkeeping) coincides with a failed `gh pr list`
+# (merged-prs.tsv and closed-prs.tsv empty) while subjects.txt + graph.yaml show nodes merged long ago; once the files are
+# back, those nodes get no merged milestone, no Build issue, no comment on their closed Resolves issue and no PATCH.
+# Two cases: an old report.json (no pr_seed) and no report.json at all.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+for n in (91, 92, 93, 94):
+    db['issues'][str(n)] = {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'closed', 'node_id': 'I_%d' % n}
+json.dump(db, open('$udb', 'w'))"
+mkspec M01 m-one '#91'
+mkspec M02 m-two ''
+mkspec N01 n-one '#92'
+mkspec N02 n-two ''
+mkspec K01 k-one '#93'
+mkspec K02 k-two ''
+mkspec K03 k-three ''
+mkspec H01 h-one '#95, #96'
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs8 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+# uanypatch: the PATCH calls since $tmp/ucalls was emptied, other than on the status issue.
+uanypatch() { grep '^PATCH' "$tmp/ucalls" | grep -vc "issues/$ustatus\$" || true; }
+ok "U01-AC-9: (self-check) uanypatch ignores the status issue and counts another" sh -c "printf 'PATCH repos/o/r/issues/$ustatus\nPATCH repos/o/r/issues/9\n' | grep '^PATCH' | grep -vc 'issues/$ustatus\$' | grep -qx 1"
+usetpulls '[]'
+rm -f "$tmp/ufail"
+h1mk() { # <state> <A> <B> <issue of A>: nodes A (Resolves issue) and B (none), merged long ago per the subjects, graph and folders
+	mkdir -p "$1/node/$2" "$1/node/$3"
+	printf 'nodes:\n  - {id: %s, name: x-a, deps: []}\n  - {id: %s, name: x-b, deps: []}\n' "$2" "$3" >"$1/graph.yaml"
+	: >"$1/status.log"; : >"$1/merged-prs.tsv"; : >"$1/closed-prs.tsv"
+	printf '%s x-a: it (#%s)\n%s x-b: it (#%s)\n' "$2" "$4" "$3" "$(($4 + 1))" >"$1/subjects.txt"
+}
+h1back() { # <state> <A> <B> <PR of A>
+	printf '%s node/%s-x-a\n%s node/%s-x-b\n' "$4" "$2" "$(($4 + 1))" "$3" >"$1/merged-prs.tsv"
+	printf '%s node/%s-x-a 2026-01-01T00:00:00Z true\n%s node/%s-x-b 2026-01-01T00:00:00Z true\n' "$4" "$2" "$(($4 + 1))" "$3" >"$1/closed-prs.tsv"
+}
+# old report.json
+ustate12=$tmp/ustate12
+h1mk "$ustate12" M01 M02 911
+sed -i 's/x-a/m-one/g; s/x-b/m-two/g' "$ustate12/graph.yaml" "$ustate12/subjects.txt"
+h1max=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$h1max" >"$ustate12/report.json"
+h1c=$(uq "len(db['comments'])"); h1i=$(uq "len(db['issues'])")
+: >"$tmp/ucalls"
+urun "$ustate12"; urun "$ustate12"
+printf '911 node/M01-m-one\n912 node/M02-m-two\n' >"$ustate12/merged-prs.tsv"
+printf '911 node/M01-m-one 2026-01-01T00:00:00Z true\n912 node/M02-m-two 2026-01-01T00:00:00Z true\n' >"$ustate12/closed-prs.tsv"
+urun "$ustate12"; urun "$ustate12"; urun "$ustate12"; urun "$ustate12"
+ok "U01-AC-9: (H1a, old report.json) a seed run with merged-prs.tsv empty, then the file restored: no merged milestone on the closed Resolves issue (91)" test "$(ucount 91 '(?i)merged')" = 0
+ok "U01-AC-9: (H1a, old report.json) no Build issue for the node without a Resolves line (M02)" test "$(ubuilds 'Build M02 m-two')" = 0 -a ! -e "$ustate12/node/M02/issue" -a "$(uq "len(db['issues'])")" = "$h1i"
+ok "U01-AC-9: (H1a, old report.json) no comment of any kind is added anywhere" test "$(uq "len(db['comments'])")" = "$h1c"
+ok "U01-AC-9: (H1a, old report.json) no PATCH of the closed Resolves issue (91) or of any issue but the status issue, and 91 stays closed" test "$(upatches 91)" = 0 -a "$(uanypatch)" = 0 -a "$(ustateof 91)" = closed
+# no report.json at all
+ustate13=$tmp/ustate13
+h1mk "$ustate13" N01 N02 921
+sed -i 's/x-a/n-one/g; s/x-b/n-two/g' "$ustate13/graph.yaml" "$ustate13/subjects.txt"
+h1c=$(uq "len(db['comments'])"); h1i=$(uq "len(db['issues'])")
+: >"$tmp/ucalls"
+urun "$ustate13"; urun "$ustate13"
+printf '921 node/N01-n-one\n922 node/N02-n-two\n' >"$ustate13/merged-prs.tsv"
+printf '921 node/N01-n-one 2026-01-01T00:00:00Z true\n922 node/N02-n-two 2026-01-01T00:00:00Z true\n' >"$ustate13/closed-prs.tsv"
+urun "$ustate13"; urun "$ustate13"; urun "$ustate13"; urun "$ustate13"
+h1c2=$(uq "len(db['comments'])")
+ok "U01-AC-9: (H1a, no report.json) no merged milestone on the closed Resolves issue (92)" test "$(ucount 92 '(?i)merged')" = 0
+ok "U01-AC-9: (H1a, no report.json) no Build issue for the node without a Resolves line (N02)" test "$(ubuilds 'Build N02 n-two')" = 0 -a ! -e "$ustate13/node/N02/issue"
+ok "U01-AC-9: (H1a, no report.json) no PATCH of 92 or of any issue but the status issue, and no comment added by the later runs" test "$(upatches 92)" = 0 -a "$(uanypatch)" = 0 -a "$h1c2" = "$h1c" -a "$(ustateof 92)" = closed
+
+# U01-AC-9 + U01-AC-3 (S3d, H1b): the seed run happens with merged-prs.tsv filled but closed-prs.tsv empty (its call failed);
+# once it is back, with an old PR closed without merging and the merged ones, nothing is posted for them.
+ustate14=$tmp/ustate14
+mkdir -p "$ustate14/node/K01" "$ustate14/node/K02" "$ustate14/node/K03"
+printf 'nodes:\n  - {id: K01, name: k-one, deps: []}\n  - {id: K02, name: k-two, deps: []}\n  - {id: K03, name: k-three, deps: []}\n' >"$ustate14/graph.yaml"
+: >"$ustate14/status.log"
+printf 'K01 k-one: it (#931)\nK02 k-two: it (#932)\n' >"$ustate14/subjects.txt"
+printf '931 node/K01-k-one\n932 node/K02-k-two\n' >"$ustate14/merged-prs.tsv"
+: >"$ustate14/closed-prs.tsv"
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$h1max" >"$ustate14/report.json"
+h1c=$(uq "len(db['comments'])"); h1i=$(uq "len(db['issues'])")
+: >"$tmp/ucalls"
+urun "$ustate14"; urun "$ustate14"
+printf '931 node/K01-k-one 2026-01-02T00:00:00Z true\n932 node/K02-k-two 2026-01-02T00:00:00Z true\n930 node/K03-k-three 2026-01-01T00:00:00Z false\n' >"$ustate14/closed-prs.tsv"
+urun "$ustate14"; urun "$ustate14"; urun "$ustate14"; urun "$ustate14"
+ok "U01-AC-3: (H1b) a seed run with closed-prs.tsv empty, then restored: no closed-without-merging milestone for the old closed PR (930)" test "$(uq "len([c for c in db['comments'] if 'closed without' in c['body'].lower() and '#930' in c['body']])")" = 0
+ok "U01-AC-9: (H1b) nothing else is new: no Build issue (K03), no comment anywhere, no PATCH but the status issue's" test "$(uq "len(db['issues'])")" = "$h1i" -a "$(ubuilds 'Build K03 k-three')" = 0 -a ! -e "$ustate14/node/K03/issue" -a "$(uq "len(db['comments'])")" = "$h1c" -a "$(uanypatch)" = 0
+ok "U01-AC-9: (H1b) no merged milestone for K01 (Resolves 93, closed) either" test "$(ucount 93 '(?i)merged')" = 0 -a "$(ustateof 93)" = closed
+
+# U01-AC-6 (S3d, H2): a Resolves issue of a merged node that the owner closed as "not planned" before the loop's rule holds
+# is not patched, commented on or touched later; a sibling Resolves issue (95) still gets closed by the rule.
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+for n in (95, 96):
+    db['issues'][str(n)] = {'number': n, 'title': 'Seeded %d' % n, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n}
+json.dump(db, open('$udb', 'w'))"
+ustate15=$tmp/ustate15
+mkdir -p "$ustate15/node/H01"
+: >"$ustate15/status.log"
+usetpulls '[]'
+printf 'Q1: asking while merged?\nh01-unique-q-line\n' >"$ustate15/node/H01/QUESTION.md"
+echo "941 node/H01-h-one" >"$ustate15/merged-prs.tsv"
+hkey=$(stat -c %Y "$ustate15/node/H01/QUESTION.md")
+hmax=$(uq "max([c['id'] for c in db['comments']] or [0])")
+printf '{"issue": %s, "comment_id": %s, "log_offset": 0, "questions": {"H01": "%s"}, "body_hash": "x", "body_time": 0}\n' \
+	"$ustatus" "$hmax" "$hkey" >"$ustate15/report.json"
+urun "$ustate15"; urun "$ustate15"
+ok "U01-AC-6: (H2 precondition) both Resolves issues of the merged node H01 are held by its open question and untouched" test "$(ustateof 95)$(ustateof 96)" = openopen -a "$(unum 95)$(unum 96)" = 00
+python3 -I -c "
+import json
+db = json.load(open('$udb'))
+db['issues']['96'].update(state='closed', state_reason='not_planned')
+json.dump(db, open('$udb', 'w'))"
+: >"$tmp/ucalls"
+rm "$ustate15/node/H01/QUESTION.md"; mkdir "$ustate15/node/H01/answered"
+urun "$ustate15"; urun "$ustate15"; urun "$ustate15"; urun "$ustate15"
+ok "U01-AC-6: (H2) the sibling Resolves issue (95) is closed by the rule with one comment naming the PR and one PATCH" test "$(ustateof 95)" = closed -a "$(ucount 95 '(#|pull/)941\b')" = 1 -a "$(upatches 95)" = 1
+ok "U01-AC-6: (H2) the issue the owner closed as not planned (96) is not patched" test "$(upatches 96)" = 0
+ok "U01-AC-6: (H2) and its state_reason is still not_planned and it is closed" test "$(uq "db['issues']['96']['state']+db['issues']['96'].get('state_reason','')")" = closednot_planned
+ok "U01-AC-6: (H2) and it gets no comment, now or over later runs" test "$(unum 96)" = 0
+
 # V01-AC-7: with --version and --signature, every comment report.py posts and the status issue body end with the
 # signature line (after any cut), and the body's header names the version. Without them, nothing is signed.
 # Each part starts from an empty fake database, so its status issue is number 100.
@@ -656,6 +1592,92 @@ echo "2026-01-09T00:02:00Z open=[] merged-prs=[]; session A02 ended (rc 0)" >>"$
 own7 "B07: something"
 run11
 ok "V01-AC-7: without the options no comment or body carries a signature" chk7 unsigned
+
+# U01 fresh review (S6): the Build issue body is signed; a comment before the question is not its answer; a Build issue
+# whose creating POST failed late is not created twice. Own units (T10..T13), appended to the fixture clone's specs.
+mkspec T10 signed-build ''
+mkspec T11 plain-build ''
+mkspec T12 early-q '#51'
+mkspec T13 late-fail ''
+git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m specs3 &&
+	git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+rm -f "$tmp/ufail"
+
+# U01-AC-1 with V01-AC-7: the Build issue body ends with the signature line when --version and --signature are given.
+ubody() { SIG=$(cat "$tmp/sig7") python3 -I -c "
+import json, os, sys
+db = json.load(open('$udb'))
+b = [i['body'] for i in db['issues'].values() if i['title'] == sys.argv[1]]
+if len(b) != 1: sys.exit(2)
+if sys.argv[2] == 'ends': sys.exit(0 if b[0].rstrip().endswith(os.environ['SIG'].strip()) else 1)
+sys.exit(0 if 'n00dl3b0t' not in b[0] else 1)" "$1" "$2"; }
+ustate5=$tmp/ustate5 ustate6=$tmp/ustate6
+mkdir -p "$ustate5/node/T10" "$ustate6/node/T11"
+: >"$ustate5/status.log"; : >"$ustate6/status.log"
+usigned() { env PATH="$ubin:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$ustate5" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner --version "$v7" --signature "$sig7" 2>"$tmp/uerr"; }
+usigned
+ev "started T10 (signed-build) in /wt, pid 1, start 1 of 2" "$ustate5"
+ev "started T11 (plain-build) in /wt, pid 2, start 1 of 2" "$ustate6"
+usigned; rcs=$?; usigned
+urun "$ustate6"; urun "$ustate6"
+ok "U01-AC-1: (signature) the signed runs succeed and create the Build issue once" sh -c "[ $rcs = 0 ] && [ \"\$1\" = 1 ]" _ "$(ubuilds 'Build T10 signed-build')"
+ok "U01-AC-1: (signature) with --version and --signature the Build issue body ends with the signature line (V01-AC-7)" ubody 'Build T10 signed-build' ends
+ok "U01-AC-1: (signature) without the options the Build issue body carries no signature" ubody 'Build T11 plain-build' none
+
+# U01-AC-4: an owner comment posted after the unit's start milestone (after the floor) but before its question comment
+# is not the answer; one posted after the question is.
+ustate7=$tmp/ustate7
+mkdir -p "$ustate7/node/T12"
+: >"$ustate7/status.log"
+urun "$ustate7"
+ev "started T12 (early-q) in /wt, pid 1, start 1 of 2" "$ustate7"
+urun "$ustate7"; urun "$ustate7"
+ucomment 51 "too early, before the question" 2026-02-02T00:00:00Z owner OWNER User https://x/t12-early
+printf 'Q1: ask late?\nt12-unique-q-line\n' >"$ustate7/node/T12/QUESTION.md"
+ev "session T12 ended (rc 0) with QUESTION.md" "$ustate7"
+# the run that posts the question cannot read the issue's comments (a failed GET), so the owner's earlier comment is
+# first seen by a later run, when the question is already open: only the question's position can tell it is no answer
+echo 'GET .*issues/51/comments' >"$tmp/ufail"
+urun "$ustate7"
+rm -f "$tmp/ufail"
+urun "$ustate7"; urun "$ustate7"; urun "$ustate7"
+ok "U01-AC-4: (cut-off) the question was posted on the home issue after the owner's comment" test "$(ucount 51 't12-unique-q-line')" = 1
+ok "U01-AC-4: (cut-off) an owner comment after the start but before the question is not recorded as ANSWER.md" test ! -e "$ustate7/node/T12/ANSWER.md"
+ok "U01-AC-4: (cut-off) and gets no reaction" test "$(ureact https://x/t12-early)" = 0
+uowned 51 "t12 real answer" https://x/t12-late
+urun "$ustate7"; rct=$?
+urun "$ustate7"
+ok "U01-AC-4: (cut-off) an owner comment after the question becomes ANSWER.md (exit 3)" sh -c "[ $rct = 3 ] && grep -q '^t12 real answer\$' '$ustate7/node/T12/ANSWER.md'"
+
+# U01-AC-1, U01-AC-9: the creating POST makes the Build issue, then fails (a timeout after GitHub made it). The next run
+# finds it by title: one issue with that title, and the unit's issue file holds its number.
+ubin2=$tmp/ubin2
+mkdir -p "$ubin2"
+cat >"$ubin2/gh" <<EOF
+#!/bin/sh
+# the fake gh; a POST .../issues while $tmp/ucreatefail exists is made, then fails once
+if [ "\$3 \${4##*/}" = "POST issues" ] && [ -e "$tmp/ucreatefail" ]; then
+	rm -f "$tmp/ucreatefail"; "$ubin/gh" "\$@" >/dev/null; echo "HTTP 504: timeout after the issue was created" >&2; exit 1
+fi
+exec "$ubin/gh" "\$@"
+EOF
+chmod +x "$ubin2/gh"
+ustate8=$tmp/ustate8
+mkdir -p "$ustate8/node/T13"
+: >"$ustate8/status.log"
+urun2() { env PATH="$ubin2:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$1" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"; }
+urun2 "$ustate8"
+ev "started T13 (late-fail) in /wt, pid 1, start 1 of 2" "$ustate8"
+: >"$tmp/ucreatefail"
+urun2 "$ustate8"; rcl=$?
+ok "U01-AC-9: (late failure) the run whose creating POST failed after the issue was made exits non-zero" test "$rcl" != 0
+ok "U01-AC-9: (late failure) the issue exists once, the unit has no issue file yet" sh -c "[ \"\$1\" = 1 ] && [ ! -e '$ustate8/node/T13/issue' ]" _ "$(ubuilds 'Build T13 late-fail')"
+urun2 "$ustate8"; rcl2=$?
+urun2 "$ustate8"
+ok "U01-AC-1: (late failure) the next runs succeed" test "$rcl2" = 0
+ok "U01-AC-1: (late failure) still exactly one Build issue with that title" test "$(ubuilds 'Build T13 late-fail')" = 1
+ok "U01-AC-1: (late failure) the unit's issue file holds that issue's number" test "$(cat "$ustate8/node/T13/issue" 2>/dev/null)" = "$(uq "[i['number'] for i in db['issues'].values() if i['title'] == 'Build T13 late-fail'][0]")"
+ok "U01-AC-2: (late failure) its start milestone is on that issue once" test "$(unum "$(cat "$ustate8/node/T13/issue" 2>/dev/null)")" = 1
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"

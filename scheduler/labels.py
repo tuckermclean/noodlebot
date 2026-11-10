@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The labels the bot relies on, created in a repository when missing.
 
-  labels.py ensure --repo OWNER/NAME    create `noodlebot`, `noodlebot-triaged`, `noodlebot-status` if absent
+  labels.py ensure --repo OWNER/NAME    create `noodlebot`, `noodlebot-triaged`, `noodlebot-status`, `noodlebot-unit` if absent
 
 Lists the repository's labels (every page); an existing label is left as it is, whatever its colour
 or description. Prints one line per label created. A create that reports the label already exists
@@ -13,6 +13,7 @@ LABELS = [
     ("noodlebot", "fbca04", "Hand this issue to the n00dl3b0t: it triages it into the graph (only the owner's label counts)"),
     ("noodlebot-triaged", "c5def5", "Triaged by the noodlebot (see its comment)"),
     ("noodlebot-status", "5319e7", "Kept up to date by the noodlebot scheduler"),
+    ("noodlebot-unit", "0e8a16", "A unit of noodlebot work, while it is built"),
 ]
 
 

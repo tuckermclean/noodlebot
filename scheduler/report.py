@@ -1,20 +1,43 @@
 #!/usr/bin/env python3
 """Mirror one repository's scheduler state to a GitHub status issue, and take the owner's answers from it.
 
-  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--owner LOGIN]
+  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN]
 
 Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all GitHub access through `gh api`.
 Each run:
   1. finds the open issue labelled `noodlebot-status` (creating the label and issue if there is none,
      e.g. after the owner closed it), and remembers its number in DIR/report.json;
-  2. turns each new comment by the owner on that issue into ANSWER.md for the node waiting on a
-     question (the only one waiting, or the one named first: "B03: ..."), and replies;
+  2. turns each new comment by the owner on that issue into ANSWER.md for the unit waiting on a
+     question (the only one waiting, or the one named first: "B03: ..."), and replies; likewise each new
+     owner comment on a unit's home issue, posted after the unit's question comment (no ID needed when one
+     question is open there; it gets a +1 and the answer-received milestone, no reply). It replies only when no
+     question is open there, or several are and the comment starts with none of their IDs. A question answered
+     on one issue is not answered again from the other;
   3. posts new status.log events (starts, ends, releases, merges, FAILED) as one comment;
-  4. posts each new unanswered QUESTION.md in full, once;
-  5. rewrites the issue body: what waits on the owner, every running session and its latest narration,
+  4. posts each new unanswered QUESTION.md once: a short `## <ID> asks` pointer on the status issue (its
+     Waiting on you item links the question's comment on the unit's issue), and
+     the whole QUESTION.md as a milestone on the unit's home issue;
+  5. posts milestones on each unit's home issue, each once, each starting with a `**Stage:**` line: a start
+     or resume (with its start count, read from new status.log lines), the question, answer received, FAILED.
+     The home issue of a triage of N is N; of a node, the first issue on the **Resolves:** line of its spec
+     (nodes/<ID>-*.md on origin/main of --clone; default <data>/repos/<basename of --worktrees>) with the
+     others linked in its first milestone, or, with no Resolves line, a new "Build <ID> <name>" issue labelled
+     `noodlebot-unit`. It is recorded in the unit's state folder (node/<ID>/issue, issue/<N>/issue). What was
+     posted per unit is in report.json, so a failed post is retried on the next run and nothing is posted twice;
+     the first run after this was added posts nothing for events, questions or FAILED from before;
+  6. posts PR milestones on a node's home issue, each once: the PR opened, the CI result per head commit (once all
+     its check runs completed), each `Fresh review (<verdict>)` PR comment's verdict, merged or closed without
+     merging (from the loop's merged-prs.tsv / closed-prs.tsv), a triage ended done (with its spec PR);
+     then closes the home issue, the Build issue and the Resolves issues of merged nodes (one comment naming the PR)
+     once every node resolving the issue is merged and none of its units holds it (open or unreleased question,
+     follow-up); a new QUESTION.md of a unit whose home issue is closed reopens that issue. Issues of triages are
+     never closed. Merged nodes and PRs from before this bookkeeping are only recorded, never commented on or closed
+     (recorded at the first run whose merged-prs.tsv / closed-prs.tsv are readable; until then none of it is posted);
+  7. rewrites the issue body: what waits on the owner, every running session and its latest narration,
      recent events. Body edits do not notify; comments do.
-On the first run it does not replay old comments or events. Any failure exits non-zero; the loop
-logs it and carries on, and the next run picks up where this one stopped.
+On the first run it does not replay old comments or events. Any failure (a failed milestone post included,
+after the other work is done) exits non-zero; the loop logs it and carries on, and the next run picks up
+where this one stopped.
 """
 import argparse, hashlib, json, math, os, re, subprocess, sys, time
 from datetime import datetime, timezone
@@ -22,6 +45,7 @@ from datetime import datetime, timezone
 LABEL = "noodlebot-status"
 EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
+UNIT_LABEL = "noodlebot-unit"
 MAX_COMMENT = 60000
 
 
@@ -314,8 +338,30 @@ def usage_lines(state):
     return out + [""]
 
 
-def body_for(a, sts, prs):
+def mtime_key_of(a, task):
+    try:
+        return mtime_key(os.path.join(tdir(a.state, task), "QUESTION.md"))
+    except OSError:
+        return None
+
+
+def question_link(a, rs, task):
+    """Where to read and answer a task's open question: its comment on the unit's issue, once that is posted."""
+    qc = rs.get("units", {}).get(task, {}).get("qc") or {}
+    try:
+        current = qc.get("key") == "question:" + mtime_key(os.path.join(tdir(a.state, task), "QUESTION.md"))
+    except OSError:
+        current = False
+    if current and qc.get("url"):
+        return "read and answer it on the unit's issue: %s" % qc["url"]
+    if (rs.get("questions") or {}).get(task) == mtime_key_of(a, task) and not qc:
+        return "answer it on this issue, starting the reply with `%s:`" % task  # posted here by the old version
+    return "its comment on the unit's issue is not posted yet"
+
+
+def body_for(a, sts, prs, rs=None):
     state = a.state
+    rs = rs or {}
     out = ["# noodlebot status: %s%s" % (a.repo, " (noodlebot %s)" % a.version if a.version else ""), "",
            "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
            "the loop is not running._" % local(), ""] + usage_lines(state) + ["## Waiting on you"]
@@ -330,9 +376,9 @@ def body_for(a, sts, prs):
             items.append("- %s: %s." % (n, answered_text(state, n) if n in nodes(state) and not n.startswith("#") else "answered"))
         elif has(state, n, "QUESTION.md") and not n.startswith("#") and is_merged(state, n):
             items.append("- **%s's PR is merged; its question is still open, and an answer starts a follow-up** "
-                         "(posted below as a comment). Reply to this issue to answer." % n)
+                         "(%s)." % (n, question_link(a, rs, n)))
         elif has(state, n, "QUESTION.md"):
-            items.append("- **%s asks a question** (posted below as a comment). Reply to this issue to answer." % n)
+            items.append("- **%s asks a question** (%s)." % (n, question_link(a, rs, n)))
         elif has(state, n, "WAITING-PR"):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
             items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after." % (n, pr))
@@ -368,9 +414,10 @@ def body_for(a, sts, prs):
     events = [l for l in tail_lines(os.path.join(state, "status.log"), 64 << 10) if EVENT.search(event_text(l)[1])]
     out += ["", "## Recent events", ""]
     out += ["- `%s` %s" % event_text(l) for l in events[-10:]] or ["- none yet"]
-    out += ["", "---", "Answer a question by replying to this issue in plain words (e.g. \"Q1 approve, Q2 as "
-            "recommended\"). Only %s's replies count; if more than one is waiting, start with its ID or "
-            "issue number, e.g. `B03: ...` or `#46: ...`. Hand an issue to the bot by adding the `noodlebot` label "
+    out += ["", "---", "Answer a question on the unit's issue (the link is in its item above) in plain words (e.g. "
+            "\"Q1 approve, Q2 as recommended\"). Only %s's replies count; if more than one unit on that issue is "
+            "waiting, start with its ID or issue number. A reply here still works if it starts with the ID "
+            "prefix, e.g. `B03: ...` or `#46: ...`. Hand an issue to the bot by adding the `noodlebot` label "
             "(only labels you add count). Closing this issue is fine: the loop opens a new one." % a.owner]
     return "\n".join(out) + "\n"
 
@@ -412,7 +459,324 @@ def comment(a, issue, text):
     if len(text) > room:
         text = text[:room] + "\n\n(cut here: too long for one comment)"
     text = signed(a, text)
-    gh("POST", "repos/%s/issues/%s/comments" % (a.repo, issue), {"body": text})
+    return gh("POST", "repos/%s/issues/%s/comments" % (a.repo, issue), {"body": text}) or {}
+
+
+def spec_info(a, node):
+    """(name or None, [Resolves issue numbers]) of node's spec on origin/main of the clone; (None, []) when unreadable."""
+    names = [l for l in git_lines(a.clone, "ls-tree", "--name-only", "origin/main", "nodes/")
+             if re.match(r"nodes/%s-.*\.md$" % re.escape(node), l)]
+    name, issues = None, []
+    if names:
+        f = sorted(names)[0]
+        name = f[len("nodes/%s-" % node):-len(".md")]
+        for l in git_lines(a.clone, "show", "origin/main:" + f):
+            if l.startswith("**Resolves:**"):
+                issues = [int(x) for x in re.findall(r"#(\d+)", l)]
+                break
+    if name is None:
+        name = next((n["name"] for n in graph_nodes(a.state) if n["id"] == node), None)
+    return name, issues
+
+
+def home_issue(a, rs, task):
+    """The unit's home issue number: the recorded one, else decided (and for a Build issue created) and recorded."""
+    f = os.path.join(tdir(a.state, task), "issue")
+    try:
+        return int(open(f).read().split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    if task.startswith("#"):
+        n = int(task[1:])
+    else:
+        name, issues = spec_info(a, task)
+        if issues:
+            n = issues[0]
+        else:
+            title = "Build %s%s" % (task, " " + name if name else "")
+            if not getattr(a, "unit_label", False):
+                a.unit_label = True
+                try:
+                    gh("POST", "repos/%s/labels" % a.repo, {"name": UNIT_LABEL, "color": "0e8a16",
+                                                          "description": "A unit of noodlebot work, while it is built"})
+                except RuntimeError:
+                    pass  # exists already, or labels.py ensures it
+            spec = "`nodes/%s-%s.md`" % (task, name) if name else "its spec"
+            n = None  # a POST that failed after GitHub created the issue must not lead to a second one
+            for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, UNIT_LABEL)) or []:
+                names = [l.get("name") if isinstance(l, dict) else l for l in i.get("labels") or []]
+                if i.get("title") == title and UNIT_LABEL in names and "pull_request" not in i:
+                    n = i["number"]
+                    break
+            if n is None:
+                n = gh("POST", "repos/%s/issues" % a.repo, {
+                    "title": title, "labels": [UNIT_LABEL],
+                    "body": signed(a, "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
+                                      "result). Its spec is %s on the main branch. The loop closes this issue once "
+                                      "the node is merged." % (task, spec))})["number"]
+    with open(f + ".tmp", "w") as fh:
+        fh.write("%d\n" % n)
+    os.replace(f + ".tmp", f)
+    return n
+
+
+def milestone(a, rs, task, key, stage, body=""):
+    """Post one milestone comment on the unit's home issue, once per key (recorded in report.json after the post)."""
+    if task.startswith("PR #"):  # a spec-PR update is not a unit: no issue
+        return
+    u = rs.setdefault("units", {}).setdefault(task, {})
+    done = u.setdefault("done", [])
+    if key in done:
+        return
+    issue = home_issue(a, rs, task)
+    text = "**Stage:** " + stage
+    if not u.get("intro") and not task.startswith("#"):
+        others = [i for i in spec_info(a, task)[1] if i != issue]
+        if others:
+            text += "\n\nAlso on this node's Resolves line: " + ", ".join("#%d" % i for i in others) + "."
+    if body:
+        text += "\n\n" + body
+    c = comment(a, issue, text)
+    u["intro"] = True
+    if c.get("created_at") and not u.get("first_at"):
+        u["first_at"] = c["created_at"]
+    if key.startswith("question:"):  # where the owner's answer on the unit's issue is taken from
+        u["qc"] = {"key": key, "id": c.get("id"), "url": c.get("html_url"), "at": c.get("created_at")}
+    done.append(key)
+    a.save()
+
+
+def flush(a, rs):
+    """Post the queued milestones; one that fails stays queued and is logged at the end of the run."""
+    left = []
+    tried = a.__dict__.setdefault("failed_keys", set())
+    for m in rs.get("pending", []):
+        if not os.path.isdir(tdir(a.state, m["task"])):
+            continue  # its unit is gone
+        if (m["task"], m["key"]) in tried:  # failed earlier in this run: the next run retries it
+            left.append(m)
+            continue
+        try:
+            milestone(a, rs, m["task"], m["key"], m["stage"], m.get("body", ""))
+        except Exception as e:
+            a.errors.append(str(e))
+            tried.add((m["task"], m["key"]))
+            left.append(m)
+    rs["pending"] = left
+    a.save()
+
+
+def queue(a, rs, task, key, stage, body=""):
+    rs.setdefault("pending", []).append({"task": task, "key": key, "stage": stage, "body": body})
+    a.save()
+
+
+def mtime_key(path):
+    return str(int(os.path.getmtime(path)))
+
+
+def migrate(a, rs):
+    """A report.json from before milestones: what is there now was seen; post no milestone for it."""
+    units = rs.setdefault("units", {})
+    for n in nodes(a.state):
+        keys = []
+        if has(a.state, n, "FAILED"):
+            keys.append("failed:" + mtime_key(os.path.join(tdir(a.state, n), "FAILED")))
+        if has(a.state, n, "QUESTION.md"):
+            key = mtime_key(os.path.join(tdir(a.state, n), "QUESTION.md"))
+            if rs.get("questions", {}).get(n) == key:  # only a question the old version posted
+                keys.append("question:" + key)
+        if keys:
+            units.setdefault(n, {}).setdefault("done", []).extend(keys)
+    if rs.get("m_offset") is None:
+        rs["m_offset"] = rs.get("log_offset", 0)
+
+
+START = re.compile(r"started (?:([A-Z][0-9][0-9]) \(|triage of (#\d+) )")
+TRIAGE_DONE = re.compile(r"triage of (#\d+) done")
+
+
+def collect_starts(a, rs):
+    """Queue a milestone for each new `started` line of status.log (only whole lines after the last one read)."""
+    log = os.path.join(a.state, "status.log")
+    size = os.path.getsize(log) if os.path.exists(log) else 0
+    off = rs.get("m_offset")
+    if off is None:
+        rs["m_offset"] = size  # first run: do not replay
+        return
+    if off > size:
+        off = 0
+    with open(log, "rb") as f:
+        f.seek(off)
+        data = f.read()
+    end = data.rfind(b"\n") + 1
+    pos = off
+    for raw in data[:end].splitlines(keepends=True):
+        line_off, pos = pos, pos + len(raw)
+        what = event_text(raw.decode("utf-8", "replace").strip())[1]
+        d = TRIAGE_DONE.match(what)
+        if d:
+            if not getattr(a, "pulls_ok", True):  # its spec PR cannot be told: read this line again next run
+                end = line_off - off
+                break
+            pr = next((p for p in getattr(a, "pulls", []) if re.match(r"spec/triage-%s-" % d.group(1)[1:],
+                                                                      (p.get("head") or {}).get("ref") or "")), None)
+            queue(a, rs, d.group(1), "done:%d" % line_off, "triage done",
+                  "The triage ended done." + (" Its spec PR: %s" % pr_link(pr) if pr else ""))
+            continue
+        m = START.match(what)
+        if not m:
+            continue
+        task = m.group(1) or m.group(2)
+        k = re.search(r"\bstart (\d+) of (\d+)", what)
+        count = "start %s of %s" % (k.group(1), k.group(2)) if k else "start count unknown"
+        resumed = os.path.isdir(os.path.join(tdir(a.state, task), "answered"))
+        if task.startswith("#") and resumed:
+            stage = "triage resumed after your answer (%s)" % count
+        elif task.startswith("#"):
+            stage = "triage started (%s)" % count
+        elif resumed:
+            stage = "resumed after your answer (%s)" % count
+        else:
+            stage = "session started (%s)" % count
+        queue(a, rs, task, "start:%d" % line_off, stage)
+    rs["m_offset"] = off + end
+    a.save()
+
+
+def post_failed(a, rs):
+    for n in nodes(a.state):
+        if n.startswith("PR #") or not has(a.state, n, "FAILED"):  # a spec-PR update is not a unit: no issue
+            continue
+        path = os.path.join(tdir(a.state, n), "FAILED")
+        key = "failed:" + mtime_key(path)
+        done = rs.setdefault("units", {}).setdefault(n, {}).setdefault("done", [])
+        if key in done:
+            continue
+        if a.first_run:  # FAILED files from before the first run were seen, not new
+            done.append(key)
+            continue
+        with open(path, errors="replace") as fh:
+            why = fh.readline().strip() or "no reason given"
+        try:
+            milestone(a, rs, n, key, "FAILED, held until you delete its FAILED file", "Reason: %s" % why)
+        except Exception as e:
+            a.errors.append(str(e))
+
+
+def record_answer(a, rs, node, c, text):
+    """Write the node's ANSWER.md from the owner's comment and queue the answer-received milestone; returns the
+    clause saying what the answer waits for (None for a triage)."""
+    d = tdir(a.state, node)
+    with open(os.path.join(d, "ANSWER.md.tmp"), "w") as f:
+        f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
+                (node, a.owner, c["created_at"], c["html_url"], text))
+    os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
+    a.answered = True
+    what = None if node.startswith("#") else answered_text(a.state, node)
+    queue(a, rs, node, "answer:%s" % c["id"], "answer received" + (", " + what if what else ""),
+          "The owner's answer was recorded: %s" % c["html_url"])
+    flush(a, rs)
+    return what
+
+
+def home_units(a):
+    """{issue number: [tasks]} for the units whose home issue is recorded."""
+    out = {}
+    for n in nodes(a.state):
+        if n.startswith("PR #"):
+            continue
+        try:
+            out.setdefault(int(open(os.path.join(tdir(a.state, n), "issue")).read().split()[0]), []).append(n)
+        except (OSError, ValueError, IndexError):
+            pass
+    return out
+
+
+def finished(a, n):
+    """A unit nothing more is expected from: no question, no session and, for a node, merged without a follow-up
+    in progress; a triage once it ended done. A new QUESTION.md makes it unfinished again."""
+    if held(a, n) or has(a.state, n, "session.pid") or has(a.state, n, "FAILED"):
+        return False
+    if n.startswith("#"):  # done: its done line was seen (queued or posted)
+        rs = getattr(a, "rs", None) or {}
+        return any(k.startswith("done:") for k in rs.get("units", {}).get(n, {}).get("done", [])) or \
+            any(m["task"] == n and m["key"].startswith("done:") for m in rs.get("pending", []))
+    return is_merged(a.state, n)
+
+
+def held(a, n):
+    """A unit with an open or answered-but-unreleased question, or a follow-up in progress: its issue stays open."""
+    return has(a.state, n, "QUESTION.md") or has(a.state, n, "FOLLOWUP")
+
+
+ID_PREFIX = re.compile(r"\s*\**(#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
+
+
+def take_home_answers(a, rs, status_issue):
+    """The owner's new comments on the units' home issues: the answer to the one open question there, with a +1;
+    a reply only when none is open, or several are and the comment does not start with one's ID."""
+    seen = rs.setdefault("home", {})
+    for issue, tasks in sorted(home_units(a).items()):
+        st = seen.get(str(issue))
+        for rid in list((st or {}).get("react", [])):  # a failed +1 is retried even when the unit is finished
+            try:
+                gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, rid), {"content": "+1"})
+                st["react"].remove(rid)
+                a.save()
+            except RuntimeError as e:
+                a.errors.append(str(e))
+        tasks = [t for t in tasks if not finished(a, t)]
+        if issue == status_issue or not tasks:
+            continue
+        units = rs.get("units", {})
+        floor = min([units[t]["first_at"] for t in tasks if units.get(t, {}).get("first_at")] or [""])
+        try:
+            since = (st or {}).get("since") or floor
+            comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
+                          (a.repo, issue, "&since=" + since if since else "")) or []
+            if st is None:
+                st = seen[str(issue)] = {"id": 0}
+                if not floor:  # nothing of ours was posted there yet: do not replay
+                    st["id"] = max([c["id"] for c in comments] or [0])
+                    a.save()
+                    continue
+            for c in sorted(comments, key=lambda c: c["id"]):
+                if c["id"] <= st["id"]:
+                    continue
+                user = c.get("user") or {}
+                text = c.get("body") or ""
+                if (user.get("type") != "Bot" and user.get("login") == a.owner and c.get("author_association") == "OWNER"
+                        and c.get("created_at", "") > floor):
+                    pending = [t for t in tasks if t in waiting(a.state)]
+                    opened = [t for t in pending if (units.get(t, {}).get("qc") or {}).get("key") ==
+                              "question:" + mtime_key(os.path.join(tdir(a.state, t), "QUESTION.md"))]
+                    def after(t):  # posted after the unit's question: by comment id when known, else by time
+                        qc = units[t]["qc"]
+                        return c["id"] > qc["id"] if isinstance(qc.get("id"), int) else (qc.get("at") or "") < c["created_at"]
+                    cands = [t for t in opened if after(t)]
+                    m = ID_PREFIX.match(text)
+                    if not pending:
+                        comment(a, issue, "Not recorded as an answer: no question is waiting on this issue.")
+                    elif len(cands) > 1 and not (m and m.group(1) in cands):
+                        comment(a, issue, "Not recorded as an answer: more than one unit is waiting on this issue (%s). "
+                                "Start the reply with the ID of the one you answer, e.g. `%s: ...`." %
+                                (", ".join(cands), cands[0]))
+                    elif cands and m and m.group(1) in nodes(a.state) and m.group(1) not in cands:
+                        comment(a, issue, "Not recorded as an answer: %s has no question waiting on this issue (waiting here: %s)." %
+                                (m.group(1), ", ".join(cands)))
+                    elif cands:
+                        node = m.group(1) if m and m.group(1) in cands else cands[0]
+                        record_answer(a, rs, node, c, text)
+                        try:
+                            gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, c["id"]), {"content": "+1"})
+                        except RuntimeError as e:
+                            a.errors.append(str(e))
+                            st.setdefault("react", []).append(c["id"])  # retried on the next run
+                st["id"], st["since"] = c["id"], c.get("created_at", "")
+                a.save()
+        except Exception as e:  # retried on the next run, from this comment on
+            a.errors.append(str(e))
 
 
 def take_answers(a, rs, issue):
@@ -428,7 +792,7 @@ def take_answers(a, rs, issue):
             continue
         text = c.get("body") or ""
         open_q = waiting(a.state)
-        m = re.match(r"\s*\**(#\d+|[A-Z][0-9][0-9])\**\s*[:\-]", text)
+        m = ID_PREFIX.match(text)
         node = (m.group(1) if m.group(1) in open_q else None) if m else (open_q[0] if len(open_q) == 1 else None)
         if node is None and m and open_q:
             comment(a, issue, "Not recorded as an answer: %s is not waiting on a question (waiting: %s)." %
@@ -439,17 +803,11 @@ def take_answers(a, rs, issue):
                     ("no node is waiting on a question" if not open_q else
                      "more than one node is waiting (%s)" % ", ".join(open_q), open_q[0] if open_q else "B03"))
             continue
-        d = tdir(a.state, node)
-        with open(os.path.join(d, "ANSWER.md.tmp"), "w") as f:
-            f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
-                    (node, a.owner, c["created_at"], c["html_url"], text))
-        os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
+        what = record_answer(a, rs, node, c, text)
         if node.startswith("#"):
             comment(a, issue, "Recorded as %s's ANSWER.md." % node)
         else:
-            what = answered_text(a.state, node)
             comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
-        a.answered = True
 
 
 def post_events(a, rs, issue):
@@ -483,14 +841,319 @@ def post_events(a, rs, issue):
 def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
-        q = os.path.join(tdir(a.state, n), "QUESTION.md")
-        key = str(int(os.path.getmtime(q)))
-        if posted.get(n) == key:
+        if n.startswith("PR #"):
             continue
-        comment(a, issue, "## %s asks\n\n%s\n\n---\nTo answer, reply to this issue in plain words. Only %s's "
-                "replies count; if more than one node is waiting, start with `%s:`.\n" %
-                (n, open(q).read().strip(), a.owner, n))
-        posted[n] = key
+        q = os.path.join(tdir(a.state, n), "QUESTION.md")
+        key = mtime_key(q)
+        if posted.get(n) == key and ("question:" + key) in rs.get("units", {}).get(n, {}).get("done", []):
+            continue
+        try:
+            home = home_issue(a, rs, n)
+            if ("question:" + key) not in rs.get("units", {}).get(n, {}).get("done", []):
+                reopen(a, rs, home)
+            if posted.get(n) != key:
+                comment(a, issue, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
+                        "starting the reply with `%s:`.\n" % (n, home, n))
+                posted[n] = key
+            milestone(a, rs, n, "question:" + key, "%s asks a question, waiting for your answer" % n,
+                      "## %s asks\n\n%s\n\n---\nTo answer, reply to this issue in plain words. Only %s's replies count.\n" %
+                      (n, open(q).read().strip(), a.owner))
+        except Exception as e:
+            a.errors.append(str(e))
+
+
+def pr_link(pr):
+    return pr.get("html_url") or "#%s" % pr.get("number")
+
+
+def tsv(a, name):
+    return [l.split() for l in read_lines(os.path.join(a.state, name))]
+
+
+def merged_numbers(a):
+    """{node: [merged PR numbers]} from merged-prs.tsv."""
+    out = {}
+    for w in tsv(a, "merged-prs.tsv"):
+        m = len(w) > 1 and w[0].isdigit() and re.match(r"node/([A-Z][0-9][0-9])-", w[1])
+        if m:
+            out.setdefault(m.group(1), []).append(int(w[0]))
+    return out
+
+
+def subject_numbers(a):
+    """{node: PR number or None} for the nodes whose squash subject is in subjects.txt (the number from a trailing "(#N)")."""
+    subjects = read_lines(os.path.join(a.state, "subjects.txt"))
+    out = {}
+    for n in graph_nodes(a.state):
+        for s in subjects:
+            if s.startswith("%s %s:" % (n["id"], n["name"])):
+                m = re.search(r"\(#(\d+)\)\s*$", s)
+                out[n["id"]] = int(m.group(1)) if m else out.get(n["id"])
+                if m:
+                    break
+    return out
+
+
+def merges_unknown(a):
+    """True when merged-prs.tsv is empty although merges are known: from the subjects, or from a merged PR in closed-prs.tsv
+    (a list made after it in the same tick, so left from an earlier one): the loop's gh pr list failed this tick."""
+    if tsv(a, "merged-prs.tsv"):
+        return False
+    return any(len(w) > 3 and w[3] == "true" for w in tsv(a, "closed-prs.tsv")) or \
+        bool(merged_ids(a.state, graph_nodes(a.state)))
+
+
+def closed_unknown(a):
+    """True when closed-prs.tsv is empty although merges are known (it lists the merged PRs too): its gh pr list failed."""
+    return not tsv(a, "closed-prs.tsv") and bool(merged_ids(a.state, graph_nodes(a.state)))
+
+
+def pr_events(a, rs=None):
+    """[(node, key, kind, PR number or None)] for the merged and closed-without-merging PRs the loop recorded."""
+    out, seen = [], set()
+    unknown = merges_unknown(a)
+    if not unknown:
+        for node, nums in sorted(merged_numbers(a).items()):
+            seen.add(node)
+            out += [(node, "merged:%d" % n, "merged", n) for n in sorted(nums)]
+        subj = subject_numbers(a)
+        for node in sorted(merged_ids(a.state, graph_nodes(a.state)) - seen):  # merged by squash subject only
+            done = ((rs or {}).get("units", {}).get(node, {}) or {}).get("done", [])
+            n = subj.get(node)
+            if n:
+                if "merged" in done:
+                    continue
+                out.append((node, "merged:%d" % n, "merged", n))
+            elif not any(k == "merged" or k.startswith("merged:") for k in done):
+                out.append((node, "merged", "merged", None))
+    for w in tsv(a, "closed-prs.tsv"):
+        m = len(w) > 3 and w[0].isdigit() and w[3] == "false" and re.match(r"node/([A-Z][0-9][0-9])-", w[1])
+        if m:
+            out.append((m.group(1), "closed:%s" % w[0], "closed", int(w[0])))
+    return out
+
+
+def resolves_map(a):
+    """{node: [issue numbers on its Resolves line]} for every node spec on origin/main of the clone."""
+    out = {}
+    for l in git_lines(a.clone, "grep", "--no-color", "-e", r"^\*\*Resolves:\*\*", "origin/main", "--", "nodes/"):
+        m = re.match(r"origin/main:nodes/([A-Z][0-9][0-9])-[^:]*\.md:(.*)$", l)
+        if m and m.group(1) not in out:
+            out[m.group(1)] = [int(x) for x in re.findall(r"#(\d+)", m.group(2))]
+    return out
+
+
+def closing_candidates(a, rs):
+    """({issue: [merged nodes it is a candidate of]}, resolves map): the home issue and Resolves issues of the merged nodes."""
+    merged = merged_ids(a.state, graph_nodes(a.state))
+    mine = [n for n in nodes(a.state) if NODE.match(n) and n in merged]
+    if not mine:
+        return {}, {}
+    res = resolves_map(a)
+    homes = {n: i for i, ts in home_units(a).items() for n in ts}
+    out = {}
+    for n in mine:
+        for i in set(res.get(n, [])) | ({homes[n]} if n in homes else set()):
+            out.setdefault(i, []).append(n)
+    return out, res
+
+
+def reopen(a, rs, issue):
+    """Make a unit's home issue open for its new question (closed by the loop, or by someone else)."""
+    if gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
+        gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "open"})
+    if (rs.get("closed") or {}).pop(str(issue), None) is not None:
+        a.save()
+
+
+def closable(a, issue, res, merged, homed):
+    """True when every node resolving the issue is merged and no unit of it (a resolver or one homed there) holds it."""
+    units = homed.get(issue, [])
+    resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in units if NODE.match(t)}
+    return resolvers <= merged and not any(held(a, t) for t in resolvers | set(units))
+
+
+def close_issues(a, rs):
+    """Close the home issue and Resolves issues of the merged nodes, each with one comment naming the PR(s), once every node
+    resolving the issue is merged and no unit holds it open; the first run after that holds."""
+    if not rs.get("close_seed") or merges_unknown(a) or not git_lines(a.clone, "rev-parse", "--verify", "-q", "origin/main"):
+        return  # not yet seeded, or the specs cannot be read (a Resolves issue could be closed too early)
+    cands, res = closing_candidates(a, rs)
+    if not cands:
+        return
+    merged = merged_ids(a.state, graph_nodes(a.state))
+    nums, subj = merged_numbers(a), subject_numbers(a)
+    closed = rs.setdefault("closed", {})
+    homed = home_units(a)
+    for issue in sorted(cands):
+        c = closed.get(str(issue)) or {}
+        if c.get("closed"):
+            continue
+        if not closable(a, issue, res, merged, homed):
+            continue
+        resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in homed.get(issue, []) if NODE.match(t)}
+        try:
+            if not c.get("commented") and gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
+                closed[str(issue)] = {"closed": True, "by_other": True}  # closed by someone already: left as they closed it
+                a.save()
+                continue
+            if not c.get("commented"):
+                prs = sorted({n for k in resolvers for n in nums.get(k) or ([subj[k]] if subj.get(k) else [])})
+                what = ", ".join("PR #%d" % n for n in prs) if prs else "the node's PR"
+                comment(a, issue, "**Stage:** merged, closing this issue\n\nMerged: %s. Closing this issue." % what)
+                c = closed[str(issue)] = {"commented": True}
+                a.save()
+            gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "closed", "state_reason": "completed"})
+            c["closed"] = True
+            a.save()
+        except Exception as e:
+            a.errors.append(str(e))
+
+
+def seed_closing(a, rs):
+    """Record the issues closable now whose merged nodes were all merged at the merge seed (before this bookkeeping) as
+    closed, so the loop leaves them alone; only once origin/main of the clone is readable, else a Resolves issue would be
+    missed. An issue of a node merged since is left to the rule."""
+    if rs.get("close_seed") or rs.get("merge_seed") is None or merges_unknown(a):
+        return
+    if not git_lines(a.clone, "rev-parse", "--verify", "-q", "origin/main"):
+        return
+    try:
+        closed = rs.setdefault("closed", {})
+        cands, res = closing_candidates(a, rs)
+        merged, homed = merged_ids(a.state, graph_nodes(a.state)), home_units(a)
+        before = set(rs["merge_seed"])
+        for i in cands:
+            if set(cands[i]) <= before and closable(a, i, res, merged, homed):
+                closed.setdefault(str(i), {"seed": True, "closed": True})
+        rs["close_seed"] = True
+    except Exception as e:
+        a.errors.append(str(e))
+
+
+def seed_events(a, rs, done_of):
+    """Record the merged and the closed-without-merging PRs already there as seen, each list once it is known (a failed
+    gh pr list leaves its file empty: seeding then would replay all of it later). A PR recorded open since the PR seed
+    ("pr:N") was merged or closed after it: it is not seeded, and its milestone is posted."""
+    if rs.get("merge_seed") is None and not merges_unknown(a):
+        new = set()
+        for t, key, kind, n in pr_events(a):
+            if kind != "merged":
+                continue
+            if n and "pr:%d" % n in done_of(t):
+                new.add(t)
+            elif key not in done_of(t):
+                done_of(t).append(key)
+        rs["merge_seed"] = sorted(merged_ids(a.state, graph_nodes(a.state)) - new)
+        a.save()
+    if not rs.get("closedpr_seed") and not closed_unknown(a):
+        for t, key, kind, n in pr_events(a):
+            if kind == "closed" and "pr:%d" % n not in done_of(t) and key not in done_of(t):
+                done_of(t).append(key)
+        rs["closedpr_seed"] = True
+        a.save()
+
+
+def post_prs(a, rs, pulls):
+    """Milestones from the PRs: opened, the CI result per head commit, each fresh review's verdict (open node PRs), and
+    merged / closed without merging (from the loop's state files). The first run with this bookkeeping only records
+    what is already there (the merged and the closed PRs each at the first run their list is readable)."""
+    tasks = set(nodes(a.state))
+    units = rs.setdefault("units", {})
+
+    def done_of(t):
+        return units.setdefault(t, {}).setdefault("done", [])
+
+    def node_prs():
+        for pr in pulls:
+            m = re.match(r"node/([A-Z][0-9][0-9])-", (pr.get("head") or {}).get("ref") or "")
+            if m and pr.get("number"):
+                yield m.group(1), pr
+
+    def comments_of(pr, every=False):
+        """The PR's comments since the cursor (every page on the seed run), in order."""
+        since = (rs.get("pr_since") or {}).get(str(pr["number"]))
+        out, page = [], 1
+        while True:
+            got = gh("GET", "repos/%s/issues/%s/comments?per_page=100&page=%d%s" %
+                     (a.repo, pr["number"], page, "&since=" + since if since else "")) or []
+            out += got
+            if not every or len(got) < 100 or page >= 50:
+                break
+            page += 1
+        return sorted(out, key=lambda c: c["id"])
+
+    def verdict(c):  # a quoted line ("> Fresh review (...)") is not a verdict
+        m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c.get("body") or "")
+        return m and m.group(1)
+
+    if not rs.get("pr_seed"):  # the open PRs already there
+        try:
+            for t, pr in node_prs():
+                keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head"]["sha"]] if (pr.get("head") or {}).get("sha") else [])
+                cs = comments_of(pr, True)
+                keys += ["review:%s" % c["id"] for c in cs if verdict(c)]
+                if cs:
+                    rs.setdefault("pr_since", {})[str(pr["number"])] = max(c.get("created_at", "") for c in cs)
+                done_of(t).extend(k for k in keys if k not in done_of(t))
+            rs["pr_seed"] = True
+        except Exception as e:
+            a.errors.append(str(e))
+        else:
+            seed_events(a, rs, done_of)
+            seed_closing(a, rs)
+        a.save()
+        return
+    seed_events(a, rs, done_of)
+    seed_closing(a, rs)
+
+    def post(t, key, stage, body=""):
+        try:
+            milestone(a, rs, t, key, stage, body)
+        except Exception as e:
+            a.errors.append(str(e))
+
+    for t, pr in node_prs():
+        if t not in tasks:
+            continue
+        n = pr["number"]
+        post(t, "pr:%s" % n, "PR #%s open, final review running" % n, "The pull request: %s" % pr_link(pr))
+        sha = (pr.get("head") or {}).get("sha")
+        if sha and "ci:" + sha not in done_of(t) and sha not in rs.get("ci_off", []):
+            try:
+                runs = (gh("GET", "repos/%s/commits/%s/check-runs?per_page=100" % (a.repo, sha)) or {}).get("check_runs") or []
+                if runs and all(r.get("status") == "completed" for r in runs):
+                    bad = [r.get("name") or "?" for r in runs if r.get("conclusion") not in ("success", "neutral", "skipped")]
+                    if bad:
+                        post(t, "ci:" + sha, "PR #%s: CI failed" % n,
+                             "Failing checks on %s: %s." % (sha[:7], ", ".join(bad)))
+                    else:
+                        post(t, "ci:" + sha, "PR #%s: CI passed" % n, "All %d checks on %s passed." % (len(runs), sha[:7]))
+            except Exception as e:
+                if re.search(r"\(HTTP (403|404)\)", str(e)) and "rate limit" not in str(e).lower():  # check runs not readable for this commit: log once, stop asking
+                    rs.setdefault("ci_off", []).append(sha)
+                    print("report.py: no CI result for %s: %s" % (sha[:7], e), file=sys.stderr)
+                else:
+                    a.errors.append(str(e))
+        try:
+            for c in comments_of(pr):
+                v = verdict(c)
+                if v:
+                    post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, v),
+                         "Verdict: %s%s" % (v, " (%s)" % c["html_url"] if c.get("html_url") else ""))
+                    if "review:%s" % c["id"] not in done_of(t):
+                        break  # its post failed: read from this comment again next run
+                rs.setdefault("pr_since", {})[str(n)] = c.get("created_at", "")
+        except Exception as e:
+            a.errors.append(str(e))
+    for t, key, kind, n in pr_events(a, rs):
+        if t not in tasks or (rs.get("merge_seed") is None if kind == "merged" else not rs.get("closedpr_seed")):
+            continue  # its list is not seeded yet: what is in it may be from before
+        pr = "PR #%d" % n if n else "the node's PR"
+        if kind == "merged":
+            post(t, key, "%s merged" % pr, "%s was merged into the main branch." % pr)
+        else:
+            post(t, key, "%s closed without merging" % pr, "%s was closed without merging." % pr)
 
 
 def main():
@@ -499,6 +1162,7 @@ def main():
     p.add_argument("--state", required=True)
     p.add_argument("--worktrees", default="")
     p.add_argument("--owner", default="")
+    p.add_argument("--clone", default="")
     p.add_argument("--version", default="")
     p.add_argument("--signature", default="")
     a = p.parse_args()
@@ -508,6 +1172,13 @@ def main():
         os.environ.get("NOODLEBOT_DATA") or os.path.join(os.path.expanduser("~"), ".local", "share", "noodlebot"),
         "worktrees", a.repo.split("/")[1])
     a.worktrees = os.path.abspath(a.worktrees)
+    a.clone = a.clone or os.path.join(os.path.dirname(os.path.dirname(a.worktrees)), "repos", os.path.basename(a.worktrees))
+    class Errors(list):
+        def append(self, e):  # logged as it happens, so a later crash cannot lose it
+            print("report.py: %s" % e, file=sys.stderr)
+            super().append(e)
+
+    a.errors = Errors()
     path = os.path.join(a.state, "report.json")
     try:
         rs = json.load(open(path))
@@ -519,6 +1190,11 @@ def main():
             json.dump(rs, f, indent=1)
         os.replace(path + ".tmp", path)
 
+    a.save = save
+    a.first_run = not rs  # no (readable) report.json: what is on disk now was seen, not new
+    if rs and "units" not in rs:
+        migrate(a, rs)
+    rs.setdefault("units", {})
     issue, new = find_issue(a, rs)
     if new or rs.get("issue") != issue:
         rs["issue"] = issue
@@ -527,19 +1203,41 @@ def main():
             old = gh("GET", "repos/%s/issues/%s/comments?per_page=100" % (a.repo, issue)) or []
             rs["comment_id"] = max([c["id"] for c in old] or [0])
         save()
+    a.rs = rs
+    a.pulls, pulls_err, a.pulls_ok = [], None, True
+    try:
+        a.pulls = gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []
+    except Exception as e:  # raised after the work below, as before
+        pulls_err, a.pulls_ok = e, False
     try:
         take_answers(a, rs, issue)
+        take_home_answers(a, rs, issue)
         post_events(a, rs, issue)
+        collect_starts(a, rs)
+        flush(a, rs)
+        post_failed(a, rs)
+        if merges_unknown(a):  # logged once per spell; the run still succeeds
+            if not rs.get("merges_unknown"):
+                print("report.py: merged-prs.tsv is empty although merges are known (its gh pr list failed?): no merged "
+                      "milestone, seeding or closing until it is filled", file=sys.stderr)
+                rs["merges_unknown"] = True
+        else:
+            rs.pop("merges_unknown", None)
+        if pulls_err is None:
+            post_prs(a, rs, a.pulls)
         post_questions(a, rs, issue)
+        close_issues(a, rs)
     finally:
         save()
+    if pulls_err is not None:
+        raise pulls_err
     prs = {}
-    for pr in gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []:
+    for pr in a.pulls:
         m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"]["ref"])
         if m:
             prs[m.group(1)] = pr["number"]
     try:
-        body = body_for(a, sessions(a.state), prs)
+        body = body_for(a, sessions(a.state), prs, rs)
     except Exception as e:  # show the failure on the issue rather than leave it silently stale
         body = ("# noodlebot status: %s\n\n_Updated %s. The scheduler loop is running, but building this "
                 "status failed: `%s`. See report.log._\n" % (a.repo, local(), str(e)[:300]))
@@ -552,7 +1250,7 @@ def main():
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"body": body})
         rs["body_hash"], rs["body_time"] = h, time.time()
         save()
-    return 3 if a.answered else 0
+    return 3 if a.answered else (1 if a.errors else 0)
 
 
 if __name__ == "__main__":

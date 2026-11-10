@@ -116,12 +116,12 @@ ensure() {
 setup "" other bug
 ensure
 ok "L01-AC-1: ensure exits 0 on a repository without the labels" test "$rc" = 0
-ok "L01-AC-1: it creates noodlebot, noodlebot-triaged and noodlebot-status" test "$(h created)" = "noodlebot noodlebot-status noodlebot-triaged"
+ok "L01-AC-1: it creates noodlebot, noodlebot-triaged, noodlebot-status and (U01-AC-10) noodlebot-unit" test "$(h created)" = "noodlebot noodlebot-status noodlebot-triaged noodlebot-unit"
 ok "L01-AC-1: each is created with a colour and a non-empty description" h complete
-ok "L01-AC-1: and nothing is changed or deleted" test "$(h writes)" = 3
+ok "L01-AC-1: and nothing is changed or deleted" test "$(h writes)" = 4
 
 # AC-2: all three present, with a colour and description of their own.
-setup "" bug noodlebot noodlebot-triaged noodlebot-status
+setup "" bug noodlebot noodlebot-triaged noodlebot-status noodlebot-unit
 ensure
 ok "L01-AC-2: all three present: exit 0" test "$rc" = 0
 ok "L01-AC-2: all three present: it read the labels (a fake gh was called)" test "$(h calls)" -ge 1
@@ -131,16 +131,16 @@ ok "L01-AC-2: all three present: no POST, PATCH or DELETE" test "$(h writes)" = 
 setup "" noodlebot-triaged bug
 ensure
 ok "L01-AC-2: some present: exit 0" test "$rc" = 0
-ok "L01-AC-2: some present: only the missing ones are created" test "$(h created)" = "noodlebot noodlebot-status"
+ok "L01-AC-2: some present: only the missing ones are created" test "$(h created)" = "noodlebot noodlebot-status noodlebot-unit"
 ok "L01-AC-2: some present: the new ones have colour and description" h complete
-ok "L01-AC-2: some present: no other write" test "$(h writes)" = 2
+ok "L01-AC-2: some present: no other write" test "$(h writes)" = 3
 
 # AC-2: every page of labels is read (100 per page at most; the third label is the 101st).
-setup "" $(seq -f 'filler-%g' 1 98) noodlebot noodlebot-triaged noodlebot-status
+setup "" $(seq -f 'filler-%g' 1 98) noodlebot noodlebot-triaged noodlebot-status noodlebot-unit
 ensure
 ok "L01-AC-2: labels on a later page: exit 0" test "$rc" = 0
 ok "L01-AC-2: a label only on a second page counts as present: no write" test "$(h writes)" = 0 -a "$(h calls)" -ge 1
-setup "" noodlebot noodlebot-triaged $(seq -f 'filler-%g' 1 130)
+setup "" noodlebot noodlebot-triaged $(seq -f 'filler-%g' 1 130) noodlebot-unit
 ensure
 ok "L01-AC-2: two labels on page 1, one missing from 132 labels: exit 0" test "$rc" = 0
 ok "L01-AC-2: and only the missing one is created" test "$(h created)" = noodlebot-status
@@ -158,7 +158,7 @@ ok "L01-AC-3: a create that fails for another reason: the error is on stderr" gr
 # AC-3: a create rejected because the label already exists (created meanwhile).
 setup reject bug
 ensure
-ok "L01-AC-3: a create rejected as already existing is not a failure (exit 0)" test "$rc" = 0 -a "$(h created)" = "noodlebot noodlebot-status noodlebot-triaged"
+ok "L01-AC-3: a create rejected as already existing is not a failure (exit 0)" test "$rc" = 0 -a "$(h created)" = "noodlebot noodlebot-status noodlebot-triaged noodlebot-unit"
 
 # AC-3: a 422 that is not "already exists" (code invalid) is a failure.
 setup invalid bug
@@ -179,10 +179,30 @@ ok "L01-AC-3: a failing create on a repository named app422: exit non-zero" test
 ok "L01-AC-3: a failing create on a repository named app422: the error is on stderr" grep -q fake-gh-boom "$tmp/err"
 
 # AC-2: label names are case-insensitive on GitHub: differently-cased existing labels count as present.
-setup "" Noodlebot NOODLEBOT-TRIAGED Noodlebot-Status
+setup "" Noodlebot NOODLEBOT-TRIAGED Noodlebot-Status NoodleBot-UNIT
 ensure
 ok "L01-AC-2: differently-cased existing labels: exit 0" test "$rc" = 0
 ok "L01-AC-2: differently-cased existing labels: no POST, PATCH or DELETE" test "$(h writes)" = 0 -a "$(h calls)" -ge 1
+
+# U01-AC-10: ensure knows noodlebot-unit (a fourth label), created when missing and otherwise left alone.
+setup "" bug noodlebot noodlebot-triaged noodlebot-status
+ensure
+ok "U01-AC-10: only noodlebot-unit missing: exit 0" test "$rc" = 0
+ok "U01-AC-10: only noodlebot-unit missing: it is the one label created" test "$(h created)" = noodlebot-unit
+ok "U01-AC-10: noodlebot-unit is created with a colour and a non-empty description" h complete
+ok "U01-AC-10: only noodlebot-unit missing: exactly one write" test "$(h writes)" = 1
+setup "" noodlebot-unit
+ensure
+ok "U01-AC-10: noodlebot-unit present with its own colour and description: not created again" test "$(h created)" = "noodlebot noodlebot-status noodlebot-triaged"
+ok "U01-AC-10: noodlebot-unit present: three writes only, none a PATCH or DELETE for it" test "$(h writes)" = 3 -a "$(python3 -c '
+import json
+print(len([c for c in map(json.loads, open("'"$tmp"'/calls.jsonl")) if c["method"] in ("PATCH", "DELETE", "PUT")]))')" = 0
+setup "" bug noodlebot noodlebot-triaged noodlebot-status noodlebot-unit
+ensure
+ok "U01-AC-10: all four present with their own colour and description: no write at all" test "$(h writes)" = 0 -a "$(h calls)" -ge 1
+setup "" NOODLEBOT-UNIT
+ensure
+ok "U01-AC-10: a differently-cased noodlebot-unit counts as present" test "$(h created)" = "noodlebot noodlebot-status noodlebot-triaged"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all labels checks"
