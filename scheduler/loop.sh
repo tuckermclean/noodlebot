@@ -784,10 +784,13 @@ queue_round() {
 	local saw=$1 f d out key tries=0 targs=(--root "$root" --repo "${repo#*/}") keep=()
 	for d in "${wdir[@]}"; do keep+=("$d"); done
 	for f in "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting; do
+		# a failed issues.py next says nothing about the issues: their records stay
+		[ "$inext_failed" = 1 ] && [[ $f == */issue/* ]] && continue
 		[ -e "$f" ] && [[ " ${keep[*]} " != *" $(dirname "$f") "* ]] && rm -f "$f"
 	done
 	out=$(printf '%s\n' "${wlist[@]}" | python3 -I "$here/turn.py" list "${targs[@]}" --tick "$tick_s" 2>&1) ||
 		{ note "$saw; turn.py list failed ($(echo "$out" | tr '\n' ' ')); nothing started"; return; }
+	listed=1
 	[ "$throttled" = 1 ] && return
 	while [ $((tries += 1)) -le $((${#wlist[@]} + 1)) ]; do
 		out=$(python3 -I "$here/turn.py" ask "${targs[@]}" --tick "$tick_s" 2>&1) ||
@@ -813,8 +816,15 @@ deploy() {
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0
+open='' merged='' tick_tok='' live=() throttled=0 listed=0
+# tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
+# or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
+	listed=0
+	tick_run
+	[ "$listed" = 1 ] || rm -f "$state/waiting.json"
+}
+tick_run() {
 	date +%s >"$state/heartbeat.tmp" && mv "$state/heartbeat.tmp" "$state/heartbeat"
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	# Keep the clone's own checkout on origin/main: sessions in its worktrees also load skills and
@@ -871,11 +881,13 @@ tick() {
 	full() { { [ "$throttled" = 1 ] && [ "$ramp" != 1 ]; } || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
 
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
-	local n
-	if [ -z "$triaging" ] && ! full && n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
-		if [ -z "$n" ]; then :
-		elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"; triaging=$n
-		else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
+	local n inext_failed=0
+	if [ -z "$triaging" ] && ! full; then
+		if n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
+			if [ -z "$n" ]; then :
+			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
+			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
+		else inext_failed=1; fi
 	fi
 	# A bot's spec PR that needs an update: one session at a time, sharing the triage's slot.
 	if [ -z "$triaging" ] && ! full; then
