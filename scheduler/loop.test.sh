@@ -2340,6 +2340,8 @@ rm -f "$S06/hold.pr-102" "$S06/hold.L01"
 kill "$lp06b"; wait "$lp06b" 2>/dev/null
 for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
 
+# the fake gh of the P03 loops reads its stdin on a /labels call; a foreground loop must not inherit the caller's open stdin
+exec </dev/null
 # ---- P03: the loop logs and removes the API's request records, and consumes node/<ID>/RELEASE ----
 # A loop run of its own (o/pthree, 1 s tick, the real throttle) over its own remote and fixture. Nodes: R0 (FAILED), R1 (ready),
 # R2 (dep R0 unmerged), R3 (FAILED), R4 (ready), R5 (FAILED). The fake claude counts its runs per worktree in $P3/runs.<key>;
