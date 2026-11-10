@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""Read-only HTTP API over the scheduler's runtime files (node P01).
+"""HTTP API over the scheduler's runtime files: reads (node P01) and a few control requests (node P03).
 
 HTTP/1.1 on $NOODLEBOT_DATA/api.sock (default root ~/.local/share/noodlebot, made absolute as loop.sh does),
 mode 0600. One server per runtime root: it holds $NOODLEBOT_DATA/api.lock (exit 2 if another does). Every
-request is a GET under /v1/; other methods are 405, unknown paths 404, both JSON. Every response has
-"version": 1. The server reads local files only (and of ~/.config/noodlebot/ only `repos`); it makes no
-GitHub call, runs no token script, and logs only its start, stop and errors.
+request is a GET under /v1/ or one of the control requests below; any other write is 405, unknown paths 404,
+both JSON. Every response has "version": 1. The server reads local files only (and of ~/.config/noodlebot/ only
+`repos`); it makes no GitHub call, runs no token script, and logs only its start, stop and errors.
+
+Controls (node P03; each writes only a marker the loop or deploy.sh reads, and answers 202 with the schema
+"control"; an unknown target is 404, a request with nothing to do 409, and neither writes anything; the server
+never signals a process, touches a worktree or starts a loop):
+  DELETE /v1/repos/<o>/<n>/nodes/<ID>/failed, .../issues/<N>/failed   remove that FAILED, and write a request record
+  PUT / DELETE /v1/repos/<o>/<n>/stop     create / remove ~/STOP-<n>, and write a request record
+  POST /v1/repos/<o>/<n>/nodes/<ID>/release   write node/<ID>/RELEASE, and a request record
+  POST /v1/deploy/retry {"sha": ...}      write $NOODLEBOT_DATA/deploy/retry (the commit must be in deploy/rejected)
+  POST /v1/deploy/rollback                write $NOODLEBOT_DATA/deploy/rollback-request (needs deploy/previous)
+A request record is state/<n>/requests/<UTC time>-<counter>.json, {"control", "target", "time"}, written to a temporary
+file and renamed; the loop logs and removes it. Deploy requests write no record.
 
 Every NOODLEBOT_API_HEAD_CHECK seconds (default 60) it compares its checkout's HEAD with the one it started
 under and, when it moved, re-execs itself keeping the lock and the listening socket (their fds are passed in
 NOODLEBOT_API_FDS). NOODLEBOT_API_KEEPALIVE (default 15) is the event stream's comment interval.
 
-Resources are registered with @route(<regex>); the handler gets the regex match and the request handler
+Resources are registered with @route(<regex>) (GET) or @route(<regex>, "<METHOD>") (a control); the handler gets the regex match and the request handler
 (req: req.query is the parsed query string, req.headers, req.wfile) and returns (status, object) (a third
 item True: served verbatim, no "version" added; None: the handler wrote the whole response itself, as a
 stream does) or raises Err(status, text). Schemas: scheduler/api-schema/v1/<resource>.json.
@@ -57,9 +68,9 @@ class Err(Exception):
 ROUTES = []
 
 
-def route(pattern):
+def route(pattern, method="GET"):
     def deco(fn):
-        ROUTES.append((re.compile(pattern + r"\Z"), fn))
+        ROUTES.append((method, re.compile(pattern + r"\Z"), fn))
         return fn
     return deco
 
@@ -697,6 +708,175 @@ def r_issues(m, req):
     return 200, {"issues": out, "modified": mtime(p)}
 
 
+# ---- control requests (node P03) ----
+
+CTL_LOCK = threading.Lock()   # one control at a time: records get their names in request order, and a check and its write are one step
+CTL_COUNT = [0]
+SHA = re.compile(r"[0-9a-f]{4,40}\Z")
+
+
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def put_file(path, text):
+    """Write text to path through a temporary file in the same directory and a rename."""
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, ".tmp-%d-%d" % (os.getpid(), threading.get_ident()))
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        log("could not write %s: %r" % (path, e))
+        raise Err(500, "could not write " + path)
+
+
+def put_record(repo, control, target, now):
+    """The request record state/<name>/requests/<time>-<n>.json; its name sorts in request order (the caller holds CTL_LOCK)."""
+    CTL_COUNT[0] += 1
+    path = os.path.join(root, "state", repo.split("/", 1)[1], "requests",
+                        "%s-%06d.json" % (now.strftime("%Y%m%dT%H%M%SZ"), CTL_COUNT[0]))
+    put_file(path, json.dumps({"control": control, "target": target, "time": now.strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n")
+    return path
+
+
+def accepted(control, target, wrote, when):
+    return 202, {"control": control, "target": target, "wrote": wrote, "when": when}
+
+
+LOOP_WHEN = "the loop for %s logs this request at the start of its next iteration (at its next start if it is stopped)"
+
+
+def known_node(repo, node):
+    graph = os.path.join(listed(repo), "graph.yaml")
+    if os.path.exists(graph):
+        try:
+            if any(n["id"] == node for n in json.loads(run_py(["-c", GRAPH_READER, graph], "reading graph.yaml"))):
+                return
+        except ValueError:
+            raise Err(503, "reading graph.yaml failed")
+    raise Err(404, "no such node: " + node)
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/nodes/(%s)/failed" % NODE_ID, "DELETE")
+def c_node_failed(m, req):
+    repo, node = m.group(1), m.group(2)
+    sd = listed(repo)
+    known_node(repo, node)
+    with CTL_LOCK:
+        f = os.path.join(sd, "node", node, "FAILED")
+        if not os.path.exists(f):
+            raise Err(409, "node %s has no FAILED" % node)
+        os.unlink(f)
+        rec = put_record(repo, "delete-failed", "node/" + node, utc_now())
+    return accepted("delete-failed", "node/" + node, [f, rec], LOOP_WHEN % repo)
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/issues/([0-9]+)/failed", "DELETE")
+def c_issue_failed(m, req):
+    repo, n = m.group(1), m.group(2)
+    sd = listed(repo)
+    if not os.path.isdir(os.path.join(sd, "issue", n)):
+        raise Err(404, "no such issue: " + n)
+    with CTL_LOCK:
+        f = os.path.join(sd, "issue", n, "FAILED")
+        if not os.path.exists(f):
+            raise Err(409, "issue %s has no FAILED" % n)
+        os.unlink(f)
+        rec = put_record(repo, "delete-failed", "issue/" + n, utc_now())
+    return accepted("delete-failed", "issue/" + n, [f, rec], LOOP_WHEN % repo)
+
+
+def stop_request(repo, on):
+    listed(repo)
+    f = os.path.join(home, "STOP-" + repo.split("/", 1)[1])
+    with CTL_LOCK:
+        if os.path.exists(f) == on:
+            raise Err(409, "%s is already %s" % (f, "there" if on else "absent"))
+        if on:
+            put_file(f, "")
+        else:
+            os.unlink(f)
+        rec = put_record(repo, "stop" if on else "unstop", repo, utc_now())
+    when = LOOP_WHEN % repo
+    if on:
+        when += "; a running loop then exits"
+    else:
+        when += "; this does not start the loop: scheduler/loops.sh start does"
+    return accepted("stop" if on else "unstop", repo, [f, rec], when)
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/stop", "PUT")
+def c_stop(m, req):
+    return stop_request(m.group(1), True)
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/stop", "DELETE")
+def c_unstop(m, req):
+    return stop_request(m.group(1), False)
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/nodes/(%s)/release" % NODE_ID, "POST")
+def c_release(m, req):
+    repo, node = m.group(1), m.group(2)
+    sd = listed(repo)
+    known_node(repo, node)
+    with CTL_LOCK:
+        now = utc_now()
+        f = os.path.join(sd, "node", node, "RELEASE")
+        put_file(f, now.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
+        rec = put_record(repo, "release", "node/" + node, now)
+    return accepted("release", "node/" + node, [f, rec],
+                    "the loop for %s consumes the release at its next tick and logs what it did" % repo)
+
+
+@route(r"/v1/deploy/retry", "POST")
+def c_retry(m, req):
+    try:
+        body = json.loads(req.body or b"{}")
+    except ValueError:
+        body = None
+    sha = body.get("sha") if isinstance(body, dict) else None
+    if not isinstance(sha, str) or not SHA.match(sha):
+        raise Err(404, "no such commit")
+    d = os.path.join(root, "deploy")
+    rejected = [x.strip() for x in (read_text(os.path.join(d, "rejected")) or "").splitlines() if x.strip()]
+    full = sha if len(sha) == 40 else None
+    if full not in rejected:
+        try:
+            r = subprocess.run(["git", "-C", CHECKOUT, "rev-parse", "--verify", "-q", sha + "^{commit}"],
+                               capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            r = None
+        out = r.stdout.strip() if r is not None and r.returncode == 0 else ""
+        if not re.fullmatch(r"[0-9a-f]{40}", out):
+            raise Err(404, "no such commit: " + sha)
+        full = out
+    if full not in rejected:
+        raise Err(409, "commit %s is not rejected" % full)
+    with CTL_LOCK:
+        f = os.path.join(d, "retry")
+        put_file(f, full + "\n")
+    return accepted("retry", full, [f], "deploy.sh carries this out at its next run (run by a loop) and logs it")
+
+
+@route(r"/v1/deploy/rollback", "POST")
+def c_rollback(m, req):
+    d = os.path.join(root, "deploy")
+    if not first_word(os.path.join(d, "previous")):
+        raise Err(409, "there is no rollback point (deploy/previous)")
+    with CTL_LOCK:
+        f = os.path.join(d, "rollback-request")
+        put_file(f, utc_now().strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
+    return accepted("rollback", "deploy/previous", [f], "deploy.sh carries this out at its next run (run by a loop) and logs it")
+
+
 # ---- the event stream ----
 # The cursor (an event's id) is urlsafe base64 of the JSON {"<owner>/<name>": [inode, offset], ...}: where each repository's
 # status.log had been read to when that event was sent. Reconnecting with it reads each log on from there, so every later line
@@ -881,7 +1061,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.close_connection = True
         if status == 405:
-            self.send_header("Allow", "GET")
+            self.send_header("Allow", "GET, POST, PUT, DELETE")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -894,16 +1074,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_obj(code, {"version": VERSION, "error": message or self.responses.get(code, ("error",))[0]})
 
     def __getattr__(self, name):
-        if name.startswith("do_"):   # every method but GET, known or not: 405
+        if name in ("do_POST", "do_PUT", "do_DELETE"):   # a control, if one is registered for the path
+            return self.do_GET
+        if name.startswith("do_"):   # every other method, known or not: 405
             return self.other
         raise AttributeError(name)
+
+    body = b""
 
     def do_GET(self):
         path = self.path.split("?", 1)[0].split("#", 1)[0]
         self.query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        method = self.command
         try:
-            for rx, fn in ROUTES:
-                m = rx.match(path)
+            if method != "GET":
+                if not any(mt == method and rx.match(path) for mt, rx, _ in ROUTES):
+                    return self.other()
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    n = 0
+                self.body = self.rfile.read(min(max(n, 0), 65536))
+                if n > 65536:
+                    self.close_connection = True
+            for mt, rx, fn in ROUTES:
+                m = rx.match(path) if mt == method else None
                 if m:
                     res = fn(m, self)
                     if res is None:
@@ -916,12 +1111,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Err as e:
             self.send_obj(e.status, {"version": VERSION, "error": e.text})
         except Exception as e:
-            log("error on GET %s: %r" % (path, e))
+            log("error on %s %s: %r" % (method, path, e))
             self.send_obj(500, {"version": VERSION, "error": "internal error"})
 
     def other(self):
         self.close_connection = True   # an unread body must not be taken for the next request
-        self.send_obj(405, {"version": VERSION, "error": "method not allowed: only GET is served"})
+        self.send_obj(405, {"version": VERSION, "error": "method not allowed"})
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
