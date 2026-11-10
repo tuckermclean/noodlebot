@@ -672,8 +672,10 @@ def r_issues(m, req):
                 state = "question"
             elif session_alive(d, str(n)):
                 state = "running"
-            elif has("done") or (first_word(os.path.join(d, "session.rc")) == "0" and not has("QUESTION.md")):
-                state = "done"   # as triage_ended: no done marker for an issue, a finished session (rc 0) with no question is done; an answered question awaits the restart (null)
+            elif has("QUESTION.md") and has("ANSWER.md"):
+                state = "answered"   # as the nodes resource: answered, awaiting the restart
+            elif has("done") or first_word(os.path.join(d, "session.rc")) == "0":
+                state = "done"   # as triage_ended: no done marker for an issue, a finished session (rc 0) with no question is done
         out.append({"number": n, "title": i.get("title") if i and isinstance(i.get("title"), str) else None,
                     "labelled": i.get("labelled") if i and isinstance(i.get("labelled"), bool) else None, "state": state})
     return 200, {"issues": out, "modified": mtime(p)}
