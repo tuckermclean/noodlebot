@@ -692,6 +692,15 @@ get P01-AC-6 /v1/repos/acme/alpha/issues issues
 chk P01-AC-6 "alpha's /issues gives a finished triage (ended session, session.rc 0, no markers, no done file) the state done" "{i['number']: i['state'] for i in d['issues'] if i['number'] == 40} == {40: 'done'}"
 chk P01-AC-6 "alpha's /issues does not give an ended session with a non-zero session.rc and no markers the state done" "{i['number']: i['state'] for i in d['issues'] if i['number'] == 41}.get(41) != 'done' and 41 in [i['number'] for i in d['issues']]"
 rm -rf "$a/issue/40" "$a/issue/41"
+# (6) a triage whose question the owner has answered (QUESTION.md and ANSWER.md, the loop has not restarted it yet) with session.rc 0
+# is not a finished triage: not "done" (triage_ended), and still listed.
+mkdir -p "$a/issue/42"
+ended "$a/issue/42"; echo 0 >"$a/issue/42/session.rc"
+printf 'Which one?\n' >"$a/issue/42/QUESTION.md"; printf 'This one.\n' >"$a/issue/42/ANSWER.md"
+touch -d 2026-11-09T10:00:00Z "$a/issue/42/session.pid"
+get P01-AC-6 /v1/repos/acme/alpha/issues issues
+chk P01-AC-6 "alpha's /issues does not give an answered question (QUESTION.md and ANSWER.md, session.rc 0) the state done, and lists it" "{i['number']: i['state'] for i in d['issues'] if i['number'] == 42}.get(42) not in (None, 'done')"
+rm -rf "$a/issue/42"
 # (5) /deploy: deploy.sh's "not deployed: <sha> (version <v>) cannot fast-forward <live> (will retry ...)" line is no failed test run
 printf '2026-11-09T11:40:00Z not deployed: 6666666666666666666666666666666666666666 (version v0.9.3-fixture) cannot fast-forward 7777777777777777777777777777777777777777 (will retry the fast-forward)\n' >>"$data/state/alpha/status.log"
 get P01-AC-6 /v1/deploy deploy
