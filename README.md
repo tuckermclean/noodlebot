@@ -61,7 +61,7 @@ Every request is a GET; every answer is JSON with `"version": 1`.
 - `/v1/repos/<owner>/<name>/nodes`, `.../nodes/<ID>`, `.../sessions`, `.../prs`, `.../issues`.
 - `/v1/throttle`, `/v1/deploy`: the usage throttle and the last deploy.
 - `/v1/schema/<resource>`: the JSON schema of a resource.
-- `/v1/events`: a Server-Sent Events stream of changes. `?repo=<owner>/<name>` limits it to one repository;
+- `/v1/events`: a `text/event-stream` (not JSON) of events, each a line appended to a repository's `status.log`. `?repo=<owner>/<name>` limits it to one repository;
   `?since=<cursor>` (or the `Last-Event-ID` header, which a browser's EventSource sends on reconnecting)
   resumes after the event with that id, with a cursor per repository.
 

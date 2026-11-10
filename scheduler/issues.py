@@ -71,6 +71,9 @@ def main():
         for i in issues:
             if "pull_request" in i:
                 continue
+            if held(a.state, i["number"]):
+                seen.append({"number": i["number"], "title": i.get("title"), "labelled": None})   # not asked: it is not a candidate
+                continue
             try:
                 lab = labelled_by(a.repo, i["number"]) == owner
             except RuntimeError as e:
@@ -79,7 +82,7 @@ def main():
                 print("issues.py: %s" % e, file=sys.stderr)   # after the issue to print: only the cache loses this entry
                 continue
             seen.append({"number": i["number"], "title": i.get("title"), "labelled": lab})
-            if first is None and lab and not held(a.state, i["number"]):
+            if first is None and lab:
                 first = i["number"]
         if a.state:
             write_cache(a.state, seen)

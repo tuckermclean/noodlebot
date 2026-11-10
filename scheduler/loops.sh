@@ -16,7 +16,10 @@
 # a probe holding it even for an instant makes a starting loop's own `flock -n` fail.
 # When $nb/scheduler/api.py exists, the read-only API server (P01) is managed too: start runs it in tmux
 # session sched-api unless its $root/api.lock is held, stop ends it after the loops have exited, status
-# adds a line with its socket $root/api.sock. Without api.py nothing about it is done or shown.
+# adds a line with its socket $root/api.sock. Without api.py nothing about it is done or shown, and with no
+# repositories listed nothing about it runs either (the list is read first). stop signals only a lock holder
+# whose pid is > 0 and whose command line has scheduler/api.py, and leaves the server running (rc 1) if a loop
+# is still running at the LOOPS_STOP_WAIT deadline.
 # start refuses (exit 1, nothing started) while ~/STOP exists, and while a loop from before the D02
 # move still holds <checkout>/state/<name>/loop.lock: run scheduler/move-runtime.sh first.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -177,6 +180,13 @@ stop)
 	done
 	if [ -e "$nb/scheduler/api.py" ]; then
 		if held "$root/api.lock"; then
+			case $hpid in '' | *[!0-9]* | 0) hpid=0 ;; esac
+			if [ "$hpid" -le 0 ] || ! tr '\0' ' ' <"/proc/$hpid/cmdline" 2>/dev/null | grep -q 'scheduler/api\.py'; then
+				echo "api: lock holder (pid $hpid) is not the API server; not signalled" >&2
+				rc=1
+			elif [ "$rc" != 0 ]; then
+				echo "api: server left running: a loop is still running" >&2
+			else
 			kill -TERM "$hpid" 2>/dev/null
 			deadline=$((SECONDS + 10))
 			while held "$root/api.lock" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
@@ -185,6 +195,7 @@ stop)
 				rc=1
 			else
 				echo "api: server stopped"
+			fi
 			fi
 		else
 			echo "api: server not running"

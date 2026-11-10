@@ -600,7 +600,7 @@ def tail_lines(path, chunk=65536, cap=1 << 20, limit=32 << 20):
 
 def last_status_lines():
     """The latest 'deployed ' and 'not deployed: ' lines over every listed repository's status.log."""
-    found = {"deployed ": None, "not deployed: ": None}
+    found = {"deployed ": None, "not deployed: ": None}   # a failed test run: "... fails make test" or "... make test timed out or was killed N times"
     for repo in repo_list():
         path = os.path.join(root, "state", repo.split("/", 1)[1], "status.log")
         todo = set(found)
@@ -609,7 +609,7 @@ def last_status_lines():
                 break
             ts, _, text = raw.decode("utf-8", "replace").rstrip("\r").partition(" ")
             for k in list(todo):
-                if text.startswith(k):
+                if text.startswith(k) and (k != "not deployed: " or text.endswith(" fails make test") or "make test timed out or was killed" in text):
                     t = epoch(ts)
                     if t is not None:
                         todo.discard(k)
@@ -666,14 +666,14 @@ def r_issues(m, req):
         if n in folders:
             d = os.path.join(sd, "issue", str(n))
             has = lambda f: os.path.exists(os.path.join(d, f))   # noqa: E731
-            if has("done"):
-                state = "done"
-            elif has("FAILED"):
+            if has("FAILED"):
                 state = "failed"
             elif has("QUESTION.md") and not has("ANSWER.md"):
                 state = "question"
             elif session_alive(d, str(n)):
                 state = "running"
+            elif has("done") or first_word(os.path.join(d, "session.rc")) == "0":
+                state = "done"   # loop.sh writes no done marker for an issue: a finished session (rc 0) with no question is done
         out.append({"number": n, "title": i.get("title") if i and isinstance(i.get("title"), str) else None,
                     "labelled": i.get("labelled") if i and isinstance(i.get("labelled"), bool) else None, "state": state})
     return 200, {"issues": out, "modified": mtime(p)}
@@ -746,7 +746,10 @@ def r_events(m, req):
     if want is not None and want not in repo_list():
         raise Err(404, "no such repository: " + want)
     since = req.query.get("since", [None])[0] or req.headers.get("Last-Event-ID")
-    start = dec_cursor(since) if since else None
+    if since == "0":
+        start = {r: (0, 0) for r in ([want] if want else repo_list())}   # from the first line of each log
+    else:
+        start = dec_cursor(since) if since else None
     try:
         keep = float(os.environ.get("NOODLEBOT_API_KEEPALIVE") or 15)
     except ValueError:
@@ -756,6 +759,9 @@ def r_events(m, req):
         req.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, struct.pack("ll", 30, 0))
     except OSError:
         pass
+    pos = {}   # repo -> (inode, offset) consumed so far; taken before the head, so a line appended after it is delivered
+    for r in ([want] if want else repo_list()):
+        pos[r] = tuple(start[r]) if start and r in start else log_end(r)
     req.send_response(200)
     req.send_header("Content-Type", "text/event-stream")
     req.send_header("Cache-Control", "no-cache")
@@ -764,7 +770,6 @@ def r_events(m, req):
     req.close_connection = True
     req.mark_stream()
     srv = req.server
-    pos = {}   # repo -> (inode, offset) consumed so far
     last_write = time.time()
     try:
         req.wfile.write(b": stream open\n\n")
