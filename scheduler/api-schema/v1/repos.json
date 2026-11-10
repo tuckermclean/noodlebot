@@ -1,0 +1,62 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "repos"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "repos": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "repo",
+     "running",
+     "stop",
+     "stop_all",
+     "heartbeat",
+     "heartbeat_age",
+     "status_issue"
+    ],
+    "properties": {
+     "repo": {
+      "type": "string"
+     },
+     "running": {
+      "type": "boolean"
+     },
+     "stop": {
+      "type": "boolean"
+     },
+     "stop_all": {
+      "type": "boolean"
+     },
+     "heartbeat": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "heartbeat_age": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "status_issue": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     }
+    },
+    "additionalProperties": false
+   }
+  }
+ },
+ "additionalProperties": false
+}
