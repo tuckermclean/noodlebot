@@ -566,5 +566,44 @@ ok "S03-AC-8: with no graph.yaml the reply says it is recorded" nonempty "$(repl
 ok "S03-AC-8: with no graph.yaml the reply claims no timing" lacks_seconds "$(reply7 R01)"
 ok "S03-AC-8: with no graph.yaml the item exists and claims no timing" sh -c "[ -n \"\$1\" ] && ! printf '%s\n' \"\$1\" | grep -qi 'within seconds'" _ "$(item7 R01)"
 
+
+# S05-AC-5: the removed-node events (wording as scheduler/loop.sh writes them: wind_down) are posted in the event comment.
+state9=$tmp/state/repo9
+mkdir -p "$state9/node/A01"
+run9() { python3 -I "$src/report.py" --repo owner/repo --state "$state9" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err9"; }
+echo "2026-02-01T00:00:00Z open=[] merged-prs=[]; started A01 (first) in /wt, pid 1, start 1 of 2" >"$state9/status.log"
+run9
+n9=$(q "len(db['comments'])")
+cat >>"$state9/status.log" <<'EOF'
+2026-02-01T00:01:00Z R01 removed by #77: closed its PR #21 without merging
+2026-02-01T00:01:01Z R01 removed by #77: marked issue #101 not planned
+2026-02-01T00:01:02Z R01 removed by #77: removed its worktree and state, evidence kept in state/archive/R01-out
+2026-02-01T00:02:00Z R02 removed by 1a2b3c4: closed its PR #22 without merging
+2026-02-01T00:02:01Z R03 removed by #77: removed its worktree and state
+2026-02-01T00:03:00Z R04 removed by #77: commenting on its PR #23 failed; tried again next tick
+2026-02-01T00:03:01Z R04 removed by #77: closing its PR #23 failed; tried again next tick
+2026-02-01T00:03:02Z R04 removed by #77: reading issue #5 failed; tried again next tick
+2026-02-01T00:03:03Z R04 removed by #77: commenting on issue #5 failed; tried again next tick
+2026-02-01T00:03:04Z R04 removed by #77: closing issue #5 failed; tried again next tick
+2026-02-01T00:03:05Z R04 removed by #77: its deleted spec could not be read; tried again next tick
+2026-02-01T00:03:06Z R04 removed by #77: its session (pid 9) survived SIGKILL; tried again next tick
+2026-02-01T00:03:07Z R04 removed by #77: archiving its evidence failed; worktree and state kept, tried again next tick
+2026-02-01T00:03:08Z R04 removed by #77: removing its worktree and state failed; tried again next tick
+EOF
+run9
+body9=$(python3 -I -c "
+import json
+db = json.load(open('$db'))
+print('\n'.join(c['body'] for c in db['comments'][$n9:]))")
+has9() { printf '%s\n' "$body9" | grep -qF -- "$1"; }
+ok "S05-AC-5: the event comment includes 'PR closed' (#N form)" has9 '`2026-02-01T00:01:00Z` R01 removed by #77: closed its PR #21 without merging'
+ok "S05-AC-5: the event comment includes 'issues marked not planned'" has9 '`2026-02-01T00:01:01Z` R01 removed by #77: marked issue #101 not planned'
+ok "S05-AC-5: the event comment includes 'worktree and state removed'" has9 '`2026-02-01T00:01:02Z` R01 removed by #77: removed its worktree and state, evidence kept in state/archive/R01-out'
+ok "S05-AC-5: the PR-closed event of a commit without (#N) is included" has9 '`2026-02-01T00:02:00Z` R02 removed by 1a2b3c4: closed its PR #22 without merging'
+ok "S05-AC-5: the worktree-removed event without evidence is included" has9 '`2026-02-01T00:02:01Z` R03 removed by #77: removed its worktree and state'
+ok "S05-AC-5: the retry lines of the removed-node step are not posted as events" sh -c "! printf '%s\n' \"\$1\" | grep -qE 'tried again next tick'" _ "$body9"
+ok "S05-AC-5: the removed-node events are posted once" sh -c "[ \"\$(printf '%s\n' \"\$1\" | grep -c 'R01 removed by #77')\" = 3 ]" _ "$body9"
+ok "S05-AC-5: the removed-node run leaves nothing on stderr" test ! -s "$tmp/err9"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
