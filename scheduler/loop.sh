@@ -103,7 +103,15 @@ hook_text() {
 #!/bin/sh
 # installed by noodlebot's loop.sh
 [ -n "${NOODLEBOT_VERSION:-}" ] || exit 0
-git interpret-trailers --in-place --trailer "Noodlebot-Version: $NOODLEBOT_VERSION" --if-exists replace "$1"
+# drop every Noodlebot-Version line from the trailer block (the last paragraph, unless it is the subject)
+t="$1.nb.$$"
+awk '{ l[NR] = $0 } END {
+	e = NR; while (e > 0 && (l[e] ~ /^[ \t]*$/ || l[e] ~ /^#/)) e--
+	s = e; while (s > 1 && l[s-1] !~ /^[ \t]*$/) s--
+	for (i = 1; i <= NR; i++) if (!(s > 1 && i >= s && i <= e && l[i] ~ /^Noodlebot-Version:/)) print l[i]
+}' "$1" >"$t" && cat "$t" >"$1"
+rm -f "$t"
+git interpret-trailers --in-place --if-exists replace --trailer "Noodlebot-Version: $NOODLEBOT_VERSION" "$1"
 HOOK
 }
 install_hook
