@@ -20,7 +20,7 @@ import argparse, hashlib, json, math, os, re, subprocess, sys, time
 from datetime import datetime, timezone
 
 LABEL = "noodlebot-status"
-EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
+EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit| removed by \S+: (?:closed its PR|marked issue|removed its worktree and state)")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
 MAX_COMMENT = 60000
 
