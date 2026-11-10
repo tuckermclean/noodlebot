@@ -364,9 +364,11 @@ stop_idle() {
 # was over 2 minutes ago and has not been resumed for that reset time, is stopped and its conversation
 # resumed (claude -p --resume) in the same worktree, appending to the same log; no start is counted.
 # With no session id to resume, it is stopped and ends as a limit exit (ended); live is kept in step.
+# With the start queue (SCHED_RAMP=1) such a session is a waiting unit (want, kind resumed) and is left
+# untouched; resume_idle <saw> <dir> then does it, when turn.py grants the turn (returns 1 if it failed).
 resume_idle() {
-	local saw=$1 f d p id rs reset sid a wt nl e name pr why
-	[ "$throttled" = 1 ] && return
+	local saw=$1 only=${2:-} k f d p id rs reset sid a wt nl e name pr why
+	[ "$throttled" = 1 ] && [ "$ramp" != 1 ] && return
 	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
 		[ -e "$f" ] || continue
 		d=$(dirname "$f") id=$(basename "$d") p=$(cat "$f")
@@ -375,10 +377,16 @@ resume_idle() {
 		read -r reset sid <<<"$rs"
 		[ $(($(date +%s) - reset)) -gt 120 ] || continue
 		[ "$(cat "$d/resumed" 2>/dev/null)" = "$reset" ] && continue
+		if [ "$ramp" = 1 ] && [ -z "$only" ]; then
+			case $d in "$state"/issue/*) k="#$id" ;; "$state"/pr/*) k="PR#$id" ;; *) k=$id ;; esac
+			want "$k" resumed - "$d" "resume|$d"
+			continue
+		fi
+		[ -z "$only" ] || [ "$d" = "$only" ] || continue
 		name=$(task_name "$d")
 		mapfile -d '' -t a <"/proc/$p/cmdline"
 		wt=$(readlink "/proc/$p/cwd")
-		stop_idle "$d" "$p" || { note "$saw; session $name (pid $p) survived SIGKILL"; continue; }
+		stop_idle "$d" "$p" || { note "$saw; session $name (pid $p) survived SIGKILL"; [ -n "$only" ] && return 1; continue; }
 		wait "$p" 2>/dev/null
 		nl=()
 		for e in "${live[@]}"; do [ "${e#* }" = "$id" ] || nl+=("$e"); done
@@ -391,6 +399,7 @@ resume_idle() {
 			: >"$d/force-limit"
 			ended "$d" "$saw"
 			[ "$triaging" = "$id" ] && triaging=''
+			[ -n "$only" ] && return 1
 			continue
 		fi
 		echo "$reset" >"$d/resumed"
@@ -401,8 +410,10 @@ resume_idle() {
 		pr=$!
 		echo "$pr" >"$d/session.pid"
 		live+=("$pr $id")
-		say "$saw; resuming session $name (pid $pr) after the usage limit: the window reset at $(date -u -d "@$reset" +%H:%M:%S) UTC (epoch $reset); start not counted"
+		say "$saw; resuming session $name (pid $pr) after the usage limit: the window reset at $(date -u -d "@$reset" +%H:%M:%S) UTC (epoch $reset); start not counted${turn_note:+; $turn_note}"
+		[ -n "$only" ] && return 0
 	done
+	[ -z "$only" ]
 }
 
 # pr_done <ID> <start>: a node's session started at <start> (epoch s) has no more use: sets why to the
@@ -773,6 +784,7 @@ start_turn() {
 	triage) start_triage "$a" "$2" && live+=("$pid $a") && triaging=$a ;;
 	update) start_update "$a" "$b" "$c" "$d" "$2" && live+=("$pid $a") && triaging=$a ;;
 	node) start_node "$a" "$b" "$2" "$c" ;;
+	resume) resume_idle "$2" "$a" ;;
 	*) return 1 ;;
 	esac
 }
@@ -821,6 +833,7 @@ open='' merged='' tick_tok='' live=() throttled=0 listed=0
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
 	listed=0
+	[ "$ramp" = 1 ] || rm -f "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting   # no queue: nothing waits
 	tick_run
 	[ "$listed" = 1 ] || rm -f "$state/waiting.json"
 }
@@ -875,8 +888,8 @@ tick_run() {
 			say "$saw; throttle released: ${usage#open: }"; throttled=0
 		fi
 	fi
-	resume_idle "$saw"
 	local wlist=(); local -A wspec=() wdir=()   # the start queue's waiting units (want)
+	resume_idle "$saw"
 	# with the queue on, the throttle does not stop units waiting: it only stops the asking
 	full() { { [ "$throttled" = 1 ] && [ "$ramp" != 1 ]; } || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
 
