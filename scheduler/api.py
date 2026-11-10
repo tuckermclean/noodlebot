@@ -16,6 +16,8 @@ Resources are registered with @route(<regex>); the handler gets the regex match 
 item True: served verbatim, no "version" added; None: the handler wrote the whole response itself, as a
 stream does) or raises Err(status, text). Schemas: scheduler/api-schema/v1/<resource>.json.
 """
+import collections
+import datetime
 import fcntl
 import http.server
 import json
@@ -208,9 +210,18 @@ def run_py(args, what):
     return r.stdout
 
 
+TOKEN = re.compile(r"(?:gh[spou]_|github_pat_|sk-ant-)[A-Za-z0-9_-]*")
+
+
+def redact(text):
+    """text with every GitHub token or Anthropic key replaced by [redacted]. Every text served from a session log, a
+    status log or a marker file goes through this before it is cut to length."""
+    return TOKEN.sub("[redacted]", text)
+
+
 def first_line(path):
     t = read_text(path)
-    return None if t is None else (t.splitlines() or [""])[0]
+    return None if t is None else redact((t.splitlines() or [""])[0])
 
 
 def first_word(path):
@@ -366,6 +377,137 @@ def r_node(m, req):
         if n["id"] == m.group(2):
             return 200, n
     raise Err(404, "no such node: " + m.group(2))
+
+
+# ---- sessions ----
+
+def epoch(ts):
+    """Epoch seconds of an ISO timestamp such as 2026-11-09T09:02:00Z, or None."""
+    try:
+        return int(datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def tool_text(inp):
+    """The first line of input.description, else command, else path, else file_path; redacted, then cut to 200."""
+    if not isinstance(inp, dict):
+        return None
+    for k in ("description", "command", "path", "file_path"):
+        v = inp.get(k)
+        if isinstance(v, str) and v.strip():
+            lines = redact(v).splitlines()
+            return lines[0][:200] if lines else None
+    return None
+
+
+def scan_log(path):
+    """One pass over a session log, a line at a time (memory stays bounded however large the log): its last 10 events,
+    the pending wakeup, the unfinished background tasks and the last rate-limit rejection."""
+    events = collections.deque(maxlen=10)
+    wake = None            # (epoch, delaySeconds) of the last ScheduleWakeup
+    wake_open = False      # no assistant tool use or result since
+    bg = collections.OrderedDict()   # tool use id -> [kind, text, background id or None]
+    done = set()
+    limit = None
+    try:
+        f = open(path, "rb")
+    except OSError:
+        return events, None, [], [], None
+    with f:
+        for raw in f:
+            if (b'"tool_use"' not in raw and b'"result"' not in raw and b"rate_limit_event" not in raw
+                    and b"task_notification" not in raw and b"tool_result" not in raw):
+                continue
+            try:
+                ev = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            t, kind = epoch(ev.get("timestamp")), ev.get("type")
+            msg = ev.get("message")
+            blocks = msg.get("content") if isinstance(msg, dict) else None
+            if not isinstance(blocks, list):
+                blocks = []
+            if kind == "assistant":
+                for b in blocks:
+                    if not (isinstance(b, dict) and b.get("type") == "tool_use"):
+                        continue
+                    inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                    e = {"type": "tool_use", "time": t, "tool": b.get("name"), "text": tool_text(inp),
+                         "subagent": bool(ev.get("parent_tool_use_id"))}
+                    events.append(e)
+                    wake_open = False
+                    if b.get("name") == "ScheduleWakeup" and t is not None and isinstance(inp.get("delaySeconds"), (int, float)):
+                        wake, wake_open = t + int(inp["delaySeconds"]), True
+                    if inp.get("run_in_background") is True and b.get("name") in ("Bash", "Agent"):
+                        bg[b.get("id")] = [b.get("name"), e["text"], None]
+            elif kind == "user":
+                for b in blocks:
+                    if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in bg:
+                        c = b.get("content")
+                        if isinstance(c, list):
+                            c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+                        m = re.search(r"ID: (\S+)", c if isinstance(c, str) else "")
+                        if m:
+                            bg[b["tool_use_id"]][2] = m.group(1)
+            elif kind == "result":
+                events.append({"type": "result", "time": t, "subtype": ev.get("subtype")})
+                wake_open = False
+            elif kind == "system" and ev.get("subtype") == "task_notification" and ev.get("task_id"):
+                done.add(ev["task_id"])
+            elif kind == "rate_limit_event":
+                info = ev.get("rate_limit_info")
+                if isinstance(info, dict) and info.get("status", "allowed") != "allowed":
+                    limit = {"at": t, "resets_at": info.get("resetsAt")}
+    pend = [v for v in bg.values() if v[2] and v[2] not in done]
+    cmds = [{"id": v[2], "text": v[1]} for v in pend if v[0] == "Bash"]
+    agents = [{"id": v[2], "text": v[1]} for v in pend if v[0] == "Agent"]
+    return events, wake if wake_open else None, cmds, agents, limit
+
+
+def session_of(sd, sub, kind, subject):
+    d = os.path.join(sd, sub)
+    pidf = os.path.join(d, "session.pid")
+    w = first_word(pidf)
+    if not (w and w.isdigit()):
+        return None
+    log_path = os.path.join(d, "session.jsonl")
+    events, wake, cmds, agents, limit = scan_log(log_path)
+    try:
+        st = os.stat(log_path)
+        size, mod = st.st_size, int(st.st_mtime)
+    except OSError:
+        size = mod = None
+    rc = first_word(os.path.join(d, "session.rc"))
+    try:
+        started = int(os.stat(pidf).st_mtime)
+    except OSError:
+        started = None
+    return {"kind": kind, "subject": subject, "pid": int(w), "alive": session_alive(d, subject), "started": started,
+            "log_size": size, "log_modified": mod, "events": list(events),
+            "rc": int(rc) if rc and rc.lstrip("-").isdigit() else None,
+            "wakeup_at": wake, "bg_commands": cmds, "bg_agents": agents, "limit": limit}
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/sessions")
+def r_sessions(m, req):
+    if m.group(1) not in repo_list():
+        raise Err(404, "no such repository: " + m.group(1))
+    sd = os.path.join(root, "state", m.group(1).split("/", 1)[1])
+    out = []
+    for parent, kind, rx in (("node", "node", NODE_ID), ("issue", "triage", r"[0-9]+"), ("pr", "update", r"[0-9]+")):
+        try:
+            names = sorted(os.listdir(os.path.join(sd, parent)))
+        except OSError:
+            continue
+        for n in names:
+            if re.fullmatch(rx, n):
+                s = session_of(sd, parent + "/" + n, kind, n)
+                if s:
+                    out.append(s)
+    return 200, {"sessions": out}
 
 
 @route(r"/v1/schema/([A-Za-z0-9_-]+)")
