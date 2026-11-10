@@ -32,11 +32,15 @@
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
+#                            visibility (public, private or unknown: the repository's, asked at start and again while unknown),
+#                            site.log (stderr of the status-site publish step);
 #                            answered/ keeps released questions and spec PRs;
 #                            issue/<N>/ (a triage) and pr/<N>/ (a spec-PR update: also from, done) hold the same files
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
+# After each tick's report it publishes the status site (site.py publish) when ~/.config/noodlebot/gist and
+# ~/.config/noodlebot/gist-token exist and SCHED_SITE is not 0; the gist token goes only to that one command.
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
 set -u -o pipefail
@@ -125,9 +129,18 @@ install_hook
 
 # The label step, once per loop start (never on a tick): the labels the bot relies on exist in the
 # repository. A failure is logged and the loop goes on.
+# vis_ask <token>: record whether the repository is public, private or unknown in state/visibility.
+vis_ask() {
+	local v
+	case $(GH_TOKEN=$1 gh api "repos/$repo" --jq .private 2>>"$state/report.log") in
+	true) v=private ;; false) v=public ;; *) v=unknown ;;
+	esac
+	echo "$v" >"$state/visibility.tmp" && mv -f "$state/visibility.tmp" "$state/visibility"
+}
 ensure_labels() {
 	local tok out
-	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { say "label step: no GitHub App token; labels not checked"; return; }
+	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { echo unknown >"$state/visibility"; say "label step: no GitHub App token; labels not checked"; return; }
+	vis_ask "$tok"
 	if out=$(GH_TOKEN=$tok python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
 		[ -z "$out" ] || say "label step: $(echo "$out" | sed 's/^created label //' | paste -sd' ' | sed 's/^/created labels: /')"
 	else
@@ -580,6 +593,38 @@ report() {
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
 
+# publish: after report, send the status site to the gist (site.py publish). The gist token is read
+# into the one command's environment only. A failure never stops the tick: its first one after a
+# success or the start is a status line, the rest go to site.log only.
+site_usage='' site_state='' site_off=0
+publish() {
+	[ "${SCHED_SITE:-1}" != 0 ] || return 0
+	local cfg=$HOME/.config/noodlebot gist repos st prev
+	if [ ! -s "$cfg/gist" ] || [ ! -s "$cfg/gist-token" ]; then
+		[ "$site_off" = 1 ] || say "status site off: no gist configured"
+		site_off=1; return 0
+	fi
+	gist=$(head -n1 "$cfg/gist" | tr -d '[:space:]')
+	repos=$cfg/repos
+	[ -r "$repos" ] || { repos=$state/site-repos; echo "$repo" >"$repos"; }
+	prev=$(wc -c <"$state/site.log" 2>/dev/null || echo 0)
+	if GH_TOKEN="$(cat "$cfg/gist-token")" timeout 60 python3 -I "$here/site.py" publish --data-root "$root" --repos "$repos" \
+			--gist "$gist" --throttle "$site_usage" 2>>"$state/site.log"; then
+		[ "$site_state" != failed ] || say "status site: publishing again"
+		site_state=ok
+	else
+		st=$?
+		if [ "$site_state" != failed ]; then
+			if [ "$st" = 124 ]; then st=timeout
+			else st=$(tail -c +"$((prev + 1))" "$state/site.log" 2>/dev/null | sed -n 's/.*publish failed (\([^)]*\)).*/\1/p' | tail -n1)
+			fi
+			say "status site: publish failed (${st:-unknown})"
+		fi
+		site_state=failed
+	fi
+	return 0
+}
+
 # followup_branch <ID>: the branch for a new follow-up of a merged node: node/<ID>-followup-<n>, n one
 # more than the highest among the clone's branches, origin's and the merged and closed PRs.
 followup_branch() {
@@ -848,6 +893,7 @@ tick_run() {
 	tick_tok=''
 	tok=$(~/.config/noodlebot/token "$repo") || { note "no GitHub App token; nothing started"; return; }
 	tick_tok=$tok
+	[ "$(cat "$state/visibility" 2>/dev/null)" != unknown ] || vis_ask "$tok"
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
@@ -881,6 +927,7 @@ tick_run() {
 	# one budget). While it says hold, no new session starts; running ones are never stopped.
 	if [ "${SCHED_THROTTLE:-1}" = 1 ]; then
 		usage=$(python3 -I "$here/usage.py" --state-root "$(dirname "$state")" 2>>"$state/report.log") || usage="open: usage unknown"
+		site_usage=$usage
 		if [[ $usage == hold:* ]]; then
 			[ "$throttled" = 1 ] || say "$saw; throttle engaged, no new sessions: ${usage#hold: }"
 			throttled=1
@@ -966,7 +1013,9 @@ pause() {
 while :; do
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
-	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
+	report; rc=$?; tick_tok=''
+	publish
+	[ $rc = 3 ] && continue
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
 		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
