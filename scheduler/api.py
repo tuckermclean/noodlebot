@@ -16,6 +16,7 @@ Resources are registered with @route(<regex>); the handler gets the regex match 
 item True: served verbatim, no "version" added; None: the handler wrote the whole response itself, as a
 stream does) or raises Err(status, text). Schemas: scheduler/api-schema/v1/<resource>.json.
 """
+import base64
 import collections
 import datetime
 import fcntl
@@ -26,6 +27,7 @@ import re
 import signal
 import socket
 import socketserver
+import struct
 import subprocess
 import sys
 import threading
@@ -529,6 +531,281 @@ def r_schema(m, req):
     if not isinstance(s, dict):
         raise Err(404, "no such schema: " + m.group(1))
     return 200, s, True   # served verbatim, without adding "version"
+
+
+# ---- throttle, deploy, PRs, issues ----
+
+def mtime(path):
+    try:
+        return int(os.stat(path).st_mtime)
+    except OSError:
+        return None
+
+
+def num(v, kinds=(int, float)):
+    return v if isinstance(v, kinds) and not isinstance(v, bool) else None
+
+
+@route(r"/v1/throttle")
+def r_throttle(m, req):
+    p = os.path.join(root, "state", "usage.json")
+    u = read_json(p)
+    if not isinstance(u, dict):
+        raise Err(503, "no usage.json yet")
+    w = u.get("windows") if isinstance(u.get("windows"), dict) else {}
+
+    def win(k):
+        x = w.get(k) if isinstance(w.get(k), dict) else {}
+        return {"utilization": num(x.get("utilization")) or 0, "resets_at": int(num(x.get("resetsAt")) or 0),
+                "status": str(x.get("status") or "")}
+    return 200, {"updated": num(u.get("updated"), (int,)), "modified": mtime(p) or 0, "five_hour": win("five_hour"),
+                 "seven_day": win("seven_day"), "projected_5h": num(u.get("projected5h")) or 0, "hold": u.get("hold") is True,
+                 "reason": str(u.get("reason") or "")}
+
+
+def tail_lines(path, chunk=65536, cap=1 << 20, limit=32 << 20):
+    """The lines of a file from the last, read backwards in chunks (memory bounded by chunk and cap, whatever the log's size);
+    a line longer than cap is skipped, and so is what lies before the last `limit` bytes."""
+    try:
+        f = open(path, "rb")
+    except OSError:
+        return
+    with f:
+        pos = f.seek(0, 2)
+        stop = max(0, pos - limit)
+        carry, skip = b"", False
+        while pos > stop:
+            n = min(chunk, pos - stop)
+            pos -= n
+            f.seek(pos)
+            data = f.read(n) + carry
+            parts = data.split(b"\n")
+            if skip:   # the end of an over-long line was dropped: its beginning is the last part here
+                if len(parts) == 1:
+                    carry = b""
+                    continue
+                parts, skip = parts[:-1], False
+            carry = parts[0]
+            if len(carry) > cap:
+                carry, skip = b"", True
+            for ln in reversed(parts[1:]):
+                yield ln
+        if carry and not skip and stop == 0:
+            yield carry
+
+
+def last_status_lines():
+    """The latest 'deployed ' and 'not deployed: ' lines over every listed repository's status.log."""
+    found = {"deployed ": None, "not deployed: ": None}
+    for repo in repo_list():
+        path = os.path.join(root, "state", repo.split("/", 1)[1], "status.log")
+        todo = set(found)
+        for raw in tail_lines(path):
+            if not todo:
+                break
+            ts, _, text = raw.decode("utf-8", "replace").rstrip("\r").partition(" ")
+            for k in list(todo):
+                if text.startswith(k):
+                    t = epoch(ts)
+                    if t is not None:
+                        todo.discard(k)
+                        if found[k] is None or t > found[k]["time"]:
+                            found[k] = {"repo": repo, "time": t, "line": redact(text)}
+    return found["deployed "], found["not deployed: "]
+
+
+@route(r"/v1/deploy")
+def r_deploy(m, req):
+    d = os.path.join(root, "deploy")
+    prev = first_word(os.path.join(d, "previous"))
+    rej = [x.strip() for x in (read_text(os.path.join(d, "rejected")) or "").splitlines() if x.strip()]
+    last_deploy, last_failed = last_status_lines()
+    return 200, {"head": head(), "previous": prev, "rejected": rej, "last_deploy": last_deploy, "last_failed": last_failed,
+                 "modified": mtime(os.path.join(d, "previous"))}
+
+
+def listed(repo):
+    if repo not in repo_list():
+        raise Err(404, "no such repository: " + repo)
+    return os.path.join(root, "state", repo.split("/", 1)[1])
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/prs")
+def r_prs(m, req):
+    p = os.path.join(listed(m.group(1)), "open-prs.tsv")
+    out = []
+    for line in (read_text(p) or "").splitlines():
+        f = line.split(" ")
+        if len(f) >= 5 and f[0].isdigit():
+            out.append({"number": int(f[0]), "branch": f[1], "head": f[2], "bot": f[3] == "true", "mergeable": f[4]})
+    return 200, {"prs": out, "modified": mtime(p)}
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/issues")
+def r_issues(m, req):
+    sd = listed(m.group(1))
+    p = os.path.join(sd, "issues.json")
+    c = read_json(p)
+    known = {}
+    for i in (c.get("issues") if isinstance(c, dict) and isinstance(c.get("issues"), list) else []):
+        if isinstance(i, dict) and num(i.get("number"), (int,)) is not None:
+            known[i["number"]] = i
+    folders = set()
+    try:
+        folders = set(int(x) for x in os.listdir(os.path.join(sd, "issue")) if x.isdigit())
+    except OSError:
+        pass
+    out = []
+    for n in sorted(folders | set(k for k, i in known.items() if i.get("labelled") is True)):
+        i = known.get(n)
+        state = None
+        if n in folders:
+            d = os.path.join(sd, "issue", str(n))
+            has = lambda f: os.path.exists(os.path.join(d, f))   # noqa: E731
+            if has("done"):
+                state = "done"
+            elif has("FAILED"):
+                state = "failed"
+            elif has("QUESTION.md") and not has("ANSWER.md"):
+                state = "question"
+            elif session_alive(d, str(n)):
+                state = "running"
+        out.append({"number": n, "title": i.get("title") if i and isinstance(i.get("title"), str) else None,
+                    "labelled": i.get("labelled") if i and isinstance(i.get("labelled"), bool) else None, "state": state})
+    return 200, {"issues": out, "modified": mtime(p)}
+
+
+# ---- the event stream ----
+# The cursor (an event's id) is urlsafe base64 of the JSON {"<owner>/<name>": [inode, offset], ...}: where each repository's
+# status.log had been read to when that event was sent. Reconnecting with it reads each log on from there, so every later line
+# comes once and in order within its repository; across repositories lines are merged by their timestamps. A log whose inode
+# changed or that shrank below its offset (rotated, truncated) is read again from 0; a repository the cursor does not name
+# starts at the end of its log.
+
+def enc_cursor(pos):
+    return base64.urlsafe_b64encode(json.dumps(pos, sort_keys=True, separators=(",", ":")).encode()).decode().rstrip("=")
+
+
+def dec_cursor(text):
+    try:
+        v = json.loads(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
+        if isinstance(v, dict) and all(isinstance(x, list) and len(x) == 2 and all(isinstance(y, int) for y in x)
+                                       for x in v.values()):
+            return {k: tuple(x) for k, x in v.items()}
+    except ValueError:
+        pass
+    raise Err(400, "bad cursor")
+
+
+def log_path(repo):
+    return os.path.join(root, "state", repo.split("/", 1)[1], "status.log")
+
+
+def log_end(repo):
+    try:
+        st = os.stat(log_path(repo))
+        return (st.st_ino, st.st_size)
+    except OSError:
+        return (0, 0)
+
+
+def read_new(repo, pos, most=1 << 20):
+    """Complete lines of repo's log after pos (inode, offset): [(line, new position)...]. A log that was replaced or
+    shrank is read from 0. A (None, position) item: nothing to send, the position moved."""
+    ino, off = pos
+    try:
+        with open(log_path(repo), "rb") as f:
+            st = os.fstat(f.fileno())
+            if st.st_ino != ino or st.st_size < off:
+                ino, off = st.st_ino, 0
+            f.seek(off)
+            data = f.read(most)
+    except OSError:
+        return []
+    end = data.rfind(b"\n") + 1
+    if end == 0 and len(data) == most:
+        end = len(data)   # a line longer than the chunk: send what there is
+    out = []
+    for raw in data[:end].splitlines(True):
+        off += len(raw)
+        text = redact(raw.decode("utf-8", "replace").rstrip("\r\n"))
+        if text:
+            out.append((text, (ino, off)))
+    if not out and (ino, off) != tuple(pos):
+        out.append((None, (ino, off)))
+    return out
+
+
+@route(r"/v1/events")
+def r_events(m, req):
+    want = req.query.get("repo", [None])[0]
+    if want is not None and want not in repo_list():
+        raise Err(404, "no such repository: " + want)
+    since = req.query.get("since", [None])[0] or req.headers.get("Last-Event-ID")
+    start = dec_cursor(since) if since else None
+    try:
+        keep = float(os.environ.get("NOODLEBOT_API_KEEPALIVE") or 15)
+    except ValueError:
+        keep = 15.0
+    req.connection.settimeout(None)
+    try:   # a client that stops reading must not hold the thread (and a restart) for ever
+        req.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, struct.pack("ll", 30, 0))
+    except OSError:
+        pass
+    req.send_response(200)
+    req.send_header("Content-Type", "text/event-stream")
+    req.send_header("Cache-Control", "no-cache")
+    req.send_header("Connection", "close")
+    req.end_headers()
+    req.close_connection = True
+    req.mark_stream()
+    srv = req.server
+    pos = {}   # repo -> (inode, offset) consumed so far
+    last_write = time.time()
+    try:
+        req.wfile.write(b": stream open\n\n")
+        while not srv.stopping.is_set():
+            repos = [want] if want else repo_list()
+            for r in repos:
+                if r not in pos:
+                    pos[r] = tuple(start[r]) if start and r in start else log_end(r)
+            for r in list(pos):
+                if r not in repos:
+                    del pos[r]
+            batches = {r: collections.deque(read_new(r, pos[r])) for r in repos}
+            sent, tprev = False, {}
+            while any(batches.values()):
+                # the repository whose next line is the oldest goes first; each repository's own order is kept
+                best = None
+                for r, q in batches.items():
+                    if q:
+                        t = epoch(q[0][0].split(" ", 1)[0]) if q[0][0] else None
+                        t = tprev.get(r, 0) if t is None else t
+                        if best is None or t < best[0]:
+                            best = (t, r)
+                t, r = best
+                tprev[r] = t
+                text, p = batches[r].popleft()
+                pos[r] = p
+                if text is not None:
+                    blob = json.dumps({"repo": r, "line": text})
+                    req.wfile.write(("id: %s\ndata: %s\n\n" % (enc_cursor({k: list(v) for k, v in pos.items()}), blob)).encode())
+                    sent = True
+            if sent:
+                last_write = time.time()
+                continue   # more may be waiting (reads are chunked)
+            if time.time() - last_write >= keep:
+                req.wfile.write(b": keep-alive\n\n")
+                last_write = time.time()
+            try:   # the client closing its end: stop
+                if req.connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) == b"":
+                    break
+            except (BlockingIOError, InterruptedError):
+                pass
+            srv.stopping.wait(0.5)
+    except OSError:
+        pass   # the client is gone
+    return None
 
 
 # ---- HTTP ----

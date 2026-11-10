@@ -1,0 +1,75 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "updated",
+  "modified",
+  "five_hour",
+  "seven_day",
+  "projected_5h",
+  "hold",
+  "reason"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "updated": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "modified": {
+   "type": "integer"
+  },
+  "five_hour": {
+   "type": "object",
+   "required": [
+    "utilization",
+    "resets_at",
+    "status"
+   ],
+   "properties": {
+    "utilization": {
+     "type": "number"
+    },
+    "resets_at": {
+     "type": "integer"
+    },
+    "status": {
+     "type": "string"
+    }
+   }
+  },
+  "seven_day": {
+   "type": "object",
+   "required": [
+    "utilization",
+    "resets_at",
+    "status"
+   ],
+   "properties": {
+    "utilization": {
+     "type": "number"
+    },
+    "resets_at": {
+     "type": "integer"
+    },
+    "status": {
+     "type": "string"
+    }
+   }
+  },
+  "projected_5h": {
+   "type": "number"
+  },
+  "hold": {
+   "type": "boolean"
+  },
+  "reason": {
+   "type": "string"
+  }
+ }
+}
