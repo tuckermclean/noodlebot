@@ -419,6 +419,8 @@ ok "D01-AC-1: the checkout moves to a passing commit within a tick or two" timeo
 ok "D01-AC-1: the loop re-execs into the new commit's loop.sh" timeout 3 sh -c "until grep -q '^v2 pid ' '$tmp/marker' 2>/dev/null; do sleep 0.2; done"
 ok "D01-AC-1: the re-exec keeps the loop's pid" sh -c "kill -0 $loop3 && grep -qx 'v2 pid $loop3' '$tmp/marker'"
 ok "D01-AC-1: the loop re-execs once" test "$(grep -c '^v2 pid ' "$tmp/marker" 2>/dev/null || echo 0)" = 1
+ok "T03-AC-5: after the re-exec the loop's environment still holds SCHED_TICK=1 it was started with" sh -c "kill -0 $loop3 && grep -qx 'v2 pid $loop3' '$tmp/marker' && tr '\\0' '\\n' <'/proc/$loop3/environ' | grep -qx 'SCHED_TICK=1'"
+ok "T03-AC-5: after the re-exec the loop's environment still holds SCHED_POLL=0.2 and SCHED_REPORT=0" sh -c "kill -0 $loop3 && grep -qx 'v2 pid $loop3' '$tmp/marker' && tr '\\0' '\\n' <'/proc/$loop3/environ' | grep -qx 'SCHED_POLL=0.2' && tr '\\0' '\\n' <'/proc/$loop3/environ' | grep -qx 'SCHED_REPORT=0'"
 v01_v2=$(git -C "$nbd" describe --tags --always)
 ok "V01-AC-3: after the deploy the re-exec writes a start line naming the deployed commit's version" withind 5 "loop started for o/dep, version $v01_v2\$"
 ok "V01-AC-3: the deployed version is not the first one (a commit after the tag)" test "$v01_v2" != v1.0
