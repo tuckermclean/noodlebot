@@ -50,6 +50,30 @@ resolving it is merged and no unit whose home it is has a question open (or answ
 follow-up in progress, and reopens it when a unit whose home it is asks a new question. A question shows on the status issue
 as a short pointer to its comment on the home issue.
 
+## API
+
+A read-only HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
+`$NOODLEBOT_DATA/api.sock` (default `~/.local/share/noodlebot/api.sock`, mode 0600, so only you can use it).
+`scheduler/loops.sh start` and `stop` start and stop it with the loops (tmux session `sched-api`); `status` shows it.
+Every request is a GET; every answer is JSON with `"version": 1`.
+
+- `/v1/repos`, `/v1/repos/<owner>/<name>`: the listed repositories and one in full.
+- `/v1/repos/<owner>/<name>/nodes`, `.../nodes/<ID>`, `.../sessions`, `.../prs`, `.../issues`.
+- `/v1/throttle`, `/v1/deploy`: the usage throttle and the last deploy.
+- `/v1/schema/<resource>`: the JSON schema of a resource.
+- `/v1/events`: a `text/event-stream` (not JSON) of events, each a line appended to a repository's `status.log`. `?repo=<owner>/<name>` limits it to one repository;
+  `?since=<cursor>` (or the `Last-Event-ID` header, which a browser's EventSource sends on reconnecting)
+  resumes after the event with that id, with a cursor per repository.
+
+    curl --unix-socket ~/.local/share/noodlebot/api.sock http://localhost/v1/repos
+
+From another machine, forward the socket over SSH and use it there:
+
+    ssh -L /tmp/nb.sock:/home/<user>/.local/share/noodlebot/api.sock host
+    curl --unix-socket /tmp/nb.sock http://localhost/v1/repos
+
+If `/tmp/nb.sock` is left over from an earlier forward, set `StreamLocalBindUnlink yes` (in `ssh_config`, or `-o`).
+
 ## Answering a node's question
 
 Reply on the unit's issue (the home issue where the loop posted the question), in plain words. Only the repository

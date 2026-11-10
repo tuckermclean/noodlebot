@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","timestamp":"2026-11-09T09:05:05Z","session_id":"sess-i9"}
+{"type":"assistant","timestamp":"2026-11-09T09:06:00Z","message":{"content":[{"type":"text","text":"Triaging #9."},{"type":"tool_use","id":"i01","name":"Bash","input":{"command":"gh issue view 9","description":"Read the issue"}}]}}
+{"type":"user","timestamp":"2026-11-09T09:06:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"i01","content":"body mentions ghs_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"}]}}
+{"type":"assistant","timestamp":"2026-11-09T09:07:00Z","message":{"content":[{"type":"tool_use","id":"i02","name":"Agent","input":{"description":"Explore the export code","prompt":"Explore","subagent_type":"Explore","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-11-09T09:07:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"i02","content":"Async agent launched with agent ID: ag-i9-1"}]}}

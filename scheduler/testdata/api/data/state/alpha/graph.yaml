@@ -1,0 +1,14 @@
+# fixture graph
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - {id: N01, track: now, name: merged-one, deps: [], summary: "merged"}
+  - {id: N02, track: now, name: pr-open-one, deps: [N01], summary: "PR open, mergeable"}
+  - {id: N03, track: now, name: running-one, deps: [N01], summary: "live session"}
+  - {id: N04, track: now, name: idle-limit-one, deps: [N01], summary: "live session idle at the usage limit"}
+  - {id: N05, track: now, name: failed-one, deps: [N01], summary: "FAILED"}
+  - {id: N06, track: now, name: question-one, deps: [N01], summary: "QUESTION.md, home issue"}
+  - {id: N07, track: now, name: answered-one, deps: [N01], summary: "QUESTION.md and ANSWER.md"}
+  - {id: N08, track: now, name: waiting-pr-one, deps: [N01], summary: "WAITING-PR 90, not merged"}
+  - {id: N09, track: now, name: ready-one, deps: [N01], summary: "ready (held while usage.json holds)"}
+  - {id: N10, track: later, name: waiting-one, deps: [N09, N03], summary: "deps not merged"}
+  - {id: N11, track: now, name: pr-conflict-one, deps: [N01], summary: "PR open, conflicting"}

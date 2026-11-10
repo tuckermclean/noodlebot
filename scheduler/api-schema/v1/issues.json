@@ -1,0 +1,55 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "issues",
+  "modified"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "issues": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "number",
+     "title",
+     "labelled",
+     "state"
+    ],
+    "properties": {
+     "number": {
+      "type": "integer"
+     },
+     "title": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "labelled": {
+      "type": [
+       "boolean",
+       "null"
+      ]
+     },
+     "state": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    }
+   }
+  },
+  "modified": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  }
+ }
+}

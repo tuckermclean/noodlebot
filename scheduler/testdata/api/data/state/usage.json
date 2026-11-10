@@ -1,0 +1,32 @@
+{
+ "updated": 1794222000,
+ "windows": {
+  "five_hour": {
+   "resetsAt": 1794236400,
+   "utilization": 0.12,
+   "status": "allowed"
+  },
+  "seven_day": {
+   "resetsAt": 1794441600,
+   "utilization": 0.3,
+   "status": "allowed"
+  }
+ },
+ "samples5h": [
+  [
+   1794218400,
+   0.06,
+   1794236400
+  ],
+  [
+   1794222000,
+   0.12,
+   1794236400
+  ]
+ ],
+ "projected5h": 0.3,
+ "weekElapsed": 0.43,
+ "hold": false,
+ "reason": "",
+ "summary": "5-hour 12%, projected 30%; 7-day 30% at 43% of the week"
+}

@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","timestamp":"2026-11-09T07:00:00Z","session_id":"sess-n11"}
+{"type":"assistant","timestamp":"2026-11-09T07:01:00Z","message":{"content":[{"type":"tool_use","id":"c01","name":"Bash","input":{"command":"git merge origin/main","description":"Merge main"}}]}}
+{"type":"user","timestamp":"2026-11-09T07:01:05Z","message":{"content":[{"type":"tool_result","tool_use_id":"c01","content":"CONFLICT"}]}}
+{"type":"rate_limit_event","timestamp":"2026-11-09T07:30:00Z","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":1794236400,"status":"rejected"},"seven_day":{"utilization":0.3,"resetsAt":1794441600,"status":"allowed"}},"resetsAt":1794225600}}
+{"type":"result","subtype":"error_during_execution","timestamp":"2026-11-09T07:30:01Z","is_error":true,"num_turns":3,"result":"You've hit your usage limit. Your limit resets at 12pm."}

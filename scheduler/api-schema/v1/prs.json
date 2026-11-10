@@ -1,0 +1,50 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "prs",
+  "modified"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "prs": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "number",
+     "branch",
+     "head",
+     "bot",
+     "mergeable"
+    ],
+    "properties": {
+     "number": {
+      "type": "integer"
+     },
+     "branch": {
+      "type": "string"
+     },
+     "head": {
+      "type": "string"
+     },
+     "bot": {
+      "type": "boolean"
+     },
+     "mergeable": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "modified": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  }
+ }
+}
