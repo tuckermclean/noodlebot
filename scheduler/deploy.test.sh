@@ -287,5 +287,64 @@ ok "V01-AC-4 a conflicting local tag: the new commit is still deployed (live che
 ok "V01-AC-4 a conflicting local tag: exit status 0 as for a normal deploy" '[ "$trc" = 0 ]'
 ok "V01-AC-4 a conflicting local tag: exactly one line 'deployed <old>..<new> (version <v>)'" 'printf "%s\n" "$tout" | grep -Eq "^deployed $t0\.\.$t1 \(version [^)]+\)\$" && [ "$(printf "%s\n" "$tout" | grep -c .)" = 1 ]'
 
+# --- P03-AC-5: deploy/retry and deploy/rollback-request markers, consumed by the next run ---
+dd=$NOODLEBOT_DATA/deploy
+dep1() { sh "$deploy" "$live" 2>/dev/null; }
+nlines() { printf '%s\n' "$1" | grep -c .; }
+in_rejected() { grep -qx "$1" "$dd/rejected" 2>/dev/null; }
+dep >/dev/null   # settle anything pending
+# a commit whose make test fails until an external marker exists: rejected first, "now passes" after
+rmark=$tmp/r1.pass
+commitm r1 "@echo r1 >>$log; [ -e $rmark ]"
+r1=$(full "$tmp/work" HEAD)
+before_r1=$(head_of)
+dep >/dev/null
+ok "P03-AC-5 setup: the failing commit is rejected and not deployed (guard)" 'in_rejected "$r1" && [ "$(head_of)" = "$before_r1" ]'
+: >"$rmark"
+echo "$r1 2" >"$dd/tries"; echo "$r1 1" >"$dd/passed"
+printf '%s\n' "$r1" >"$dd/retry"
+out=$(dep1)
+ok "P03-AC-5 a retry of the rejected origin/main head whose make test now passes deploys it" '[ "$(head_of)" = "$r1" ]'
+ok "P03-AC-5 the retry run printed a line saying the retry was requested" 'printf "%s\n" "$out" | grep -i "retry" | grep -qi "requested"'
+ok "P03-AC-5 the retry run printed the deployed line too" 'printf "%s\n" "$out" | grep -q "^deployed $before_r1\.\.$r1 "'
+ok "P03-AC-5 the retry run printed exactly two status lines (one per event)" '[ "$(nlines "$out")" = 2 ]'
+ok "P03-AC-5 the retried commit is gone from deploy/rejected" '[ "$(head_of)" = "$r1" ] && ! in_rejected "$r1"'
+ok "P03-AC-5 its counts are gone from deploy/tries and deploy/passed" '[ "$(head_of)" = "$r1" ] && ! grep -q "$r1" "$dd/tries" "$dd/passed" 2>/dev/null'
+ok "P03-AC-5 make test ran again for the retried commit" '[ "$(runs r1)" = 2 ]'
+ok "P03-AC-5 the retry marker is gone after the run" '[ ! -e "$dd/retry" ]'
+
+# a retry of a commit that is not rejected: one line saying there was nothing to retry
+rej_before=$(cat "$dd/rejected" 2>/dev/null)
+printf '%s\n' "$r1" >"$dd/retry"
+out=$(dep1)
+ok "P03-AC-5 a retry of a commit that is not rejected prints exactly one line" '[ "$(nlines "$out")" = 1 ]'
+ok "P03-AC-5 that line says there was nothing to retry" 'printf "%s\n" "$out" | grep -qi "nothing"'
+ok "P03-AC-5 that line mentions the retry" 'printf "%s\n" "$out" | grep -qi "retry"'
+ok "P03-AC-5 nothing changed: head and deploy/rejected" '[ "$(head_of)" = "$r1" ] && [ "$(cat "$dd/rejected" 2>/dev/null)" = "$rej_before" ]'
+ok "P03-AC-5 the marker of a nothing-to-retry is gone after the run" '[ ! -e "$dd/retry" ]'
+
+# a rollback request with a rollback point (deploy/previous is the commit before r1)
+prev_r1=$(cat "$dd/previous" 2>/dev/null)
+printf '2026-11-10T03:15:00Z\n' >"$dd/rollback-request"
+out=$(dep1)
+ok "P03-AC-5 the rollback point is the commit before the deployed one (guard)" '[ "$prev_r1" = "$before_r1" ]'
+ok "P03-AC-5 a rollback request leaves the live checkout at deploy/previous" '[ "$(head_of)" = "$before_r1" ]'
+ok "P03-AC-5 the commit the rollback left is recorded in deploy/rejected" 'in_rejected "$r1"'
+ok "P03-AC-5 the rollback run printed a line saying the rollback was requested" 'printf "%s\n" "$out" | grep -i "rollback\|rolled back" | grep -qi "requested"'
+ok "P03-AC-5 the rollback run printed exactly one status line (the rolled-back commit is not redeployed)" '[ "$(nlines "$out")" = 1 ]'
+ok "P03-AC-5 the rollback marker is gone after the run" '[ ! -e "$dd/rollback-request" ]'
+
+# a rollback request without a rollback point: one line saying there was nothing to roll back
+rm -f "$dd/previous"
+rej_before=$(cat "$dd/rejected" 2>/dev/null)
+head_before=$(head_of)
+printf '2026-11-10T03:16:00Z\n' >"$dd/rollback-request"
+out=$(dep1)
+ok "P03-AC-5 a rollback request without a rollback point prints exactly one line" '[ "$(nlines "$out")" = 1 ]'
+ok "P03-AC-5 that line says there was nothing to roll back" 'printf "%s\n" "$out" | grep -qi "nothing\|no rollback point"'
+ok "P03-AC-5 that line mentions the rollback" 'printf "%s\n" "$out" | grep -qi "roll"'
+ok "P03-AC-5 nothing changed: head and deploy/rejected" '[ "$(head_of)" = "$head_before" ] && [ "$(cat "$dd/rejected" 2>/dev/null)" = "$rej_before" ]'
+ok "P03-AC-5 the marker of a rollback without a rollback point is gone after the run" '[ ! -e "$dd/rollback-request" ]'
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
