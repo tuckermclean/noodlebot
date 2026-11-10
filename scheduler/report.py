@@ -503,6 +503,10 @@ def find_issue(a, rs):
     prev = next((num for d, num in log_issues(a, "all") if d < today), None)
     for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []:
         if "pull_request" not in i and i.get("title") == "noodlebot log " + today:
+            if log.get("date") == today and log.get("issue") == i["number"]:
+                rs["issue"] = i["number"]  # the one we recorded (its read failed): keep its overview state
+                a.save()
+                return i["number"], False
             rs["log"], rs["issue"] = {"date": today, "issue": i["number"], "prev": prev, "overview": True}, i["number"]
             a.save()  # found, not opened by us: no overview
             return i["number"], True
