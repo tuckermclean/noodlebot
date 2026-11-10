@@ -640,6 +640,47 @@ if [ "$(evx "$tmp/ev.c5" "[(x['repo'], x['line']) for x in e]")" = "[('acme/beta
 for c in c2 c3 c4 c5; do eval "p=\$ev_pid_$c"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; cat "$tmp/ev.$c" >>"$tmp/allresp"; done
 cat "$tmp/ev.c1" >>"$tmp/allresp"
 err P01-AC-7 POST /v1/events 405
+# ---- P01-AC-5, real CLI stream-json shapes (added after the S3 review): background tasks and usage-limit warnings ----
+# Session logs here use the shapes of the real Claude Code CLI: a Bash background start answers "Command running in background with
+# ID: <id>. Output is being written to: <path>" (the id is followed by a period; the content is a plain string); an Agent background
+# start answers a list of text blocks whose text ends with a line "agentId: <id> (use SendMessage ...)" (no "ID:"); the end of a
+# task is {"type":"system","subtype":"task_notification","task_id":...,"tool_use_id":...,"status":"completed"}. The id of a
+# Bash task equals its task_id; an Agent task's notification may carry only the tool_use_id of the Agent call (task_id differs).
+# A rate_limit_event with status "allowed_warning" is a warning, not a rejection: it is no "limit". Made here, removed below.
+mkdir -p "$a/pr/17" "$a/issue/21" "$a/issue/22"
+cat >"$a/pr/17/session.jsonl" <<'EOT'
+{"type":"system","subtype":"init","timestamp":"2026-11-09T10:00:00Z"}
+{"type":"assistant","timestamp":"2026-11-09T10:01:00Z","message":{"content":[{"type":"tool_use","id":"toolu_bgrun","name":"Bash","input":{"command":"sleep 900","description":"Watch the slow build","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-11-09T10:01:01Z","message":{"role":"user","content":[{"tool_use_id":"toolu_bgrun","type":"tool_result","content":"Command running in background with ID: bqx7run01. Output is being written to: /tmp/x/tasks/bqx7run01.output If it exits while you are still working you will be notified.","is_error":false}]}}
+{"type":"assistant","timestamp":"2026-11-09T10:02:00Z","message":{"content":[{"type":"tool_use","id":"toolu_bgfin","name":"Bash","input":{"command":"make lint","description":"Lint in the background","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-11-09T10:02:01Z","message":{"role":"user","content":[{"tool_use_id":"toolu_bgfin","type":"tool_result","content":"Command running in background with ID: bqx7fin02. Output is being written to: /tmp/x/tasks/bqx7fin02.output If it exits while you are still working you will be notified.","is_error":false}]}}
+{"type":"assistant","timestamp":"2026-11-09T10:03:00Z","message":{"content":[{"type":"tool_use","id":"toolu_agrun","name":"Agent","input":{"description":"Review the running slice","prompt":"look","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-11-09T10:03:01Z","message":{"role":"user","content":[{"tool_use_id":"toolu_agrun","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully.\nagentId: aqx7run03 (use SendMessage with to: 'aqx7run03' to continue this agent)\nThe agent is working in the background."}]}]}}
+{"type":"assistant","timestamp":"2026-11-09T10:04:00Z","message":{"content":[{"type":"tool_use","id":"toolu_agfin","name":"Agent","input":{"description":"Review the finished slice","prompt":"look","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-11-09T10:04:01Z","message":{"role":"user","content":[{"tool_use_id":"toolu_agfin","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully.\nagentId: aqx7fin04 (use SendMessage with to: 'aqx7fin04' to continue this agent)\nThe agent is working in the background."}]}]}}
+{"type":"system","subtype":"task_notification","task_id":"bqx7fin02","run_id":"r1","tool_use_id":"toolu_other","status":"completed","output_file":"","summary":"Lint"}
+{"type":"system","subtype":"task_notification","task_id":"tsk-differs","run_id":"r2","tool_use_id":"toolu_agfin","status":"completed","output_file":"","summary":"Review"}
+EOT
+cat >"$a/issue/21/session.jsonl" <<'EOT'
+{"type":"system","subtype":"init","timestamp":"2026-11-09T11:00:00Z"}
+{"type":"assistant","timestamp":"2026-11-09T11:01:00Z","message":{"content":[{"type":"tool_use","id":"w21","name":"Bash","input":{"command":"ls","description":"List"}}]}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1794228000,"rateLimitType":"five_hour","utilization":0.9}}
+EOT
+cat >"$a/issue/22/session.jsonl" <<'EOT'
+{"type":"system","subtype":"init","timestamp":"2026-11-09T12:00:00Z"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794200000,"rateLimitType":"five_hour"}}
+{"type":"assistant","timestamp":"2026-11-09T12:01:00Z","message":{"content":[{"type":"tool_use","id":"w22","name":"Bash","input":{"command":"ls","description":"List"}}]}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1794228000,"rateLimitType":"five_hour"}}
+EOT
+ended "$a/pr/17"; ended "$a/issue/21"; ended "$a/issue/22"
+touch -d 2026-11-09T10:00:00Z "$a/pr/17/session.pid" "$a/issue/21/session.pid" "$a/issue/22/session.pid"
+get P01-AC-5 /v1/repos/acme/alpha/sessions sessions; cp "$tmp/resp" "$tmp/sessions.json"
+sess_is update 17 "sorted((b.get('id'), b.get('text')) for b in (s.get('bg_commands') or [])) == [('bqx7run01', 'Watch the slow build')]" "lists the running Bash background command by its id without the period, and not the one ended by task_id"
+sess_is update 17 "sorted((b.get('id'), b.get('text')) for b in (s.get('bg_agents') or [])) == [('aqx7run03', 'Review the running slice')]" "lists the running background Agent by its agentId, and not the one ended by tool_use_id alone"
+sess_is triage 21 "not s.get('limit')" "ending with an allowed_warning rate_limit_event has no limit"
+sess_is triage 22 "(s.get('limit') or {}).get('resets_at') == 1794200000" "gives as limit its last rejection (not a later allowed_warning)"
+rm -rf "$a/pr/17" "$a/issue/21" "$a/issue/22"
+
 snap >"$tmp/snap.before"   # the test appended to the status logs: re-take the AC-2 baseline
 
 # AC-2 end-of-test checks: later slices append their cases ABOVE this block (marked by the line below).
