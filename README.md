@@ -50,6 +50,22 @@ resolving it is merged and no unit whose home it is has a question open (or answ
 follow-up in progress, and reopens it when a unit whose home it is asks a new question. A question shows on the status issue
 as a short pointer to its comment on the home issue.
 
+## Status site
+
+The loop can publish a status site for the repositories it watches. The files are sent to a public gist you make once by hand;
+the publisher never creates a gist.
+
+1. Create a public gist (any file will do; it is replaced by the first publish) and note its ID, the last part of its URL.
+2. Make a token that can only touch gists: a classic token with only the `gist` scope, or a fine-grained token with only
+   the Gists account permission (read and write).
+3. Put the ID in `~/.config/noodlebot/gist` and the token in `~/.config/noodlebot/gist-token`, both mode 0600.
+   An optional `~/.config/noodlebot/repos` lists the repositories to show, one `owner/name` per line (default: the loop's own).
+
+With either file missing the loop says `site off: no gist configured` once at start and publishes nothing. `SCHED_SITE=0`
+turns the publishing off. The token goes only to the publish command, never to a session; a failed publish is one status
+line (`site: publish failed (<status>)`), the details are in `state/<name>/site.log`, and `site: publishing again` follows
+the next success.
+
 ## API
 
 A read-only HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
