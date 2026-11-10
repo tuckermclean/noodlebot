@@ -23,13 +23,17 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
   GitHub every 60 s (PR merges). Only one loop runs at a time. Sessions run detached, so stopping or
   restarting the loop never stops a session; a restarted loop takes over the running one.
 
-## Watching it: the status issue
+## Watching it: the daily log
 
-Each repository gets one open issue labelled `noodlebot-status` (`scheduler/report.py`, run by the loop
-after each 60 s tick). Its body shows what waits on you, the running session with the orchestrator's latest
-narration and the active subagent, and recent events. Each start, end (with the session's closing
-summary), release, merge and question is a comment, so GitHub notifies you. It is disposable: close it
-and the loop opens a new one. Its failures go to `$NOODLEBOT_DATA/state/<repo>/report.log` and never stop the loop.
+Each repository gets one log issue a day, "noodlebot log <date>", labelled `noodlebot-status`
+(`scheduler/report.py`, run by the loop after each 60 s tick). Its first comment is the morning overview;
+its body is the status table (what waits on you, the running sessions with the latest narration, usage, the
+deployed commit); each start, end (with its total cost), release, merge and question is one line in its
+comments, so GitHub notifies you. At the first run on a new date it posts the day's summary on the old issue,
+closes it, opens the new one, links the two and tries to pin the new one. Closing today's issue is fine: the
+loop opens another. The open ones are here:
+[open `noodlebot-status` issues](https://github.com/tuckermclean/noodlebot/issues?q=is%3Aissue+label%3Anoodlebot-status+is%3Aopen).
+Its failures go to `$NOODLEBOT_DATA/state/<repo>/report.log` and never stop the loop.
 Nothing in it is specific to one repository: `report.py --repo OWNER/NAME --state DIR`.
 
 ## Handing an issue to the bot
