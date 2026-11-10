@@ -70,6 +70,15 @@ turns the publishing off. The token goes only to the publish command, never to a
 line (`site: publish failed (<status>)`), the details are in `state/<name>/site.log`, and `site: publishing again` follows
 the next success.
 
+The front end in `site/` is a static page that reads the gist from the browser; `.github/workflows/pages.yml` deploys it to
+GitHub Pages when `site/**` changes on `main` (or by hand, with `workflow_dispatch`). To enable it:
+
+1. In the repository's Settings, Pages, set the source to GitHub Actions.
+2. In Settings, Secrets and variables, Actions, Variables, add the repository variable `NOODLEBOT_GIST_ID` with the gist's ID.
+   The workflow writes it to `site/config.json` and fails with a message while it is unset.
+
+The page also takes `?gist=<id>`, which wins over `config.json`.
+
 ## API
 
 A read-only HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
