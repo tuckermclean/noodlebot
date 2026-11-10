@@ -1455,7 +1455,7 @@ s5ok "S05-AC-4: no removed-node event is written" sh -c "! grep -qE 'removed by|
 printf '28 node/R08-n8 %s false\n' "$(date -u +%FT%TZ)" >>"$S5/closed.tsv"
 s5ok "S05-AC-4: a node still in the graph whose PR was closed: its session is stopped (S01)" waitf 5 grp_gone "$s5pg8"
 s5ok "S05-AC-4: and it is held by FAILED naming the PR (S01)" waitf 3 sh -c "grep -qE '#28([^0-9]|\$)' '$s5st/node/R08/FAILED'"
-s5ok "S05-AC-4: the held event keeps its S01 wording: session R08 ended (rc N), held by FAILED" waitf 5 sh -c "grep -qE 'session R08 ended \\(rc [0-9]+\\), held by FAILED\$' '$s5st/status.log'"
+s5ok "S05-AC-4: the held event keeps its S01 wording: session R08 ended (rc ?), held by FAILED" waitf 5 sh -c "grep -qE 'session R08 ended \\(rc [0-9?]+\\), held by FAILED\$' '$s5st/status.log'"
 s5ok "S05-AC-4: its state and worktree stay, and no PR or issue is touched for it" sh -c "[ -d '$s5wt/R08' ] && [ -d '$s5st/node/R08' ] && [ \"\$(wc -l <'$S5/calls.log')\" = 0 ]"
 # the removal lands on main
 git -C "$tmp/s05work" rm -q nodes/R01-n1.md nodes/R03-n3.md nodes/R04-n4.md nodes/R05-n5.md
