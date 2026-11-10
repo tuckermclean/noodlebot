@@ -183,6 +183,21 @@ mkdir -p "$tmp/out5"
 printf '%s\n' "$H1" >"$root/deploy/previous"
 printf '%s\n%s\n' "$H2" "$H3" >"$root/deploy/rejected"
 build "$tmp/out5" "$res/rc5"
+# out6: an open spec/* PR whose branch is not in the clone (fork, or opened after the last fetch)
+printf '53 spec/not-fetched 0abc123 true MERGEABLE\n' >>"$sa/open-prs.tsv"
+printf 'spec/not-fetched\n' >>"$sa/open-prs.txt"
+mkdir -p "$tmp/out6"
+build "$tmp/out6" "$res/rc6" --throttle "$HOLD"
+# out7: usage.json holding NaN and Infinity tokens
+python3 -I - "$root/state/usage.json" <<'EOF'
+import sys
+p = sys.argv[1]; s = open(p).read()
+s = s.replace('"utilization": 0.62', '"utilization": NaN', 1)
+s = s.replace(', 0.005,', ', Infinity,', 1)
+open(p, "w").write(s)
+EOF
+mkdir -p "$tmp/out7"
+build "$tmp/out7" "$res/rc7" --throttle "$HOLD"
 echo "$tmp" >"$res/tmp"
 
 cat >"$res/check.py" <<'EOF'
@@ -378,6 +393,23 @@ check("W01-AC-7 activity.json has events of public repositories only", lambda: {
 def same(a_, b_): return open(a_).read() == open(b_).read()
 check("W01-AC-7 the build writes nothing outside --out (listing of the whole tree unchanged)", lambda: rc(1) == "0" and rc(4) == "0" and sorted(os.listdir(out[0])) == files and same(res + "/before", res + "/after") and same(res + "/before3", res + "/after3") and os.path.getsize(res + "/before") > 0)
 check("W01-AC-7 no gh call and no other network tool call", lambda: rc(1) == "0" and rc(4) == "0" and not os.path.exists(tmp + "/calls.log"))
+# ---- W01-AC-3 / W01-AC-4 additions: unfetched spec branch, non-finite usage values
+def a6(): return J(tmp + "/out6", "repo.acme.alpha.json")
+def sp6(n): return next(p for p in a6()["spec_prs"] if p["number"] == n)
+check("W01-AC-3 a spec PR whose branch is not in the clone: build exits 0 and the PR is listed in open_prs", lambda: rc(6) == "0" and 53 in [p["number"] for p in a6()["open_prs"]])
+check("W01-AC-3 an unfetched spec PR has an entry with added, changed and removed all empty (unknown, not every node removed)", lambda: (sp6(53)["added"], sp6(53)["changed"], sp6(53)["removed"]) == ([], [], []))
+check("W01-AC-3 the entry of the fetched spec PR #51 is unchanged by the unfetched one", lambda: sp6(51) == next(p for p in J(out[0], "repo.acme.alpha.json")["spec_prs"] if p["number"] == 51))
+def strict(path):
+    def bad(c): raise ValueError("non-finite token " + c)
+    json.loads(open(path, encoding="utf-8").read(), parse_constant=bad); return True
+o7 = tmp + "/out7"
+def hist7():
+    d = J(o7, "throttle.json")
+    return next(v for k, v in d.items() if isinstance(v, list) and k != "windows")
+check("W01-AC-4 non-finite usage values: build exits 0 and writes all four files", lambda: rc(7) == "0" and all(os.path.exists(o7 + "/" + f) for f in ("activity.json", "throttle.json", "repo.acme.alpha.json", "repo.acme.bravo.json")))
+check("W01-AC-4 every output file is strict JSON (no NaN or Infinity)", lambda: len(os.listdir(o7)) >= 4 and all(strict(o7 + "/" + f) for f in os.listdir(o7)))
+check("W01-AC-4 a NaN window utilization comes out as null", lambda: J(o7, "throttle.json")["windows"][0]["utilization"] is None)
+check("W01-AC-4 an Infinity sample is dropped or null, never non-finite", lambda: all(h.get("u") is None or abs(h["u"]) < float("inf") for h in hist7()))
 sys.exit(1 if fails else 0)
 EOF
 python3 -I "$res/check.py" "$src" "$tmp" "$root" "$HOME" "$GH" "$ANT" >"$res/checks.out" 2>&1
