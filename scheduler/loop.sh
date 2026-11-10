@@ -139,6 +139,7 @@ alive() {
 # limit_exit <dir>: the session ended because of the plan's usage limit: its last rate_limit_event is
 # not "allowed", or its last result names a usage or rate limit. Such an end uses up no start.
 limit_exit() {
+	[ -e "$1/force-limit" ] && return 0   # the loop itself stopped it, or the resume failed (see ended)
 	tail -c 400000 "$1/session.jsonl" 2>/dev/null | python3 -I -c '
 import json, re, sys
 ev = res = None
@@ -151,6 +152,45 @@ for line in sys.stdin:
 st = ((ev or {}).get("rate_limit_info") or {}).get("status", "allowed")
 txt = str((res or {}).get("result") or "") + " " + str((res or {}).get("subtype") or "")
 sys.exit(0 if st != "allowed" or re.search(r"usage limit|rate limit|limit reached|hit your limit", txt, re.I) else 1)'
+}
+
+# idle_by_limit <dir>: the session's log ends with the usage limit (its last line is a rate_limit_event
+# whose status is not "allowed", or a result naming the limit) and has a reset time. Prints
+# "<reset epoch> <session id of the last system/init line, or ->". A log that moved on is not idle.
+idle_by_limit() {
+	local out sid
+	out=$(idle_tail "$1") || return 1
+	sid=${out#* }
+	if [ "$sid" = - ]; then   # the init line may lie before the tail window: look in the whole log
+		sid=$(grep -a '"subtype": *"init"' "$1/session.jsonl" 2>/dev/null | tail -n 1 | python3 -I -c '
+import json, sys
+try: print(json.loads(sys.stdin.read()).get("session_id") or "-")
+except ValueError: print("-")') || sid=-
+		[ -n "$sid" ] || sid=-
+	fi
+	echo "${out%% *} $sid"
+}
+
+# idle_tail <dir>: the check of idle_by_limit on the last 400 KB of the log.
+idle_tail() {
+	tail -c 400000 "$1/session.jsonl" 2>/dev/null | python3 -I -c '
+import json, re, sys
+last = reset = sid = None
+for line in sys.stdin:
+    if not line.strip(): continue
+    try: d = json.loads(line)
+    except ValueError: last = None; continue
+    if not isinstance(d, dict): last = None; continue
+    last = d
+    if d.get("type") == "rate_limit_event":
+        i = d.get("rate_limit_info") or {}
+        if i.get("status", "allowed") != "allowed": reset = i.get("resetsAt")
+    elif d.get("type") == "system" and d.get("subtype") == "init" and d.get("session_id"): sid = d["session_id"]
+if last is None or not isinstance(reset, (int, float)): sys.exit(1)
+if last.get("type") == "rate_limit_event": ok = (last.get("rate_limit_info") or {}).get("status", "allowed") != "allowed"
+else: ok = last.get("type") == "result" and re.search(r"usage limit|rate limit|limit reached|hit your limit", str(last.get("result") or "") + " " + str(last.get("subtype") or ""), re.I)
+if not ok: sys.exit(1)
+print(int(reset), sid or "-")'
 }
 
 # bg_cut_off <dir>: the CLI said on session.stderr that it stopped background tasks still running
@@ -196,6 +236,15 @@ ended() {
 	p=$(cat "$d/session.pid"); wait "$p" 2>/dev/null
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
+	if [ -e "$d/resume.size" ]; then
+		tail -c +$(($(cat "$d/resume.size") + 1)) "$d/session.jsonl" 2>/dev/null | grep -q '"subtype": *"init"' || {
+			say "$saw; session $(task_name "$d") could not be resumed: the resumed claude wrote no init line (rc $rc)"
+			: >"$d/force-limit"
+		}
+		rm -f "$d/resume.size"
+	fi
+	# a failed resume is a limit exit whatever claude's exit code was
+	if [ -e "$d/force-limit" ]; then [ "$rc" != 0 ] || rc=143; fi
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; session $id ended (rc $rc), held by FAILED"
@@ -286,6 +335,69 @@ stop_group() {
 	return 1
 }
 
+# task_name <dir>: how the status log names a session: its node ID, #N (triage) or PR #N (update).
+task_name() {
+	case $(basename "$(dirname "$1")") in
+	issue) echo "#$(basename "$1")" ;;
+	pr) echo "PR #$(basename "$1")" ;;
+	*) basename "$1" ;;
+	esac
+}
+
+# stop_idle <dir> <pid>: stop a session that is idle by the usage limit: its claude gets SIGTERM so that
+# run-session.sh writes session.rc, then whatever is left of the process group goes.
+stop_idle() {
+	local d=$1 p=$2 c i
+	for c in $(pgrep -P "$p"); do kill -TERM "$c" 2>/dev/null; done
+	for i in $(seq 1 50); do [ -e "$d/session.rc" ] && break; sleep 0.2; done
+	stop_group "$p"
+}
+
+# resume_idle <saw>: after the throttle is known. A running session idle by the usage limit, whose reset
+# was over 2 minutes ago and has not been resumed for that reset time, is stopped and its conversation
+# resumed (claude -p --resume) in the same worktree, appending to the same log; no start is counted.
+# With no session id to resume, it is stopped and ends as a limit exit (ended); live is kept in step.
+resume_idle() {
+	local saw=$1 f d p id rs reset sid a wt nl e name pr why
+	[ "$throttled" = 1 ] && return
+	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
+		[ -e "$f" ] || continue
+		d=$(dirname "$f") id=$(basename "$d") p=$(cat "$f")
+		alive "$p" "$id" || continue
+		rs=$(idle_by_limit "$d") || continue
+		read -r reset sid <<<"$rs"
+		[ $(($(date +%s) - reset)) -gt 120 ] || continue
+		[ "$(cat "$d/resumed" 2>/dev/null)" = "$reset" ] && continue
+		name=$(task_name "$d")
+		mapfile -d '' -t a <"/proc/$p/cmdline"
+		wt=$(readlink "/proc/$p/cwd")
+		stop_idle "$d" "$p" || { note "$saw; session $name (pid $p) survived SIGKILL"; continue; }
+		wait "$p" 2>/dev/null
+		nl=()
+		for e in "${live[@]}"; do [ "${e#* }" = "$id" ] || nl+=("$e"); done
+		live=("${nl[@]}")
+		if [ "$sid" = - ] || [ -z "${a[4]:-}" ] || [ ! -d "$wt" ]; then
+			if [ "$sid" = - ]; then why='no session id in its log'
+			elif [ -z "${a[4]:-}" ]; then why='its command line could not be read'
+			else why='its worktree is missing'; fi
+			say "$saw; session $name was idle by the usage limit and could not be resumed: $why"
+			: >"$d/force-limit"
+			ended "$d" "$saw"
+			[ "$triaging" = "$id" ] && triaging=''
+			continue
+		fi
+		echo "$reset" >"$d/resumed"
+		{ cat "$here/limit-resume.md"; printf '\nThe limit window reset at %s UTC (epoch %s).\n' "$(date -u -d "@$reset" +%H:%M:%S)" "$reset"; } >"$d/resume-prompt.md"
+		stat -c %s "$d/session.jsonl" >"$d/resume.size"
+		rm -f "$d/session.rc"
+		NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$wt" "${a[3]}" "${a[4]}" "$sid" </dev/null 9>&- >>"$d/session.jsonl" 2>>"$d/session.stderr" &
+		pr=$!
+		echo "$pr" >"$d/session.pid"
+		live+=("$pr $id")
+		say "$saw; resuming session $name (pid $pr) after the usage limit: the window reset at $(date -u -d "@$reset" +%H:%M:%S) UTC (epoch $reset); start not counted"
+	done
+}
+
 # pr_done <ID> <start>: a node's session started at <start> (epoch s) has no more use: sets why to the
 # reason ("merged"/"closed") and prn to the PR. Merged; or no open PR and a PR on node/<ID>-* closed
 # without merging at or after <start>. For a follow-up (FOLLOWUP marker) only a PR on its follow-up
@@ -328,7 +440,7 @@ stop_done() {
 # launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
 # prompt's last word: a node ID or an issue number).
 launch() {
-	rm -f "$2/session.rc"
+	rm -f "$2/session.rc" "$2/resumed" "$2/resume.size" "$2/force-limit"
 	# 9>&-: the session must not hold the loop's lock.
 	NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
 	pid=$! node=${3##* }
@@ -675,6 +787,7 @@ tick() {
 			say "$saw; throttle released: ${usage#open: }"; throttled=0
 		fi
 	fi
+	resume_idle "$saw"
 	full() { [ "$throttled" = 1 ] || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
 
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
