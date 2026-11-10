@@ -460,5 +460,19 @@ ok M01-AC-1:old-lock-free:locks-under-runtime-root sh -c "sleep 0.3; [ -e '$rt/s
 touch "$HOME/STOP"
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA REALFLOCK
 
+echo "# V01-AC-8: status names the version of a running loop"
+setup v01
+start_loop alpha
+i=0; while [ ! -s "$nb/state/alpha/loop.pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+echo v9.8.7-3-g1a2b3c4 >"$nb/state/alpha/version"
+mkdir -p "$nb/state/beta"; echo v1.1.1-stale >"$nb/state/beta/version"
+run status
+aline=$(grep 'alpha' "$sc/out" | head -n 1)
+bline=$(grep 'beta' "$sc/out" | head -n 1)
+ok V01-AC-8:running-loop-line-names-version sh -c "echo '$aline' | grep -qF 'version v9.8.7-3-g1a2b3c4'"
+no V01-AC-8:stopped-loop-line-names-no-version sh -c "echo '$bline' | grep -qF 'version'"
+ok V01-AC-8:still-one-line-per-repository sh -c "[ \$(grep -c . '$sc/out') = 2 ]"
+touch "$HOME/STOP"
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"

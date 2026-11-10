@@ -76,6 +76,46 @@ exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
 [ -d "$clone/.git" ] || git clone -q "https://github.com/$repo" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
 
+# The loop's version and signature, once per start (a deploy's re-exec is a new start). Without
+# version.sh in the checkout, or if it fails, "unknown"; never a reason to stop.
+version=$(sh "$here/version.sh" "$nb" 2>/dev/null) || version=
+[ -n "$version" ] || version=unknown
+signature=$(sh "$here/version.sh" --signature "$nb" 2>/dev/null) || signature=
+[ -n "$signature" ] || signature="— n00dl3b0t unknown"
+{ echo "$version" >"$state/version.tmp" && mv "$state/version.tmp" "$state/version"; } 2>/dev/null || say "could not write $state/version"
+say "loop started for $repo, version $version"
+# sedesc <text>: text for a sed replacement (delimiter |) with & | \ escaped.
+sedesc() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
+vsub=$(sedesc "$version") ssub=$(sedesc "$signature")
+
+# The commit-msg hook: adds "Noodlebot-Version: $NOODLEBOT_VERSION" (replacing the message's own) to
+# every commit made in a session, in the clone and all its worktrees; does nothing outside one.
+install_hook() {
+	local hooks h
+	hooks=$(git -C "$clone" rev-parse --git-common-dir 2>/dev/null) || { say "commit-msg hook: no git dir in $clone; not installed"; return; }
+	case $hooks in /*) ;; *) hooks=$clone/$hooks ;; esac
+	hooks=$hooks/hooks; h=$hooks/commit-msg
+	if mkdir -p "$hooks" 2>/dev/null && hook_text >"$h.tmp.$$" 2>/dev/null && chmod 755 "$h.tmp.$$" && mv "$h.tmp.$$" "$h"; then :
+	else rm -f "$h.tmp.$$"; say "commit-msg hook: could not install it in $hooks; carrying on"; fi
+}
+hook_text() {
+	cat <<'HOOK'
+#!/bin/sh
+# installed by noodlebot's loop.sh
+[ -n "${NOODLEBOT_VERSION:-}" ] || exit 0
+# drop every Noodlebot-Version line from the trailer block (the last paragraph, unless it is the subject)
+t="$1.nb.$$"
+awk '{ l[NR] = $0 } END {
+	e = NR; while (e > 0 && (l[e] ~ /^[ \t]*$/ || l[e] ~ /^#/)) e--
+	s = e; while (s > 1 && l[s-1] !~ /^[ \t]*$/) s--
+	for (i = 1; i <= NR; i++) if (!(s > 1 && i >= s && i <= e && l[i] ~ /^Noodlebot-Version:/)) print l[i]
+}' "$1" >"$t" && cat "$t" >"$1"
+rm -f "$t"
+git interpret-trailers --in-place --if-exists replace --trailer "Noodlebot-Version: $NOODLEBOT_VERSION" "$1"
+HOOK
+}
+install_hook
+
 # The label step, once per loop start (never on a tick): the labels the bot relies on exist in the
 # repository. A failure is logged and the loop goes on.
 ensure_labels() {
@@ -277,7 +317,7 @@ stop_done() {
 launch() {
 	rm -f "$2/session.rc"
 	# 9>&-: the session must not hold the loop's lock.
-	setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
+	NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
 	pid=$! node=${3##* }
 	echo "$pid" >"$2/session.pid"
 	set_starts "$2" $(($(starts_of "$2") + 1))
@@ -292,7 +332,7 @@ start_triage() {
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return 1; }
 	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return 1; }
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
-		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended-triage.md" >"$d/unattended.md"
+		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
 }
@@ -315,7 +355,7 @@ start_update() {
 		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
 	fi
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
-		-e "s|@LOOP@|$here/loop.sh|g" "$here/unattended-update.md" >"$d/unattended.md"
+		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-update.md" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
 	launch "$wt" "$d" "/noodlebot:triage --update $n"
 	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
@@ -393,6 +433,7 @@ report() {
 	[ "${SCHED_REPORT:-1}" = 1 ] || return 0
 	[ -n "$tick_tok" ] || return 0   # the tick had no token or did not reach GitHub
 	GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
+		--version "$version" --signature "$signature" \
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
 
@@ -435,7 +476,7 @@ start_node() {
 			git -C "$clone" worktree add -q "$wt" "$br" || { note "$saw; worktree for $id failed"; return 1; }
 	fi
 	sed -e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
-		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" "$here/$prompt" >"$d/unattended.md" || { note "$saw; $id: no $prompt; not started"; return 1; }
+		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/$prompt" >"$d/unattended.md" || { note "$saw; $id: no $prompt; not started"; return 1; }
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
 	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
 	launch "$wt" "$d" "$skill $id"
