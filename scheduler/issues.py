@@ -7,7 +7,7 @@
 `next` skips an issue unless the repository owner added the label (checked in the issue's events,
 so a collaborator, a template or a workflow cannot hand work to the bot), and skips one whose
 $NOODLEBOT_DATA/state/<repo>/issue/<N>/ holds FAILED or an unanswered QUESTION.md.
-`next` also writes every non-PR issue it read to <state>/issues.json (number, title, whether the owner labelled it). GH_TOKEN must be set; stdlib only.
+`next` also writes every non-PR issue it read to <state>/issues.json (number, title, whether the owner labelled it; a held issue is written with "labelled": null, gh is not asked about it). GH_TOKEN must be set; stdlib only.
 """
 import argparse, json, os, subprocess, sys, tempfile, time
 
