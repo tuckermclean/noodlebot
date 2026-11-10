@@ -264,7 +264,7 @@ def at_limit(d):
             except ValueError:
                 continue
             if isinstance(e, dict) and e.get("type") == "rate_limit_event" and (
-                    (e.get("rate_limit_info") or {}).get("status", "allowed")) != "allowed":
+                    str((e.get("rate_limit_info") or {}).get("status", "allowed"))).startswith("allowed") is False:
                 rejected = True
     if not rejected:
         return False
@@ -275,7 +275,7 @@ def at_limit(d):
     if not isinstance(ev, dict):
         return False
     if ev.get("type") == "rate_limit_event":
-        return ((ev.get("rate_limit_info") or {}).get("status", "allowed")) != "allowed"
+        return not str((ev.get("rate_limit_info") or {}).get("status", "allowed")).startswith("allowed")
     if ev.get("type") == "result":
         return LIMIT_TEXT.search(str(ev.get("result") or "") + " " + str(ev.get("subtype") or "")) is not None
     return False
@@ -464,21 +464,25 @@ def scan_log(path):
                         c = b.get("content")
                         if isinstance(c, list):
                             c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
-                        m = re.search(r"ID: (\S+)", c if isinstance(c, str) else "")
+                        c = c if isinstance(c, str) else ""
+                        m = re.search(r"\bID: ([\w.-]*[\w-])", c) or re.search(r"agentId: ([\w.-]*[\w-])", c)
                         if m:
                             bg[b["tool_use_id"]][2] = m.group(1)
             elif kind == "result":
                 events.append({"type": "result", "time": t, "subtype": ev.get("subtype")})
                 wake_open = False
-            elif kind == "system" and ev.get("subtype") == "task_notification" and ev.get("task_id"):
-                done.add(ev["task_id"])
+            elif kind == "system" and ev.get("subtype") == "task_notification" and (ev.get("task_id") or ev.get("tool_use_id")):
+                if ev.get("task_id"):
+                    done.add(ev["task_id"])
+                if ev.get("tool_use_id"):
+                    done.add(ev["tool_use_id"])
             elif kind == "rate_limit_event":
                 info = ev.get("rate_limit_info")
-                if isinstance(info, dict) and info.get("status", "allowed") != "allowed":
+                if isinstance(info, dict) and not str(info.get("status", "allowed")).startswith("allowed"):
                     limit = {"at": t, "resets_at": info.get("resetsAt")}
-    pend = [v for v in bg.values() if v[2] and v[2] not in done]
-    cmds = [{"id": v[2], "text": v[1]} for v in pend if v[0] == "Bash"]
-    agents = [{"id": v[2], "text": v[1]} for v in pend if v[0] == "Agent"]
+    pend = [(k, v) for k, v in bg.items() if v[2] and v[2] not in done and k not in done]
+    cmds = [{"id": redact(v[2]), "text": redact(v[1])} for k, v in pend if v[0] == "Bash"]
+    agents = [{"id": redact(v[2]), "text": redact(v[1])} for k, v in pend if v[0] == "Agent"]
     return events, wake if wake_open else None, cmds, agents, limit
 
 
