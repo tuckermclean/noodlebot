@@ -6,6 +6,7 @@
 # the start count over, writes FAILED, and resumes a node after its spec PR merges.
 #   bash scheduler/loop.test.sh   (make test)
 set -u
+unset NOODLEBOT_VERSION   # V01: run from a clean environment, even inside a noodlebot session
 src=$(cd "$(dirname "$0")" && pwd -P)
 tmp=$(mktemp -d)
 pids=()
@@ -360,9 +361,11 @@ mkdir -p "$tmp/nbwork/scheduler" "$tmp/nbwork/plugin"
 for f in "${nbsrc[@]}"; do cp "$src/$f" "$tmp/nbwork/scheduler/" 2>/dev/null; done
 chmod +x "$tmp/nbwork"/scheduler/*.sh
 touch "$tmp/nbwork/plugin/.keep"
+cp "$src/version.sh" "$tmp/nbwork/scheduler/" 2>/dev/null; chmod +x "$tmp/nbwork"/scheduler/version.sh 2>/dev/null
 printf 'state/\nrepos/\nworktrees/\n' >"$tmp/nbwork/.gitignore"
 printf 'test:\n\t@echo stub test passes\n\n.PHONY: test\n' >"$tmp/nbwork/Makefile"
 git -C "$tmp/nbwork" add -A && git -C "$tmp/nbwork" -c user.name=t -c user.email=t@t commit -q -m c1
+git -C "$tmp/nbwork" tag v1.0
 git clone -q --bare "$tmp/nbwork" "$tmp/nbremote.git"
 git clone -q "$tmp/nbremote.git" "$nbd"
 # The repository the loop schedules: one ready node, B01.
@@ -403,6 +406,8 @@ sp=$(cat "$stated/node/B01/session.pid" 2>/dev/null)
 c1=$(headd)
 sleep 1.5
 ok "D01-AC-1: a tick with nothing to deploy leaves the loop and the checkout alone" sh -c "[ ! -e '$tmp/marker' ] && [ '$(headd)' = '$c1' ]"
+ok "V01-AC-3: the first start wrote exactly one line 'loop started for o/dep, version v1.0' (the tag on the loop's own commit)" sh -c "[ \$(grep -c 'loop started for o/dep, version ' '$stated/status.log') = 1 ] && grep -q 'loop started for o/dep, version v1.0\$' '$stated/status.log'"
+ok "V01-AC-3: and state/dep/version holds v1.0" sh -c "[ \"\$(cat '$stated/version' 2>/dev/null)\" = v1.0 ]"
 
 # C2: passes make test, new loop.sh.
 mkloop v2 >"$tmp/nbwork/scheduler/loop.sh"
@@ -414,8 +419,14 @@ ok "D01-AC-1: the checkout moves to a passing commit within a tick or two" timeo
 ok "D01-AC-1: the loop re-execs into the new commit's loop.sh" timeout 3 sh -c "until grep -q '^v2 pid ' '$tmp/marker' 2>/dev/null; do sleep 0.2; done"
 ok "D01-AC-1: the re-exec keeps the loop's pid" sh -c "kill -0 $loop3 && grep -qx 'v2 pid $loop3' '$tmp/marker'"
 ok "D01-AC-1: the loop re-execs once" test "$(grep -c '^v2 pid ' "$tmp/marker" 2>/dev/null || echo 0)" = 1
+v01_v2=$(git -C "$nbd" describe --tags --always)
+ok "V01-AC-3: after the deploy the re-exec writes a start line naming the deployed commit's version" withind 5 "loop started for o/dep, version $v01_v2\$"
+ok "V01-AC-3: the deployed version is not the first one (a commit after the tag)" test "$v01_v2" != v1.0
+ok "V01-AC-3: the deploy's restart makes two start lines in all, the first naming v1.0" sh -c "[ \$(grep -c 'loop started for o/dep, version ' '$stated/status.log') = 2 ] && [ \$(grep -c 'loop started for o/dep, version v1.0\$' '$stated/status.log') = 1 ]"
+ok "V01-AC-3: and state/dep/version now holds the deployed version" sh -c "[ \"\$(cat '$stated/version' 2>/dev/null)\" = '$v01_v2' ]"
 ok "D01-AC-1: the deploy is one status-log event" sh -c "[ \$(grep -cE 'deployed ${c1:0:7}[0-9a-f]*\.\.${c2:0:7}' '$stated/status.log') = 1 ]"
 ok "D01-AC-1: a deploy is exactly one status-log line in total (no second 're-execs' line)" sh -c "[ \$(grep -c 'deployed' '$stated/status.log') = 1 ] && [ \$(grep -cE 'deployed ${c1:0:7}[0-9a-f]*\.\.${c2:0:7}' '$stated/status.log') = 1 ]"
+ok "V01-AC-4: the status log's deploy line names the deployed commit's version" withind 5 "deployed ${c1:0:7}[0-9a-f]*\.\.${c2:0:7}[0-9a-f]* \(version ${v01_v2}\)\$"
 ok "D01-AC-1: the re-exec'd loop still owns the session (reported running)" afterd 4 "$n0" "running: .*B01 \(pid $sp\)"
 ok "D01-AC-1: the session is alive with the same pid" kill -0 "$sp"
 ok "D01-AC-1: the session was started once, not again after the re-exec" sh -c "[ \$(grep -c '^start B01' '$tmp/claudel.log') = 1 ] && [ \$(grep -c 'started B01' '$stated/status.log') = 1 ]"
@@ -427,7 +438,10 @@ mkloop v3 >"$tmp/nbwork/scheduler/loop.sh"
 printf 'test:\n\t@echo stub test fails; false\n\n.PHONY: test\n' >"$tmp/nbwork/Makefile"
 pushd c3
 c3=$(git -C "$tmp/nbwork" rev-parse HEAD)
-ok "D01-AC-2: a commit failing make test is one status-log event" withind 5 "not deployed: ${c3:0:7}[0-9a-f]* fails make test"
+ok "D01-AC-2: a commit failing make test is one status-log event" withind 5 "not deployed: ${c3:0:7}[0-9a-f]* \(version [^)]+\) fails make test"
+v01_v3=$(git -C "$nbd" describe --tags --always "$c3" 2>/dev/null)
+ok "V01-AC-4: the refused commit's version is tag-based, not a bare sha (guard)" sh -c "case '$v01_v3' in v1.0-*-g*) true ;; *) false ;; esac"
+ok "V01-AC-4: the status log's not-deployed line names the refused commit's version" withind 5 "not deployed: ${c3:0:7}[0-9a-f]* \(version ${v01_v3}\) fails make test\$"
 sleep 4
 ok "D01-AC-2: it stays one event across several ticks" test "$(countd 'not deployed')" = 1
 ok "D01-AC-2: the checkout stays on the old commit" test "$(headd)" = "$c2"
@@ -1716,5 +1730,116 @@ s4ok "S04-AC-3: (rebase) a leftover patch exists" sh -c "[ -s '$(s4dpatch J04)' 
 kill "$lp10"; wait "$lp10" 2>/dev/null
 for f in "$st10"/node/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
 
+# ---- V01: the loop's version: start line, rendered prompts, NOODLEBOT_VERSION, commit trailer ----
+# The loop runs from a Git checkout $nbv (tag v7.0, one commit after it, GitHub origin), so its version is
+# known: v7.0-1-g<sha>. The fake claude records NOODLEBOT_VERSION and makes commits in its worktree and in
+# a second worktree of the clone, each once without and once with a Noodlebot-Version trailer of its own.
+nbv=$tmp/nbv datav=$tmp/datav V01=$tmp/v01 V01_CLONE=$tmp/datav/repos/pv
+statev=$datav/state/pv
+state=$statev   # ok prints this log on a failure
+export V01 V01_CLONE
+mkdir -p "$nbv/scheduler" "$nbv/plugin" "$datav/repos" "$statev/node" "$V01" "$tmp/bin5"
+cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
+	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$src"/usage.py "$nbv/scheduler/"
+[ -f "$src/version.sh" ] && cp "$src/version.sh" "$nbv/scheduler/"
+touch "$nbv/plugin/.keep"
+git init -q -b main "$nbv"
+git -C "$nbv" add -A && git -C "$nbv" -c user.name=t -c user.email=t@t commit -q -m v1
+git -C "$nbv" tag v7.0
+git -C "$nbv" -c user.name=t -c user.email=t@t commit -q --allow-empty -m v2
+git -C "$nbv" remote add origin https://github.com/o/nbv.git
+v01_ver=$(git -C "$nbv" describe --tags --always)
+v01_sig=$(sh "$src/version.sh" --signature "$nbv" 2>/dev/null)
+git init -q -b main "$tmp/workv"; mkdir -p "$tmp/workv/docs"
+printf 'nodes:\n  - {id: C01, name: only-node, deps: []}\n' >"$tmp/workv/docs/graph.yaml"
+git -C "$tmp/workv" add -A && git -C "$tmp/workv" -c user.name=t -c user.email=t@t commit -q -m init
+git clone -q --bare "$tmp/workv" "$tmp/remotev.git"
+git clone -q "$tmp/remotev.git" "$V01_CLONE"
+cat >"$tmp/bin5/claude" <<'EOF'
+#!/bin/sh
+case "$2" in "/noodlebot:triage "*) echo "${NOODLEBOT_VERSION-unset}" >"$V01/env.triage"; touch "$V01/done.triage"; exit 0 ;; esac
+id=${2##* }
+echo "${NOODLEBOT_VERSION-unset}" >"$V01/env.node"
+v=${NOODLEBOT_VERSION:-}
+g() { git -c user.name=t -c user.email=t@t "$@"; }
+# mk <label> <file>: one commit without a trailer, one with the session's own trailer
+mk() {
+	echo "$2" >"$2.1"; git add "$2.1"; g commit -q -m "$1 plain"; echo "$1-plain $(git rev-parse HEAD)" >>"$V01/commits"
+	echo "$2" >"$2.2"; git add "$2.2"; g commit -q -m "$1 own trailer
+
+Noodlebot-Version: $v"; echo "$1-trailer $(git rev-parse HEAD)" >>"$V01/commits"
+}
+mk own a
+git -C "$V01_CLONE" worktree add -q --detach "$V01/wt2" HEAD
+( cd "$V01/wt2" && mk second b )
+# V01-AC-6, real-world shape: the session's own trailer (the right one, then another value) followed by Co-Authored-By.
+mk2() {
+	echo "$2" >"$2.3"; git add "$2.3"
+	g commit -q -m "$1 trailer then co-author
+
+Noodlebot-Version: $3
+Co-Authored-By: Claude <noreply@anthropic.com>"; echo "$1 $(git rev-parse HEAD)" >>"$V01/commits2"
+}
+mk2 own-same a "$v"
+mk2 own-other a "different-value"
+( cd "$V01/wt2" && mk2 second-same b "$v" && mk2 second-other b "different-value" )
+echo "Q1: x" >"$V01_STATE/node/$id/QUESTION.md"
+touch "$V01/done.node"
+exit 0
+EOF
+# gh: no PRs; one issue labelled noodlebot by the owner, until the loop removes that label.
+echo '[{"number": 46}]' >"$V01/issues.json"
+cat >"$tmp/bin5/gh" <<'EOF'
+#!/bin/sh
+case " $* " in
+*" --state merged "*) ;;
+*"/issues?labels=noodlebot"*) cat "$V01/issues.json" ;;
+*"/events"*) echo '[{"event": "labeled", "label": {"name": "noodlebot"}, "actor": {"login": "o"}}]' ;;
+*" DELETE "*"/labels/noodlebot"*) echo '[]' >"$V01/issues.json"; echo '[]' ;;
+*"/labels"*) cat >/dev/null; echo '{}' ;;
+esac
+exit 0
+EOF
+chmod +x "$tmp/bin5/claude" "$tmp/bin5/gh"
+export V01_STATE=$statev
+NOODLEBOT_DATA=$datav PATH=$tmp/bin5:$PATH SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 bash "$nbv/scheduler/loop.sh" o/pv >"$tmp/pv.out" 2>&1 &
+lpv=$!; pids+=("$lpv")
+timeout 20 sh -c "until [ -e '$V01/done.node' ] && [ -e '$V01/done.triage' ]; do sleep 0.2; done"
+sleep 1.5
+touch "$HOME/STOP-pv"
+timeout 5 sh -c "while kill -0 $lpv 2>/dev/null; do sleep 0.1; done"
+
+ok "V01 (harness): the loop's checkout has a known version after a tag" sh -c "case '$v01_ver' in v7.0-1-g*) true ;; *) false ;; esac"
+ok "V01-AC-3: a first start writes exactly one line 'loop started for o/pv, version <version>'" sh -c "[ \$(grep -c 'loop started for o/pv, version ' '$statev/status.log') = 1 ] && grep -q 'loop started for o/pv, version $v01_ver\$' '$statev/status.log'"
+ok "V01-AC-3: and state/pv/version holds that version" sh -c "[ \"\$(cat '$statev/version' 2>/dev/null)\" = '$v01_ver' ]"
+for t in "$src"/unattended*.md; do
+	ok "V01-AC-5: the template $(basename "$t") contains @VERSION@" grep -qF @VERSION@ "$t"
+done
+for k in "node:$statev/node/C01/unattended.md" "triage:$statev/issue/46/unattended.md"; do
+	f=${k#*:}
+	ok "V01-AC-5: the rendered ${k%%:*} prompt exists" test -s "$f"
+	ok "V01-AC-5: the rendered ${k%%:*} prompt has no @VERSION@ left" sh -c "[ -s '$f' ] && ! grep -qF @VERSION@ '$f'"
+	ok "V01-AC-5: the rendered ${k%%:*} prompt contains the loop's version" grep -qF "$v01_ver" "$f"
+	ok "V01-AC-5: the rendered ${k%%:*} prompt contains the signature line" grep -qF -- "$v01_sig" "$f"
+	ok "V01-AC-5: the rendered ${k%%:*} prompt tells the session to end PR bodies and comments with the signature line" sh -c "grep -qiE 'pr body|pr bodies' '$f' && grep -qi 'comment' '$f' && grep -qF -- '$v01_sig' '$f'"
+	ok "V01-AC-5: the rendered ${k%%:*} prompt, in one instruction, says to end every PR body and every comment with the signature line" sh -c "grep -qi 'end every PR body and every comment' '$f' && grep -i -A3 'end every PR body and every comment' '$f' | grep -qF -- '$v01_sig'"
+done
+ok "V01-AC-5: the node session's environment has NOODLEBOT_VERSION equal to the version" sh -c "[ \"\$(cat '$V01/env.node' 2>/dev/null)\" = '$v01_ver' ]"
+ok "V01-AC-5: the triage session's environment has NOODLEBOT_VERSION equal to the version" sh -c "[ \"\$(cat '$V01/env.triage' 2>/dev/null)\" = '$v01_ver' ]"
+# AC-6: each commit ends with exactly one trailer.
+ok "V01-AC-6: the fake session made its four commits" sh -c "[ \$(wc -l <'$V01/commits' 2>/dev/null || echo 0) = 4 ]"
+while read -r lbl sha; do
+	where=worktree; case $lbl in second-*) where="second worktree of the clone" ;; esac
+	case $lbl in *plain) how="without a trailer of its own" ;; *) how="with a trailer of its own" ;; esac
+	ok "V01-AC-6: a commit in the session's $where, $how, ends with exactly one Noodlebot-Version trailer for the session's version" sh -c "[ \"\$(git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -c '^Noodlebot-Version:')\" = 1 ] && git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -qx 'Noodlebot-Version: $v01_ver'"
+done <"$V01/commits"
+ok "V01-AC-6: the fake session made its four commits with a Co-Authored-By after the trailer" sh -c "[ \$(wc -l <'$V01/commits2' 2>/dev/null || echo 0) = 4 ]"
+while read -r lbl sha; do
+	ok "V01-AC-6: a session commit '$lbl' (its own trailer, then Co-Authored-By) ends with exactly one Noodlebot-Version trailer, the session's version" sh -c "[ \"\$(git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -c '^Noodlebot-Version:')\" = 1 ] && git -C '$V01_CLONE' log -1 --format=%B '$sha' | git interpret-trailers --parse | grep -qx 'Noodlebot-Version: $v01_ver'"
+done <"$V01/commits2"
+git -C "$V01_CLONE" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "outside any session" 2>/dev/null
+ok "V01-AC-6: a commit in the clone outside any session gets no Noodlebot-Version trailer" sh -c "[ -x '$V01_CLONE/.git/hooks/commit-msg' ] && ! git -C '$V01_CLONE' log -1 --format=%B | git interpret-trailers --parse | grep -q '^Noodlebot-Version:'"
+NOODLEBOT_VERSION=probe git -C "$V01_CLONE" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "inside a session" 2>/dev/null
+ok "V01-AC-6: the same clone's hook adds the trailer when NOODLEBOT_VERSION is set" sh -c "[ \"\$(git -C '$V01_CLONE' log -1 --format=%B | git interpret-trailers --parse | grep -c '^Noodlebot-Version: probe\$')\" = 1 ]"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
