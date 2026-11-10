@@ -847,11 +847,11 @@ tick() {
 		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --all "${args[@]}") ||
 		{ note "$saw; ready.py failed; nothing started"; return; }
 	requests   # a request's event is logged before any node starts (a record that came in during ready.py too)
-	local -A isrel=() handled=() isready=()
+	local -A isrel=() handled=() isready=() started=()
 	for id in "${rels[@]}"; do isrel[$id]=1; done
+	while read -r id name kind; do [ -z "$id" ] || isready[$id]=1; done <<<"$ready"   # all of them, also past a break below
 	while read -r id name kind; do
 		[ -n "$id" ] || continue
-		isready[$id]=1
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
 		if full; then
 			# the throttle's hold is lifted for a released node; SCHED_MAX is not
@@ -869,13 +869,16 @@ tick() {
 			[ "$throttled" = 1 ] && continue
 			break
 		fi
-		start_node "$id" "$name" "$saw" "$kind"
+		start_node "$id" "$name" "$saw" "$kind" && started[$id]=1
 	done <<<"$ready"
 	for id in "${rels[@]}"; do
 		[ -z "${handled[$id]:-}" ] || continue
-		if [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
+		if [ -n "${started[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it started as the loop would anyway"
+		elif [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
 		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
-		elif [ -n "${isready[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it starts or not as the loop would anyway"
+		elif [ -n "${isready[$id]:-}" ]; then
+			if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then say "$saw; $id: RELEASE found, the throttle is open; not started, SCHED_MAX ($cap) sessions are running"
+			else say "$saw; $id: RELEASE found, the throttle is open; it did not start (see above)"; fi
 		elif grep -q "id: *$id[,} ]" "$state/graph.yaml" 2>/dev/null; then say "$saw; $id: RELEASE found, nothing started: it is not ready"
 		else say "$saw; $id: RELEASE found, nothing started: unknown node"
 		fi
