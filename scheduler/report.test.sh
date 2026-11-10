@@ -919,7 +919,7 @@ ok "U01-AC-4: and gets one reply naming both, over repeated runs" test "$(ubcoun
 uowned 52 "**V06**: go" https://x/tri-v06
 urun "$ustate4"; rct=$?
 urun "$ustate4"
-ok "U01-AC-4: a comment starting with **V06** is V06's answer and not the triage's, exit 3" sh -c "[ $rct = 3 ] && grep -q 'V06.: go' '$ustate4/node/V06/ANSWER.md' && [ ! -e '$ustate4/issue/52/ANSWER.md' ]"
+ok "U01-AC-4: a comment starting with **V06** is V06's answer and not the triage's, exit 3" sh -c "[ $rct = 3 ] && grep -qF '**V06**: go' '$ustate4/node/V06/ANSWER.md' && [ ! -e '$ustate4/issue/52/ANSWER.md' ]"
 ok "U01-AC-4: it gets one +1 reaction" test "$(ureact https://x/tri-v06)" = 1
 
 # U01-AC-5
@@ -1465,7 +1465,7 @@ h1c=$(uq "len(db['comments'])"); h1i=$(uq "len(db['issues'])")
 urun "$ustate14"; urun "$ustate14"
 printf '931 node/K01-k-one 2026-01-02T00:00:00Z true\n932 node/K02-k-two 2026-01-02T00:00:00Z true\n930 node/K03-k-three 2026-01-01T00:00:00Z false\n' >"$ustate14/closed-prs.tsv"
 urun "$ustate14"; urun "$ustate14"; urun "$ustate14"; urun "$ustate14"
-ok "U01-AC-3: (H1b) a seed run with closed-prs.tsv empty, then restored: no closed-without-merging milestone for the old closed PR (930)" test "$(uq "len([c for c in db['comments'] if 'closed without' in c['body'].lower()])")" = 0
+ok "U01-AC-3: (H1b) a seed run with closed-prs.tsv empty, then restored: no closed-without-merging milestone for the old closed PR (930)" test "$(uq "len([c for c in db['comments'] if 'closed without' in c['body'].lower() and '#930' in c['body']])")" = 0
 ok "U01-AC-9: (H1b) nothing else is new: no Build issue (K03), no comment anywhere, no PATCH but the status issue's" test "$(uq "len(db['issues'])")" = "$h1i" -a "$(ubuilds 'Build K03 k-three')" = 0 -a ! -e "$ustate14/node/K03/issue" -a "$(uq "len(db['comments'])")" = "$h1c" -a "$(uanypatch)" = 0
 ok "U01-AC-9: (H1b) no merged milestone for K01 (Resolves 93, closed) either" test "$(ucount 93 '(?i)merged')" = 0 -a "$(ustateof 93)" = closed
 
