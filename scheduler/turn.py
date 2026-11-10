@@ -40,7 +40,19 @@ GROUP = {"S": 1, "M": 2, "L": 3}
 
 
 def num(x):
-    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+    try:
+        return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+    except OverflowError:  # a JSON integer too big for a float
+        return False
+
+
+def env_num(name, default):
+    """The number in the environment variable (inf allowed), or the default when it is unset, empty, not a number or nan."""
+    try:
+        v = float(os.environ.get(name) or "x")
+    except ValueError:
+        return default
+    return default if math.isnan(v) else v
 
 
 def read_json(path):
@@ -129,17 +141,13 @@ def ask(state, repo, now, args):
     if repo not in lists:
         return None
     gap = args.gap
-    if gap is None and os.environ.get("SCHED_START_GAP"):
-        gap = float(os.environ["SCHED_START_GAP"])
-        if not math.isfinite(gap):
-            gap = None
+    if gap is None:
+        gap = env_num("SCHED_START_GAP", None)
     if gap is None or not math.isfinite(gap):
         gap = max(d["tick"] for d in lists.values())
     starve = args.starve
     if starve is None:
-        starve = float(os.environ.get("SCHED_STARVE") or 21600)
-        if math.isnan(starve):
-            starve = 21600.0
+        starve = env_num("SCHED_STARVE", 21600.0)
     spath = os.path.join(state, "starts.json")
     last = read_json(spath)
     if not valid_start(last):

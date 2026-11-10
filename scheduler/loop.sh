@@ -14,6 +14,13 @@
 # started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
+# The start queue (SCHED_RAMP, default 1; 0 = off, every ready unit starts in the same tick and turn.py is
+# never run): new sessions start one per SCHED_START_GAP seconds (default: the largest SCHED_TICK among the
+# live loops) across every loop of the machine, in the order turn.py gives (triages, spec-PR updates,
+# follow-ups and resumes, then fresh nodes by their spec's Size; a unit that waited over SCHED_STARVE
+# seconds, default 21600, goes first). Each tick the loop lists its waiting units (waiting records
+# state/<name>/{node,issue,pr}/<key>/waiting) and, with the throttle open, asks for a turn. SCHED_START_GAP
+# and SCHED_STARVE are read by turn.py from the environment.
 # Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
 # a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
 # (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
@@ -44,7 +51,7 @@ wtroot=$root/worktrees/${repo#*/}
 state=$root/state/${repo#*/}
 oauth=$HOME/.config/noodlebot/oauth-token
 log=$state/status.log
-tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600
+tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note=''
 # The runtime root must not lie inside a Git working tree (sessions would load its CLAUDE.md and
 # AGENTS.md). The root may not exist yet: ask from its nearest existing ancestor.
 probe=$root
@@ -459,7 +466,7 @@ start_triage() {
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
-	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
+	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
 # start_update <N> <branch> <main> <head> <saw>: update spec PR N (/noodlebot:triage --update N) in a
@@ -483,7 +490,7 @@ start_update() {
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-update.md" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
 	launch "$wt" "$d" "/noodlebot:triage --update $n"
-	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
+	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
 # graph_clash <branch>: origin/<branch>'s graph gives an ID of origin/main's graph to a node of another name.
@@ -721,7 +728,78 @@ start_node() {
 	launch "$wt" "$d" "$skill $id"
 	[ "$resume" = 1 ] && rm -f "$d/leftover.pending"
 	live+=("$pid $id")
-	say "$saw; started $id ($name)${kind:+ as a follow-up on $br} in $wt, pid $pid, start $(starts_of "$d") of 2"
+	say "$saw; started $id ($name)${kind:+ as a follow-up on $br} in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
+}
+
+# node_size <ID> <name>: the Size in the header row of the node's spec on origin/main (S, M or L), else -.
+node_size() {
+	local s
+	s=$(git -C "$clone" show "origin/main:nodes/$1-$2.md" 2>/dev/null | awk -F'|' '
+		h == 0 && /^\|[ ]*Track[ ]*\|.*\|[ ]*Size[ ]*\|[ ]*$/ { h = 1; next }
+		h == 1 { h = 2; next }
+		h == 2 { gsub(/[ \t]/, "", $(NF-1)); print $(NF-1); exit }')
+	case $s in S|M|L) echo "$s" ;; *) echo - ;; esac
+}
+
+# The start queue (SCHED_RAMP=1). want <key> <kind> <size> <dir> <spec>: the loop would start this unit now
+# if starts were unlimited. Its waiting record in <dir> keeps the time it was first found waiting; <spec> says
+# how to start it (see start_turn). Sets, in tick: wlist (the lines for turn.py), wspec, wdir (by key).
+want() {
+	local since
+	since=$(cat "$4/waiting" 2>/dev/null)
+	[[ $since =~ ^[0-9]+$ ]] || {
+		since=$(date +%s); mkdir -p "$4"
+		echo "$since" >"$4/waiting.tmp" && mv "$4/waiting.tmp" "$4/waiting" || note "could not write $4/waiting"
+	}
+	wlist+=("$1 $2 $3 $since"); wspec[$1]=$5 wdir[$1]=$4
+}
+
+# want_node <ID> <name> <kind>: a ready node without a session; kind is ready.py's third word.
+want_node() {
+	local id=$1 wt=$wtroot/$1 k=fresh n
+	if [ -n "$3" ]; then k=followup
+	elif [ -d "$wt" ]; then
+		n=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+		{ [ "${n:-0}" -gt 0 ] || [ -d "$wt/out/node/$id" ]; } && k=resumed
+	fi
+	want "$id" "$k" "$([ "$k" = fresh ] && node_size "$id" "$2" || echo -)" "$state/node/$id" "node|$id|$2|$3"
+}
+
+# start_turn <key> <saw>: start the unit of a granted turn; fails like the start functions.
+start_turn() {
+	local t a b c d
+	IFS='|' read -r t a b c d <<<"${wspec[$1]:-}"
+	case $t in
+	triage) start_triage "$a" "$2" && live+=("$pid $a") && triaging=$a ;;
+	update) start_update "$a" "$b" "$c" "$d" "$2" && live+=("$pid $a") && triaging=$a ;;
+	node) start_node "$a" "$b" "$2" "$c" ;;
+	*) return 1 ;;
+	esac
+}
+
+# queue_round <saw>: list the waiting units for turn.py (also while the throttle holds); with the throttle
+# open, ask for a turn and start that unit; a failed start gives the turn back and the next unit is asked for.
+# A failing turn.py is logged and starts nothing.
+queue_round() {
+	local saw=$1 f d out key tries=0 targs=(--root "$root" --repo "${repo#*/}") keep=()
+	for d in "${wdir[@]}"; do keep+=("$d"); done
+	for f in "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting; do
+		[ -e "$f" ] && [[ " ${keep[*]} " != *" $(dirname "$f") "* ]] && rm -f "$f"
+	done
+	out=$(printf '%s\n' "${wlist[@]}" | python3 -I "$here/turn.py" list "${targs[@]}" --tick "$tick_s" 2>&1) ||
+		{ note "$saw; turn.py list failed ($(echo "$out" | tr '\n' ' ')); nothing started"; return; }
+	[ "$throttled" = 1 ] && return
+	while [ $((tries += 1)) -le $((${#wlist[@]} + 1)) ]; do
+		out=$(python3 -I "$here/turn.py" ask "${targs[@]}" --tick "$tick_s" 2>&1) ||
+			{ note "$saw; turn.py ask failed ($(echo "$out" | tr '\n' ' ')); nothing started"; return; }
+		[ -n "$out" ] || return
+		key=${out%%$'\t'*} turn_note=${out#*$'\t'}
+		if start_turn "$key" "$saw"; then
+			turn_note=''; rm -f "${wdir[$key]}/waiting"; return
+		fi
+		turn_note=''
+		python3 -I "$here/turn.py" giveback "$key" "${targs[@]}" >/dev/null 2>&1 || { note "$saw; turn.py giveback failed; nothing more started"; return; }
+	done
 }
 
 # deploy: self-deploy this checkout (deploy.sh); its stdout lines are status events, its stderr goes
@@ -737,7 +815,7 @@ deploy() {
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
 open='' merged='' tick_tok='' live=() throttled=0
 tick() {
-	date +%s >"$state/heartbeat"
+	date +%s >"$state/heartbeat.tmp" && mv "$state/heartbeat.tmp" "$state/heartbeat"
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	# Keep the clone's own checkout on origin/main: sessions in its worktrees also load skills and
 	# agents from it, so a stale checkout would offer them stale ones.
@@ -788,12 +866,16 @@ tick() {
 		fi
 	fi
 	resume_idle "$saw"
-	full() { [ "$throttled" = 1 ] || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
+	local wlist=(); local -A wspec=() wdir=()   # the start queue's waiting units (want)
+	# with the queue on, the throttle does not stop units waiting: it only stops the asking
+	full() { { [ "$throttled" = 1 ] && [ "$ramp" != 1 ]; } || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
 
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
 	local n
 	if [ -z "$triaging" ] && ! full && n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
-		[ -z "$n" ] || { start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; }
+		if [ -z "$n" ]; then :
+		elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"; triaging=$n
+		else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
 	fi
 	# A bot's spec PR that needs an update: one session at a time, sharing the triage's slot.
 	if [ -z "$triaging" ] && ! full; then
@@ -801,6 +883,7 @@ tick() {
 		while read -r un ub um uh; do
 			[ -n "$un" ] || continue
 			# a failed start does not keep the later PRs from their turn
+			if [ "$ramp" = 1 ]; then want "PR#$un" update - "$state/pr/$un" "update|$un|$ub|$um|$uh"; continue; fi
 			start_update "$un" "$ub" "$um" "$uh" "$saw" && { live+=("$pid $un"); triaging=$un; break; }
 		done < <(next_update)
 	fi
@@ -818,8 +901,9 @@ tick() {
 		[ -n "$id" ] || continue
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
 		full && break
-		start_node "$id" "$name" "$saw" "$kind"
+		if [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind"; fi
 	done <<<"$ready"
+	[ "$ramp" = 1 ] && queue_round "$saw"
 
 	local held=''; [ "$throttled" = 1 ] && held="; throttle holding new sessions"
 	if [ "${#live[@]}" = 0 ]; then note "$saw; nothing ready$held"
