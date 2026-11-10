@@ -245,40 +245,44 @@ def session_alive(d, key):
 
 
 def at_limit(d):
-    """The log's last line is a usage-limit rejection as S06 reads it: a rate_limit_event whose status is not
-    allowed, or a result naming a usage limit; and the log has a rate_limit_event that is not allowed (its resetsAt is
-    the reset time), else the reset time is unknown and the session is not idle by the limit."""
+    """The session is idle at the usage limit as S06's idle_tail (loop.sh) reads the last 400 KB of its log: the last
+    parseable line is a rate_limit_event whose status is not allowed, or a result naming a usage limit; and the last
+    rate_limit_event that is not allowed has a numeric resetsAt (the reset time), else the session is not idle by the
+    limit. A line that is no JSON object makes the last line unknown, as there."""
     try:
         with open(os.path.join(d, "session.jsonl"), "rb") as f:
             f.seek(0, 2)
             f.seek(max(0, f.tell() - 400000))
-            lines = f.read().decode("utf-8", "replace").splitlines()
+            data = f.read()
     except OSError:
         return False
-    lines = [x for x in lines if x.strip()]
-    rejected = False
-    for x in lines:
-        if "rate_limit_event" in x:
-            try:
-                e = json.loads(x)
-            except ValueError:
-                continue
-            if isinstance(e, dict) and e.get("type") == "rate_limit_event" and (
-                    str((e.get("rate_limit_info") or {}).get("status", "allowed"))).startswith("allowed") is False:
-                rejected = True
-    if not rejected:
-        return False
+    last = reset = None
     try:
-        ev = json.loads(lines[-1])
-    except ValueError:
+        for raw in data.split(b"\n"):
+            line = raw.decode("utf-8", "replace")
+            if not line.strip():
+                continue
+            try:
+                e = json.loads(line)
+            except ValueError:
+                last = None
+                continue
+            if not isinstance(e, dict):
+                last = None
+                continue
+            last = e
+            if e.get("type") == "rate_limit_event":
+                i = e.get("rate_limit_info") or {}
+                if i.get("status", "allowed") != "allowed":
+                    reset = i.get("resetsAt")
+        if last is None or not isinstance(reset, (int, float)):
+            return False
+        if last.get("type") == "rate_limit_event":
+            return (last.get("rate_limit_info") or {}).get("status", "allowed") != "allowed"
+        return last.get("type") == "result" and LIMIT_TEXT.search(
+            str(last.get("result") or "") + " " + str(last.get("subtype") or "")) is not None
+    except AttributeError:   # a rate_limit_info that is no object: idle_tail fails on it, so not idle
         return False
-    if not isinstance(ev, dict):
-        return False
-    if ev.get("type") == "rate_limit_event":
-        return not str((ev.get("rate_limit_info") or {}).get("status", "allowed")).startswith("allowed")
-    if ev.get("type") == "result":
-        return LIMIT_TEXT.search(str(ev.get("result") or "") + " " + str(ev.get("subtype") or "")) is not None
-    return False
 
 
 def node_ids(path, col):
@@ -416,6 +420,16 @@ def tool_text(inp):
     return None
 
 
+def int_or_none(v):
+    """v as an integer (a float or a numeric string is cut to one), else None."""
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return None
+    try:
+        return int(float(v)) if not isinstance(v, int) else v
+    except (ValueError, OverflowError):
+        return None
+
+
 def scan_log(path):
     """One pass over a session log, a line at a time (memory stays bounded however large the log): its last 10 events,
     the pending wakeup, the unfinished background tasks and the last rate-limit rejection."""
@@ -450,8 +464,9 @@ def scan_log(path):
                     if not (isinstance(b, dict) and b.get("type") == "tool_use"):
                         continue
                     inp = b.get("input") if isinstance(b.get("input"), dict) else {}
-                    e = {"type": "tool_use", "time": t, "tool": b.get("name"), "text": tool_text(inp),
-                         "subagent": bool(ev.get("parent_tool_use_id"))}
+                    e = {"type": "tool_use", "time": t, "text": tool_text(inp), "subagent": bool(ev.get("parent_tool_use_id"))}
+                    if isinstance(b.get("name"), str):
+                        e["tool"] = redact(b["name"])
                     events.append(e)
                     wake_open = False
                     if b.get("name") == "ScheduleWakeup" and t is not None and isinstance(inp.get("delaySeconds"), (int, float)):
@@ -469,7 +484,8 @@ def scan_log(path):
                         if m:
                             bg[b["tool_use_id"]][2] = m.group(1)
             elif kind == "result":
-                events.append({"type": "result", "time": t, "subtype": ev.get("subtype")})
+                sub = ev.get("subtype")
+                events.append({"type": "result", "time": t, "subtype": redact(sub) if isinstance(sub, str) else None})
                 wake_open = False
             elif kind == "system" and ev.get("subtype") == "task_notification" and (ev.get("task_id") or ev.get("tool_use_id")):
                 if ev.get("task_id"):
@@ -479,7 +495,7 @@ def scan_log(path):
             elif kind == "rate_limit_event":
                 info = ev.get("rate_limit_info")
                 if isinstance(info, dict) and not str(info.get("status", "allowed")).startswith("allowed"):
-                    limit = {"at": t, "resets_at": info.get("resetsAt")}
+                    limit = {"at": t, "resets_at": int_or_none(info.get("resetsAt"))}
     pend = [(k, v) for k, v in bg.items() if v[2] and v[2] not in done and k not in done]
     cmds = [{"id": redact(v[2]), "text": redact(v[1])} for k, v in pend if v[0] == "Bash"]
     agents = [{"id": redact(v[2]), "text": redact(v[1])} for k, v in pend if v[0] == "Agent"]
@@ -978,7 +994,7 @@ def watch_head(srv, started):
         h = head()
         # HEAD unreadable at start: the code now running is of unknown age, so the first HEAD read restarts it
         if h and h != started:
-            log("HEAD moved %s..%s; restarting" % (started[:7], h[:7]))
+            log("HEAD moved %s..%s; restarting" % ((started or "unknown")[:7], h[:7]))
             srv.restart = True
             srv.shutdown()   # stops accepting; main drains and execs
             return
