@@ -1,0 +1,4 @@
+12 node/N02-pr-open-one aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa false MERGEABLE
+14 node/N11-pr-conflict-one bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb false CONFLICTING
+15 spec/triage-9-new-idea cccccccccccccccccccccccccccccccccccccccc true CONFLICTING
+16 spec/triage-8-other dddddddddddddddddddddddddddddddddddddddd true MERGEABLE

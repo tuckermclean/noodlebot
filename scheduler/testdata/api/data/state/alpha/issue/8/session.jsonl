@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","timestamp":"2026-11-08T12:00:00Z","session_id":"sess-i8"}
+{"type":"assistant","timestamp":"2026-11-08T12:01:00Z","message":{"content":[{"type":"tool_use","id":"j01","name":"Write","input":{"file_path":"/w/alpha/issue-8/nodes/Z01-dark-mode.md"}}]}}
+{"type":"user","timestamp":"2026-11-08T12:01:05Z","message":{"content":[{"type":"tool_result","tool_use_id":"j01","content":"ok"}]}}
+{"type":"result","subtype":"success","timestamp":"2026-11-08T12:10:00Z","is_error":false,"num_turns":5,"result":"Opened spec PR #16"}

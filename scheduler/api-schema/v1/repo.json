@@ -1,0 +1,50 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "repo",
+  "running",
+  "stop",
+  "stop_all",
+  "heartbeat",
+  "heartbeat_age",
+  "status_issue"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "repo": {
+   "type": "string"
+  },
+  "running": {
+   "type": "boolean"
+  },
+  "stop": {
+   "type": "boolean"
+  },
+  "stop_all": {
+   "type": "boolean"
+  },
+  "heartbeat": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "heartbeat_age": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "status_issue": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  }
+ },
+ "additionalProperties": false
+}

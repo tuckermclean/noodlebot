@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","timestamp":"2026-11-08T09:00:00Z","session_id":"sess-n01"}
+{"type":"assistant","timestamp":"2026-11-08T09:01:00Z","message":{"content":[{"type":"tool_use","id":"m01","name":"Bash","input":{"command":"git push","description":"Push"}}]}}
+{"type":"user","timestamp":"2026-11-08T09:01:05Z","message":{"content":[{"type":"tool_result","tool_use_id":"m01","content":"ok"}]}}
+{"type":"result","subtype":"success","timestamp":"2026-11-08T09:20:00Z","is_error":false,"num_turns":7,"result":"Opened PR #11"}

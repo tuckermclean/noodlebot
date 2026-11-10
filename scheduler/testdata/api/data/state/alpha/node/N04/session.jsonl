@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","timestamp":"2026-11-09T09:01:05Z","session_id":"sess-n04"}
+{"type":"rate_limit_event","timestamp":"2026-11-09T09:01:06Z","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.5,"resetsAt":1794236400,"status":"allowed"},"seven_day":{"utilization":0.3,"resetsAt":1794441600,"status":"allowed"}}}}
+{"type":"assistant","timestamp":"2026-11-09T09:30:00Z","message":{"content":[{"type":"tool_use","id":"u01","name":"Bash","input":{"command":"make test","description":"Run the tests"}}]}}
+{"type":"user","timestamp":"2026-11-09T09:30:30Z","message":{"content":[{"type":"tool_result","tool_use_id":"u01","content":"ok"}]}}
+{"type":"rate_limit_event","timestamp":"2026-11-09T10:40:00Z","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":1794236400,"status":"rejected"},"seven_day":{"utilization":0.3,"resetsAt":1794441600,"status":"allowed"}},"resetsAt":1794236400}}
