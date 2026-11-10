@@ -720,6 +720,18 @@ rc, o, e, c = pub(T + 105, ["--keepalive", "0"])
 one("W02-AC-3 --keepalive 0: a changed file within --min-interval sends nothing", lambda: rc == 0 and c == [])
 T += 100000
 
+# ---- W02-AC-6: a repository whose visibility record holds 'unknown' is in no PATCH and not in site/out
+vp = tmp + "/data/state/bravo/visibility"
+open(vp, "w").write("unknown\n")
+k += 1; bump(k)
+rc, o, e, cu = pub(T)
+one("W02-AC-6 a repository marked unknown: the publish still sends the change (its file is removed), exit 0", lambda: rc == 0 and len(cu) == 1)
+one("W02-AC-6 a repository marked unknown: its file is no dict (null at most) in the PATCH", lambda: all(not isinstance(files_of(c).get(BR), dict) for c in cu))
+one("W02-AC-6 a repository marked unknown: its name is in no PATCH body content and not in the manifest", lambda: all("bravo" not in json.dumps({f: v for f, v in files_of(c).items() if f != BR}) for c in cu))
+one("W02-AC-6 a repository marked unknown: no file for it in site/out", lambda: not os.path.exists(root + "/site/out/" + BR))
+open(vp, "w").write("public\n")
+T += 100000
+
 # ---- W02-AC-3: a held lock; two publishes started at once
 os.makedirs(root + "/site", exist_ok=True)
 lk = open(root + "/site/lock", "a")
