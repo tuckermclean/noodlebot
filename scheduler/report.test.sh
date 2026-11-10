@@ -1825,5 +1825,248 @@ ok "U02-AC-2: the overview is the issue's first comment, before any event line" 
 ok "U02-AC-2: an event comment was posted after it (V09 ended)" test "$(wq "len([c for c in cs[1:] if 'session V09 ended' in c['body']])")" = 1
 ok "U02-AC-2: no second log issue was opened for the day" test "$(wq "len(logs)")" = 1
 
+# U02-AC-4, U02-AC-5: the daily rollover, the old status issue's closing and the answers it still takes. Own database and
+# fake gh (the U01 fake, patched: it logs each PATCH as "PATCH <n> state=<s> keys=<k,...>" and each GraphQL body, can fail a
+# GraphQL call whose body matches $tmp/xgqlfail, and fails the calls matching $tmp/xfail only while the python expression
+# in $tmp/xcond (over `db`) is true; each injected failure is logged as "INJECTED ..." in $tmp/xlog).
+xroot=$tmp/x xbin=$tmp/xbin xdb=$tmp/xgh.json
+mkdir -p "$xbin" "$xroot"
+cat >"$tmp/xpatch.py" <<'PY'
+import sys
+src, dst, udb, ucalls, ufail, xdb, xcalls, xfail, xcond, xlog, xgql, xgqlfail = sys.argv[1:]
+t = open(src).read().replace(udb, xdb).replace(ucalls, xcalls).replace(ufail, xfail)
+def sub(old, new):
+    global t
+    if old not in t:
+        sys.exit("xpatch: not found: " + old)
+    t = t.replace(old, new)
+sub('if mode and re.search(mode, desc):',
+    'if mode and re.search(mode, desc) and eval(open(%r).read() if os.path.exists(%r) else "True"):' % (xcond, xcond))
+sub('print("HTTP 502: injected failure for " + desc, file=sys.stderr)',
+    'open(%r, "a").write("INJECTED " + desc + "\\n"); print("HTTP 502: injected failure for " + desc, file=sys.stderr)' % xlog)
+sub('    if method == "PATCH": db["issues"][n].update(body)',
+    '    if method == "PATCH":\n        open(%r, "a").write("PATCH %%s state=%%s keys=%%s\\n" %% (n, body.get("state"), ",".join(sorted(body))))\n        db["issues"][n].update(body)' % xlog)
+sub('elif p == "graphql":',
+    'elif p == "graphql":\n    open(%r, "a").write(json.dumps(body) + "\\n")\n    if os.path.exists(%r) and re.search(open(%r).read().strip(), json.dumps(body)):\n        print("HTTP 403: injected graphql failure", file=sys.stderr); sys.exit(1)' % (xgql, xgqlfail, xgqlfail))
+open(dst, "w").write(t)
+PY
+python3 -I "$tmp/xpatch.py" "$ubin/gh" "$xbin/gh" "$udb" "$tmp/ucalls" "$tmp/ufail" "$xdb" "$tmp/xcalls" "$tmp/xfail" "$tmp/xcond" "$tmp/xlog" "$tmp/xgql" "$tmp/xgqlfail" 2>"$tmp/xpatch.err"
+chmod +x "$xbin/gh"
+ok "U02-AC-4: (harness) the patched fake gh was written" test -s "$xbin/gh" -a ! -s "$tmp/xpatch.err"
+xrun() { env PATH="$xbin:$PATH" TZ=UTC NOODLEBOT_NOW="$1" NOODLEBOT_LIVE="$vlive" python3 -I "$src/report.py" --repo owner/repo --state "$xs" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/xerr"; }
+# xq <python expr>: evaluated with db, L(<date>) (the issues titled 'noodlebot log <date>') and C(<issue>) (its comments).
+xq() {
+	python3 -I -c "
+import json, re, sys
+db = json.load(open('$xdb'))
+def L(d): return [i for i in db['issues'].values() if i['title'] == 'noodlebot log ' + d]
+def C(n): return [c for c in db['comments'] if c['issue'] == str(n)]
+print(eval(sys.argv[1]))" "$1" 2>/dev/null
+}
+# xlinks <from> <to>: True when issue <from> (its body or one of its comments) links issue <to>.
+xlinks() { xq "any(re.search(r'#%s\b|/issues/%s\b' % ($2, $2), s) for s in [db['issues']['$1']['body']] + [c['body'] for c in C($1)])"; }
+xowner() {
+	python3 -I -c "
+import json, sys
+db = json.load(open('$xdb'))
+db['comments'].append({'id': len(db['comments']) + 1, 'issue': sys.argv[1], 'body': sys.argv[2], 'user': {'login': 'owner', 'type': 'User'},
+    'author_association': 'OWNER', 'created_at': '2026-04-10T10:00:00Z', 'html_url': 'https://x/x%s' % (len(db['comments']) + 1)})
+json.dump(db, open('$xdb', 'w'))" "$1" "$2"
+}
+xpins() { grep -cE '(^|[^n])pinIssue' "$tmp/xgql"; }
+xunpins() { grep -c unpinIssue "$tmp/xgql"; }
+# xcore: the old issue's comment count, the number of issues for 2026-04-11, the closes of the old issue, the new issue's comment count.
+xcore() { printf '%s %s %s %s' "$(xq "len(C($xold))")" "$(xq "len(L('2026-04-11'))")" "$(grep -c "^PATCH $xold state=closed" "$tmp/xlog")" "$(xq "len(C($xnew))")"; }
+xclean() { rm -f "$tmp/xfail" "$tmp/xcond" "$tmp/xgqlfail"; : >"$tmp/xlog"; : >"$tmp/xgql"; }
+
+# xinit <name>: a fresh database and state folder for the day 2026-04-10, and two runs that day (so today's log issue is
+# $xold, number 200). The day's events: X01 ended (cost $2.50) and its PR #501 merged; X02 ended (cost $1.25) and wrote
+# FAILED; X03's PR #502 was opened; X04 ended the day before (cost $9.99) and PR #499 was merged the day before.
+xinit() {
+	xs=$xroot/$1 xnew=''
+	rm -rf "$xs"; mkdir -p "$xs/node/X01" "$xs/node/X02" "$xs/node/X03" "$xs/node/X04"
+	xclean
+	python3 -I -c "
+import json
+mk = lambda n, t: {'number': n, 'title': t, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n}
+issues = {str(n): mk(n, 'Unit X0%d' % (n - 60)) for n in range(61, 65)}
+pr = {'number': 502, 'head': {'ref': 'node/X03-three', 'sha': 'x3sha'}, 'created_at': '2026-04-10T10:00:00Z', 'html_url': 'https://github.com/owner/repo/pull/502'}
+json.dump({'issues': issues, 'comments': [], 'labels': ['noodlebot-status'], 'pulls': [pr], 'checks': {}, 'reactions': [], 'next': 200}, open('$xdb', 'w'))"
+	r 2.5 3 >"$xs/node/X01/session.jsonl"
+	r 1.25 2 >"$xs/node/X02/session.jsonl"
+	r 9.99 9 >"$xs/node/X04/session.jsonl"
+	printf '2026-04-10T15:00:00Z second exit (rc 1) with no PR and no QUESTION.md\n' >"$xs/node/X02/FAILED"
+	for n in 1 2 3 4; do echo "6$n" >"$xs/node/X0$n/issue"; done
+	printf '499 node/X00-old\n501 node/X01-one\n' >"$xs/merged-prs.tsv"
+	printf '499\n501\n' >"$xs/merged-prs.txt"
+	printf '499 node/X00-old 2026-04-09T12:00:00Z true\n501 node/X01-one 2026-04-10T12:00:00Z true\n' >"$xs/closed-prs.tsv"
+	printf '502 node/X03-three x3sha false MERGEABLE\n' >"$xs/open-prs.tsv"
+	{
+		echo "2026-04-09T22:00:00Z open=[] merged-prs=[X00]; session X04 ended (rc 0)"
+		echo "2026-04-10T10:00:00Z open=[X03] merged-prs=[X00]; started X03 (three) in /wt, pid 3, start 1 of 2"
+		echo "2026-04-10T12:00:00Z open=[X03] merged-prs=[X00 X01]; session X01 ended (rc 0)"
+		echo "2026-04-10T15:00:00Z open=[X03] merged-prs=[X00 X01]; session X02 ended (rc 1), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
+	} >"$xs/status.log"
+	xrun 2026-04-10T09:00:00; xrun 2026-04-10T09:30:00
+	xold=$(xq "L('2026-04-10')[0]['number']")
+	xclean
+}
+
+# The rollover, clean: the first run on 2026-04-11 and two more.
+xinit rollover
+ok "U02-AC-4: (before the new date) today's log issue is open and holds no closing summary" test "$(xq "db['issues']['$xold']['state']")$(xq "len([c for c in C($xold) if '3.75' in c['body']])")" = open0
+xrun 2026-04-11T00:05:00; xrc=$?
+xnew=$(xq "L('2026-04-11')[0]['number']")
+xrun 2026-04-11T00:10:00; xrun 2026-04-11T09:00:00; xrc3=$?
+xq "'\n----\n'.join(c['body'] for c in C($xold) if '3.75' in c['body'])" >"$tmp/xsum"
+xq "C($xnew)[0]['body']" >"$tmp/xfirst"
+ok "U02-AC-4: (rollover) the runs on the new date succeed" test "$xrc$xrc3" = 00
+ok "U02-AC-4: (rollover) exactly one closing summary is posted on the old log issue (one comment holds the day's cost \$3.75)" test "$(xq "len([c for c in C($xold) if '3.75' in c['body']])")" = 1
+ok "U02-AC-4: (rollover) the summary has the day's summed cost of ended sessions (X01 2.50 + X02 1.25)" grep -qF '$3.75' "$tmp/xsum"
+ok "U02-AC-4: (rollover) the summary does not count a session that ended the day before (X04 \$9.99)" sh -c "! grep -qF '9.99' '$tmp/xsum'"
+ok "U02-AC-4: (rollover) the summary has the PR merged that day (#501) and not the one merged the day before (#499)" sh -c "grep -q '501' '$tmp/xsum' && ! grep -q '499' '$tmp/xsum'"
+ok "U02-AC-4: (rollover) the summary has the PR opened that day (#502)" grep -q '502' "$tmp/xsum"
+ok "U02-AC-4: (rollover) the summary names the unit that wrote FAILED (X02) on a FAILED line" sh -c "grep FAILED '$tmp/xsum' | grep -q X02"
+ok "U02-AC-4: (rollover) the old log issue is closed, once" test "$(xq "db['issues']['$xold']['state']")$(grep -c "^PATCH $xold state=closed" "$tmp/xlog")" = closed1
+ok "U02-AC-4: (rollover) the new day's issue is opened once, titled 'noodlebot log 2026-04-11', open and labelled noodlebot-status" test "$(xq "len(L('2026-04-11'))")$(xq "L('2026-04-11')[0]['state']")$(xq "'noodlebot-status' in L('2026-04-11')[0]['labels']")" = 1openTrue
+ok "U02-AC-4: (rollover) the new issue links the old one (body or a comment)" test "$(xlinks "$xnew" "$xold")" = True
+ok "U02-AC-4: (rollover) a link to the new issue is put on the old one (body or a comment)" test "$(xlinks "$xold" "$xnew")" = True
+ok "U02-AC-4: (rollover) pinIssue is tried on the new issue (a GraphQL mutation naming its node id)" sh -c "grep -E '(^|[^n])pinIssue' '$tmp/xgql' | grep -q 'I_$xnew[^0-9]'"
+ok "U02-AC-4: (rollover) unpinIssue is tried on the old issue (a GraphQL mutation naming its node id)" sh -c "grep unpinIssue '$tmp/xgql' | grep -q 'I_$xold[^0-9]'"
+ok "U02-AC-4: (rollover) over the three runs: one new issue, one close, one pin, one unpin" test "$(xcore | cut -d' ' -f2-3) $(xpins) $(xunpins)" = "1 1 1 1"
+ok "U02-AC-4: (rollover) the runs leave nothing on stderr" test ! -s "$tmp/xerr"
+ok "U02-AC-4: (F3) the new day's overview (its first comment) is the same summary: the cost \$3.75" grep -qF '$3.75' "$tmp/xfirst"
+ok "U02-AC-4: (F3) the overview has the previous day's merged PR (#501) and opened PR (#502)" sh -c "grep -q '501' '$tmp/xfirst' && grep -q '502' '$tmp/xfirst'"
+ok "U02-AC-4: (F3) the overview names the unit that wrote FAILED (X02) on a FAILED line" sh -c "grep FAILED '$tmp/xfirst' | grep -q X02"
+ok "U02-AC-4: (F3) the overview does not have the merge of the day before (#499) or the cost \$9.99" sh -c "! grep -q '499' '$tmp/xfirst' && ! grep -qF '9.99' '$tmp/xfirst'"
+xref=$(xcore)
+ok "U02-AC-4: (rollover) (precondition) the reference counts are real (old issue comments, one new issue, one close, new issue comments)" test "$(echo "$xref" | cut -d' ' -f2-3)" = "1 1"
+
+# A failing pin or unpin changes nothing else: everything else is as in the clean rollover.
+xcase_gql() { # <name> <regex on the GraphQL body that fails> <what fails>
+	xinit "$1"
+	printf '%s' "$2" >"$tmp/xgqlfail"
+	xrun 2026-04-11T00:05:00
+	xnew=$(xq "L('2026-04-11')[0]['number']")
+	xrun 2026-04-11T00:10:00; xrun 2026-04-11T09:00:00
+	ok "U02-AC-4: ($3 fails) the rest happens as usual: the old issue's comments, the new issue, the close and the new issue's comments are as in the clean rollover" test "$(xcore)" = "$xref"
+	ok "U02-AC-4: ($3 fails) the summary is posted once, the old issue is closed, the links are both there" sh -c "[ \"\$1\" = 1 ] && [ \"\$2\" = closed ] && [ \"\$3\" = True ] && [ \"\$4\" = True ]" _ "$(xq "len([c for c in C($xold) if '3.75' in c['body']])")" "$(xq "db['issues']['$xold']['state']")" "$(xlinks "$xnew" "$xold")" "$(xlinks "$xold" "$xnew")"
+}
+xcase_gql pinfails '(^|[^n])pinIssue' 'pin'
+ok "U02-AC-4: (pin fails) pinIssue was tried on the new issue" sh -c "grep -E '(^|[^n])pinIssue' '$tmp/xgql' | grep -q 'I_$xnew[^0-9]'"
+ok "U02-AC-4: (pin fails) unpinIssue was still tried on the old issue, once" test "$(xunpins)" = 1
+xcase_gql unpinfails 'unpinIssue' 'unpin'
+ok "U02-AC-4: (unpin fails) unpinIssue was tried on the old issue" sh -c "grep unpinIssue '$tmp/xgql' | grep -q 'I_$xold[^0-9]'"
+ok "U02-AC-4: (unpin fails) pinIssue was still tried on the new issue, once" test "$(xpins)" = 1
+xcase_gql bothfail 'pinIssue' 'pin and unpin'
+ok "U02-AC-4: (pin and unpin fail) both were tried" test "$(xpins)" -ge 1 -a "$(xunpins)" -ge 1
+
+# A run that fails after a step finishes the rest on the next run, no step repeated: one summary, one close, one new issue,
+# one link each way (the pin and the unpin are tried once, and so not again). The run is cut by failing every call from the
+# step on; the failure is then removed and three runs follow.
+xcase_cut() { # <name> <python condition for the failure to start> <what was done>
+	xinit "$1"
+	printf '%s' '.' >"$tmp/xfail"
+	printf '%s' "$2" >"$tmp/xcond"
+	xrun 2026-04-11T00:05:00; xrcc=$?
+	ok "U02-AC-4: (cut after $3) (precondition) the first run on the new date fails" test "$xrcc" != 0 -a "$(grep -c '^INJECTED' "$tmp/xlog")" -ge 1
+	rm -f "$tmp/xfail" "$tmp/xcond"
+	xrun 2026-04-11T00:10:00; xrun 2026-04-11T00:15:00; xrun 2026-04-11T09:00:00
+	xnew=$(xq "L('2026-04-11')[0]['number']")
+	ok "U02-AC-4: (cut after $3) the next runs finish it: the counts are those of the uninterrupted rollover" test "$(xcore)" = "$xref"
+	ok "U02-AC-4: (cut after $3) one closing summary, one close, the old issue closed" test "$(xq "len([c for c in C($xold) if '3.75' in c['body']])")$(grep -c "^PATCH $xold state=closed" "$tmp/xlog")$(xq "db['issues']['$xold']['state']")" = 11closed
+	ok "U02-AC-4: (cut after $3) the links both ways are there" sh -c "[ \"\$1\" = True ] && [ \"\$2\" = True ]" _ "$(xlinks "$xnew" "$xold")" "$(xlinks "$xold" "$xnew")"
+	ok "U02-AC-4: (cut after $3) pin and unpin were each done once over the runs" test "$(xpins) $(xunpins)" = "1 1"
+}
+xcase_cut cutsummary "any('3.75' in c['body'] for c in db['comments'] if c['issue'] == '200')" "the summary post"
+xcase_cut cutclose "db['issues']['200']['state'] == 'closed'" "the close"
+xcase_cut cutnew "any(i['title'] == 'noodlebot log 2026-04-11' for i in db['issues'].values())" "the new issue opens"
+xcase_cut cutlink "any(re.search(r'#201\b|/issues/201\b', s) for s in [db['issues']['200']['body']] + [c['body'] for c in db['comments'] if c['issue'] == '200'])" "the link on the old issue"
+
+# The owner closes today's issue: the next run opens a new one for the same day, linked from the closed one.
+xinit ownerclose
+python3 -I -c "
+import json
+db = json.load(open('$xdb')); db['issues']['$xold']['state'] = 'closed'; json.dump(db, open('$xdb', 'w'))"
+xrun 2026-04-10T10:00:00; xrc=$?
+xrun 2026-04-10T10:10:00; xrun 2026-04-10T10:20:00
+xnew=$(xq "[i['number'] for i in L('2026-04-10') if i['state'] == 'open'][0]")
+ok "U02-AC-4: (owner closes today's issue) the runs succeed" test "$xrc" = 0
+ok "U02-AC-4: (owner closes today's issue) a new issue is opened for the same day: two issues for 2026-04-10, one open, one closed" test "$(xq "len(L('2026-04-10'))")$(xq "len([i for i in L('2026-04-10') if i['state'] == 'open'])")" = 21
+ok "U02-AC-4: (owner closes today's issue) the new one is not the closed one" test -n "$xnew" -a "$xnew" != "$xold"
+ok "U02-AC-4: (owner closes today's issue) the closed issue links the new one (body or a comment)" test "$(xlinks "$xold" "$xnew")" = True
+ok "U02-AC-4: (owner closes today's issue) later runs open no third issue" test "$(xq "len(L('2026-04-10'))")" = 2
+
+# U02-AC-5, first deploy (review F2): an open noodlebot-status issue titled like the old sticky one, no log issue. It had
+# questions asked on it before the switch (A01 open, A03 answered, A04 closed); A02 and A06 ask on their unit issues.
+xdeploy() {
+	xs=$xroot/deploy xnew=''
+	rm -rf "$xs"; mkdir -p "$xs/node/A01" "$xs/node/A02" "$xs/node/A03" "$xs/node/A04" "$xs/node/A05" "$xs/node/A06"
+	xclean
+	printf 'Q1: unique-a01-question\n' >"$xs/node/A01/QUESTION.md"
+	printf 'Q1: unique-a02-question\n' >"$xs/node/A02/QUESTION.md"
+	printf 'Q1: unique-a03-question\n' >"$xs/node/A03/QUESTION.md"
+	printf 'A03 first answer\n' >"$xs/node/A03/ANSWER.md"
+	printf 'Q1: unique-a06-question\n' >"$xs/node/A06/QUESTION.md"
+	for n in 1 2 3 4 5 6; do echo "8$n" >"$xs/node/A0$n/issue"; done
+	echo "2026-04-09T20:00:00Z open=[] merged-prs=[]; session A04 ended (rc 0)" >"$xs/status.log"
+	python3 -I -c "
+import json
+mk = lambda n, t, lab: {'number': n, 'title': t, 'body': '', 'labels': lab, 'state': 'open', 'node_id': 'I_%d' % n}
+issues = {str(n): mk(n, 'Unit A0%d' % (n - 80), []) for n in range(81, 87)}
+issues['70'] = dict(mk(70, 'noodlebot status', ['noodlebot-status']), body='OLD STICKY BODY')
+bot = lambda i, n: {'id': i, 'issue': '70', 'body': '## %s asks\n\nQ1: x\n\n---\nTo answer, reply to this issue in plain words. Only owner\'s replies count.\n' % n,
+    'user': {'login': 'bot', 'type': 'Bot'}, 'author_association': 'NONE', 'created_at': '2026-04-09T08:00:00Z', 'html_url': 'https://x/old%d' % i}
+json.dump({'issues': issues, 'comments': [bot(1, 'A01'), bot(2, 'A03'), bot(3, 'A04')], 'labels': ['noodlebot-status'], 'pulls': [], 'checks': {},
+           'reactions': [], 'next': 200}, open('$xdb', 'w'))"
+	printf '{"issue": 70, "comment_id": 3, "log_offset": %s, "questions": {"A01": "%s", "A03": "%s", "A04": "1"}, "body_hash": "x", "body_time": 0}\n' \
+		"$(wc -c <"$xs/status.log")" "$(stat -c %Y "$xs/node/A01/QUESTION.md")" "$(stat -c %Y "$xs/node/A03/QUESTION.md")" >"$xs/report.json"
+}
+xdeploy
+xrun 2026-04-10T09:00:00; xrc=$?
+dc1=$(xq "len(C(70))")
+xrun 2026-04-10T09:10:00
+echo "2026-04-10T09:15:00Z open=[] merged-prs=[]; session A05 ended (rc 0)" >>"$xs/status.log"
+xrun 2026-04-10T09:20:00; xrun 2026-04-10T09:30:00
+xlog=$(xq "L('2026-04-10')[0]['number']")
+ok "U02-AC-5: (first deploy) the runs succeed" test "$xrc" = 0
+ok "U02-AC-5: (first deploy) with the old status issue open, a new 'noodlebot log 2026-04-10' issue is opened, once, open and labelled noodlebot-status" test "$(xq "len(L('2026-04-10'))")$(xq "L('2026-04-10')[0]['state']")$(xq "'noodlebot-status' in L('2026-04-10')[0]['labels']")" = 1openTrue
+ok "U02-AC-5: (first deploy) the old status issue (#70) is closed" test "$(xq "db['issues']['70']['state']")" = closed
+ok "U02-AC-5: (first deploy) it is closed with exactly one comment linking today's log issue" test "$(xq "len([c for c in C(70) if re.search(r'#%s\b|/issues/%s\b' % ($xlog, $xlog), c['body'])])")" = 1
+ok "U02-AC-5: (first deploy) that is the one comment the loop added to it (3 earlier ones, then 4), and the second run added none" test "$dc1 $(xq "len(C(70))")" = "4 4"
+ok "U02-AC-5: (first deploy) the old issue's body is not edited" test "$(xq "db['issues']['70']['body']")" = "OLD STICKY BODY" -a "$(grep -c '^PATCH 70 .*keys=.*body' "$tmp/xlog")" = 0
+ok "U02-AC-5: (first deploy) the old issue is closed once" test "$(grep -c '^PATCH 70 state=closed' "$tmp/xlog")" = 1
+ok "U02-AC-5: (first deploy) an event (A05 ended) is not a comment on the old issue" test "$(xq "len([c for c in C(70) if 'session A05 ended' in c['body']])")" = 0
+ok "U02-AC-5: (first deploy) the event is on the log issue instead" test "$(xq "len([c for c in C($xlog) if 'session A05 ended' in c['body']])")" = 1
+
+# A prefixed owner answer on the closed old issue: recorded only while the question it names was posted there and is open.
+xowner 70 "A02: not asked here"
+xowner 70 "A03: answered already"
+xowner 70 "A04: question closed"
+xowner 70 "A05: no question"
+xrun 2026-04-10T10:05:00; xrc=$?
+ok "U02-AC-5: (old issue) answers naming a question not posted there (A02), answered (A03), closed (A04) or absent (A05) are not recorded (exit not 3)" test "$xrc" != 3
+ok "U02-AC-5: (old issue) no ANSWER.md for A02, A04, A05, and A03's is unchanged" sh -c "[ ! -e '$xs/node/A02/ANSWER.md' ] && [ ! -e '$xs/node/A04/ANSWER.md' ] && [ ! -e '$xs/node/A05/ANSWER.md' ] && [ \"\$(cat '$xs/node/A03/ANSWER.md')\" = 'A03 first answer' ]"
+ok "U02-AC-5: (old issue) A01 is not answered yet" test ! -e "$xs/node/A01/ANSWER.md"
+xowner 70 "A01: go left"
+xrun 2026-04-10T10:10:00; xrc=$?
+ok "U02-AC-5: (old issue) an answer naming A01, whose question was posted there and is open, is recorded: exit 3" test "$xrc" = 3
+ok "U02-AC-5: (old issue) A01's ANSWER.md holds the answer" grep -q '^A01: go left$' "$xs/node/A01/ANSWER.md" 2>/dev/null
+ok "U02-AC-5: (old issue) the bot replies that it recorded A01's answer" test "$(xq "len([c for c in db['comments'] if \"Recorded as A01\" in c['body']])")" -ge 1
+ok "U02-AC-5: (old issue) the earlier refused answers are still not recorded" sh -c "[ ! -e '$xs/node/A02/ANSWER.md' ] && [ ! -e '$xs/node/A04/ANSWER.md' ] && [ ! -e '$xs/node/A05/ANSWER.md' ] && [ \"\$(cat '$xs/node/A03/ANSWER.md')\" = 'A03 first answer' ]"
+
+# A prefixed owner answer on the log issue is recorded as on the status issue before.
+xowner "$xlog" "A06: from the log issue"
+xrun 2026-04-10T10:15:00; xrc=$?
+ok "U02-AC-5: (log issue) a prefixed answer on today's log issue is recorded: exit 3" test "$xrc" = 3
+ok "U02-AC-5: (log issue) A06's ANSWER.md holds the answer, with where it came from" sh -c "grep -q '^A06: from the log issue\$' '$xs/node/A06/ANSWER.md' && grep -q 'posted by owner on GitHub at 2026-04-10T10:00:00Z' '$xs/node/A06/ANSWER.md'"
+ok "U02-AC-5: (log issue) the bot replies that it recorded A06's answer" test "$(xq "len([c for c in db['comments'] if \"Recorded as A06\" in c['body']])")" -ge 1
+
+# U02-AC-6, the README part: "Watching it" links the repository's open noodlebot-status issues, as a stable search URL.
+readme=$(cd "$src/.." && pwd -P)/README.md
+watching() { awk '/^## Watching it/ { f = 1; next } f && /^## / { f = 0 } f' "$readme"; }
+ok "U02-AC-6: README.md has a 'Watching it' section" test -n "$(watching)"
+ok "U02-AC-6: it links the open noodlebot-status issues (an issues search URL with label:noodlebot-status and is:open)" sh -c "$(printf '%s' "watching() { awk '/^## Watching it/ { f = 1; next } f && /^## / { f = 0 } f' '$readme'; }; watching | grep -oE 'https://github\\.com/[^ )>]*/issues\\?[^ )>]*' | grep -E 'label(:|%3A)noodlebot-status' | grep -Eq 'is(:|%3A)open'")"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
