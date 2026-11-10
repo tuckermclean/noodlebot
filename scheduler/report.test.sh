@@ -2145,5 +2145,43 @@ r5pin=$(grep -nE '(^|[^n])pinIssue' "$tmp/xgql" | grep "I_$xnew[^0-9]" | head -n
 ok "U02-AC-4: (R5 order) both calls were tried" test -n "$r5un" -a -n "$r5pin"
 ok "U02-AC-4: (R5 order) unpinIssue on the old issue comes before pinIssue on the new one" sh -c '[ -n "$1" ] && [ -n "$2" ] && [ "$1" -lt "$2" ]' _ "$r5un" "$r5pin"
 
+# Slice 2 re-review (S1, S2), regression cases. The closing summary is the comment on #200 holding the day's cost $3.75
+# (not its heading); the next day's own summary is the comment on #201 holding its merged PR #503.
+# S1: a single failed call of one rollover step (the first only; all others work) must not lose that step.
+xcase_once() { # <name> <regex of the one call that fails once> <what fails>
+	xinit "$1"
+	printf '%s' "$2" >"$tmp/xfail"
+	printf '%s' "'INJECTED' not in open('$tmp/xlog').read()" >"$tmp/xcond"
+	xrun 2026-04-11T00:05:00; xrcs=$?
+	ok "U02-AC-4: (S1 $3 fails once) (precondition) the first run on the new date fails, with exactly one injected failure" test "$xrcs" != 0 -a "$(grep -c '^INJECTED' "$tmp/xlog")" = 1
+	xrun 2026-04-11T00:10:00; xrun 2026-04-11T00:15:00; xrun 2026-04-11T09:00:00; xrun 2026-04-11T09:10:00
+	xnew=$(xq "L('2026-04-11')[0]['number']")
+	ok "U02-AC-4: (S1 $3 fails once) the old issue has exactly one closing summary" test "$(xq "len([c for c in C($xold) if '3.75' in c['body']])")" = 1
+	ok "U02-AC-4: (S1 $3 fails once) the old issue is closed, by one close" test "$(xq "db['issues']['$xold']['state']")$(grep -c "^PATCH $xold state=closed" "$tmp/xlog")" = closed1
+	ok "U02-AC-4: (S1 $3 fails once) the old issue links the new one exactly once" test "$(xq "len([s for s in [db['issues']['$xold']['body']] + [c['body'] for c in C($xold)] if re.search(r'#%s\b|/issues/%s\b' % ($xnew, $xnew), s)])")" = 1
+	ok "U02-AC-4: (S1 $3 fails once) the new day's issue exists once and links the old one" test "$(xq "len(L('2026-04-11'))")$(xlinks "$xnew" "$xold")" = 1True
+}
+xcase_once s1summary '^POST \S*/issues/200/comments' 'the closing summary post'
+xcase_once s1close '^PATCH \S*/issues/200$' 'the close'
+
+# S2/B: every write to the old issue (#200) fails until after the next local midnight (2026-04-12 00:05), then works.
+xinit s2pending
+printf '%s' '^(POST|PATCH) \S*/issues/200(/comments)?( |$)' >"$tmp/xfail"
+xrun 2026-04-11T00:05:00; xrcb=$?
+xrun 2026-04-11T08:00:00
+xs2a=$(xq "L('2026-04-11')[0]['number']")
+printf '503 node/X05-five 2026-04-11T12:00:00Z true\n' >>"$xs/closed-prs.tsv"
+xrun 2026-04-12T00:05:00
+rm -f "$tmp/xfail" "$tmp/xcond"
+xrun 2026-04-12T00:10:00; xrun 2026-04-12T00:15:00; xrun 2026-04-12T09:00:00; xrun 2026-04-12T09:10:00; xrun 2026-04-12T09:20:00
+xs2b=$(xq "L('2026-04-12')[0]['number']")
+ok "U02-AC-4: (S2 pending past midnight) (precondition) the first run failed, and no write to #200 happened before the failures stopped" test "$xrcb" != 0 -a "$(grep -c '^PATCH 200 ' "$tmp/xlog")" -le 1
+ok "U02-AC-4: (S2 pending past midnight) #200 ends with exactly one closing summary" test "$(xq "len([c for c in C(200) if '3.75' in c['body']])")" = 1
+ok "U02-AC-4: (S2 pending past midnight) #200 is closed, by exactly one close" test "$(xq "db['issues']['200']['state']")$(grep -c '^PATCH 200 state=closed' "$tmp/xlog")" = closed1
+ok "U02-AC-4: (S2 pending past midnight) #200 links its next issue (#$xs2a) exactly once" test "$(xq "len([s for s in [db['issues']['200']['body']] + [c['body'] for c in C(200)] if re.search(r'#%s\b|/issues/%s\b' % ($xs2a, $xs2a), s)])")" = 1
+ok "U02-AC-4: (S2 pending past midnight) the next issue (#$xs2a) has exactly one closing summary (its merged PR #503) and is closed, by one close" test "$(xq "len([c for c in C($xs2a) if '503' in c['body']])")$(xq "db['issues']['$xs2a']['state']")$(grep -c "^PATCH $xs2a state=closed" "$tmp/xlog")" = 1closed1
+ok "U02-AC-4: (S2 pending past midnight) no issue is opened twice for a date: one for each of 04-10, 04-11, 04-12" test "$(xq "len(L('2026-04-10'))")$(xq "len(L('2026-04-11'))")$(xq "len(L('2026-04-12'))")" = 111
+ok "U02-AC-4: (S2 pending past midnight) the newest issue (2026-04-12) is open and links #$xs2a" test "$(xq "L('2026-04-12')[0]['state']")$(xlinks "$xs2b" "$xs2a")" = openTrue
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
