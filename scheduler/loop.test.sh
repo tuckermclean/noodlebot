@@ -2442,6 +2442,9 @@ p3reap() { pkill -f "$tmp/nb-p3/scheduler/loop.sh" 2>/dev/null; n=0
 	if pgrep -f "$tmp/nb-p3/scheduler/loop.sh" >/dev/null 2>&1; then pkill -9 -f "$tmp/nb-p3/scheduler/loop.sh" 2>/dev/null; sleep 0.3
 		pgrep -f "$tmp/nb-p3/scheduler/loop.sh" >/dev/null 2>&1 && { echo "FAIL: P03 harness: $1 loop.sh is still running after kill"; fails=$((fails+1)); }; fi; }
 p3reap "loop A"
+p3free() { n=0; while ! flock -n "$st3/loop.lock" true 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n+1)); done
+	flock -n "$st3/loop.lock" true 2>/dev/null || { echo "FAIL: P03 harness: $1 loop.lock still held"; fails=$((fails+1)); }; }
+p3free "loop A's"
 
 # loop B: ~/STOP-pthree present at the start; the records made while it was stopped (created in reverse name order)
 p3rec 20300101T000003Z-000003 release node/R8
@@ -2463,6 +2466,7 @@ p3ok "P03-AC-3: they are logged in name order, before the loop looks for ~/STOP"
 
 # loop C: the throttle is open; R4 (ready, nothing started it yet) has a RELEASE; R1 is held again
 p3win allowed 0.01 $(($(date +%s) + 7200))
+[ "$rcb" -eq 0 ] || head -n 5 "$tmp/p3-b.out" | sed "s/^/  loop B: /"
 echo held >"$st3/node/R1/FAILED"
 date -u +%FT%TZ >"$st3/node/R4/RELEASE"
 p3loop >"$tmp/p3-c.out" 2>&1 &
@@ -2484,5 +2488,6 @@ p3ok "P03-AC-3: its request is one event, logged before the node started" sh -c 
 p3ok "P03-AC-3: that record is removed" p3gone
 kill "$loopc"; wait "$loopc" 2>/dev/null
 p3reap "loop C"
+p3free "loop C's"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
