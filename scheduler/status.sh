@@ -12,6 +12,9 @@ wtroot=$root/worktrees/${repo#*/}
 echo "== $(date '+%F %T %Z')"
 if ! flock -n "$state/loop.lock" true 2>/dev/null; then echo "loop:    running; stop with: touch ~/STOP"
 else echo "loop:    NOT running; start with: tmux new -d -s sched-${repo#*/} $nb/scheduler/loop.sh $repo"; fi
+if ! flock -n "$state/loop.lock" true 2>/dev/null; then
+	v=$(cat "$state/version" 2>/dev/null); [ -n "$v" ] && echo "version: $v"
+fi
 [ -e ~/STOP ] && echo "         ~/STOP exists: the loop exits within seconds"
 hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
 if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi

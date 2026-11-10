@@ -566,15 +566,105 @@ ok "S03-AC-8: with no graph.yaml the reply says it is recorded" nonempty "$(repl
 ok "S03-AC-8: with no graph.yaml the reply claims no timing" lacks_seconds "$(reply7 R01)"
 ok "S03-AC-8: with no graph.yaml the item exists and claims no timing" sh -c "[ -n \"\$1\" ] && ! printf '%s\n' \"\$1\" | grep -qi 'within seconds'" _ "$(item7 R01)"
 
+# V01-AC-7: with --version and --signature, every comment report.py posts and the status issue body end with the
+# signature line (after any cut), and the body's header names the version. Without them, nothing is signed.
+# Each part starts from an empty fake database, so its status issue is number 100.
+v7=v1.2.3-4-gabcdef0
+sig7='— n00dl3b0t [v1.2.3-4-gabcdef0](https://github.com/acme-co/widget-kit/commit/0123456789abcdef0123456789abcdef01234567)'
+printf '%s\n' "$sig7" >"$tmp/sig7"
+cat >"$tmp/chk7.py" <<'PY'
+import json, sys
+db = json.load(open(sys.argv[1]))
+sig = open(sys.argv[2], encoding="utf-8").read().strip()
+mode = sys.argv[3]
+arg = sys.argv[4] if len(sys.argv) > 4 else ""
+bots = [c["body"] for c in db["comments"] if c["user"]["login"] == "bot"]
+issues = db["issues"]
+body = issues["100"]["body"] if "100" in issues else None
+if mode == "ends":      # at least one bot comment holds arg, and each of them ends with the signature
+    hit = [b for b in bots if arg in b]
+    ok = bool(hit) and all(b.rstrip().endswith(sig) for b in hit)
+elif mode == "all":     # at least 5 bot comments, each ends with the signature
+    ok = len(bots) >= 5 and all(b.rstrip().endswith(sig) for b in bots)
+elif mode == "cut":     # the cut comment: marker, then the signature at the very end, within GitHub's 65536
+    hit = [b for b in bots if "(cut here" in b]
+    ok = bool(hit) and all(b.rstrip().endswith(sig) and b.index("(cut here") < b.rindex(sig) and len(b) <= 65536 for b in hit)
+elif mode == "body":
+    ok = body is not None and body.rstrip().endswith(sig)
+elif mode == "header":  # what precedes the first "## " heading names the version
+    ok = body is not None and arg in body.split("\n## ")[0]
+elif mode == "fallback":
+    ok = body is not None and "status failed" in body and body.rstrip().endswith(sig) and arg in body.split("\n")[0:4].__str__()
+elif mode == "unsigned":
+    ok = len(bots) >= 3 and body is not None and not any("n00dl3b0t" in b for b in bots + [body])
+else:
+    ok = False
+sys.exit(0 if ok else 1)
+PY
+chk7() { python3 -I "$tmp/chk7.py" "$db" "$tmp/sig7" "$@"; }
+resetdb7() { echo '{"issues": {}, "comments": [], "labels": [], "pulls": []}' >"$db"; }
+own7() {
+	python3 -I -c "
+import json, sys
+db = json.load(open('$db'))
+db['comments'].append({'id': len(db['comments']) + 1, 'issue': '100', 'body': sys.argv[1], 'user': {'login': 'owner', 'type': 'User'},
+    'author_association': 'OWNER', 'created_at': '2026-01-09T00:00:00Z', 'html_url': 'https://x/c9'})
+json.dump(db, open('$db', 'w'))" "$1"
+}
+
+state9=$tmp/state/repo9
+mkdir -p "$state9/node/A01" "$state9/node/A02" "$state9/node/A03"
+: >"$state9/status.log"
+resetdb7
+run9() { python3 -I "$src/report.py" --repo owner/repo --state "$state9" --worktrees "$tmp/worktrees/repo" --version "$v7" --signature "$sig7" 2>"$tmp/err9"; }
+run9
+printf 'Q1: which way?\n' >"$state9/node/A01/QUESTION.md"
+{ printf 'Q1: a very long one\n'; awk 'BEGIN { for (i = 0; i < 1000; i++) printf "0123456789012345678901234567890123456789012345678901234567890123456789\n" }'; } >"$state9/node/A02/QUESTION.md"
+printf 'Q1: short one\n' >"$state9/node/A03/QUESTION.md"
+echo "2026-01-09T00:02:00Z open=[] merged-prs=[]; session A01 ended (rc 0) with QUESTION.md" >>"$state9/status.log"
+own7 "B07: something"
+own7 "A01: go"
+run9; rc9a=$?
+ok "V01-AC-7: the run with --version and --signature succeeds (answer recorded: exit 3)" test "$rc9a" = 3
+ok "V01-AC-7: an event comment ends with the signature line" chk7 ends "session A01 ended"
+ok "V01-AC-7: a question comment ends with the signature line" chk7 ends "## A03 asks"
+ok "V01-AC-7: an answer reply (Recorded as ...) ends with the signature line" chk7 ends "Recorded as A01's ANSWER.md"
+ok "V01-AC-7: a not-recorded reply ends with the signature line" chk7 ends "Not recorded as an answer"
+ok "V01-AC-7: an over-long comment is cut, then the signature comes last, within GitHub's limit" chk7 cut
+ok "V01-AC-7: every comment posted ends with the signature line" chk7 all
+ok "V01-AC-7: the status issue body ends with the signature line" chk7 body
+ok "V01-AC-7: the body's header names the version" chk7 header "$v7"
+ok "V01-AC-7: the signed run leaves nothing on stderr" test ! -s "$tmp/err9"
+
+# The fallback body (building the body fails: a FAILED that is a folder cannot be read) is signed too.
+state10=$tmp/state/repo10
+mkdir -p "$state10/node/X01/FAILED"
+: >"$state10/status.log"
+resetdb7
+python3 -I "$src/report.py" --repo owner/repo --state "$state10" --worktrees "$tmp/worktrees/repo" --version "$v7" --signature "$sig7" 2>"$tmp/err10"
+ok "V01-AC-7: the fallback status body ends with the signature line and names the version" chk7 fallback "$v7"
+
+# Without the options nothing is signed.
+state11=$tmp/state/repo11
+mkdir -p "$state11/node/A01" "$state11/node/A02"
+: >"$state11/status.log"
+resetdb7
+run11() { python3 -I "$src/report.py" --repo owner/repo --state "$state11" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err11"; }
+run11
+printf 'Q1: which way?\n' >"$state11/node/A01/QUESTION.md"
+echo "2026-01-09T00:02:00Z open=[] merged-prs=[]; session A02 ended (rc 0)" >>"$state11/status.log"
+own7 "B07: something"
+run11
+ok "V01-AC-7: without the options no comment or body carries a signature" chk7 unsigned
 
 # S05-AC-5: the removed-node events (wording as scheduler/loop.sh writes them: wind_down) are posted in the event comment.
-state9=$tmp/state/repo9
-mkdir -p "$state9/node/A01"
-run9() { python3 -I "$src/report.py" --repo owner/repo --state "$state9" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err9"; }
-echo "2026-02-01T00:00:00Z open=[] merged-prs=[]; started A01 (first) in /wt, pid 1, start 1 of 2" >"$state9/status.log"
-run9
-n9=$(q "len(db['comments'])")
-cat >>"$state9/status.log" <<'EOF'
+state12=$tmp/state/repo12
+mkdir -p "$state12/node/A01"
+run12() { python3 -I "$src/report.py" --repo owner/repo --state "$state12" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err12"; }
+echo "2026-02-01T00:00:00Z open=[] merged-prs=[]; started A01 (first) in /wt, pid 1, start 1 of 2" >"$state12/status.log"
+run12
+n12=$(q "len(db['comments'])")
+cat >>"$state12/status.log" <<'EOF'
 2026-02-01T00:01:00Z R01 removed by #77: closed its PR #21 without merging
 2026-02-01T00:01:01Z R01 removed by #77: marked issue #101 not planned
 2026-02-01T00:01:02Z R01 removed by #77: removed its worktree and state, evidence kept in state/archive/R01-out
@@ -590,20 +680,20 @@ cat >>"$state9/status.log" <<'EOF'
 2026-02-01T00:03:07Z R04 removed by #77: archiving its evidence failed; worktree and state kept, tried again next tick
 2026-02-01T00:03:08Z R04 removed by #77: removing its worktree and state failed; tried again next tick
 EOF
-run9
-body9=$(python3 -I -c "
+run12
+body12=$(python3 -I -c "
 import json
 db = json.load(open('$db'))
-print('\n'.join(c['body'] for c in db['comments'][$n9:]))")
-has9() { printf '%s\n' "$body9" | grep -qF -- "$1"; }
-ok "S05-AC-5: the event comment includes 'PR closed' (#N form)" has9 '`2026-02-01T00:01:00Z` R01 removed by #77: closed its PR #21 without merging'
-ok "S05-AC-5: the event comment includes 'issues marked not planned'" has9 '`2026-02-01T00:01:01Z` R01 removed by #77: marked issue #101 not planned'
-ok "S05-AC-5: the event comment includes 'worktree and state removed'" has9 '`2026-02-01T00:01:02Z` R01 removed by #77: removed its worktree and state, evidence kept in state/archive/R01-out'
-ok "S05-AC-5: the PR-closed event of a commit without (#N) is included" has9 '`2026-02-01T00:02:00Z` R02 removed by 1a2b3c4: closed its PR #22 without merging'
-ok "S05-AC-5: the worktree-removed event without evidence is included" has9 '`2026-02-01T00:02:01Z` R03 removed by #77: removed its worktree and state'
-ok "S05-AC-5: the retry lines of the removed-node step are not posted as events" sh -c "! printf '%s\n' \"\$1\" | grep -qE 'tried again next tick'" _ "$body9"
-ok "S05-AC-5: the removed-node events are posted once" sh -c "[ \"\$(printf '%s\n' \"\$1\" | grep -c 'R01 removed by #77')\" = 3 ]" _ "$body9"
-ok "S05-AC-5: the removed-node run leaves nothing on stderr" test ! -s "$tmp/err9"
+print('\n'.join(c['body'] for c in db['comments'][$n12:]))")
+has12() { printf '%s\n' "$body12" | grep -qF -- "$1"; }
+ok "S05-AC-5: the event comment includes 'PR closed' (#N form)" has12 '`2026-02-01T00:01:00Z` R01 removed by #77: closed its PR #21 without merging'
+ok "S05-AC-5: the event comment includes 'issues marked not planned'" has12 '`2026-02-01T00:01:01Z` R01 removed by #77: marked issue #101 not planned'
+ok "S05-AC-5: the event comment includes 'worktree and state removed'" has12 '`2026-02-01T00:01:02Z` R01 removed by #77: removed its worktree and state, evidence kept in state/archive/R01-out'
+ok "S05-AC-5: the PR-closed event of a commit without (#N) is included" has12 '`2026-02-01T00:02:00Z` R02 removed by 1a2b3c4: closed its PR #22 without merging'
+ok "S05-AC-5: the worktree-removed event without evidence is included" has12 '`2026-02-01T00:02:01Z` R03 removed by #77: removed its worktree and state'
+ok "S05-AC-5: the retry lines of the removed-node step are not posted as events" sh -c "! printf '%s\n' \"\$1\" | grep -qE 'tried again next tick'" _ "$body12"
+ok "S05-AC-5: the removed-node events are posted once" sh -c "[ \"\$(printf '%s\n' \"\$1\" | grep -c 'R01 removed by #77')\" = 3 ]" _ "$body12"
+ok "S05-AC-5: the removed-node run leaves nothing on stderr" test ! -s "$tmp/err12"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
