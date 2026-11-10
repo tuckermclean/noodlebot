@@ -2176,6 +2176,9 @@ for k in K01 K02 issue-46; do
 	x6ok "S06-AC-2: $k ($ty session): one status event names it and the reset time" test "$(x6res_n "$k")" = 1
 done
 x6ok "S06-AC-3: while the resumed triage session runs, no update session is started" test "$(x6runs pr-101)" = 0
+rm -f "$S06/hold.K02"
+x6wait 10 sh -c "[ \"\$(grep -c 'rate_limit_event' '$st06/node/K02/session.jsonl')\" = 2 ]"
+sleep 4
 x6ok "S06-AC-3: K02 was resumed once, though its log ends with the same rejection again" sh -c "[ '$(x6runs K02)' = 2 ] && [ '$(x6res_n K02)' = 1 ] && [ \"\$(grep -c 'rate_limit_event' '$st06/node/K02/session.jsonl')\" = 2 ]"
 x6ok "S06-AC-3: K01's resumed process is the only K01 session while it runs" sh -c "[ '$(x6runs K01)' = 2 ] && [ \"\$(grep -c 'started K01 ' '$st06/status.log')\" = 1 ]"
 x6ok "S06-AC-2 (harness): the resume prompt template scheduler/limit-resume.md exists" test -s "$src/limit-resume.md"
