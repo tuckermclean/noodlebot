@@ -12,7 +12,8 @@ It holds new sessions (running ones are never stopped) when:
 - a window's status is not "allowed";
 - the 5-hour window is projected to pass USAGE_5H_LIMIT (default 0.90) by its reset, at the burn rate
   of the last 30 minutes (or of the whole window so far, with too few samples);
-- the 7-day window is more than USAGE_7D_MARGIN (default 0.10) ahead of an even pace for the week.
+- only with USAGE_7D_PACE=1 (off by default): the 7-day window is more than USAGE_7D_MARGIN (default 0.10)
+  ahead of an even pace for the week. The reading is kept in usage.json either way.
 Prints one line: "open: ..." or "hold: <reason>"; exits 0 either way (1 only on an error).
 """
 import glob
@@ -69,6 +70,7 @@ def main():
     now = float(a[a.index("--now") + 1]) if "--now" in a else time.time()
     lim5 = float(os.environ.get("USAGE_5H_LIMIT", "0.90"))
     margin7 = float(os.environ.get("USAGE_7D_MARGIN", "0.10"))
+    pace7 = os.environ.get("USAGE_7D_PACE") == "1"
     path = os.path.join(root, "usage.json")
     try:
         prev = json.load(open(path))
@@ -105,13 +107,13 @@ def main():
     if seven and seven["resetsAt"] > now:
         pace = min(max(1 - (seven["resetsAt"] - now) / WEEK, 0), 1)
         why.append("7-day %.0f%% at %.0f%% of the week" % (seven["utilization"] * 100, pace * 100))
-        if seven["utilization"] > pace + margin7:
+        if pace7 and seven["utilization"] > pace + margin7:
             hold.append("7-day window %.0f%% used at %.0f%% of the week (more than %.0f%% ahead of pace)"
                         % (seven["utilization"] * 100, pace * 100, margin7 * 100))
 
     state = {"updated": now, "windows": win, "samples5h": samples, "projected5h": proj, "weekElapsed": pace,
              "hold": bool(hold), "reason": "; ".join(hold) if hold else "", "summary": "; ".join(why) or "no reading yet",
-             "limits": {"five_hour": lim5, "seven_day_margin": margin7}}
+             "limits": {"five_hour": lim5, "seven_day_margin": margin7, "seven_day_pace": pace7}}
     with open(path + ".tmp", "w") as f:
         json.dump(state, f, indent=1)
     os.replace(path + ".tmp", path)
