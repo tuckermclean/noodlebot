@@ -2489,5 +2489,42 @@ p3ok "P03-AC-3: that record is removed" p3gone
 kill "$loopc"; wait "$loopc" 2>/dev/null
 p3reap "loop C"
 p3free "loop C's"
+# P03-AC-4, round 4: the checks above start with the status line's "open=[..] merged-prs=[..]" prefix, which holds the words
+# "open" and "merged"; these look at the release line's own text (everything after the first "; ")
+p3own() { grep -F -- "$1" "$st3/status.log" 2>/dev/null | grep -i 'releas' | sed 's/^[^;]*; //'; }
+p3ownc() { p3own "$1" | grep -ciE -- "$2"; }
+p3ok "P03-AC-4: with the throttle open, one release line names R4 and says the throttle was open (own text, not the status prefix)" test "$(p3ownc R4 'throttle (is |was )?open')" = 1
+p3ok "P03-AC-4: that line does not claim nothing was started, a running session, or a release past the throttle" sh -c "[ \"$(p3ownc R4 'throttle (is |was )?open')\" = 1 ] && [ \"$(p3own R4 | grep -iE 'throttle (is |was )?open' | grep -ciE 'nothing started|running session|past the throttle')\" = 0 ]"
+p3ok "P03-AC-4: R2's release line gives a not-ready reason in its own text" test "$(p3ownc R2 'not ready|dep')" -ge 1
+p3ok "P03-AC-4: R3's release line gives a FAILED / not-ready reason in its own text" test "$(p3ownc R3 'FAILED|not ready')" -ge 1
+# SCHED_MAX 1 reached by D1's running session; D2 is ready and released, the throttle is open
+dp4=$tmp/data-p4; st4=$dp4/state/pfour; mkdir -p "$tmp/bin-p4" "$dp4/repos" "$st4/node/D1" "$st4/node/D2"
+git init -q -b main "$tmp/work-p4"; mkdir -p "$tmp/work-p4/docs"
+printf 'nodes:\n  - {id: D1, name: d1, deps: []}\n  - {id: D2, name: d2, deps: []}\n' >"$tmp/work-p4/docs/graph.yaml"
+git -C "$tmp/work-p4" add -A && git -C "$tmp/work-p4" -c user.name=t -c user.email=t@t commit -q -m init
+git clone -q --bare "$tmp/work-p4" "$tmp/remote-p4.git"
+git clone -q "$tmp/remote-p4.git" "$dp4/repos/pfour"
+cp "$tmp/bin-p3/gh" "$tmp/bin-p4/gh"
+cat >"$tmp/bin-p4/claude" <<'EOF'
+#!/bin/sh
+key=$(basename "$(pwd -P)")
+n=$(( $(cat "$P3/runs4.$key" 2>/dev/null || echo 0) + 1 )); echo $n >"$P3/runs4.$key"
+case $key in D1) sleep 12 ;; *) echo "Q1: held" >"$P3/q4.$key" ;; esac
+exit 0
+EOF
+chmod +x "$tmp/bin-p4/gh" "$tmp/bin-p4/claude"
+date -u +%FT%TZ >"$st4/node/D2/RELEASE"
+env -u USAGE_7D_MARGIN -u USAGE_5H_LIMIT NOODLEBOT_DATA=$dp4 PATH=$tmp/bin-p4:$PATH SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 SCHED_MAX=1 \
+	bash "$tmp/nb-p3/scheduler/loop.sh" o/pfour >"$tmp/p4.out" 2>&1 &
+loopd=$!; pids+=("$loopd")
+p3wait 10 test -e "$P3/runs4.D1"
+p3wait 8 test ! -e "$st4/node/D2/RELEASE"
+sleep 2
+p3ok "P03-AC-4 (SCHED_MAX): D1 holds the only session and D2 (ready, released) is not started" sh -c "[ \"\$(cat '$P3/runs4.D1' 2>/dev/null)\" = 1 ] && [ ! -e '$P3/runs4.D2' ]"
+p3ok "P03-AC-4 (SCHED_MAX): the RELEASE of D2 is removed" test ! -e "$st4/node/D2/RELEASE"
+p3ok "P03-AC-4 (SCHED_MAX): D2's release line gives the session cap as its reason, not 'not ready'" sh -c "l=\$(grep -F D2 '$st4/status.log' | grep -i releas | sed 's/^[^;]*; //'); [ -n \"\$l\" ] && printf '%s\n' \"\$l\" | grep -qiE 'SCHED_MAX|cap|max' && ! printf '%s\n' \"\$l\" | grep -qi 'not ready'"
+kill "$loopd"; wait "$loopd" 2>/dev/null
+p3reap "loop D"
+n=0; while ! flock -n "$st4/loop.lock" true 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n+1)); done
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all loop checks"
