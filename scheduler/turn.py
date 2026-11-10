@@ -57,8 +57,12 @@ def write_json(path, data):
 
 
 def valid_list(d):
+    def text(x):
+        return isinstance(x, str)
     return (isinstance(d, dict) and num(d.get("tick")) and isinstance(d.get("units"), list)
-            and all(isinstance(u, dict) and num(u.get("since")) for u in d["units"]))
+            and all(isinstance(u, dict) and num(u.get("since")) and text(u.get("key"))
+                    and text(u.get("kind")) and text(u.get("size")) for u in d["units"])
+            and isinstance(d.get("gaveback", []), list) and all(text(k) for k in d.get("gaveback", [])))
 
 
 def valid_start(d):
@@ -95,20 +99,19 @@ def label(u):
 
 
 def order(lists, now, starve):
-    """The merged order: [(unit, repo, starved)]."""
+    """The merged order: [(unit, repo, starved, gaveback)]."""
     rows = []
     for repo, d in lists.items():
         skip = d.get("gaveback", [])
         for i, u in enumerate(d["units"]):
-            if u.get("key") in skip:
-                continue
             wait = now - u["since"]
             starved = wait > starve
             group = 0 if u["kind"] in SMALL else GROUP.get(u["size"], 3)
-            rows.append(((0 if starved else 1, -wait, 0 if starved else group, repo, i), u, repo, starved))
+            rows.append(((0 if starved else 1, -wait, 0 if starved else group, repo, i), u, repo, starved,
+                         u["key"] in skip))
     # starved units compare by wait alone; the rest by group, then wait
     rows.sort(key=lambda r: (r[0][0], r[0][2], r[0][1], r[0][3], r[0][4]))
-    return [(u, repo, starved) for _, u, repo, starved in rows]
+    return [(u, repo, starved, given) for _, u, repo, starved, given in rows]
 
 
 def hm(secs):
@@ -132,15 +135,18 @@ def ask(state, repo, now, args):
     last = read_json(spath)
     if not valid_start(last):
         last = None
+    if last is not None and last["time"] > now:
+        last = None  # a start in the future is a bad record (clock step, junk): no start yet
     if last is not None and now - last["time"] < gap:
         return None
-    queue = order(lists, now, starve)
+    everyone = order(lists, now, starve)
+    queue = [r for r in everyone if not r[3]]  # given-back units wait but get no turn
     if not queue or queue[0][1] != repo:
         return None
-    u, _, starved = queue[0]
+    u, _, starved, _ = queue[0]
     wait = now - u["since"]
     ahead = ["%s" % x["key"] if r == repo else "%s/%s" % (r, x["key"])
-             for x, r, _ in queue[1:] if now - x["since"] > wait]
+             for x, r, _, _ in everyone if x is not u and now - x["since"] > wait]
     text = "turn: %s, waited %s" % (label(u), hm(wait))
     if starved:
         text += ", first by the starvation limit"
@@ -156,13 +162,15 @@ def ask(state, repo, now, args):
 def giveback(state, repo, key):
     spath = os.path.join(state, "starts.json")
     last = read_json(spath)
-    if valid_start(last) and last.get("repo") == repo and last.get("unit") == key:
+    wpath = os.path.join(state, repo, "waiting.json")
+    d = read_json(wpath)
+    # a key already given back (until the next list) belongs to a grant already undone
+    done = valid_list(d) and key in d.get("gaveback", [])
+    if not done and valid_start(last) and last.get("repo") == repo and last.get("unit") == key:
         if valid_start(last.get("prev")):
             write_json(spath, last["prev"])
         else:
             os.unlink(spath)
-    wpath = os.path.join(state, repo, "waiting.json")
-    d = read_json(wpath)
     if valid_list(d):
         d["gaveback"] = sorted(set(d.get("gaveback", [])) | {key})
         write_json(wpath, d)
