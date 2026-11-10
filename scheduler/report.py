@@ -569,18 +569,27 @@ def run_pins(a, rs):
 
 def rollover(a, rs):
     """The first run on a date after the open log issue's: one summary of that day on it, then close it. Each step is
-    recorded in rs["roll"] so that a failed run finishes the rest on the next, repeating none (the new issue, its link
-    on the old one and the pins follow in find_issue, finish_roll and run_pins)."""
+    recorded in the roll (rs["roll"]; rs["parked"] for a roll still unfinished at the next midnight) so that a failed run
+    finishes the rest on the next, repeating none (the new issue, its link on the old one and the pins follow in
+    find_issue, finish_roll and run_pins)."""
     log = rs.get("log") or {}
     roll = rs.get("roll")
-    if roll and roll.get("new") and not roll.get("linked") and log.get("issue") == roll["new"] and log.get("date", a.today) < a.today:
-        park_link(rs)  # the link is still pending at the next midnight: keep it apart, start the pending day's rollover
+    if roll and roll.get("new") and log.get("issue") == roll["new"] and log.get("date", a.today) < a.today:
+        park_link(rs)  # still unfinished at the next midnight: keep it apart, start the pending day's rollover
         roll = None
     if roll is None:
-        if not (log.get("issue") and log.get("date") and log["date"] < a.today):
-            return
-        roll = rs["roll"] = {"old": log["issue"], "date": log["date"]}
-        a.save()
+        if log.get("issue") and log.get("date") and log["date"] < a.today:
+            roll = rs["roll"] = {"old": log["issue"], "date": log["date"]}
+            a.save()
+    for r in list(rs.get("parked") or []) + ([roll] if roll else []):
+        try:
+            roll_steps(a, rs, r)
+        except Exception as e:  # another roll's steps do not depend on this one's
+            a.errors.append(str(e))
+
+
+def roll_steps(a, rs, roll):
+    """The summary of the roll's own day on its old issue, then the close, each once."""
     if not roll.get("summary"):
         try:
             comment(a, roll["old"], "\n".join(["## End-of-day summary, %s" % roll["date"], ""] +
@@ -607,10 +616,11 @@ def gone(e):
 
 
 def park_link(rs):
-    """Move a rollover's pending link step to rs["links"], where finish_roll retries it until done, whatever the roll."""
+    """Move a rollover that has a new issue but is not finished (summary, close, link) to rs["parked"], where rollover and
+    finish_roll complete it, whatever the roll of a later day."""
     roll = rs.get("roll")
-    if roll and roll.get("new") and not roll.get("linked"):
-        rs.setdefault("links", []).append({"old": roll["old"], "new": roll["new"]})
+    if roll and roll.get("new") and not (roll.get("summary") and roll.get("closed") and roll.get("linked")):
+        rs.setdefault("parked", []).append(roll)
         rs.pop("roll", None)
 
 
@@ -624,25 +634,25 @@ def put_link(a, old, new):
 
 
 def finish_roll(a, rs):
-    """Put the link to the new issue on the old one, once; then the rollover is done."""
-    for l in list(rs.get("links") or []):
+    """Put the link to the new issue on the old one, once, when the roll's summary and close are done; then that
+    rollover is done."""
+    for roll in list(rs.get("parked") or []) + ([rs["roll"]] if rs.get("roll") else []):
+        if not roll.get("new") or not (roll.get("summary") and roll.get("closed")):
+            continue
         try:
-            put_link(a, l["old"], l["new"])
-            rs["links"].remove(l)
+            if not roll.get("linked"):
+                put_link(a, roll["old"], roll["new"])
+                roll["linked"] = True
+                a.save()
+            if roll is rs.get("roll"):
+                rs.pop("roll", None)
+            else:
+                rs["parked"].remove(roll)
             a.save()
         except Exception as e:
             a.errors.append(str(e))
-    if not rs.get("links"):
-        rs.pop("links", None)
-    roll = rs.get("roll")
-    if not roll or not roll.get("new"):
-        return
-    if not roll.get("linked"):
-        put_link(a, roll["old"], roll["new"])
-        roll["linked"] = True
-        a.save()
-    rs.pop("roll", None)
-    a.save()
+    if not rs.get("parked"):
+        rs.pop("parked", None)
 
 
 def close_old_status(a, rs, log_issue):
