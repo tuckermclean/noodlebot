@@ -27,7 +27,8 @@ changed a manifest-only keepalive goes every --keepalive seconds (900). DIR/site
 non-blocking: a publish that finds it held does nothing and exits 0. A 404 or any other failed call
 logs one stderr line `site.py: publish failed (<status>)` (status: 404 with the gist ID, HTTP code, or
 `no answer: <reason>`; never the response body) and exits 1, published.json untouched. build's own
-warnings during a publish go to DIR/site/build.log, so that line is the only stderr output.
+warnings during a publish go to DIR/site/build.log; a fatal build error is the one line
+`publish failed (build: <reason>)`, so that line is the only stderr output.
 --keepalive 0 turns the keepalive off.
 """
 import argparse
@@ -61,6 +62,13 @@ LOGFILE = [None]  # during a publish, build's warnings go to DIR/site/build.log,
 
 def log(msg):
     print("site.py: " + msg, file=LOGFILE[0] or sys.stderr)
+
+
+def fatal(msg):
+    if LOGFILE[0]:  # during a publish: publish() reports it as its one stderr line
+        raise RuntimeError(msg)
+    log(msg)
+    sys.exit(1)
 
 
 def text(s):
@@ -495,8 +503,7 @@ def read_repos(path):
         with open(path, encoding="utf-8") as f:
             raw = f.read().splitlines()
     except OSError as e:
-        log("cannot read the repository list: %s" % e)
-        sys.exit(1)
+        fatal("cannot read the repository list: %s" % e)
     repos = []
     for line in raw:
         line = re.sub(r"\s+", "", line.split("#")[0])
@@ -518,8 +525,7 @@ def write_out(out, files):
             if e not in files and (os.path.isfile(p) or os.path.islink(p)):
                 os.unlink(p)
     except OSError as e:
-        log("cannot write %s: %s" % (out, e))
-        sys.exit(1)
+        fatal("cannot write %s: %s" % (out, e))
 
 
 def build(a):
@@ -593,9 +599,15 @@ def publish(a):
         LOGFILE[0] = open(os.devnull, "w")
     try:
         files = build(a)
+    except RuntimeError as e:
+        err = "publish failed (build: %s)" % e
+        files = None
     finally:
         LOGFILE[0].close()
         LOGFILE[0] = None
+    if files is None:
+        log(err)
+        return 1
     hashes = {n: hashlib.sha256(d).hexdigest() for n, d in files.items()}
     prev = None
     try:
