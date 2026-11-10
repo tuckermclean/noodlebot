@@ -41,9 +41,11 @@ UNATTENDED RUN, A FOLLOW-UP. The noodlebot scheduler (@LOOP@) started this sessi
   - The earlier session may have started CI runs on this branch. Run gh run list --branch @BR@ and wait
     for or read those before starting a new one.
 @PATCH-BEGIN@
-  - The uncommitted changes the dead session left were saved as the patch
-    @PATCH@ and the worktree was reset to HEAD. Examine that patch (git apply --stat, read it);
-    never apply or commit it unexamined. List it in the PR under Deviations with what you did with it.
+  - Each line below names a leftover patch: uncommitted changes an earlier session left, saved
+    before the worktree was reset to HEAD.
+@PATCH@
+    Examine each listed patch (git apply --stat, read it); never apply or commit one unexamined.
+    List each in the PR under Deviations with what you did with it.
 @PATCH-END@
 @RESUME-END@
 - RESUMING. @STATE@/node/@ID@/answered/ holds what earlier runs of this node stopped on. Read every
