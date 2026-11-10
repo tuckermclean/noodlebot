@@ -31,7 +31,8 @@
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # At the start of every iteration (before the ~/STOP check) it logs each API request record under
 # state/<name>/requests/*.json (one event naming the control and its target, in name order) and removes it;
-# a broken record is logged as such and removed. A node/<ID>/RELEASE marker (the API's release control) is
+# a broken record is logged as such and removed. The tick does the same again after ready.py and before it starts
+# any node, so a request's event always comes before its effect (each record is logged once). A node/<ID>/RELEASE marker (the API's release control) is
 # consumed at the next tick: a ready node the throttle holds starts despite the hold (SCHED_MAX still applies),
 # otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
@@ -845,6 +846,7 @@ tick() {
 	ready=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
 		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --all "${args[@]}") ||
 		{ note "$saw; ready.py failed; nothing started"; return; }
+	requests   # a request's event is logged before any node starts (a record that came in during ready.py too)
 	local -A isrel=() handled=() isready=()
 	for id in "${rels[@]}"; do isrel[$id]=1; done
 	while read -r id name kind; do
