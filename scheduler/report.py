@@ -13,8 +13,8 @@ Each run:
      the cost of the sessions that ended) on the old issue, closes it, opens the new one, links them both ways and
      tries to pin the new and unpin the old, each step recorded in report.json ("roll", "pins") and done once; an
      open `noodlebot-status` issue that is not a log issue (the old sticky one) is closed with one comment linking
-     the log issue, and the owner's prefixed answers on it count while the question they name was posted there
-     ("qissue") and is open;
+     the log issue, and the owner's prefixed answers on it, or on an earlier log issue ("old_logs"), count while the
+     question they name was posted there ("qissue") and is open;
   2. turns each new comment by the owner on that issue into ANSWER.md for the unit waiting on a
      question (the only one waiting, or the one named first: "B03: ..."), and replies; likewise each new
      owner comment on a unit's home issue, posted after the unit's question comment (no ID needed when one
@@ -682,36 +682,54 @@ def close_old_status(a, rs, log_issue):
 
 
 def take_old_answers(a, rs):
-    """The owner's new prefixed comments on a closed old status issue: recorded as an answer only when the question the
-    prefix names was posted on that issue (rs["qissue"]) and is still open; refused, with a reply, otherwise."""
-    for num, st in sorted((rs.get("old_status") or {}).items()):
-        if st.get("cursor") is None:
+    """The owner's new prefixed comments on a closed old status issue (rs["old_status"]) or an earlier log issue
+    (rs["old_logs"]): recorded as an answer only when the question the prefix names was posted on that issue
+    (rs["qissue"]) and is still open; refused, with a reply, otherwise. An earlier log issue is kept only while an open
+    question was posted on it; an issue that is gone (404/410) is dropped."""
+    held = {(rs.get("qissue") or {}).get(n) for n in waiting(a.state) if n in (rs.get("questions") or {})
+            and rs["questions"][n] == mtime_key(os.path.join(tdir(a.state, n), "QUESTION.md"))}
+    logs = rs.get("old_logs") or {}
+    for num in [n for n in logs if int(n) not in held]:
+        logs.pop(num)
+        a.save()
+    for key in ("old_status", "old_logs"):
+        for num, st in sorted((rs.get(key) or {}).items()):
+            if st.get("cursor") is None:
+                continue
+            try:
+                take_old_comments(a, rs, num, st)
+            except Exception as e:
+                if gone(e):
+                    print("report.py: issue #%s is gone; its answers are no longer read" % num, file=sys.stderr)
+                    rs[key].pop(num, None)
+                    a.save()
+                else:
+                    a.errors.append(str(e))
+
+
+def take_old_comments(a, rs, num, st):
+    comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
+                  (a.repo, num, "&since=" + st["since"] if st.get("since") else "")) or []
+    for c in sorted(comments, key=lambda c: c["id"]):
+        if c["id"] <= st["cursor"]:
             continue
-        try:
-            comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
-                          (a.repo, num, "&since=" + st["since"] if st.get("since") else "")) or []
-            for c in sorted(comments, key=lambda c: c["id"]):
-                if c["id"] <= st["cursor"]:
-                    continue
-                user = c.get("user") or {}
-                text = c.get("body") or ""
-                if user.get("type") != "Bot" and user.get("login") == a.owner and c.get("author_association") == "OWNER":
-                    m = ID_PREFIX.match(text)
-                    node = m.group(1) if m else None
-                    q = os.path.join(tdir(a.state, node), "QUESTION.md") if node and node in nodes(a.state) else None
-                    live = bool(q) and node in waiting(a.state) and (rs.get("qissue") or {}).get(node) == int(num) \
-                        and (rs.get("questions") or {}).get(node) == mtime_key(q)
-                    if live:
-                        what = record_answer(a, rs, node, c, text)
-                        comment(a, num, "Recorded as %s's ANSWER.md%s." % (node, "" if what is None else "; " + what))
-                    else:
-                        comment(a, num, "Not recorded as an answer: this issue is closed, and %s. Answer on the unit's issue "
-                                "or on the log issue (#%s)." % ("no reply starting with a unit's ID" if not node else
-                                "%s has no question asked here that is still open" % node, rs.get("issue")))
-                st["cursor"], st["since"] = c["id"], c.get("created_at", "")
-                a.save()
-        except Exception as e:
-            a.errors.append(str(e))
+        user = c.get("user") or {}
+        text = c.get("body") or ""
+        if user.get("type") != "Bot" and user.get("login") == a.owner and c.get("author_association") == "OWNER":
+            m = ID_PREFIX.match(text)
+            node = m.group(1) if m else None
+            q = os.path.join(tdir(a.state, node), "QUESTION.md") if node and node in nodes(a.state) else None
+            live = bool(q) and node in waiting(a.state) and (rs.get("qissue") or {}).get(node) == int(num) \
+                and (rs.get("questions") or {}).get(node) == mtime_key(q)
+            if live:
+                what = record_answer(a, rs, node, c, text)
+                comment(a, num, "Recorded as %s's ANSWER.md%s." % (node, "" if what is None else "; " + what))
+            else:
+                comment(a, num, "Not recorded as an answer: this issue is closed, and %s. Answer on the unit's issue "
+                        "or on the log issue (#%s)." % ("no reply starting with a unit's ID" if not node else
+                        "%s has no question asked here that is still open" % node, rs.get("issue")))
+        st["cursor"], st["since"] = c["id"], c.get("created_at", "")
+        a.save()
 
 
 def day_summary(a, date):
@@ -1574,7 +1592,10 @@ def main():
         rollover(a, rs)
     except Exception as e:  # the rest of the run does not depend on it; its record makes the next run finish it
         a.errors.append(str(e))
+    was = rs.get("issue") if rs.get("issue") == (rs.get("log") or {}).get("issue") else None
     issue, new = find_issue(a, rs)
+    if was and was != issue:  # an earlier log issue: its answers still count while their question is open there
+        rs.setdefault("old_logs", {})[str(was)] = {"cursor": rs.get("comment_id", 0), "since": rs.get("comment_since", "")}
     if new or rs.get("issue") != issue:
         rs["issue"] = issue
         rs.pop("body_hash", None)
