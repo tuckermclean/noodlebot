@@ -25,7 +25,10 @@ created). Changed files go as {"content": ...}, files no longer built as null, p
 only after a 2xx answer. A change is sent at most every --min-interval seconds (60); with nothing
 changed a manifest-only keepalive goes every --keepalive seconds (900). DIR/site/lock is held
 non-blocking: a publish that finds it held does nothing and exits 0. A 404 or any other failed call
-logs one line naming the status (never the response body) and exits 1, published.json untouched.
+logs one stderr line `site.py: publish failed (<status>)` (status: 404 with the gist ID, HTTP code, or
+`no answer: <reason>`; never the response body) and exits 1, published.json untouched. build's own
+warnings during a publish go to DIR/site/build.log, so that line is the only stderr output.
+--keepalive 0 turns the keepalive off.
 """
 import argparse
 import collections
@@ -53,8 +56,11 @@ HOLD = re.compile(r"hold:\s*")  # the throttle line's hold prefix
 LOCAL = []  # literal strings (runtime root, HOME) the filter removes
 
 
+LOGFILE = [None]  # during a publish, build's warnings go to DIR/site/build.log, not stderr
+
+
 def log(msg):
-    print("site.py: " + msg, file=sys.stderr)
+    print("site.py: " + msg, file=LOGFILE[0] or sys.stderr)
 
 
 def text(s):
@@ -555,15 +561,15 @@ def gh_patch(gist, body_path):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
-        return "publish failed: gh api: %s" % type(e).__name__
+        return "publish failed (no answer: %s)" % type(e).__name__
     if r.returncode == 0:
         return None
     m = re.search(r"\bHTTP (\d{3})\b", r.stderr)
     if m and m.group(1) == "404":
-        return "gist %s not found or not writable with this token" % gist
+        return "publish failed (404): gist %s not found or not writable with this token" % gist
     if m:
-        return "publish failed: HTTP %s" % m.group(1)
-    return "publish failed: gh api exited %d without a status" % r.returncode
+        return "publish failed (HTTP %s)" % m.group(1)
+    return "publish failed (no answer: exit %d)" % r.returncode
 
 
 def publish(a):
@@ -581,7 +587,15 @@ def publish(a):
         return 1
     a.out = os.path.join(site, "out")
     a.now = now
-    files = build(a)
+    try:
+        LOGFILE[0] = open(os.path.join(site, "build.log"), "w", encoding="utf-8")
+    except OSError:
+        LOGFILE[0] = open(os.devnull, "w")
+    try:
+        files = build(a)
+    finally:
+        LOGFILE[0].close()
+        LOGFILE[0] = None
     hashes = {n: hashlib.sha256(d).hexdigest() for n, d in files.items()}
     prev = None
     try:
@@ -598,7 +612,7 @@ def publish(a):
         if seen is not None and now - seen < a.min_interval:
             return 0
         updated = now
-    elif seen is None or now - seen < a.keepalive:
+    elif seen is None or a.keepalive <= 0 or now - seen < a.keepalive:
         return 0
     with open(os.path.join(HERE, "site-schema.json"), encoding="utf-8") as f:
         version = json.load(f)["version"]
@@ -611,7 +625,7 @@ def publish(a):
             json.dump({"files": send}, f, ensure_ascii=False)
         err = gh_patch(a.gist, body)
     except OSError as e:
-        err = "cannot write the request: %s" % e
+        err = "publish failed (no answer: cannot write the request)"
     finally:
         try:
             os.unlink(body)
