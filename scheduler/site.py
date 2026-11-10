@@ -33,6 +33,7 @@ RUN = re.compile(r"[A-Za-z0-9+/]{40,}")
 LOOP_PREFIX = re.compile(r"^open=\[[^\]]*\] merged-prs=\[[^\]]*\]; ")
 DEPLOY = re.compile(r"(deployed|not deployed|rolled back)\b")
 SAFE = re.compile(r"^[A-Za-z0-9][\w.-]*$")
+HOLD = re.compile(r"hold:\s*")  # the throttle line's hold prefix
 LOCAL = []  # literal strings (runtime root, HOME) the filter removes
 
 
@@ -43,11 +44,11 @@ def log(msg):
 def text(s):
     """The one filter: local paths, the runtime root, HOME and token-shaped strings out; URLs kept."""
     out, pos = [], 0
+    for lit in LOCAL:
+        s = s.replace(lit, "…")
     for m in list(URL.finditer(s)) + [None]:
         end = m.start() if m else len(s)
         part = PATH.sub("…", s[pos:end])
-        for lit in LOCAL:
-            part = part.replace(lit, "…")
         out.append(RUN.sub("[redacted]", TOKEN.sub("[redacted]", part)))
         if m:
             out.append(TOKEN.sub("[redacted]", m.group(0)))
@@ -60,8 +61,10 @@ def cut(s, n):
 
 
 def read(path, limit=None):
+    """The file's text, None when missing, unreadable or a symlink (never followed)."""
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8", errors="replace") as f:
             return f.read(limit) if limit else f.read()
     except OSError:
         return None
@@ -120,14 +123,14 @@ def held(lockfile):
 def alive(pidfile, key):
     """The pid file's process exists and is that task's session (loop.sh alive())."""
     s = read(pidfile, 64)
-    if s is None or not s.strip().isdigit():
+    if s is None or not re.fullmatch(r"[0-9]+", s.strip()):
         return False
-    pid = int(s.strip())
     try:
+        pid = int(s.strip())
         os.kill(pid, 0)
         with open("/proc/%d/cmdline" % pid, "rb") as f:
             cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
-    except OSError:
+    except (OSError, ValueError, OverflowError):
         return False
     k = re.escape(key)
     return bool(re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (k, k), cmd))
@@ -243,7 +246,7 @@ def repo_file(root, repo, running, hold, home):
     for n in nodes:
         i = n["id"]
         d = os.path.join(state, "node", i) if SAFE.match(i) else None
-        has = (lambda m: d is not None and os.path.exists(os.path.join(d, m)))  # noqa: E731
+        has = (lambda m: d is not None and os.path.lexists(os.path.join(d, m)))  # noqa: E731
         o = {"id": text(i), "name": text(n["name"]), "track": text(n["track"]), "deps": [text(x) for x in n["deps"]],
              "unlocks": [text(m["id"]) for m in nodes if i in m["deps"]], "summary": cut(text(n["summary"]), 300),
              "size": None, "has_spec": False, "criteria": [], "starts": 0, "state": "waiting", "pr": None,
@@ -352,13 +355,15 @@ def throttle_file(root, line):
             wins.append({"name": text(str(k)), "utilization": num(v.get("utilization")), "resets_at": integ(v.get("resetsAt")),
                          "status": cut(text(st), 60) if isinstance(st, str) else None})
     samples = []
-    for s in usage.get("samples5h") or []:
+    sm = usage.get("samples5h")
+    for s in sm if isinstance(sm, list) else []:
         if isinstance(s, list) and len(s) >= 2 and num(s[0]) is not None and num(s[1]) is not None:
             samples.append({"t": int(s[0]), "u": s[1]})
     is_held, reason = False, None
     if line is not None:
-        if line.startswith("hold: "):
-            is_held, reason = True, line[6:]
+        m = HOLD.match(line)
+        if m:
+            is_held, reason = True, line[m.end():].strip()
         else:
             reason = line[6:] if line.startswith("open: ") else line
         reason = cut(text(reason), 300)
@@ -402,7 +407,7 @@ def triage(root, repo):
     out = []
     for n in nums:
         d = os.path.join(base, str(n))
-        has = lambda m: os.path.exists(os.path.join(d, m))  # noqa: E731
+        has = lambda m: os.path.lexists(os.path.join(d, m))  # noqa: E731
         state, txt = "idle", None
         if alive(os.path.join(d, "session.pid"), str(n)):
             state = "running"
@@ -421,25 +426,37 @@ def triage(root, repo):
 def activity_file(root, repos):
     events, deploys, tri, version = [], [], [], None
     for idx, repo in enumerate(repos):
-        name = repo.split("/")[1]
-        state = os.path.join(root, "state", name)
-        log_path = os.path.join(state, "status.log")
-        for ln, line in enumerate(tail_lines(log_path, 100)):
-            if line.strip():
-                events.append(((line.partition(" ")[0], -idx, ln), event(repo, line)))
-        mine = collections.deque(maxlen=10)
-        try:  # the deploy events: the whole log, line by line
-            with open(log_path, encoding="utf-8", errors="replace") as f:
-                for ln, line in enumerate(f):
-                    line = line.rstrip("\n")
-                    if DEPLOY.match(LOOP_PREFIX.sub("", line.partition(" ")[2])):
-                        mine.append(((line.partition(" ")[0], -idx, ln), event(repo, line)))
-        except OSError:
-            pass
-        deploys += mine
-        tri += triage(root, repo)
-        if version is None:
-            version = first_line(os.path.join(state, "version"))
+        try:
+            version = activity_repo(root, repo, idx, events, deploys, tri, version)
+        except Exception as e:  # noqa: BLE001 - one repository's bad files give defaults
+            log("%s: activity: %s: %s" % (repo, type(e).__name__, e))
+    return finish_activity(root, events, deploys, tri, version)
+
+
+def activity_repo(root, repo, idx, events, deploys, tri, version):
+    name = repo.split("/")[1]
+    state = os.path.join(root, "state", name)
+    log_path = os.path.join(state, "status.log")
+    for ln, line in enumerate(tail_lines(log_path, 100)):
+        if line.strip():
+            events.append(((line.partition(" ")[0], -idx, ln), event(repo, line)))
+    mine = collections.deque(maxlen=10)
+    try:  # the deploy events: the whole log, line by line
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            for ln, line in enumerate(f):
+                line = line.rstrip("\n")
+                if DEPLOY.match(LOOP_PREFIX.sub("", line.partition(" ")[2])):
+                    mine.append(((line.partition(" ")[0], -idx, ln), event(repo, line)))
+    except OSError:
+        pass
+    deploys += mine
+    tri += triage(root, repo)
+    if version is None:
+        version = first_line(os.path.join(state, "version"))
+    return version
+
+
+def finish_activity(root, events, deploys, tri, version):
     events.sort(key=lambda e: e[0], reverse=True)
     dep = sorted(deploys, key=lambda e: e[0], reverse=True)[:10]
     prev = (read(os.path.join(root, "deploy", "previous"), 4000) or "").split("\n")[0].strip()
@@ -500,11 +517,15 @@ def build(a):
     for repo in published:
         try:
             lock = os.path.join(root, "state", repo.split("/")[1], "loop.lock")
-            data = repo_file(root, repo, held(lock), bool(throttle and throttle.startswith("hold:")), home)
+            data = repo_file(root, repo, held(lock), bool(throttle and HOLD.match(throttle)), home)
             files["repo.%s.%s.json" % tuple(repo.split("/"))] = jdump(data)
         except Exception as e:  # noqa: BLE001 - one repository's bad files do not stop the others
             log("%s: %s: %s" % (repo, type(e).__name__, e))
-    files["throttle.json"] = jdump(throttle_file(root, throttle))
+    try:
+        files["throttle.json"] = jdump(throttle_file(root, throttle))
+    except Exception as e:  # noqa: BLE001
+        log("throttle.json: %s: %s" % (type(e).__name__, e))
+        files["throttle.json"] = jdump({"windows": [], "updated": None, "held": False, "reason": None, "history": []})
     files["activity.json"] = jdump(activity_file(root, published))
     write_out(a.out, files)
 
