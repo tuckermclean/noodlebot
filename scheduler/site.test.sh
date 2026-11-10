@@ -673,6 +673,41 @@ for code in ("404", "422", "403", "500", "fail"):
 one("W02-AC-4 no call ever was a POST, and every call was to gists/<ID>",
     lambda: len(all_calls) > 10 and all("POST" not in c["args"] and any(a.lstrip("/").endswith("gists/" + gid) for a in c["args"]) for c in all_calls))
 
+# ---- W02-AC-4: a build that fails fatally (a missing --repos file) is one 'publish failed (<reason>)' line
+k += 1; bump(k)
+before = pj()
+r = subprocess.run([a if a != tmp + "/pub-repos" else tmp + "/no-such-repos" for a in pub_args(T)], cwd=tmp + "/cwd", env=env(),
+                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+fo, fe = r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+outputs.append(fo + fe)
+fl = [l for l in fe.split("\n") if l.strip()]
+fc = new_calls()
+one("W02-AC-4 a fatal build error (missing --repos file): exit 1", lambda: r.returncode == 1)
+one("W02-AC-4 a fatal build error: exactly one stderr line", lambda: len(fl) == 1)
+one("W02-AC-4 a fatal build error: the line is 'publish failed (<reason>)'", lambda: len(fl) == 1 and re.search(r"publish failed \(.+\)", fl[0]) is not None)
+one("W02-AC-4 a fatal build error: no gh call is made", lambda: fc == [])
+one("W02-AC-4 a fatal build error: published.json is byte-identical", lambda: pj() == before)
+
+# ---- W02-AC-4: a per-repository build warning plus an error answer is still exactly one stderr line
+gp = tmp + "/data/state/bravo/graph.yaml"
+had = open(gp, "rb").read() if os.path.exists(gp) else None
+open(gp, "w").write("nodes:\n  - id: B01\n    name: x\n    track: t\n    deps: 5\n    summary: s\n")
+k += 1; bump(k)
+before = pj()
+answer("500")
+rc, o, e, cw = pub(T + 100)
+wl = [l for l in e.split("\n") if l.strip()]
+one("W02-AC-4 a build warning and a 500 answer: exit 1", lambda: rc == 1)
+one("W02-AC-4 a build warning and a 500 answer: exactly one stderr line", lambda: len(wl) == 1)
+one("W02-AC-4 a build warning and a 500 answer: that line is 'publish failed (<status>)'", lambda: len(wl) == 1 and re.search(r"publish failed \([^)]*500[^)]*\)", wl[0]) is not None)
+one("W02-AC-4 a build warning and a 500 answer: published.json is byte-identical", lambda: pj() == before)
+answer("200")
+if had is None: os.unlink(gp)
+else: open(gp, "wb").write(had)
+k += 1; bump(k)
+rc, o, e, cr = pub(T + 300)
+T += 400
+
 # ---- W02-AC-3: --keepalive 0 turns the keepalive off
 T += 100000
 rc, o, e, c = pub(T, ["--keepalive", "0"])
