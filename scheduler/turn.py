@@ -28,6 +28,7 @@ Exits 1 with a message on stderr on an error.
 import argparse
 import fcntl
 import json
+import math
 import os
 import sys
 import time
@@ -37,7 +38,7 @@ GROUP = {"S": 1, "M": 2, "L": 3}
 
 
 def num(x):
-    return isinstance(x, (int, float)) and not isinstance(x, bool)
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
 def read_json(path):
@@ -59,7 +60,7 @@ def write_json(path, data):
 def valid_list(d):
     def text(x):
         return isinstance(x, str)
-    return (isinstance(d, dict) and num(d.get("tick")) and isinstance(d.get("units"), list)
+    return (isinstance(d, dict) and num(d.get("tick")) and d["tick"] > 0 and isinstance(d.get("units"), list)
             and all(isinstance(u, dict) and num(u.get("since")) and text(u.get("key"))
                     and text(u.get("kind")) and text(u.get("size")) for u in d["units"])
             and isinstance(d.get("gaveback", []), list) and all(text(k) for k in d.get("gaveback", [])))
@@ -78,6 +79,8 @@ def parse_units(text):
         try:
             since = float(f[3])
         except ValueError:
+            continue
+        if not math.isfinite(since):
             continue
         units.append({"key": f[0], "kind": f[1], "size": f[2], "since": since})
     return units
@@ -126,17 +129,21 @@ def ask(state, repo, now, args):
     gap = args.gap
     if gap is None and os.environ.get("SCHED_START_GAP"):
         gap = float(os.environ["SCHED_START_GAP"])
-    if gap is None:
+        if not math.isfinite(gap):
+            gap = None
+    if gap is None or not math.isfinite(gap):
         gap = max(d["tick"] for d in lists.values())
     starve = args.starve
     if starve is None:
         starve = float(os.environ.get("SCHED_STARVE") or 21600)
+        if math.isnan(starve):
+            starve = 21600.0
     spath = os.path.join(state, "starts.json")
     last = read_json(spath)
     if not valid_start(last):
         last = None
-    if last is not None and last["time"] > now:
-        last = None  # a start in the future is a bad record (clock step, junk): no start yet
+    if last is not None and last["time"] > now + gap:
+        last = None  # a start far in the future is a bad record (clock step, junk): no start yet
     if last is not None and now - last["time"] < gap:
         return None
     everyone = order(lists, now, starve)
@@ -187,14 +194,18 @@ def main():
     p.add_argument("--starve", type=float)
     p.add_argument("--now", type=float)
     args = p.parse_args()
-    now = time.time() if args.now is None else args.now
+    if args.now is not None and not math.isfinite(args.now):
+        p.error("--now must be finite")
     state = os.path.join(args.root, "state")
     os.makedirs(os.path.join(state, args.repo), exist_ok=True)
     with open(os.path.join(state, "starts.lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        now = time.time() if args.now is None else args.now
         if args.command == "list":
             if args.tick is None:
                 p.error("list needs --tick")
+            if not (math.isfinite(args.tick) and args.tick > 0):
+                p.error("--tick must be a positive finite number")
             write_json(os.path.join(state, args.repo, "waiting.json"),
                        {"tick": args.tick, "units": parse_units(sys.stdin.read()), "gaveback": []})
         elif args.command == "ask":
