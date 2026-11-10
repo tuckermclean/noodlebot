@@ -346,5 +346,44 @@ ok "P03-AC-5 that line mentions the rollback" 'printf "%s\n" "$out" | grep -qi "
 ok "P03-AC-5 nothing changed: head and deploy/rejected" '[ "$(head_of)" = "$head_before" ] && [ "$(cat "$dd/rejected" 2>/dev/null)" = "$rej_before" ]'
 ok "P03-AC-5 the marker of a rollback without a rollback point is gone after the run" '[ ! -e "$dd/rollback-request" ]'
 
+# (round 2) a rollback request when the live checkout is already at deploy/previous: still one line
+head_now=$(head_of)
+printf '%s\n' "$head_now" >"$dd/previous"
+rej_before=$(cat "$dd/rejected" 2>/dev/null)
+printf '2026-11-10T03:17:00Z\n' >"$dd/rollback-request"
+out=$(dep1)
+ok "P03-AC-5 a rollback request when already at the rollback point prints exactly one line" '[ "$(nlines "$out")" = 1 ]'
+ok "P03-AC-5 that line says there was nothing to roll back" 'printf "%s\n" "$out" | grep -qi "nothing\|no rollback point" && printf "%s\n" "$out" | grep -qi "roll"'
+ok "P03-AC-5 already at the rollback point: head and deploy/rejected unchanged" '[ "$(head_of)" = "$head_now" ] && [ "$(cat "$dd/rejected" 2>/dev/null)" = "$rej_before" ]'
+ok "P03-AC-5 the marker of a rollback already at the rollback point is gone after the run" '[ ! -e "$dd/rollback-request" ]'
+
+# (round 2) a retry clears the named sha's count from deploy/tries; a different sha's count is kept
+# c0 is a real commit that is not origin/main's head, so no deploy run removes tries on its own.
+echo "$c0" >>"$dd/rejected"
+echo "$c0 1" >"$dd/tries"
+printf '%s\n' "$c0" >"$dd/retry"
+out=$(dep1)
+ok "P03-AC-5 a retry of a rejected non-head commit is acknowledged (guard)" 'printf "%s\n" "$out" | grep -i "retry" | grep -qi "requested"'
+ok "P03-AC-5 the retry removes the named sha from deploy/rejected" '! in_rejected "$c0"'
+ok "P03-AC-5 the retry clears the named sha's count from deploy/tries" '! grep -q "$c0" "$dd/tries" 2>/dev/null'
+echo "$c0" >>"$dd/rejected"
+echo "$c1 1" >"$dd/tries"
+printf '%s\n' "$c0" >"$dd/retry"
+out=$(dep1)
+ok "P03-AC-5 the retry removes the sha from deploy/rejected (other count case, guard)" '! in_rejected "$c0"'
+ok "P03-AC-5 a retry keeps the count of a different sha in deploy/tries" 'grep -q "^$c1 1\$" "$dd/tries" 2>/dev/null'
+
+# (round 2) in every case the markers are gone: an unresolvable rollback point does not strand the retry marker
+echo "$c0" >>"$dd/rejected"
+echo 0123456789abcdef0123456789abcdef01234567 >"$dd/previous"
+head_now=$(head_of)
+printf '2026-11-10T03:18:00Z\n' >"$dd/rollback-request"
+printf '%s\n' "$c0" >"$dd/retry"
+out=$(dep1)
+ok "P03-AC-5 an unresolvable rollback point: the rollback marker is gone after the run" '[ ! -e "$dd/rollback-request" ]'
+ok "P03-AC-5 an unresolvable rollback point: the retry marker is gone after the run" '[ ! -e "$dd/retry" ]'
+ok "P03-AC-5 an unresolvable rollback point: a stdout line reports the rollback request" 'printf "%s\n" "$out" | grep -i "roll" | grep -qi "request"'
+ok "P03-AC-5 an unresolvable rollback point: head unchanged" '[ "$(head_of)" = "$head_now" ]'
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
