@@ -36,10 +36,12 @@ commit() {
 	g add -A && g commit -q -m "$1" && g push -q "$tmp/remote.git" HEAD:main 2>/dev/null
 }
 commit c0 pass
+g tag v0.1.0   # V01-AC-4: tagged commits, so a version is not just a sha
 git clone -q --bare "$tmp/work" "$tmp/remote.git"
 git clone -q "$tmp/remote.git" "$live"
 g remote add origin "$tmp/remote.git" 2>/dev/null
 commit c1 pass
+g tag v0.2.0 && g push -q "$tmp/remote.git" v0.2.0 2>/dev/null
 
 full() { git -C "$1" rev-parse "$2"; }
 head_of() { full "$live" HEAD; }
@@ -53,8 +55,14 @@ c1=$(full "$tmp/work" HEAD)
 
 # D01-AC-1: a passing new commit is deployed.
 out=$(dep)
-m1=0; printf '%s\n' "$out" | grep -Eq "^deployed $(short "$c0")[0-9a-f]*\.\.$(short "$c1")[0-9a-f]*\$" && m1=1
-ok "D01-AC-1 prints deployed <old>..<new>" '[ "$m1" = 1 ]'
+m1=0; printf '%s\n' "$out" | grep -Eq "^deployed $(short "$c0")[0-9a-f]*\.\.$(short "$c1")[0-9a-f]* \(version [^)]+\)\$" && m1=1
+ok "D01-AC-1 prints deployed <old>..<new> (version <v>)" '[ "$m1" = 1 ]'
+# V01-AC-4: the events name git describe --tags --always of the commit they deploy, refuse or return to.
+# (expected versions come from the remote's own repository, where the tags are; deploy.sh must bring them to the live checkout)
+ver() { git -C "$tmp/work" describe --tags --always "$1" 2>/dev/null; }
+v1=$(ver "$c1")
+ok "V01-AC-4 the expected version of the deployed commit is a tag, not a bare sha (guard)" '[ "$v1" = v0.2.0 ]'
+ok "V01-AC-4 the deploy line is 'deployed <old>..<new> (version <describe of new>)'" '[ "$v1" = v0.2.0 ] && [ "$out" = "deployed $c0..$c1 (version $v1)" ]'
 ok "D01-AC-1 live checkout moved to the new commit" '[ "$(head_of)" = "$c1" ]'
 ok "D01-AC-1 deploy/previous is the old HEAD" 'prev_is "$c0"'
 ok "D01-AC-1 make test ran once for the commit" '[ "$(runs c1)" = 1 ]'
@@ -66,8 +74,11 @@ ok "D01-AC-1 nothing to do prints nothing" '[ "$deployed1" = 1 ] && [ -z "$out" 
 commit c2 fail
 c2=$(full "$tmp/work" HEAD)
 out=$(dep)
-m2=0; printf '%s\n' "$out" | grep -Eq "^not deployed: $(short "$c2")[0-9a-f]* fails make test\$" && m2=1
-ok "D01-AC-2 prints 'not deployed: <sha> fails make test'" '[ "$m2" = 1 ]'
+m2=0; printf '%s\n' "$out" | grep -Eq "^not deployed: $(short "$c2")[0-9a-f]* \(version [^)]+\) fails make test\$" && m2=1
+ok "D01-AC-2 prints 'not deployed: <sha> (version <v>) fails make test'" '[ "$m2" = 1 ]'
+v2=$(ver "$c2")
+ok "V01-AC-4 the refused commit's version is tag-based, not a bare sha (guard)" 'case $v2 in v0.2.0-1-g*) true ;; *) false ;; esac'
+ok "V01-AC-4 the failing commit's line is 'not deployed: <sha> (version <describe of it>) fails make test'" '[ -n "$v2" ] && [ "$out" = "not deployed: $c2 (version $v2) fails make test" ]'
 ok "D01-AC-2 the failure is one line" '[ "$m2" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c .)" = 1 ]'
 ok "D01-AC-2 live checkout stays on the old commit" '[ "$m2" = 1 ] && [ "$(head_of)" = "$c1" ]'
 ok "D01-AC-2 make test ran for the failing commit" '[ "$(runs c2)" = 1 ]'
@@ -84,6 +95,7 @@ ok "D01-AC-2 previous is the commit deployed from" 'prev_is "$c1"'
 # D01-AC-3: --rollback returns to the recorded previous commit, and it sticks.
 out=$(sh "$deploy" --rollback "$live" 2>&1)
 ok "D01-AC-3 rollback returns the live checkout to the previous commit" '[ "$(head_of)" = "$c1" ]'
+ok "V01-AC-4 the rollback line is 'rolled back <cur>..<prev> (version <describe of prev>)'" '[ "$v1" = v0.2.0 ] && [ "$out" = "rolled back $c3..$c1 (version $v1)" ]'
 rb=0; [ "$(head_of)" = "$c1" ] && rb=1
 out=$(dep)
 ok "D01-AC-3 rollback sticks: the next deploy does not move back to the commit just left" '[ "$rb" = 1 ] && [ "$(head_of)" = "$c1" ]'
@@ -156,6 +168,8 @@ ok "D01-AC-2 the live checkout stays on the old commit when the fast-forward fai
 ok "D01-AC-2 the failed fast-forward prints at most one stdout line (a status event)" '[ "$(runs a2)" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c .)" -le 1 ]'
 ok "D01-AC-2 the failed fast-forward prints exactly one stdout line" '[ "$(runs a2)" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c .)" = 1 ]'
 ok "D01-AC-2 that line starts with 'not deployed: <sha>'" '[ "$(runs a2)" = 1 ] && printf "%s\n" "$out" | grep -Eq "^not deployed: $(short "$a2")[0-9a-f]*( |\$)"'
+va2=$(ver "$a2")
+ok "V01-AC-4 the cannot-fast-forward line is 'not deployed: <sha> (version <describe of it>) cannot fast-forward <live> (will retry the fast-forward)'" '[ -n "$va2" ] && [ "$out" = "not deployed: $a2 (version $va2) cannot fast-forward $live (will retry the fast-forward)" ]'
 out=$(sh "$deploy" "$live" 2>/dev/null)
 ok "D01-AC-2 the same commit is not tried again: make test is not rerun" '[ "$(runs a2)" = 1 ]'
 ok "D01-AC-2 the later run prints nothing on stdout" '[ "$(runs a2)" = 1 ] && [ -z "$out" ]'
@@ -238,9 +252,40 @@ during=$(head_of)
 rm -f "$live/.git/index.lock"
 out2=$(dep)
 ok "D01-AC-1 make test ran for the commit while the fast-forward is blocked (guard)" '[ "$during" = "$before" ] && [ "$(runs f3)" -ge 1 ]'
-ok "D01-AC-2 a temporarily blocked fast-forward is not reported as failing make test" '[ "$(runs f3)" -ge 1 ] && ! printf "%s\n%s\n" "$out1" "$out2" | grep -q "not deployed: $(short "$f3")[0-9a-f]* fails make test"'
+ok "D01-AC-2 a temporarily blocked fast-forward is not reported as failing make test" '[ "$(runs f3)" -ge 1 ] && ! printf "%s\n%s\n" "$out1" "$out2" | grep -Eq "not deployed: $(short "$f3")[0-9a-f]* \(version [^)]+\) fails make test"'
 ok "D01-AC-1 once the lock is gone the next run deploys the commit" '[ "$(runs f3)" -ge 1 ] && [ "$(head_of)" = "$f3" ]'
 ok "D01-AC-1 make test is not run a second time for that sha" '[ "$(runs f3)" = 1 ]'
+
+# --- V01-AC-4 robustness: a moved or conflicting tag must not stop a deploy ---
+# tagcase <name> <moved|local>: a fresh remote and live clone, both having tag v1 on the first commit.
+# moved: origin's v1 is then moved to the new commit. local: the live checkout's own v1 points elsewhere than origin's.
+tagcase() {
+	tn=$1; tw=$tmp/tw-$tn; tr=$tmp/tr-$tn; tl=$tmp/tl-$tn
+	tg() { git -C "$tw" -c user.name=t -c user.email=t@t "$@"; }
+	git init -q -b main "$tw"
+	printf 'test:\n\t@true\n' >"$tw/Makefile"; echo t0 >"$tw/file"
+	tg add -A && tg commit -q -m t0 && tg tag v1
+	git clone -q --bare "$tw" "$tr"
+	git clone -q "$tr" "$tl"
+	echo t1 >"$tw/file"; tg add -A && tg commit -q -m t1
+	t0=$(git -C "$tl" rev-parse HEAD); t1=$(git -C "$tw" rev-parse HEAD)
+	if [ "$2" = moved ]; then
+		tg tag -f v1 "$t1" >/dev/null && tg push -q --force "$tr" HEAD:main v1 2>/dev/null
+	else
+		tg tag v2 "$t1" && tg push -q "$tr" HEAD:main v2 2>/dev/null
+		git -C "$tl" tag v2 "$t0"
+	fi
+	tout=$(NOODLEBOT_DATA=$tmp/data-$tn sh "$deploy" "$tl" 2>"$tmp/err-$tn"); trc=$?
+	thead=$(git -C "$tl" rev-parse HEAD)
+}
+tagcase moved moved
+ok "V01-AC-4 a tag moved on origin: the new commit is still deployed (live checkout moves)" '[ "$thead" = "$t1" ]'
+ok "V01-AC-4 a tag moved on origin: exit status 0 as for a normal deploy" '[ "$trc" = 0 ]'
+ok "V01-AC-4 a tag moved on origin: exactly one line 'deployed <old>..<new> (version <v>)'" 'printf "%s\n" "$tout" | grep -Eq "^deployed $t0\.\.$t1 \(version [^)]+\)\$" && [ "$(printf "%s\n" "$tout" | grep -c .)" = 1 ]'
+tagcase local local
+ok "V01-AC-4 a conflicting local tag: the new commit is still deployed (live checkout moves)" '[ "$thead" = "$t1" ]'
+ok "V01-AC-4 a conflicting local tag: exit status 0 as for a normal deploy" '[ "$trc" = 0 ]'
+ok "V01-AC-4 a conflicting local tag: exactly one line 'deployed <old>..<new> (version <v>)'" 'printf "%s\n" "$tout" | grep -Eq "^deployed $t0\.\.$t1 \(version [^)]+\)\$" && [ "$(printf "%s\n" "$tout" | grep -c .)" = 1 ]'
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
