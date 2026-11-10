@@ -657,6 +657,12 @@ for code in ("404", "422", "403", "500", "fail"):
     elif code != "fail":
         one(tag + ": the line names the status", lambda: code in lines[0])
     one(tag + ": no response body in stdout or stderr", lambda: "RESPONSEBODYMARK" not in o + e and "Validation Failed" not in o + e)
+    if code == "404":
+        one(tag + ": the line names the status (404)", lambda: "404" in lines[0])
+    if code != "fail":
+        one(tag + ": the line is '... publish failed (<status>)' with the HTTP code in the parentheses", lambda: re.search(r"publish failed \([^)]*" + code + r"[^)]*\)", lines[0]) is not None)
+    else:
+        one(tag + ": the line has 'publish failed (' with something in the parentheses", lambda: re.search(r"publish failed \([^)]+\)", lines[0]) is not None)
     one(tag + ": published.json is byte-identical", lambda: pj() == before)
     answer("200")
     rc2, o2, e2, cn = pub(T + 100)
@@ -666,6 +672,18 @@ for code in ("404", "422", "403", "500", "fail"):
     T += 200
 one("W02-AC-4 no call ever was a POST, and every call was to gists/<ID>",
     lambda: len(all_calls) > 10 and all("POST" not in c["args"] and any(a.lstrip("/").endswith("gists/" + gid) for a in c["args"]) for c in all_calls))
+
+# ---- W02-AC-3: --keepalive 0 turns the keepalive off
+T += 100000
+rc, o, e, c = pub(T, ["--keepalive", "0"])
+one("W02-AC-3 --keepalive 0, nothing changed, long after the last publish: no gh call, exit 0", lambda: rc == 0 and c == [])
+k += 1; bump(k)
+rc, o, e, c = pub(T + 100, ["--keepalive", "0"])
+one("W02-AC-3 --keepalive 0: a change past --min-interval is still sent", lambda: rc == 0 and len(c) == 1)
+k += 1; bump(k)
+rc, o, e, c = pub(T + 105, ["--keepalive", "0"])
+one("W02-AC-3 --keepalive 0: a changed file within --min-interval sends nothing", lambda: rc == 0 and c == [])
+T += 100000
 
 # ---- W02-AC-3: a held lock; two publishes started at once
 os.makedirs(root + "/site", exist_ok=True)
