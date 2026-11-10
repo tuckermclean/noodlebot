@@ -2468,7 +2468,8 @@ qrun_until 30 5
 qok "S07-AC-1: five ready units, throttle open: exactly five sessions start, none twice" test "$(qn)" = 5 -a "$(sort "$q/starts.log" | awk '{ print $3 }' | sort -u | wc -l)" = 5
 qok "S07-AC-1: every unit is started by the loop of its repository" test "$(qpairs)" = "qa:A02 qa:A03 qa:t7 qb:B01 qb:B04"
 qok "S07-AC-1: one start per turn: the five starts are at least SCHED_START_GAP (2 s) apart (the sessions' clocks)" qgap_n 5 1.7
-qok "S07-AC-1: the status logs' five start times are at least the gap less a second apart" sh -c "[ \"\$(qlogtimes | wc -l)\" = 5 ]" && qok "S07-AC-1: the status logs' start times are at least a second apart (whole seconds, gap 2)" qlog_gap_ok 1
+qok "S07-AC-1: the status logs' five start times are at least the gap less a second apart" test "$(qlogtimes | wc -l)" = 5
+qok "S07-AC-1: the status logs' start times are at least a second apart (whole seconds, gap 2)" qlog_gap_ok 1
 qok "S07-AC-2: the order is the triage and S, then M, then the Ls (the longer wait first)" test "$(qseq)" = "t7 B01 A02 A03 B04"
 qok "S07-AC-3: starts.json and both waiting.json exist and every sample of them was well-formed JSON" test "$qjson_n" -ge 6 -a "$qjson_bad" = 0 -a -e "$qd/state/starts.json" -a -e "$qd/state/qa/waiting.json" -a -e "$qd/state/qb/waiting.json"
 for u in 'triage of #7 ' 'A02 ' 'A03 ' 'B01 ' 'B04 '; do
