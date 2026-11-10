@@ -1352,6 +1352,10 @@ d=$S05D
 a1=$1 a2=$2 n=${3:-}
 case "$a1 $a2" in
 "pr list")
+	case " $* " in *" --state merged "*)   # once per tick: log whether the watched process group is alive
+		w=$(cat "$d/watchpg" 2>/dev/null)
+		if [ -n "$w" ] && ps -eo pgid=,stat= | awk -v g="$w" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; then echo "tick alive" >>"$d/ticks.log"
+		else echo "tick gone" >>"$d/ticks.log"; fi ;; esac
 	case " $* " in
 	*" --state merged "*) cat "$d/merged.tsv" ;;
 	*" --state open "*) cat "$d/open.tsv" ;;
@@ -1480,7 +1484,13 @@ git -C "$tmp/s05work" rm -q nodes/R02-n2.md
 printf 'nodes:\n  - {id: R08, name: n8, deps: []}\n  - {id: R09, name: n9, deps: []}\n' >"$tmp/s05work/docs/graph.yaml"
 git -C "$tmp/s05work" add -A && git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m 'Remove node R02'
 s5h2=$(git -C "$tmp/s05work" rev-parse HEAD); s5h2s=${s5h2:0:7}
+# S05-AC-3 "within one tick": anchor the push to a tick (the fake gh logs one line per tick, after the loop's fetch),
+# so the tick after the sync line is the first to see the removal and the group must be gone in the line after that
+echo "$s5pg2" >"$S5/watchpg"; : >"$S5/ticks.log"
+waitf 10 sh -c "[ \"\$(wc -l <'$S5/ticks.log')\" -ge 1 ]"
 git -C "$tmp/s05work" push -q "$tmp/s05remote.git" HEAD:main
+waitf 15 sh -c "[ \"\$(wc -l <'$S5/ticks.log')\" -ge 3 ]"
+s5ok "S05-AC-3: the session of a removed node is stopped within one tick of the tick that sees the removal (alive in that tick's own line, gone in the next)" sh -c "[ \"\$(sed -n 2p '$S5/ticks.log')\" = 'tick alive' ] && [ \"\$(sed -n 3p '$S5/ticks.log')\" = 'tick gone' ]"
 # R02: session stopped, PR closed, cleaned
 s5ok "S05-AC-3: the running session of a removed node: its process group is gone within a tick" waitf 5 grp_gone "$s5pg2"
 s5ok "S05-AC-3: and its child with it" waitf 2 dead "$s5c2"
@@ -1610,6 +1620,7 @@ git -C "$tmp/s05work" rm -q nodes/R13-n13.md && git -C "$tmp/s05work" -c user.na
 git -C "$tmp/s05work" push -q "$tmp/s05remote.git" HEAD:main
 s5ok "S05-AC-4: (issues) a failing gh issue close is tried (and fails) several times" waitf 10 sh -c "[ \"\$(grep -c 'fail-issue-close 150' '$S5/attempts.log')\" -ge 3 ]"
 s5ok "S05-AC-4: (issues) the issue stays open and the state of R13 stays while the close fails" sh -c "[ \"\$(cat '$S5/issue.150')\" = OPEN ] && [ -d '$s5st/node/R13' ]"
+s5ok "S05-AC-4: (issues) a failing gh issue close is logged in the status log, naming issue #150" waitf 3 sh -c "grep -qE 'R13 removed by #80: closing issue #150 failed' '$s5st/status.log'"
 rm -f "$S5/fail.issueclose"
 s5ok "S05-AC-4: (issues) at a later tick the step completes: issue #150 is closed as not planned" waitf 8 sh -c "grep -qE '^issue-close 150 reason=not planned\$' '$S5/calls.log' && [ \"\$(cat '$S5/issue.150')\" = CLOSED ]"
 sleep 2.5
