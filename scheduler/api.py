@@ -182,6 +182,192 @@ def r_repo(m, req):
     return 200, repo_info(m.group(1))
 
 
+# ---- nodes ----
+
+NODE_ID = r"[A-Z][0-9][0-9]"
+GRAPH_READER = """
+import json, sys, yaml
+with open(sys.argv[1], encoding="utf-8") as f:
+    nodes = yaml.safe_load(f)["nodes"]
+print(json.dumps([{"id": str(n["id"]), "name": str(n["name"]), "deps": [str(d) for d in n.get("deps") or []],
+                   "track": str(n.get("track") or "")} for n in nodes]))
+"""
+LIMIT_TEXT = re.compile(r"usage limit|rate limit|limit reached|hit your limit", re.I)
+
+
+def run_py(args, what):
+    """Run python3 -I with args (stdlib-only api.py leaves PyYAML to this child, as ready.py needs it too); 503 on any failure."""
+    try:
+        r = subprocess.run(["python3", "-I"] + args, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e:
+        log("%s failed: %r" % (what, e))
+        raise Err(503, what + " failed")
+    if r.returncode != 0:
+        log("%s failed: rc %d: %s" % (what, r.returncode, r.stderr.strip()[:300]))
+        raise Err(503, what + " failed")
+    return r.stdout
+
+
+def first_line(path):
+    t = read_text(path)
+    return None if t is None else (t.splitlines() or [""])[0]
+
+
+def first_word(path):
+    t = read_text(path)
+    return (t.split() or [None])[0] if t is not None else None
+
+
+def session_alive(d, key):
+    """The session's pid is a live process whose command line is a session of key, as alive() in loop.sh decides it."""
+    w = first_word(os.path.join(d, "session.pid"))
+    if not w or not w.isdigit():
+        return False
+    try:
+        os.kill(int(w), 0)
+    except OSError:
+        return False
+    cmd = (read_text("/proc/%s/cmdline" % w) or "").replace("\0", " ")
+    return re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (key, key), cmd) is not None
+
+
+def at_limit(d):
+    """The log's last line is a usage-limit rejection as S06 reads it: a rate_limit_event whose status is not
+    allowed, or a result naming a usage limit."""
+    try:
+        with open(os.path.join(d, "session.jsonl"), "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 400000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return False
+    lines = [x for x in lines if x.strip()]
+    try:
+        ev = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        return False
+    if not isinstance(ev, dict):
+        return False
+    if ev.get("type") == "rate_limit_event":
+        return ((ev.get("rate_limit_info") or {}).get("status", "allowed")) != "allowed"
+    if ev.get("type") == "result":
+        return LIMIT_TEXT.search(str(ev.get("result") or "") + " " + str(ev.get("subtype") or "")) is not None
+    return False
+
+
+def node_ids(path, col):
+    """IDs of the node/<ID>-... branches in column col (0-based) of a space-separated file, as ids() in loop.sh."""
+    out = []
+    for line in (read_text(path) or "").splitlines():
+        f = line.split(" ")
+        if len(f) > col:
+            m = re.match(r"node/(%s)-" % NODE_ID, f[col])
+            if m and m.group(1) not in out:
+                out.append(m.group(1))
+    return out
+
+
+def nodes_of(repo):
+    if repo not in repo_list():
+        raise Err(404, "no such repository: " + repo)
+    owner, name = repo.split("/", 1)
+    sd = os.path.join(root, "state", name)
+    graph = os.path.join(sd, "graph.yaml")
+    if not os.path.exists(graph):
+        raise Err(503, "no graph fetched yet for " + repo)
+    try:
+        nodes = json.loads(run_py(["-c", GRAPH_READER, graph], "reading graph.yaml"))
+    except ValueError:
+        raise Err(503, "reading graph.yaml failed")
+    merged_tsv, open_tsv = os.path.join(sd, "merged-prs.tsv"), os.path.join(sd, "open-prs.tsv")
+    merged_ids = node_ids(merged_tsv, 1)
+    open_ids = node_ids(os.path.join(sd, "open-prs.txt"), 0)
+    subjects = (read_text(os.path.join(sd, "subjects.txt")) or "").splitlines()
+    merged_prs = set((read_text(os.path.join(sd, "merged-prs.txt")) or "").split())
+    prs = {}   # node ID -> (number, mergeable) of its open PR
+    for line in (read_text(open_tsv) or "").splitlines():
+        f = line.split(" ")
+        m = re.match(r"node/(%s)-" % NODE_ID, f[1]) if len(f) > 1 else None
+        if m and m.group(1) not in prs:
+            prs[m.group(1)] = (int(f[0]) if f[0].isdigit() else None, f[4] if len(f) > 4 else None)
+    # ready.py over the loop's cached files, exactly as tick() in loop.sh runs it (it writes nothing)
+    args = [os.path.join(HERE, "ready.py"), "--graph", graph, "--markers", os.path.join(sd, "node")]
+    if os.path.exists(os.path.join(sd, "subjects.txt")):
+        args += ["--subjects", os.path.join(sd, "subjects.txt")]
+    if os.path.exists(os.path.join(sd, "merged-prs.txt")):
+        args += ["--merged-prs", os.path.join(sd, "merged-prs.txt")]
+    args.append("--all")
+    for i in merged_ids:
+        args += ["--merged", i]
+    for i in open_ids:
+        args += ["--open", i]
+    ready = set()
+    for line in run_py(args, "ready.py").splitlines():
+        w = line.split()
+        if len(w) == 2:   # a third word is a merged node to follow up
+            ready.add(w[0])
+    usage = read_json(os.path.join(root, "state", "usage.json"))
+    hold = isinstance(usage, dict) and usage.get("hold") is True
+    status_issue = (read_json(os.path.join(sd, "report.json")) or {}).get("issue") if isinstance(read_json(os.path.join(sd, "report.json")), dict) else None
+    merged = set(merged_ids)
+    for n in nodes:
+        if any(x.startswith("%s %s:" % (n["id"], n["name"])) for x in subjects):
+            merged.add(n["id"])
+    out = []
+    for n in nodes:
+        i = n["id"]
+        d = os.path.join(sd, "node", i)
+        has = lambda f: os.path.exists(os.path.join(d, f))   # noqa: E731
+        n.update(starts=0, state=None, pr=None, mergeable=None, reason=None, question=None, issue_url=None, spec_pr=None,
+                 waiting_on=[])
+        st = first_word(os.path.join(d, "starts"))
+        if st and st.isdigit():
+            n["starts"] = int(st)
+        wp = first_word(os.path.join(d, "WAITING-PR"))
+        if i in merged:
+            n["state"] = "merged"
+        elif i in prs:
+            n["state"], (n["pr"], n["mergeable"]) = "pr-open", prs[i]
+        # idle-limit before running: a session idle at the limit is still alive, so "any live session is running"
+        # first would make idle-limit unreachable
+        elif session_alive(d, i) and at_limit(d):
+            n["state"] = "idle-limit"
+        elif session_alive(d, i):
+            n["state"] = "running"
+        elif has("FAILED"):
+            n["state"], n["reason"] = "failed", first_line(os.path.join(d, "FAILED"))
+        elif has("QUESTION.md") and not has("ANSWER.md"):
+            n["state"], n["question"] = "question", first_line(os.path.join(d, "QUESTION.md"))
+            num = first_word(os.path.join(d, "issue"))
+            if not (num and num.isdigit()) and isinstance(status_issue, int) and not isinstance(status_issue, bool):
+                num = str(status_issue)
+            if num and num.isdigit():
+                n["issue_url"] = "https://github.com/%s/%s/issues/%s" % (owner, name, num)
+        elif has("QUESTION.md"):
+            n["state"] = "answered"
+        elif wp and wp.isdigit() and wp not in merged_prs:   # a merged spec PR lets ready.py resume the node
+            n["state"], n["spec_pr"] = "waiting-pr", int(wp)
+        elif i in ready:
+            n["state"] = "held" if hold else "ready"
+        else:
+            n["state"], n["waiting_on"] = "waiting", [x for x in n["deps"] if x not in merged]
+        out.append(n)
+    return out
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/nodes")
+def r_nodes(m, req):
+    return 200, {"nodes": nodes_of(m.group(1))}
+
+
+@route(r"/v1/repos/([^/]+/[^/]+)/nodes/(%s)" % NODE_ID)
+def r_node(m, req):
+    for n in nodes_of(m.group(1)):
+        if n["id"] == m.group(2):
+            return 200, n
+    raise Err(404, "no such node: " + m.group(2))
+
+
 @route(r"/v1/schema/([A-Za-z0-9_-]+)")
 def r_schema(m, req):
     s = read_json(os.path.join(SCHEMAS, m.group(1) + ".json"))
