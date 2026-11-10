@@ -473,6 +473,175 @@ sz=$(wc -c <"$tmp/sessions.json")
 if [ "$sz" -gt 500 ] && [ "$sz" -lt 60000 ]; then pass "P01-AC-5: the response ($sz bytes) stays under 60000 bytes though a log is about 450 KB"; else fail "P01-AC-5: the response is $sz bytes (want a real answer under 60000)"; fi
 rm -rf "$a/pr/16" "$a/issue/20"
 
+# ================= P01-AC-6: throttle, deploy, PRs, issues =================
+# S4 contract (fields named once here; the schemas "throttle", "deploy", "prs" and "issues" declare them). Every one of the four
+# carries "modified" (int epoch: the mtime of the file it was read from). None is written by the server; none calls gh.
+#  Resource "throttle"  GET /v1/throttle  ->  {"version":1, "updated" (int: usage.json's "updated"), "modified" (usage.json's mtime),
+#    "five_hour" and "seven_day": {"utilization" (number, as in the file: 0.12), "resets_at" (int, the file's resetsAt), "status"
+#    (string)}, "projected_5h" (number, the file's projected5h), "hold" (bool), "reason" (string)}.
+#  Resource "deploy"  GET /v1/deploy  ->  {"version":1, "head" (string: the HEAD of the checkout api.py runs from), "previous" (string
+#    or null: deploy/previous, trimmed: the rollback point), "rejected" (list of strings: deploy/rejected, one per line),
+#    "last_deploy" and "last_failed" (null, or {"repo": "owner/name", "time" (int: the log line's timestamp), "line" (string: the
+#    text after the timestamp, redacted)} of the LATEST line over all listed repositories' status.log that starts "deployed "
+#    (last_deploy) or "not deployed: " (last_failed)), "modified" (the mtime of deploy/previous)}.
+#  Resource "prs"  GET /v1/repos/<owner>/<name>/prs  ->  {"version":1, "prs":[{"number" (int), "branch", "head" (string), "bot"
+#    (bool: the tsv's is_bot), "mergeable" (string)}...], "modified" (open-prs.tsv's mtime)}, in file order; unlisted repo 404.
+#  Resource "issues"  GET /v1/repos/<owner>/<name>/issues  ->  {"version":1, "issues":[{"number" (int), "title" (string or null),
+#    "labelled" (bool or null), "state" (string or null)}...], "modified" (issues.json's mtime)}. An entry exists for each issue of
+#    issues.json that is labelled true, and for each state/<name>/issue/<N>/ folder (the union, once per number). title and labelled
+#    come from issues.json (null when the issue is not in it); state is "done" (a done marker), else "failed" (FAILED), else
+#    "question" (QUESTION.md without ANSWER.md), else "running" (a session.pid whose process is alive); null with no folder.
+#    An issue that issues.json lists as labelled false (the owner did not label it) and that has no folder is not listed.
+chk() { # chk <id> <what> <python expr over d>
+	if [ "$(jx "$3")" = True ]; then pass "$1: $2"; else fail "$1: $2; got $(head -c 400 "$tmp/resp")"; fi
+}
+mt() { stat -c %Y "$1"; }
+set_usage open
+get P01-AC-6 /v1/throttle throttle
+chk P01-AC-6 "/v1/throttle gives both windows, the projection, hold and reason (open)" "d['five_hour'] == {'utilization': 0.12, 'resets_at': 1794236400, 'status': 'allowed'} and d['seven_day'] == {'utilization': 0.3, 'resets_at': 1794441600, 'status': 'allowed'} and d['projected_5h'] == 0.3 and d['hold'] is False and d['reason'] == '' and d['updated'] == 1794222000"
+chk P01-AC-6 "/v1/throttle carries the mtime of usage.json" "abs(d['modified'] - $(mt "$data/state/usage.json")) <= 1"
+set_usage holding
+get P01-AC-6 /v1/throttle throttle
+chk P01-AC-6 "/v1/throttle follows usage.json while it holds: utilization, projection, hold and reason" "d['five_hour']['utilization'] == 0.93 and d['seven_day']['utilization'] == 0.4 and d['projected_5h'] == 1.7 and d['hold'] is True and d['reason'] == '5-hour window projected to 170% before its reset' and abs(d['modified'] - $(mt "$data/state/usage.json")) <= 1"
+set_usage open
+err P01-AC-6 POST /v1/throttle 405
+
+# a later deploy line in beta's status log makes beta the repository of the last deploy
+printf '2026-11-09T11:30:00Z deployed 4444444..5555555 (version v0.9.2-fixture)\n' >>"$data/state/beta/status.log"
+get P01-AC-6 /v1/deploy deploy
+chk P01-AC-6 "/v1/deploy gives the live checkout's head (the HEAD of the checkout api.py runs from)" "d['head'] == '$(git -C "$co" rev-parse HEAD)'"
+chk P01-AC-6 "/v1/deploy gives the rollback point and the rejected commits" "d['previous'] == '1' * 40 and d['rejected'] == ['2' * 40, '3' * 40] and abs(d['modified'] - $(mt "$data/deploy/previous")) <= 1"
+chk P01-AC-6 "/v1/deploy gives the last deploy as the status logs record it (the latest over all repositories)" "d['last_deploy'] == {'repo': 'acme/beta', 'time': $(ep 2026-11-09T11:30:00Z), 'line': 'deployed 4444444..5555555 (version v0.9.2-fixture)'}"
+chk P01-AC-6 "/v1/deploy gives the last failed test run as the status logs record it" "d['last_failed'] == {'repo': 'acme/alpha', 'time': $(ep 2026-11-09T09:04:00Z), 'line': 'not deployed: 2222222222222222222222222222222222222222 (version v0.9.1-fixture) fails make test'}"
+err P01-AC-6 PUT /v1/deploy 405
+
+get P01-AC-6 /v1/repos/acme/alpha/prs prs
+chk P01-AC-6 "alpha's /prs gives number, branch, head, bot and mergeable of each open PR, MERGEABLE and CONFLICTING" "{p['number']: (p['branch'], p['head'], p['bot'], p['mergeable']) for p in d['prs']} == {12: ('node/N02-pr-open-one', 'a' * 40, False, 'MERGEABLE'), 14: ('node/N11-pr-conflict-one', 'b' * 40, False, 'CONFLICTING'), 15: ('spec/triage-9-new-idea', 'c' * 40, True, 'CONFLICTING'), 16: ('spec/triage-8-other', 'd' * 40, True, 'MERGEABLE')} and len(d['prs']) == 4 and [p['number'] for p in d['prs']] == [12, 14, 15, 16]"
+chk P01-AC-6 "alpha's /prs carries the mtime of open-prs.tsv" "abs(d['modified'] - $(mt "$data/state/alpha/open-prs.tsv")) <= 1"
+get P01-AC-6 /v1/repos/acme/beta/prs prs
+chk P01-AC-6 "beta's /prs is empty (its open-prs.tsv is)" "d['prs'] == []"
+err P01-AC-6 GET /v1/repos/acme/ghost/prs 404
+err P01-AC-6 POST /v1/repos/acme/alpha/prs 405
+
+# two more issue folders, made here and removed below: 30 waits for an answer, 31 failed
+mkdir -p "$a/issue/30" "$a/issue/31"
+echo "Which format?" >"$a/issue/30/QUESTION.md"; echo "triage failed twice" >"$a/issue/31/FAILED"
+get P01-AC-6 /v1/repos/acme/alpha/issues issues
+chk P01-AC-6 "alpha's /issues gives the labelled issues of issues.json with title and labelled, and the state of the ones with a folder (8 done, 9 running)" "{i['number']: (i['title'], i['labelled'], i['state']) for i in d['issues'] if i['number'] in (8, 9)} == {8: ('Add a dark mode', True, 'done'), 9: ('Support export to CSV', True, 'running')}"
+chk P01-AC-6 "alpha's /issues gives an issue folder with an unanswered QUESTION.md the state question, and one with FAILED the state failed" "{i['number']: i['state'] for i in d['issues'] if i['number'] in (30, 31)} == {30: 'question', 31: 'failed'}"
+chk P01-AC-6 "alpha's /issues lists each issue once, and not the issue the owner did not label (10)" "sorted(i['number'] for i in d['issues']) == [8, 9, 30, 31]"
+chk P01-AC-6 "alpha's /issues carries the mtime of issues.json" "abs(d['modified'] - $(mt "$data/state/alpha/issues.json")) <= 1"
+rm -rf "$a/issue/30" "$a/issue/31"
+get P01-AC-6 /v1/repos/acme/alpha/issues issues
+chk P01-AC-6 "alpha's /issues drops a folder once it is gone" "sorted(i['number'] for i in d['issues']) == [8, 9]"
+get P01-AC-6 /v1/repos/acme/beta/issues issues
+chk P01-AC-6 "beta's /issues is empty" "d['issues'] == []"
+err P01-AC-6 GET /v1/repos/acme/ghost/issues 404
+err P01-AC-6 DELETE /v1/repos/acme/alpha/issues 405
+for res in throttle deploy prs issues; do
+	req GET /v1/schema/$res
+	if [ "$code" = 200 ] && [ -f "$schemas/$res.json" ] && python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])) else 1)' "$tmp/resp" "$schemas/$res.json" 2>/dev/null; then pass "P01-AC-8: /v1/schema/$res serves scheduler/api-schema/v1/$res.json"; else fail "P01-AC-8: /v1/schema/$res answered $code or differs from the committed schema"; fi
+done
+
+# ================= P01-AC-7: the event stream =================
+# S4 contract: GET /v1/events[?repo=<owner>/<name>][&since=<cursor>], optional header Last-Event-ID: <cursor>. Answers 200 with
+#  Content-Type text/event-stream and keeps the connection open. Each line appended to a listed repository's status.log is sent as
+#  one event: a block of lines "id: <cursor>" and "data: <one-line JSON {"repo": "owner/name", "line": "<the whole log line,
+#  timestamp included, redacted>"}" ended by an empty line. Comment lines (": ...") are keep-alives. The cursor is opaque (the
+#  test never looks inside; it is the id of an event of this or an earlier connection, global over all repositories).
+#  With a cursor the stream first sends every line after that cursor, once and in order, then goes on with new lines; without
+#  one it starts at the end (no old lines). ?repo= filters events (and the lines after a cursor) to that repository.
+cat >"$tmp/stream.py" <<'EOP'
+import http.client, signal, socket, sys
+sk, path, out, secs = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+class Stop(Exception): pass
+def h(*a): raise Stop()
+class C(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX); self.sock.connect(sk)
+signal.signal(signal.SIGALRM, h); signal.alarm(secs)
+f = open(out, "wb", buffering=0)
+try:
+    c = C("localhost")
+    c.request("GET", path, headers={"Last-Event-ID": sys.argv[5]} if len(sys.argv) > 5 else {})
+    r = c.getresponse()
+    open(out + ".hdr", "w").write("%d\n%s\n" % (r.status, r.getheader("Content-Type")))
+    while True:
+        l = r.readline()
+        if not l: break
+        f.write(l)
+except Exception:
+    pass
+EOP
+cat >"$tmp/sse.py" <<'EOP'
+import json, sys
+ev, cur = [], {}
+for l in open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n"):
+    if l == "":
+        if cur.get("id") is not None or cur.get("data") is not None:
+            try: dd = json.loads(cur.get("data", ""))
+            except Exception: dd = {}
+            ev.append({"id": cur.get("id"), "repo": dd.get("repo"), "line": dd.get("line")})
+        cur = {}
+    elif l.startswith(":"): pass
+    elif ":" in l:
+        k, v = l.split(":", 1); cur[k] = v[1:] if v.startswith(" ") else v
+print(json.dumps(ev))
+EOP
+evx() { python3 -I -c 'import json,sys
+e = json.loads(sys.argv[1])
+try: print(eval(sys.argv[2]))
+except Exception as x: print("ERR", x)' "$(python3 -I "$tmp/sse.py" "$1")" "$2"; }
+evn() { python3 -I "$tmp/sse.py" "$1" | python3 -I -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+ev_open() { # ev_open <name> <path> [last-event-id]: a client in the background writing $tmp/ev.<name>; waits for the response head
+	f=$tmp/ev.$1; : >"$f"; rm -f "$f.hdr"
+	python3 -I "$tmp/stream.py" "$sock" "$2" "$f" 12 ${3:+"$3"} </dev/null >/dev/null 2>&1 &
+	pids="$pids $!"; eval "ev_pid_$1=\$!"; i=0
+	while [ $i -lt 30 ] && [ ! -s "$f.hdr" ]; do sleep 0.1; i=$((i + 1)); done
+}
+ev_wait() { # ev_wait <name> <count> <seconds>: until the client has that many events
+	i=0; n=$(( $3 * 5 ))
+	while [ $i -lt $n ] && [ "$(evn "$tmp/ev.$1")" -lt "$2" ]; do sleep 0.2; i=$((i + 1)); done
+}
+tok=$(sed -n 2p "$fix/tokens.txt")
+A0="2026-11-09T11:00:00Z ev-test alpha before the client connects"
+A1="2026-11-09T11:00:01Z ev-test alpha one" B1="2026-11-09T11:00:02Z ev-test beta one"
+A2="2026-11-09T11:00:03Z ev-test alpha two $tok" A2r="2026-11-09T11:00:03Z ev-test alpha two [redacted]"
+A3="2026-11-09T11:00:04Z ev-test alpha three" B2="2026-11-09T11:00:05Z ev-test beta two" A4="2026-11-09T11:00:06Z ev-test alpha four"
+A5="2026-11-09T11:00:07Z ev-test alpha five" B3="2026-11-09T11:00:08Z ev-test beta three"
+sl_a=$data/state/alpha/status.log sl_b=$data/state/beta/status.log
+printf '%s\n' "$A0" >>"$sl_a"
+ev_open c1 /v1/events
+sleep 0.5
+if [ "$(sed -n 1p "$tmp/ev.c1.hdr" 2>/dev/null)" = 200 ] && sed -n 2p "$tmp/ev.c1.hdr" | grep -qi '^text/event-stream'; then pass "P01-AC-7: GET /v1/events answers 200 text/event-stream"; else fail "P01-AC-7: GET /v1/events head: $(tr '\n' ' ' <"$tmp/ev.c1.hdr" 2>/dev/null)"; fi
+printf '%s\n' "$A1" >>"$sl_a"; printf '%s\n' "$B1" >>"$sl_b"; printf '%s\n' "$A2" >>"$sl_a"
+ev_wait c1 3 5
+if [ "$(evx "$tmp/ev.c1" "[(x['repo'], x['line']) for x in e]")" = "[('acme/alpha', '$A1'), ('acme/beta', '$B1'), ('acme/alpha', '$A2r')]" ]; then pass "P01-AC-7: a connected client gets each appended line within 5 s, in order, as one event with its repository and the (redacted) line"; else fail "P01-AC-7: events of the connected client: $(evx "$tmp/ev.c1" "[(x['repo'], x['line']) for x in e]")"; fi
+if [ "$(evx "$tmp/ev.c1" "len(e) == 3 and all(isinstance(x['id'], str) and x['id'] != '' for x in e) and len(set(x['id'] for x in e)) == 3")" = True ]; then pass "P01-AC-7: each event has its own non-empty id"; else fail "P01-AC-7: ids: $(evx "$tmp/ev.c1" "[x['id'] for x in e]")"; fi
+if ! grep -q 'before the client connects' "$tmp/ev.c1" && ! grep -q 'loop started' "$tmp/ev.c1"; then pass "P01-AC-7: without a cursor the stream starts at the end (no old lines)"; else fail "P01-AC-7: the stream without a cursor sent old lines"; fi
+id_b1=$(evx "$tmp/ev.c1" "e[1]['id']"); id_a2=$(evx "$tmp/ev.c1" "e[2]['id']")
+kill "$ev_pid_c1" 2>/dev/null; wait "$ev_pid_c1" 2>/dev/null
+# while away: A3 B2 A4. Then three clients reconnect with the ids, and a fourth filters by repository.
+printf '%s\n' "$A3" >>"$sl_a"; printf '%s\n' "$B2" >>"$sl_b"; printf '%s\n' "$A4" >>"$sl_a"
+q_a2=$(python3 -I -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$id_a2")
+q_b1=$(python3 -I -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$id_b1")
+ev_open c2 "/v1/events?since=$q_a2"
+ev_open c3 /v1/events "$id_b1"
+ev_open c4 "/v1/events?repo=acme/beta"
+ev_open c5 "/v1/events?repo=acme/beta&since=$q_b1"
+sleep 0.5
+printf '%s\n' "$A5" >>"$sl_a"; printf '%s\n' "$B3" >>"$sl_b"
+ev_wait c2 5 5; ev_wait c3 6 5; ev_wait c5 2 5; ev_wait c4 1 5
+sleep 1.2
+if [ "$(evx "$tmp/ev.c2" "[(x['repo'], x['line']) for x in e]")" = "[('acme/alpha', '$A3'), ('acme/beta', '$B2'), ('acme/alpha', '$A4'), ('acme/alpha', '$A5'), ('acme/beta', '$B3')]" ]; then pass "P01-AC-7: reconnecting with ?since= gets the lines appended while away, then the new ones, each once and in order (none lost, none repeated)"; else fail "P01-AC-7: ?since= events: $(evx "$tmp/ev.c2" "[(x['repo'], x['line'][-22:]) for x in e]")"; fi
+if [ "$(evx "$tmp/ev.c3" "[(x['repo'], x['line']) for x in e]")" = "[('acme/alpha', '$A2r'), ('acme/alpha', '$A3'), ('acme/beta', '$B2'), ('acme/alpha', '$A4'), ('acme/alpha', '$A5'), ('acme/beta', '$B3')]" ]; then pass "P01-AC-7: reconnecting with a Last-Event-ID header gets every later line, each once and in order"; else fail "P01-AC-7: Last-Event-ID events: $(evx "$tmp/ev.c3" "[(x['repo'], x['line'][-22:]) for x in e]")"; fi
+if [ "$(evx "$tmp/ev.c4" "[(x['repo'], x['line']) for x in e]")" = "[('acme/beta', '$B3')]" ]; then pass "P01-AC-7: ?repo=acme/beta sends beta's lines only (and starts at the end)"; else fail "P01-AC-7: ?repo= events: $(evx "$tmp/ev.c4" "[(x['repo'], x['line'][-22:]) for x in e]")"; fi
+if [ "$(evx "$tmp/ev.c5" "[(x['repo'], x['line']) for x in e]")" = "[('acme/beta', '$B2'), ('acme/beta', '$B3')]" ]; then pass "P01-AC-7: ?repo= with ?since= sends beta's lines after the cursor only"; else fail "P01-AC-7: ?repo=&since= events: $(evx "$tmp/ev.c5" "[(x['repo'], x['line'][-22:]) for x in e]")"; fi
+for c in c2 c3 c4 c5; do eval "p=\$ev_pid_$c"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; cat "$tmp/ev.$c" >>"$tmp/allresp"; done
+cat "$tmp/ev.c1" >>"$tmp/allresp"
+err P01-AC-7 POST /v1/events 405
+snap >"$tmp/snap.before"   # the test appended to the status logs: re-take the AC-2 baseline
+
 # AC-2 end-of-test checks: later slices append their cases ABOVE this block (marked by the line below).
 # ================= P01-AC-9: no tokens (FINAL CHECK: later slices put their cases ABOVE this block) =================
 # What it fixes: the tokens of scheduler/testdata/api/tokens.txt (planted in session logs and status logs) appear in no
