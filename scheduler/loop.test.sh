@@ -1375,6 +1375,7 @@ case "$a1 $a2" in
 	if [ -n "$q" ]; then echo "$s"; else echo "{\"state\": \"$s\"}"; fi ;;
 "issue comment") echo "issue-comment $n $body" >>"$d/calls.log" ;;
 "issue close")
+	if grep -qx "$n" "$d/fail.issueclose" 2>/dev/null; then echo "fail-issue-close $n" >>"$d/attempts.log"; echo "fake-close-failure" >&2; exit 1; fi
 	[ -z "$body" ] || echo "issue-comment $n $body" >>"$d/calls.log"
 	echo "issue-close $n reason=$reason" >>"$d/calls.log"
 	echo CLOSED >"$d/issue.$n" ;;
@@ -1569,6 +1570,40 @@ s5ok "S05-AC-3: (R10) while its out/node/R10 cannot be archived, its worktree an
 rm -f "$s5st/archive"; mkdir -p "$s5st/archive"
 s5ok "S05-AC-3: (R10) once the archive works, its out/node/R10 is kept under state/archive/R10-out" waitf 8 test -f "$s5st/archive/R10-out/brief.md"
 s5ok "S05-AC-3: (R10) and then its worktree is removed, with one event" waitf 5 sh -c "[ ! -d '$s5wt/R10' ] && [ \"\$(grep -cE 'R10 removed by #78: removed its worktree and state' '$s5st/status.log')\" = 1 ]"
+# A third loop (R14, PR #41, state, worktree): the graph is readable and R14 is not in it, its spec deletion is in
+# main's history, but `git log --diff-filter=D` fails (a git wrapper first on PATH): nothing is touched.
+# R13: a removed node (state only) whose issue #150 cannot be closed for a while (fail.issueclose): the comment is not repeated.
+S5C=$tmp/s05c; mkdir -p "$S5C" "$tmp/s05gitbin"
+realgit=$(command -v git)
+printf '#!/bin/sh\ncase " $* " in *" log "*" --diff-filter=D "*) echo "fake-history-failure" >&2; exit 128 ;; esac\nexec %s "$@"\n' "$realgit" >"$tmp/s05gitbin/git"
+chmod +x "$tmp/s05gitbin/git"
+git init -q -b main "$tmp/s05workc"; mkdir -p "$tmp/s05workc/docs" "$tmp/s05workc/nodes"
+printf 'nodes:\n  - {id: R30, name: n30, deps: [R99]}\n' >"$tmp/s05workc/docs/graph.yaml"; s5spec R14 '#160' >"$tmp/s05workc/nodes/R14-n14.md"
+git -C "$tmp/s05workc" add -A && git -C "$tmp/s05workc" -c user.name=t -c user.email=t@t commit -q -m init
+git -C "$tmp/s05workc" rm -q nodes/R14-n14.md && git -C "$tmp/s05workc" -c user.name=t -c user.email=t@t commit -q -m 'Remove R14 (#89)'
+git clone -q --bare "$tmp/s05workc" "$tmp/s05remotec.git"
+s5datac=$tmp/s5datac s5stc=$tmp/s5datac/state/sc s5wtc=$tmp/s5datac/worktrees/sc s5clc=$tmp/s5datac/repos/sc
+mkdir -p "$s5datac/repos" "$s5stc/node/R14"; git clone -q "$tmp/s05remotec.git" "$s5clc"
+git -C "$s5clc" worktree add -q -b node/R14-n14 "$s5wtc/R14" origin/main; echo 1 >"$s5stc/node/R14/starts"
+printf '41 node/R14-n14 o14 false MERGEABLE\n' >"$S5C/open.tsv"; : >"$S5C/closed.tsv"; : >"$S5C/merged.tsv"; : >"$S5C/calls.log"; echo OPEN >"$S5C/issue.160"
+NOODLEBOT_DATA=$s5datac S05D=$S5C PATH=$tmp/s05gitbin:$tmp/s05bin:$PATH SCHED_REPORT=0 SCHED_THROTTLE=0 SCHED_TICK=1 SCHED_POLL=0.2 \
+	bash "$tmp/s05nb/scheduler/loop.sh" o/sc >>"$tmp/s05-loop.out" 2>&1 &
+pids+=("$!"); s5lpc=$!
+mkdir -p "$s5st/node/R13"; echo 1 >"$s5st/node/R13/starts"; echo OPEN >"$S5/issue.150"; echo 150 >"$S5/fail.issueclose"
+s5spec R13 '#150' >"$tmp/s05work/nodes/R13-n13.md"
+git -C "$tmp/s05work" add -A && git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m 'Add R13'
+git -C "$tmp/s05work" rm -q nodes/R13-n13.md && git -C "$tmp/s05work" -c user.name=t -c user.email=t@t commit -q -m 'Remove R13 (#80)'
+git -C "$tmp/s05work" push -q "$tmp/s05remote.git" HEAD:main
+s5ok "S05-AC-4: (issues) a failing gh issue close is tried (and fails) several times" waitf 10 sh -c "[ \"\$(grep -c 'fail-issue-close 150' '$S5/attempts.log')\" -ge 3 ]"
+s5ok "S05-AC-4: (issues) the issue stays open and the state of R13 stays while the close fails" sh -c "[ \"\$(cat '$S5/issue.150')\" = OPEN ] && [ -d '$s5st/node/R13' ]"
+rm -f "$S5/fail.issueclose"
+s5ok "S05-AC-4: (issues) at a later tick the step completes: issue #150 is closed as not planned" waitf 8 sh -c "grep -qE '^issue-close 150 reason=not planned\$' '$S5/calls.log' && [ \"\$(cat '$S5/issue.150')\" = CLOSED ]"
+sleep 2.5
+s5ok "S05-AC-4: (issues) with one comment only, not one per attempt, and a single close" sh -c "[ \"\$(grep -cE '^issue-comment 150 ' '$S5/calls.log')\" = 1 ] && [ \"\$(grep -cE '^issue-close 150 ' '$S5/calls.log')\" = 1 ] && grep -E '^issue-comment 150 ' '$S5/calls.log' | grep -F R13 | grep -qF '#80'"
+s5ok "S05-AC-4: (issues) and its state is removed" waitf 5 test ! -d "$s5st/node/R13"
+s5ok "S05-AC-4: with main's history unreadable, no PR or issue is closed and nothing is removed (R14's spec deletion is in main)" sh -c "[ \"\$(wc -l <'$S5C/calls.log')\" = 0 ] && grep -q '^41 ' '$S5C/open.tsv' && [ -d '$s5stc/node/R14' ] && [ -d '$s5wtc/R14' ] && [ ! -d '$s5stc/archive/R14-out' ] && [ \"\$(cat '$S5C/issue.160')\" = OPEN ]"
+s5ok "S05-AC-4: (history unreadable) the loop was ticking and wrote no removal event" sh -c "[ -s '$s5stc/heartbeat' ] && ! grep -q 'removed by' '$s5stc/status.log'"
+kill "$s5lpc" 2>/dev/null; wait "$s5lpc" 2>/dev/null
 kill "$s5lpa" "$s5lpb" 2>/dev/null; wait "$s5lpa" "$s5lpb" 2>/dev/null
 s05_cleanup
 [ "$fails" -eq "$fails0" ] || s3dumplog
