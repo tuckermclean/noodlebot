@@ -424,25 +424,43 @@ followup_branch() {
 # file name (empty when the worktree is clean). Fails, resetting nothing, if the patch cannot be written.
 leftover_patch=''
 save_leftover() {
-	local id=$1 wt=$2 d=$3 saw=$4 ts patch tmpd ex=()
+	local id=$1 wt=$2 d=$3 saw=$4 ts patch tmpd='' ex=() g w=0 ti='' empty=0
 	# the node's evidence stays even where out/ is not ignored (an excluded path that is ignored makes git add fail)
 	git -C "$wt" check-ignore -q "out/node/$id/x" || ex=(":(exclude)out/node/$id")
 	leftover_patch=''
-	[ -n "$(git -C "$wt" status --porcelain -- . "${ex[@]}" 2>/dev/null)" ] || return 0
-	ts=$(date -u +%Y%m%dT%H%M%SZ) patch=$d/leftover/$ts.patch
-	if mkdir -p "$d/leftover" && tmpd=$(mktemp -d "$d/leftover/.tmp.XXXXXX") &&
-		GIT_INDEX_FILE=$tmpd/index git -C "$wt" read-tree HEAD &&
-		GIT_INDEX_FILE=$tmpd/index git -C "$wt" add -A -- . "${ex[@]}" &&
-		GIT_INDEX_FILE=$tmpd/index git -C "$wt" diff --binary --cached HEAD >"$tmpd/patch" &&
-		[ -s "$tmpd/patch" ] && [ ! -e "$patch" ] && mv "$tmpd/patch" "$patch"; then
-		rm -rf "$tmpd"
-	else
-		[ -n "${tmpd:-}" ] && rm -rf "$tmpd"
-		note "$saw; $id: cannot write the leftover patch for its uncommitted changes; not started"; return 1
+	# a rebase in progress (HEAD detached) is not ours to undo: hold the node
+	for g in rebase-merge rebase-apply; do
+		[ -e "$(git -C "$wt" rev-parse --git-path $g 2>/dev/null | sed "s|^[^/]|$wt/&|")" ] && w=1
+	done
+	if [ "$w" = 1 ]; then note "$saw; $id: a rebase is in progress in its worktree; not started"; return 1; fi
+	if [ -n "$(git -C "$wt" status --porcelain -- . "${ex[@]}" 2>/dev/null)" ]; then
+		ts=$(date -u +%Y%m%dT%H%M%SZ) patch=$d/leftover/$ts.patch
+		# a temporary index: HEAD plus everything in the real index (a force-added ignored file, a tracked file
+		# matching an ignore pattern) plus the worktree (modified, deleted, untracked and not ignored)
+		if mkdir -p "$d/leftover" && tmpd=$(mktemp -d "$d/leftover/.tmp.XXXXXX") && ti=$tmpd/index &&
+			GIT_INDEX_FILE=$ti git -C "$wt" read-tree HEAD &&
+			GIT_INDEX_FILE=$ti git -C "$wt" add -A -- . "${ex[@]}" &&
+			git -C "$wt" ls-files -z -- . "${ex[@]}" | GIT_INDEX_FILE=$ti git -C "$wt" update-index --add --remove -z --stdin &&
+			GIT_INDEX_FILE=$ti git -C "$wt" diff --binary --cached HEAD >"$tmpd/patch" &&
+			{ [ ! -s "$tmpd/patch" ] && empty=1 || { [ ! -e "$patch" ] && mv "$tmpd/patch" "$patch"; }; }; then
+			rm -rf "$tmpd"
+		else
+			[ -n "$tmpd" ] && rm -rf "$tmpd"
+			note "$saw; $id: cannot write the leftover patch for its uncommitted changes; not started"; return 1
+		fi
+		[ "$empty" = 1 ] || leftover_patch=$ts.patch
 	fi
-	git -C "$wt" restore -q --source=HEAD --staged --worktree -- . "${ex[@]}" && git -C "$wt" clean -fdq -- . "${ex[@]}" || { note "$saw; $id: resetting the worktree after the leftover patch failed; not started"; return 1; }
-	leftover_patch=$ts.patch
-	say "$saw; $id: uncommitted changes of an earlier session saved as leftover/$leftover_patch and the worktree reset"
+	# an interrupted merge, cherry-pick or revert is dropped (its changes are in the patch); the reset below
+	# then brings index and worktree back to HEAD
+	git -C "$wt" merge --quit >/dev/null 2>&1; git -C "$wt" cherry-pick --quit >/dev/null 2>&1; git -C "$wt" revert --quit >/dev/null 2>&1
+	[ -n "$leftover_patch" ] || [ "$empty" = 1 ] || [ -z "$(git -C "$wt" status --porcelain -- . "${ex[@]}" 2>/dev/null)" ] || empty=1
+	[ -n "$leftover_patch" ] || [ "$empty" = 1 ] || return 0
+	git -C "$wt" restore -q --source=HEAD --staged --worktree -- . "${ex[@]}" && git -C "$wt" clean -fdq -e "/out/node/$id/" -- . || { note "$saw; $id: resetting the worktree after the leftover patch failed; not started"; return 1; }
+	if [ -n "$leftover_patch" ]; then
+		say "$saw; $id: uncommitted changes of an earlier session saved as leftover/$leftover_patch and the worktree reset"
+	else
+		say "$saw; $id: the staged changes of an earlier session left nothing to save; the worktree reset"
+	fi
 }
 
 # start_node <ID> <name> <saw> [followup]: start a ready node's session (/node, or the plugin's skill).
