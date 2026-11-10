@@ -1798,5 +1798,32 @@ vrun 2026-03-10T09:25:00
 ok "U02-AC-3: nothing is posted twice on a further run" test "$(vq "len(cs)")" = "$vn"
 ok "U02-AC-3: the runs leave nothing on stderr" test ! -s "$tmp/verr"
 
+# U02-AC-2 (a failed post, then a failed read): the next day's log issue is opened, its overview POST fails (run 1), then
+# the GET of the recorded issue fails once (run 2); the clean runs after still post the overview first, once, and open no
+# second log issue, with an event pending that an event comment would be posted for.
+wq() {
+	python3 -I -c "
+import json, sys
+db = json.load(open('$vdb'))
+logs = [i for i in db['issues'].values() if i['title'] == 'noodlebot log 2026-03-11']
+n = str(logs[0]['number']) if logs else ''
+cs = [c for c in db['comments'] if c['issue'] == n]
+print(eval(sys.argv[1]))" "$1" 2>/dev/null
+}
+echo "2026-03-11T08:00:00Z open=[] merged-prs=[]; started V09 (vee-nine) in /wt, pid 1, start 1 of 2" >>"$vstate/status.log"
+echo 'POST .*/issues/[0-9]+/comments' >"$tmp/vfail"
+vrun 2026-03-11T09:00:00
+wn=$(wq "n")
+echo "GET .*/issues/$wn\$" >"$tmp/vfail"
+vrun 2026-03-11T09:05:00
+rm -f "$tmp/vfail"
+vrun 2026-03-11T09:10:00
+echo "2026-03-11T09:12:00Z open=[] merged-prs=[]; session V09 ended (rc 0)" >>"$vstate/status.log"
+vrun 2026-03-11T09:15:00
+ok "U02-AC-2: after the failed post and the failed read, the log issue has exactly one overview comment (it names V01)" test "$(wq "len([c for c in cs if 'V01' in c['body']])")" = 1
+ok "U02-AC-2: the overview is the issue's first comment, before any event line" test "$(wq "len(cs) > 0 and 'V01' in cs[0]['body'] and not any(l.startswith('- \`') for l in cs[0]['body'].splitlines())")" = True
+ok "U02-AC-2: an event comment was posted after it (V09 ended)" test "$(wq "len([c for c in cs[1:] if 'session V09 ended' in c['body']])")" = 1
+ok "U02-AC-2: no second log issue was opened for the day" test "$(wq "len(logs)")" = 1
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
