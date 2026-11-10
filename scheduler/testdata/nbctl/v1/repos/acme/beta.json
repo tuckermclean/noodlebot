@@ -1,0 +1,10 @@
+{
+ "version": 1,
+ "repo": "acme/beta",
+ "running": false,
+ "stop": true,
+ "stop_all": false,
+ "heartbeat": "@now-95",
+ "heartbeat_age": 95,
+ "status_issue": null
+}
