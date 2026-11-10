@@ -86,5 +86,24 @@ ok "P01-AC-6: a failure to write issues.json does not change what next prints or
 ok "P01-AC-6: a failure to write issues.json is logged on stderr" grep -q 'issues.json' "$tmp/next.err"
 ok "P01-AC-6: a failed write leaves the state folder holding only what it held" test "$(ls -A "$tmp/state3")" = issues.json -a "$(ls -A "$tmp/state3/issues.json")" = keep
 
+# --- P01-AC-6: a gh failure on the events of an issue that is held (FAILED) must not stop `next` from printing the eligible one ---
+# Issue 20 is listed first and failed (its events call fails); issue 21 is eligible. A held issue is skipped without asking gh about it.
+python3 -I -c "
+import json
+db = json.load(open('$tmp/db.json'))
+db['issues'] = [{'number': 20, 'title': 'Held'}, {'number': 21, 'title': 'Eligible'}]
+db['events'] = {'20': [], '21': [{'event': 'labeled', 'label': {'name': 'noodlebot'}, 'actor': {'login': 'owner'}}]}
+json.dump(db, open('$tmp/db.json', 'w'))"
+mkdir -p "$tmp/bin2" "$tmp/state4/issue/20"; touch "$tmp/state4/issue/20/FAILED"
+cat >"$tmp/bin2/gh" <<EOF
+#!/bin/sh
+case "\$4" in */issues/20/events*) echo "HTTP 502: bad gateway" >&2; exit 1 ;; esac
+exec "$tmp/bin/gh" "\$@"
+EOF
+chmod +x "$tmp/bin2/gh"
+out4=$(PATH=$tmp/bin2:$PATH python3 -I "$src/issues.py" next --repo owner/repo --state "$tmp/state4" 2>"$tmp/next4.err"); rc4=$?
+ok "P01-AC-6: with gh failing on the events of a held issue listed first, next still prints the eligible one" test "$out4" = 21
+ok "P01-AC-6: ... and exits 0" test "$rc4" = 0
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all issues checks"
