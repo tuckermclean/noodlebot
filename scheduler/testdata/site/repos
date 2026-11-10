@@ -1,0 +1,7 @@
+# repositories of the site fixture (owner/name; alpha and bravo are public)
+acme/alpha
+acme/hidden
+
+acme/novis   # no visibility record
+acme/bravo
+acme/alpha

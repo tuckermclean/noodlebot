@@ -1,0 +1,102 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "id",
+  "name",
+  "deps",
+  "track",
+  "starts",
+  "state",
+  "pr",
+  "mergeable",
+  "reason",
+  "question",
+  "issue_url",
+  "spec_pr",
+  "waiting_on"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "id": {
+   "type": "string"
+  },
+  "name": {
+   "type": "string"
+  },
+  "deps": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "track": {
+   "type": "string"
+  },
+  "starts": {
+   "type": "integer"
+  },
+  "state": {
+   "type": "string",
+   "enum": [
+    "merged",
+    "pr-open",
+    "running",
+    "idle-limit",
+    "failed",
+    "question",
+    "answered",
+    "waiting-pr",
+    "held",
+    "ready",
+    "waiting"
+   ]
+  },
+  "pr": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "mergeable": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "reason": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "question": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "issue_url": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "spec_pr": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "waiting_on": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  }
+ },
+ "additionalProperties": false
+}

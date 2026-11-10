@@ -1,0 +1,4 @@
+# fixture graph
+nodes:
+  - {id: B01, track: now, name: first-beta, deps: [], summary: "ready"}
+  - {id: B02, track: now, name: second-beta, deps: [B01], summary: "waiting"}

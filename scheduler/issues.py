@@ -6,9 +6,10 @@
 
 `next` skips an issue unless the repository owner added the label (checked in the issue's events,
 so a collaborator, a template or a workflow cannot hand work to the bot), and skips one whose
-$NOODLEBOT_DATA/state/<repo>/issue/<N>/ holds FAILED or an unanswered QUESTION.md. GH_TOKEN must be set; stdlib only.
+$NOODLEBOT_DATA/state/<repo>/issue/<N>/ holds FAILED or an unanswered QUESTION.md.
+`next` also writes every non-PR issue it read to <state>/issues.json (number, title, whether the owner labelled it; a held issue is written with "labelled": null, gh is not asked about it). GH_TOKEN must be set; stdlib only.
 """
-import argparse, json, os, subprocess, sys
+import argparse, json, os, subprocess, sys, tempfile, time
 
 LABEL, DONE = "noodlebot", "noodlebot-triaged"
 
@@ -37,6 +38,24 @@ def held(state, n):
     return ex("FAILED") or (ex("QUESTION.md") and not ex("ANSWER.md"))
 
 
+def write_cache(state, seen):
+    """$state/issues.json, the open issues read, for the API: a temporary file renamed. A failure is logged and goes no further."""
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".issues.json.", dir=state)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"updated": int(time.time()), "issues": seen}, f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(state, "issues.json"))
+    except OSError as e:
+        print("issues.py: could not write issues.json: %s" % e, file=sys.stderr)
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("cmd", choices=["next", "done"])
@@ -48,12 +67,27 @@ def main():
     owner = a.owner or a.repo.split("/")[0]
     if a.cmd == "next":
         issues = gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=50&sort=created&direction=asc" % (a.repo, LABEL)) or []
+        first, seen = None, []
         for i in issues:
-            if "pull_request" in i or held(a.state, i["number"]):
+            if "pull_request" in i:
                 continue
-            if labelled_by(a.repo, i["number"]) == owner:
-                print(i["number"])
-                return
+            if held(a.state, i["number"]):
+                seen.append({"number": i["number"], "title": i.get("title"), "labelled": None})   # not asked: it is not a candidate
+                continue
+            try:
+                lab = labelled_by(a.repo, i["number"]) == owner
+            except RuntimeError as e:
+                if first is None:
+                    raise
+                print("issues.py: %s" % e, file=sys.stderr)   # after the issue to print: only the cache loses this entry
+                continue
+            seen.append({"number": i["number"], "title": i.get("title"), "labelled": lab})
+            if first is None and lab:
+                first = i["number"]
+        if a.state:
+            write_cache(a.state, seen)
+        if first is not None:
+            print(first)
     else:
         try:
             gh("POST", "repos/%s/labels" % a.repo, {"name": DONE, "color": "c5def5",

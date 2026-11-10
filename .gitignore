@@ -1,5 +1,5 @@
 # Runtime folders of an installation not yet moved to $NOODLEBOT_DATA (scheduler/move-runtime.sh); never committed.
-repos/
-worktrees/
-state/
+/repos/
+/worktrees/
+/state/
 __pycache__/

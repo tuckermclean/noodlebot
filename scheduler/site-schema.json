@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "files": {
+    "repo": {"object": {
+      "repo": "string",
+      "name": "string",
+      "running": "boolean",
+      "stop": "boolean",
+      "nodes": {"array": {"object": {
+        "id": "string",
+        "name": "string",
+        "track": "string",
+        "deps": {"array": "string"},
+        "unlocks": {"array": "string"},
+        "summary": "string",
+        "size": {"nullable": "string"},
+        "has_spec": "boolean",
+        "criteria": {"array": {"object": {"id": "string", "text": "string"}}},
+        "starts": "integer",
+        "state": "string",
+        "pr": {"nullable": "integer"},
+        "started": {"nullable": "integer"},
+        "text": {"nullable": "string"},
+        "url": {"nullable": "string"},
+        "mergeable": {"nullable": "string"},
+        "waiting_for": {"array": "string"}
+      }}},
+      "open_prs": {"array": {"object": {
+        "number": "integer",
+        "branch": "string",
+        "mergeable": "string",
+        "bot": "boolean"
+      }}},
+      "spec_prs": {"array": {"object": {
+        "number": "integer",
+        "branch": "string",
+        "added": {"array": {"object": {
+          "id": "string", "name": "string", "track": "string",
+          "deps": {"array": "string"}, "summary": "string"
+        }}},
+        "changed": {"array": {"object": {
+          "id": "string", "name": {"nullable": "string"}, "track": {"nullable": "string"},
+          "deps": {"nullable": {"array": "string"}}, "summary": {"nullable": "string"}
+        }}},
+        "removed": {"array": "string"}
+      }}}
+    }},
+    "throttle": {"object": {
+      "windows": {"array": {"object": {
+        "name": "string",
+        "utilization": {"nullable": "number"},
+        "resets_at": {"nullable": "integer"},
+        "status": {"nullable": "string"}
+      }}},
+      "updated": {"nullable": "integer"},
+      "held": "boolean",
+      "reason": {"nullable": "string"},
+      "history": {"array": {"object": {"t": "integer", "u": "number"}}}
+    }},
+    "activity": {"object": {
+      "events": {"array": {"object": {"time": "string", "repo": "string", "text": "string"}}},
+      "triage": {"array": {"object": {
+        "repo": "string",
+        "number": "integer",
+        "url": "string",
+        "state": "string",
+        "text": {"nullable": "string"},
+        "spec_pr": {"nullable": "integer"}
+      }}},
+      "deploy": {"object": {
+        "version": {"nullable": "string"},
+        "previous": {"nullable": "string"},
+        "rejected": {"array": "string"},
+        "events": {"array": {"object": {"time": "string", "repo": "string", "text": "string"}}}
+      }}
+    }}
+  }
+}

@@ -474,5 +474,142 @@ no V01-AC-8:stopped-loop-line-names-no-version sh -c "echo '$bline' | grep -qF '
 ok V01-AC-8:still-one-line-per-repository sh -c "[ \$(grep -c . '$sc/out') = 2 ]"
 touch "$HOME/STOP"
 
+echo "# P01-AC-10: the API server with the loops (only when the checkout has scheduler/api.py)"
+export LOOPS_START_WAIT=5 LOOPS_STOP_WAIT=20
+# api_setup <scenario> [noapi]: setup, a runtime root of its own, loops that record their exit in the
+# sequence log, a fake tmux that remembers each session's process and can kill it, and (unless noapi)
+# a fake api.py that takes $NOODLEBOT_DATA/api.lock, logs its start and data root, and records its stop.
+api_setup() {
+	setup "$1"
+	data=$sc/data; NOODLEBOT_DATA=$data; export NOODLEBOT_DATA
+	mkdir -p "$data" "$sc/bin"
+	seq=$nb/scheduler/seq.log; alog=$nb/scheduler/api.log
+	cat >"$nb/scheduler/loop.sh" <<'EOT'
+#!/bin/sh
+name=${1#*/}
+st=$NOODLEBOT_DATA/state/$name
+mkdir -p "$st"
+exec 9>"$st/loop.lock"
+flock -n 9 || exit 1
+echo $$ >"$st/loop.pid"
+while [ ! -e "$HOME/STOP" ] && [ ! -e "$HOME/STOP-$name" ]; do sleep 0.2; done
+sleep 0.5
+echo "loop-exit $name" >>"$(dirname "$0")/seq.log"
+EOT
+	chmod +x "$nb/scheduler/loop.sh"
+	cat >"$sc/bin/tmux" <<EOT
+#!/bin/sh
+echo "\$*" >>"\$TMUXLOG"
+case \$1 in
+new | new-session)
+	shift
+	while [ \$# -gt 0 ]; do case \$1 in -d) shift ;; -s) sess=\$2; shift 2 ;; *) break ;; esac; done
+	setsid sh -c "\$*" >/dev/null 2>&1 </dev/null &
+	echo \$! >"$sc/sess-\$sess.pid"
+	exit 0 ;;
+kill-session | kill-server)
+	while [ \$# -gt 0 ]; do case \$1 in -t) sess=\${2#=}; shift 2 ;; *) shift ;; esac; done
+	[ -e "$sc/sess-\$sess.pid" ] && kill -TERM -- "-\$(cat "$sc/sess-\$sess.pid")" 2>/dev/null
+	exit 0 ;;
+has-session)
+	while [ \$# -gt 0 ]; do case \$1 in -t) sess=\${2#=}; shift 2 ;; *) shift ;; esac; done
+	[ -e "$sc/sess-\$sess.pid" ] && kill -0 "\$(cat "$sc/sess-\$sess.pid")" 2>/dev/null
+	exit \$? ;;
+esac
+exit 1
+EOT
+	chmod +x "$sc/bin/tmux"
+	PATH=$sc/bin:$oldpath
+	[ "${2:-}" = noapi ] && return 0
+	cat >"$nb/scheduler/api.py" <<'EOT'
+#!/usr/bin/env python3
+import fcntl, os, signal, sys, time
+here = os.path.dirname(os.path.abspath(__file__))
+data = os.environ.get("NOODLEBOT_DATA", "")
+def log(f, s):
+    with open(os.path.join(here, f), "a") as h:
+        h.write(s + "\n")
+lk = open(os.path.join(data, "api.lock"), "w")
+try:
+    fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    log("api.log", "lockfail")
+    sys.exit(1)
+log("api.log", "start data=" + data)
+def stop(*a):
+    log("seq.log", "api-stop")
+    sys.exit(0)
+for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+    signal.signal(s, stop)
+while True:
+    time.sleep(0.1)
+EOT
+	chmod +x "$nb/scheduler/api.py"
+}
+api_wait() { i=0; while ! nl_held "$data/api.lock" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+api_gone() { i=0; while pgrep -f "$nb/scheduler/api.py" >/dev/null && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done; ! pgrep -f "$nb/scheduler/api.py" >/dev/null; }
+api_end() { touch "$HOME/STOP"; pkill -f "$nb/scheduler/api.py" 2>/dev/null; sleep 0.3; rm -f "$HOME/STOP"; PATH=$oldpath; }
+
+oldpath=$PATH
+api_setup ac10a
+run start
+api_wait
+ok P01-AC-10:start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok P01-AC-10:start-launches-sched-api-in-tmux sh -c "grep -q 'sched-api' '$TMUXLOG'"
+ok P01-AC-10:server-holds-api-lock-after-start sh -c "[ -e '$data/api.lock' ] && ! flock -n '$data/api.lock' true"
+ok P01-AC-10:server-given-runtime-root-as-NOODLEBOT_DATA sh -c "grep -qx 'start data=$data' '$alog'"
+ok P01-AC-10:loops-still-started sh -c "grep -q 'sched-alpha' '$TMUXLOG' && grep -q 'sched-beta' '$TMUXLOG'"
+run start
+sleep 0.5
+ok P01-AC-10:second-start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok P01-AC-10:second-start-no-second-sched-api-call sh -c "[ \$(grep -c 'sched-api' '$TMUXLOG') = 1 ]"
+ok P01-AC-10:second-start-no-second-server sh -c "[ \$(grep -c '^start' '$alog') = 1 ] && ! grep -q lockfail '$alog'"
+echo "# P01-AC-10: status, server running"
+run status
+ok P01-AC-10:status-running-one-api-line sh -c "[ \$(grep -ci 'api' '$sc/out') = 1 ]"
+ok P01-AC-10:status-running-says-running sh -c "l=\$(grep -i 'api' '$sc/out'); echo \"\$l\" | grep -q 'running' && ! echo \"\$l\" | grep -q 'not running'"
+ok P01-AC-10:status-running-names-socket sh -c "grep -i 'api' '$sc/out' | grep -qF '$data/api.sock'"
+ok P01-AC-10:status-still-a-line-per-repository sh -c "grep -c 'o/alpha' '$sc/out' | grep -qx 1 && grep -c 'o/beta' '$sc/out' | grep -qx 1"
+echo "# P01-AC-10: stop"
+: >"$seq"
+run stop
+ok P01-AC-10:stop-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok P01-AC-10:stop-stops-the-server sh -c "grep -qx api-stop '$seq'"
+ok P01-AC-10:stop-server-after-both-loops-exited sh -c "[ \$(grep -c '^loop-exit' '$seq') = 2 ] && [ \"\$(tail -n 1 '$seq')\" = api-stop ] && [ \$(grep -c '^api-stop' '$seq') = 1 ]"
+ok P01-AC-10:stop-api-lock-free sh -c "[ -e '$data/api.lock' ] && flock -n '$data/api.lock' true"
+ok P01-AC-10:stop-server-process-gone api_gone
+echo "# P01-AC-10: status, server not running"
+run status
+ok P01-AC-10:status-stopped-one-api-line sh -c "[ \$(grep -ci 'api' '$sc/out') = 1 ]"
+ok P01-AC-10:status-stopped-says-not-running sh -c "grep -i 'api' '$sc/out' | grep -q 'not running'"
+ok P01-AC-10:status-stopped-names-socket sh -c "grep -i 'api' '$sc/out' | grep -qF '$data/api.sock'"
+api_end
+
+echo "# P01-AC-10: a server already running is left alone"
+api_setup ac10b
+setsid python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
+api_wait
+run start
+sleep 0.5
+ok P01-AC-10:running-server-start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok P01-AC-10:running-server-no-sched-api-tmux-call sh -c "[ -e '$TMUXLOG' ] && ! grep -q 'sched-api' '$TMUXLOG'"
+ok P01-AC-10:running-server-not-started-again sh -c "[ \$(grep -c '^start' '$alog') = 1 ] && ! grep -q lockfail '$alog'"
+ok P01-AC-10:running-server-still-holds-lock sh -c "! flock -n '$data/api.lock' true"
+ok P01-AC-10:running-server-loops-started sh -c "grep -q 'sched-alpha' '$TMUXLOG' && grep -q 'sched-beta' '$TMUXLOG'"
+api_end
+
+echo "# P01-AC-10: a checkout without api.py manages no server"
+api_setup ac10c noapi
+run start
+sleep 0.5
+ok P01-AC-10:no-api-py-start-exits-0 sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
+ok P01-AC-10:no-api-py-loops-started sh -c "grep -q 'sched-alpha' '$TMUXLOG' && grep -q 'sched-beta' '$TMUXLOG'"
+no P01-AC-10:no-api-py-no-sched-api sh -c "grep -q 'sched-api' '$TMUXLOG'"
+run status
+ok P01-AC-10:no-api-py-status-two-lines sh -c "[ \$(grep -c . '$sc/out') = 2 ]"
+no P01-AC-10:no-api-py-status-no-api-line sh -c "grep -qi 'api' '$sc/out'"
+api_end
+unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"

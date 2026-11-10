@@ -13,8 +13,10 @@ test:
 	sh plugin/hooks/guard.test.sh
 	bash scheduler/loop.test.sh
 	sh scheduler/loops.test.sh
+	sh scheduler/api.test.sh
 	sh scheduler/move-runtime.test.sh
 	sh plugin/skills/adopt/adopt.test.sh
 	sh plugin/skills/triage/nodes.test.sh
+	sh scheduler/site.test.sh
 
 .PHONY: test
