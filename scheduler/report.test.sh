@@ -31,7 +31,8 @@ elif method == "POST" and path.endswith("/issues"):
     n = str(100 + len(db["issues"]))
     db["issues"][n] = dict(body, number=int(n), state="open", node_id="I_" + n); out = db["issues"][n]
 elif method == "GET" and re.search(r"/issues\?labels=", path):
-    out = [i for i in db["issues"].values() if i["state"] == "open"]
+    lab = re.search(r"labels=([^&]+)", path).group(1)
+    out = [i for i in db["issues"].values() if i["state"] == "open" and lab in [l if isinstance(l, str) else l.get("name") for l in i.get("labels", [])]]
 elif re.search(r"/issues/\d+$", path):
     n = path.rsplit("/", 1)[1]
     if method == "PATCH": db["issues"][n].update(body)
@@ -67,6 +68,8 @@ db['comments'].append({'id': len(db['comments']) + 1, 'issue': '100', 'body': sy
 json.dump(db, open('$db', 'w'))" "$1"
 }
 last() { q "db['comments'][-1]['body']"; }
+# sopen: a python expression (over `db`) for the open issues labelled noodlebot-status, as GitHub's label query finds them.
+sopen="[i for i in db['issues'].values() if i['state'] == 'open' and 'noodlebot-status' in [l if isinstance(l, str) else l.get('name') for l in i.get('labels', [])]]"
 
 echo "2026-01-01T00:00:00Z open=[] merged-prs=[]; started A01 (first) in /wt, pid 1, start 1 of 2" >"$state/status.log"
 ok "the first run succeeds" run
@@ -122,11 +125,11 @@ python3 -I -c "
 import json
 db = json.load(open('$db')); db['issues']['100']['state'] = 'closed'; json.dump(db, open('$db', 'w'))"
 run
-ok "a closed status issue is replaced by a new one" test "$(q "db['issues']['101']['state']")" = open
+ok "a closed status issue is replaced by a new one" test "$(q "$sopen[0]['state']")" = open
 
 printf '{"windows": {"five_hour": {"utilization": 0.62, "resetsAt": 1800000000, "status": "allowed"}, "seven_day": {"utilization": 0.4, "resetsAt": 1800500000, "status": "allowed"}}, "projected5h": 1.3, "weekElapsed": 0.5, "hold": true, "reason": "5-hour window projected to reach 130%% before it resets (limit 90%%)"}' >"$tmp/state/usage.json"
 run
-ok "the body shows both windows and the throttle holding" sh -c "python3 -I -c \"import json; print(json.load(open('$db'))['issues']['101']['body'])\" | grep -q '5-hour.* 62%, resets' && python3 -I -c \"import json; print(json.load(open('$db'))['issues']['101']['body'])\" | grep -q 'Throttle:\*\* \*\*holding new sessions\*\*: 5-hour window projected to reach 130%'"
+ok "the body shows both windows and the throttle holding" sh -c "python3 -I -c \"import json; db = json.load(open('$db')); print($sopen[0]['body'])\" | grep -q '5-hour.* 62%, resets' && python3 -I -c \"import json; db = json.load(open('$db')); print($sopen[0]['body'])\" | grep -q 'Throttle:\*\* \*\*holding new sessions\*\*: 5-hour window projected to reach 130%'"
 ok "no run left an error" test ! -s "$tmp/err"
 mkdir "$tmp/badbin" && printf '#!/bin/sh\necho "HTTP 502" >&2; exit 1\n' >"$tmp/badbin/gh" && chmod +x "$tmp/badbin/gh"
 PATH=$tmp/badbin:$PATH run; rc=$?
@@ -149,8 +152,9 @@ dump() {
 	python3 -I -c "
 import json
 db = json.load(open('$db'))
-open('$tmp/body2', 'w').write(db['issues']['101']['body'])
-open('$tmp/comments2', 'w').write('\n'.join(c['body'] for c in db['comments'] if c['issue'] == '101'))"
+st = $sopen[0]
+open('$tmp/body2', 'w').write(st['body'])
+open('$tmp/comments2', 'w').write('\n'.join(c['body'] for c in db['comments'] if c['issue'] == str(st['number'])))"
 }
 # section <ID>: the session's header line and the lines under it, up to the next heading.
 section() { awk -v id="$1" 'f && /^##/ {f=0} index($0, "### " id ",") == 1 {f=1} f' "$tmp/body2"; }
@@ -419,7 +423,7 @@ trap 'kill $pids $sess $pids3 $pids4 $pids5 $pids6 2>/dev/null; rm -rf "$tmp"' E
 mkdir -p "$state/node/C05"
 printf '2026-01-03T00:00:00Z PR #12 was closed without merging; delete this file to start the node again\nsecond-line-detail\n' >"$state/node/C05/FAILED"
 run
-s01body=$(q "[i['body'] for i in db['issues'].values() if i['state'] == 'open'][0]")
+s01body=$(q "$sopen[0]['body']")
 ok "S01-AC-4: the FAILED item gives the first line of the FAILED file as the reason" sh -c "printf '%s\n' \"\$1\" | grep -qF 'PR #12 was closed without merging; delete this file to start the node again'" _ "$s01body"
 ok "S01-AC-4: and the path to delete" sh -c "printf '%s\n' \"\$1\" | grep 'C05 FAILED' | grep -qF '$state/node/C05/FAILED'" _ "$s01body"
 ok "S01-AC-4: and not the fixed text" sh -c "! printf '%s\n' \"\$1\" | grep 'C05 FAILED' | grep -q '2 starts with no PR'" _ "$s01body"
@@ -439,7 +443,7 @@ sleep 1
 printf '2026-01-08T00:00:00Z second exit (rc 1) without finishing\nsecond-line-detail-13\n' >"$state7/pr/13/FAILED"
 : >"$state7/status.log"
 python3 -I "$src/report.py" --repo owner/repo --state "$state7" --worktrees "$tmp/worktrees/repo" 2>"$tmp/err7"
-body7=$(q "[i['body'] for i in db['issues'].values() if i['state'] == 'open'][0]")
+body7=$(q "$sopen[0]['body']")
 printf '%s\n' "$body7" >"$tmp/body7"
 awk '/^## Waiting on you/ {f=1; next} /^## / {f=0} f' "$tmp/body7" >"$tmp/waiting7"
 ok "G01-AC-7: the report runs on a state dir with pr/<N> folders without error" test ! -s "$tmp/err7"
@@ -482,7 +486,7 @@ owner7() {
 	python3 -I -c "
 import json, sys
 db = json.load(open('$db'))
-n = [i['number'] for i in db['issues'].values() if i['state'] == 'open'][0]
+n = $sopen[0]['number']
 db['comments'].append({'id': len(db['comments']) + 1, 'issue': str(n), 'body': sys.argv[1], 'user': {'login': 'owner', 'type': 'User'},
     'author_association': 'OWNER', 'created_at': '2026-01-09T00:00:00Z', 'html_url': 'https://x/c7'})
 json.dump(db, open('$db', 'w'))" "$1"
@@ -492,7 +496,7 @@ dump7() {
 	python3 -I -c "
 import json
 db = json.load(open('$db'))
-i = [i for i in db['issues'].values() if i['state'] == 'open'][0]
+i = $sopen[0]
 open('$tmp/body7', 'w').write(i['body'])
 open('$tmp/comments7', 'w').write('\n====\n'.join(c['body'] for c in db['comments'] if c['issue'] == str(i['number'])))"
 }
