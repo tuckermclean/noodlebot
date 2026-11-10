@@ -29,6 +29,11 @@
 #                            issue/<N>/ (a triage) and pr/<N>/ (a spec-PR update: also from, done) hold the same files
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
+# At the start of every iteration (before the ~/STOP check) it logs each API request record under
+# state/<name>/requests/*.json (one event naming the control and its target, in name order) and removes it;
+# a broken record is logged as such and removed. A node/<ID>/RELEASE marker (the API's release control) is
+# consumed at the next tick: a ready node the throttle holds starts despite the hold (SCHED_MAX still applies),
+# otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
@@ -734,10 +739,36 @@ deploy() {
 	return 0
 }
 
+# requests: log and remove the API's request records ({"control","target","time"}), in name order.
+requests() {
+	local f out
+	for f in "$state"/requests/*.json; do
+		[ -f "$f" ] || continue
+		if out=$(python3 -I -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+c, t = d["control"], d["target"]
+if not isinstance(c, str) or not isinstance(t, str) or not c or not t: raise ValueError
+print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
+			say "request: $out"
+		else
+			say "request record $(basename "$f") is broken; removed"
+		fi
+		rm -f "$f"
+	done
+}
+
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0
+open='' merged='' tick_tok='' live=() throttled=0 rels=()
 tick() {
+	local f
 	date +%s >"$state/heartbeat"
+	# RELEASE markers: taken (and removed) now, so they go also when the tick ends early; see the ready loop
+	rels=()
+	for f in "$state"/node/*/RELEASE; do
+		[ -e "$f" ] || continue
+		rels+=("$(basename "$(dirname "$f")")"); rm -f "$f"
+	done
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	# Keep the clone's own checkout on origin/main: sessions in its worktrees also load skills and
 	# agents from it, so a stale checkout would offer them stale ones.
@@ -760,7 +791,7 @@ tick() {
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
 	cut -d' ' -f1 "$state/merged-prs.tsv" >"$state/merged-prs.txt"
-	local saw="open=[${open% }] merged-prs=[${merged% }]" f id name triaging='' p
+	local saw="open=[${open% }] merged-prs=[${merged% }]" id name triaging='' p
 	tok=''
 
 	# Running sessions: recorded in pid files, so this works after a restart too.
@@ -814,12 +845,40 @@ tick() {
 	ready=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
 		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --all "${args[@]}") ||
 		{ note "$saw; ready.py failed; nothing started"; return; }
+	local -A isrel=() handled=() isready=()
+	for id in "${rels[@]}"; do isrel[$id]=1; done
 	while read -r id name kind; do
 		[ -n "$id" ] || continue
+		isready[$id]=1
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
-		full && break
+		if full; then
+			# the throttle's hold is lifted for a released node; SCHED_MAX is not
+			if [ "$throttled" = 1 ] && [ -n "${isrel[$id]:-}" ]; then
+				handled[$id]=1
+				if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then
+					say "$saw; $id: RELEASE found, but SCHED_MAX ($cap) sessions are running; not started"
+				elif start_node "$id" "$name" "$saw" "$kind"; then
+					say "$saw; $id: released past the throttle"
+				else
+					say "$saw; $id: RELEASE found, but it did not start (see above)"
+				fi
+				continue
+			fi
+			[ "$throttled" = 1 ] && continue
+			break
+		fi
 		start_node "$id" "$name" "$saw" "$kind"
 	done <<<"$ready"
+	for id in "${rels[@]}"; do
+		[ -z "${handled[$id]:-}" ] || continue
+		if [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
+		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
+		elif [ -n "${isready[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it starts or not as the loop would anyway"
+		elif grep -q "id: *$id[,} ]" "$state/graph.yaml" 2>/dev/null; then say "$saw; $id: RELEASE found, nothing started: it is not ready"
+		else say "$saw; $id: RELEASE found, nothing started: unknown node"
+		fi
+	done
+	rels=()
 
 	local held=''; [ "$throttled" = 1 ] && held="; throttle holding new sessions"
 	if [ "${#live[@]}" = 0 ]; then note "$saw; nothing ready$held"
@@ -837,8 +896,8 @@ tick() {
 
 # fingerprint: the markers and exit files under node/, issue/ and pr/; a change means "look again now".
 fingerprint() {
-	find "$state/node" "$state/issue" "$state/pr" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
-		-o -name FAILED -o -name session.rc \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
+	find "$state/node" "$state/issue" "$state/pr" "$state/requests" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
+		-o -name FAILED -o -name session.rc -o -name RELEASE -o -path '*/requests/*.json' \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
 }
 
 # pause: until the next GitHub poll is due, or sooner when a marker changes, any session exits or
@@ -855,8 +914,10 @@ pause() {
 }
 
 while :; do
+	requests
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
+	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
 	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
