@@ -10,6 +10,8 @@ DATA/state/starts.lock, and files are replaced atomically, so two loops asking a
   list      read this loop's waiting units on stdin, one "<key> <kind> <size> <since-epoch>" per line
             (kind: triage|update|followup|resumed|fresh; size: S|M|L|-), store them with --tick, and
             clear this loop's give-backs. Lines that do not have four fields or a numeric since are ignored.
+            A since that is a number but not finite (inf, nan) is an error: list exits 1 and removes this
+            loop's waiting list, so the loop is left out (an ask from it gets no turn) until its next good list.
   ask       give this loop a turn when the gap has passed since the last start and the first unit of the
             merged order of all live loops is this loop's. It records the start and prints
             "<key>\\tturn: <kind or Size>, waited <H>h<MM>m, [first by the starvation limit, ]ahead of <units>";
@@ -81,7 +83,7 @@ def parse_units(text):
         except ValueError:
             continue
         if not math.isfinite(since):
-            continue
+            raise ValueError("unit %s: since %s is not finite" % (f[0], f[3]))
         units.append({"key": f[0], "kind": f[1], "size": f[2], "since": since})
     return units
 
@@ -206,8 +208,15 @@ def main():
                 p.error("list needs --tick")
             if not (math.isfinite(args.tick) and args.tick > 0):
                 p.error("--tick must be a positive finite number")
-            write_json(os.path.join(state, args.repo, "waiting.json"),
-                       {"tick": args.tick, "units": parse_units(sys.stdin.read()), "gaveback": []})
+            wpath = os.path.join(state, args.repo, "waiting.json")
+            try:
+                units = parse_units(sys.stdin.read())
+            except ValueError:
+                # leave this loop out until its next good list
+                if os.path.exists(wpath):
+                    os.unlink(wpath)
+                raise
+            write_json(wpath, {"tick": args.tick, "units": units, "gaveback": []})
         elif args.command == "ask":
             line = ask(state, args.repo, now, args)
             if line:
