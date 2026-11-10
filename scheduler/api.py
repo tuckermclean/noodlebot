@@ -244,7 +244,8 @@ def session_alive(d, key):
 
 def at_limit(d):
     """The log's last line is a usage-limit rejection as S06 reads it: a rate_limit_event whose status is not
-    allowed, or a result naming a usage limit."""
+    allowed, or a result naming a usage limit; and the log has a rate_limit_event that is not allowed (its resetsAt is
+    the reset time), else the reset time is unknown and the session is not idle by the limit."""
     try:
         with open(os.path.join(d, "session.jsonl"), "rb") as f:
             f.seek(0, 2)
@@ -253,8 +254,20 @@ def at_limit(d):
     except OSError:
         return False
     lines = [x for x in lines if x.strip()]
+    rejected = False
+    for x in lines:
+        if "rate_limit_event" in x:
+            try:
+                e = json.loads(x)
+            except ValueError:
+                continue
+            if isinstance(e, dict) and e.get("type") == "rate_limit_event" and (
+                    (e.get("rate_limit_info") or {}).get("status", "allowed")) != "allowed":
+                rejected = True
+    if not rejected:
+        return False
     try:
-        ev = json.loads(lines[-1]) if lines else None
+        ev = json.loads(lines[-1])
     except ValueError:
         return False
     if not isinstance(ev, dict):
@@ -528,11 +541,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    busy = False
+
+    def setup(self):
+        http.server.BaseHTTPRequestHandler.setup(self)
+        self.server.track(self, True)
+
+    def finish(self):
+        self.server.track(self, False)
+        http.server.BaseHTTPRequestHandler.finish(self)
+
+    def parse_request(self):
+        self.server.set_busy(self, True)   # a request has arrived: a restart waits for it
+        return http.server.BaseHTTPRequestHandler.parse_request(self)
+
+    def handle_one_request(self):
+        try:
+            http.server.BaseHTTPRequestHandler.handle_one_request(self)
+        finally:
+            self.server.set_busy(self, False)
+            if self.server.stopping.is_set():
+                self.close_connection = True
+
+    def mark_stream(self):
+        """A handler that streams calls this: a restart no longer waits for it, and it must end when
+        req.server.stopping is set (poll stopping.wait(interval) between writes)."""
+        self.server.set_busy(self, False)
+
     def send_obj(self, status, obj):
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if self.server.stopping.is_set():
+            self.send_header("Connection", "close")
+            self.close_connection = True
         if status == 405:
             self.send_header("Allow", "GET")
         self.end_headers()
@@ -542,6 +585,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def send_error(self, code, message=None, explain=None):
         """Malformed requests get a JSON body too, never the stdlib's HTML."""
         self.close_connection = True
+        if self.request_version == "HTTP/0.9":   # an unparsable request line: still answer with a status line and headers
+            self.request_version = "HTTP/1.1"
         self.send_obj(code, {"version": VERSION, "error": message or self.responses.get(code, ("error",))[0]})
 
     def __getattr__(self, name):
@@ -582,6 +627,43 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     def __init__(self, sock):
         socketserver.BaseServer.__init__(self, sock.getsockname(), Handler)
         self.socket = sock
+        self.stopping = threading.Event()   # set when the server is about to re-exec; event streams poll it and end
+        self.restart = False
+        self.lock = threading.Lock()
+        self.handlers = {}   # request handler -> a request is being served
+
+    def track(self, h, on):
+        with self.lock:
+            if on:
+                self.handlers[h] = False
+            else:
+                self.handlers.pop(h, None)
+
+    def set_busy(self, h, busy):
+        with self.lock:
+            if h in self.handlers:
+                self.handlers[h] = busy
+
+    def drain(self, wait=5.0):
+        """Before a re-exec (the listening socket stays open, so new connections queue in its backlog for the next
+        process): close idle keep-alive connections, let running requests finish (bounded), stream handlers end on
+        `stopping`."""
+        self.stopping.set()
+        end = time.time() + wait
+        while True:
+            with self.lock:
+                for h, busy in list(self.handlers.items()):
+                    if not busy:
+                        try:
+                            h.connection.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+                if not any(self.handlers.values()):
+                    return
+            if time.time() > end:
+                log("restarting with requests still running")
+                return
+            time.sleep(0.02)
 
     def get_request(self):
         c, _ = self.socket.accept()
@@ -598,7 +680,7 @@ def head():
         return None
 
 
-def watch_head(started):
+def watch_head(srv, started):
     try:
         every = float(os.environ.get("NOODLEBOT_API_HEAD_CHECK") or 60)
     except ValueError:
@@ -609,8 +691,9 @@ def watch_head(started):
         # HEAD unreadable at start: the code now running is of unknown age, so the first HEAD read restarts it
         if h and h != started:
             log("HEAD moved %s..%s; restarting" % (started[:7], h[:7]))
-            argv = getattr(sys, "orig_argv", None) or [sys.executable] + sys.argv   # keeps flags such as -I
-            os.execv(sys.executable, argv)
+            srv.restart = True
+            srv.shutdown()   # stops accepting; main drains and execs
+            return
 
 
 def main():
@@ -650,7 +733,7 @@ def main():
     os.set_inheritable(sock.fileno(), True)
     os.environ["NOODLEBOT_API_FDS"] = "%d,%d" % (lock.fileno(), sock.fileno())
     srv = Server(sock)
-    threading.Thread(target=watch_head, args=(head(),), daemon=True).start()
+    threading.Thread(target=watch_head, args=(srv, head()), daemon=True).start()
 
     def stop(*_):
         threading.Thread(target=srv.shutdown, daemon=True).start()
@@ -658,6 +741,10 @@ def main():
     signal.signal(signal.SIGINT, stop)
     try:
         srv.serve_forever()
+        if srv.restart:
+            srv.drain()
+            argv = getattr(sys, "orig_argv", None) or [sys.executable] + sys.argv   # keeps flags such as -I
+            os.execv(sys.executable, argv)
     finally:
         try:
             os.unlink(sockpath)
