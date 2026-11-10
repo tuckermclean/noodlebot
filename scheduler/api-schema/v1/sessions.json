@@ -1,0 +1,191 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "sessions"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "sessions": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "kind",
+     "subject",
+     "pid",
+     "alive",
+     "started",
+     "log_size",
+     "log_modified",
+     "events",
+     "rc",
+     "wakeup_at",
+     "bg_commands",
+     "bg_agents",
+     "limit"
+    ],
+    "properties": {
+     "kind": {
+      "enum": [
+       "node",
+       "triage",
+       "update"
+      ]
+     },
+     "subject": {
+      "type": "string"
+     },
+     "pid": {
+      "type": "integer"
+     },
+     "alive": {
+      "type": "boolean"
+     },
+     "started": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "log_size": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "log_modified": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "events": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "type": "object",
+       "required": [
+        "type",
+        "time"
+       ],
+       "properties": {
+        "type": {
+         "enum": [
+          "tool_use",
+          "result"
+         ]
+        },
+        "time": {
+         "type": [
+          "integer",
+          "null"
+         ]
+        },
+        "tool": {
+         "type": "string"
+        },
+        "text": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "subagent": {
+         "type": "boolean"
+        },
+        "subtype": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       }
+      }
+     },
+     "rc": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "wakeup_at": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "bg_commands": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "id",
+        "text"
+       ],
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "text": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       }
+      }
+     },
+     "bg_agents": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "id",
+        "text"
+       ],
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "text": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       }
+      }
+     },
+     "limit": {
+      "type": [
+       "object",
+       "null"
+      ],
+      "required": [
+       "at",
+       "resets_at"
+      ],
+      "properties": {
+       "at": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "resets_at": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

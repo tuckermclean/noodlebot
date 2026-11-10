@@ -1,0 +1,86 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "head",
+  "previous",
+  "rejected",
+  "last_deploy",
+  "last_failed",
+  "modified"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "head": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "previous": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "rejected": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "last_deploy": {
+   "type": [
+    "object",
+    "null"
+   ],
+   "required": [
+    "repo",
+    "time",
+    "line"
+   ],
+   "properties": {
+    "repo": {
+     "type": "string"
+    },
+    "time": {
+     "type": "integer"
+    },
+    "line": {
+     "type": "string"
+    }
+   }
+  },
+  "last_failed": {
+   "type": [
+    "object",
+    "null"
+   ],
+   "required": [
+    "repo",
+    "time",
+    "line"
+   ],
+   "properties": {
+    "repo": {
+     "type": "string"
+    },
+    "time": {
+     "type": "integer"
+    },
+    "line": {
+     "type": "string"
+    }
+   }
+  },
+  "modified": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  }
+ }
+}

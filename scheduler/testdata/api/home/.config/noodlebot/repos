@@ -1,0 +1,6 @@
+# the fixture's repositories (comments, blanks, a repeat and a bad line are ignored, as loops.sh does)
+acme/alpha
+
+acme/beta   # stopped, ~/STOP-beta exists
+acme/alpha
+not-a-repo

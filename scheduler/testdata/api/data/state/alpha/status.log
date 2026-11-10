@@ -1,0 +1,8 @@
+2026-11-09T09:00:00Z loop started for acme/alpha, version v0.9.0-fixture
+2026-11-09T09:01:00Z open=[N02 N11] merged-prs=[N01]; started N03 in /w/alpha/N03, pid 4001, start 1 of 2
+2026-11-09T09:02:00Z deployed 1111111..4444444 (version v0.9.0-fixture)
+2026-11-09T09:03:00Z open=[N02 N11] merged-prs=[N01]; N05 FAILED: tests do not pass after 2 starts
+2026-11-09T09:04:00Z not deployed: 2222222222222222222222222222222222222222 (version v0.9.1-fixture) fails make test
+2026-11-09T09:05:00Z started triage of #9 in /w/alpha/issue-9, pid 4002, start 1 of 2; token ghp_Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2 leaked into a line
+2026-11-09T09:06:00Z update of PR #15 started in /w/alpha/pr-15, pid 4003, start 1 of 2 (key sk-ant-api03-Fixture_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ-AA)
+2026-11-09T09:07:00Z N06 asks a question: see https://github.com/acme/alpha/issues/77 (gho_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8 ghu_q1W2e3R4t5Y6u7I8o9P0a1S2d3F4g5H6j7K8 github_pat_11ABCDEFG0abcdefghijkl_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01)
