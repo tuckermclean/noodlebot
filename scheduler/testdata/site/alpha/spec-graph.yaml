@@ -1,0 +1,14 @@
+# The graph of the open spec PR spec/new-thing: adds N01, changes R01 (deps) and Y01 (track, summary), removes Z01.
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - {id: M01, track: now, name: merged-thing, deps: [], summary: "The merged thing"}
+  - {id: M02, track: now, name: second-merged, deps: [], summary: "Merged through its squash subject"}
+  - {id: R01, track: now, name: running-thing, deps: [M01, M02], summary: "A session runs on it"}
+  - {id: F01, track: now, name: failed-thing, deps: [M01], summary: "Held by FAILED"}
+  - {id: Q01, track: now, name: question-thing, deps: [M01], summary: "Asked a question in its home issue"}
+  - {id: Q02, track: later, name: question-two, deps: [M01], summary: "Asked a question in the status issue"}
+  - {id: A01, track: now, name: answered-thing, deps: [M01], summary: "Its question is answered"}
+  - {id: S01, track: now, name: spec-wait, deps: [M01], summary: "Waits for a spec PR"}
+  - {id: P01, track: now, name: pr-open-thing, deps: [M01], summary: "Its PR is open"}
+  - {id: Y01, track: later, name: ready-thing, deps: [M01, M02], summary: "Changed summary"}
+  - {id: N01, track: later, name: new-thing, deps: [M01], summary: "A brand new node"}

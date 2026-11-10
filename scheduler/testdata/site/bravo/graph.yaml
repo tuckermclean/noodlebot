@@ -1,0 +1,4 @@
+# Fixture for site.test.sh: the graph of the second public repository.
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - {id: B01, track: now, name: only-node, deps: [], summary: "The only node of bravo"}
