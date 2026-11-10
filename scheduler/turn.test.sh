@@ -318,5 +318,121 @@ reset; hb a "$base"
 ask a "$base" --gap 10
 [ $rc = 0 ] && [ -z "$key" ] && [ -s "$d/state/a/waiting.json" ] && pass "S07-AC-1 an empty list is stored and gives no turn" || fail "empty list: rc=$rc $out"
 
+
+# --- S07-AC-1 / S07-AC-3: a start record slightly in the future of the asker's now is a real start
+reset; hb a "$base"; hb b "$base"
+echo "B1 triage - $(w 100)" | list b 60
+echo "A1 fresh L $(w 100)" | list a 60
+ask b $((base + 30)) --gap 60
+[ $rc = 0 ] && [ "$key" = B1 ] && pass "S07-AC-1 (setup) b's unit gets the turn at base+30" || fail "S07-AC-1 future setup: rc=$rc $out"
+: | list b 60
+ask a $((base + 20)) --gap 60
+[ $rc = 0 ] && [ -z "$key" ] && pass "S07-AC-1 a start 10 s in the asker's future still counts: no turn 10 s before it with a gap of 60" || fail "S07-AC-1 start slightly in the future ignored (two starts 10 s apart): rc=$rc $out"
+ask a $((base + 90)) --gap 60
+[ $rc = 0 ] && [ "$key" = A1 ] && pass "S07-AC-1 and a turn 60 s after that start" || fail "S07-AC-1 turn after the future start: rc=$rc $out"
+for t in 1e300 $((base + 61)) $((base + 1000000)); do
+	reset; hb a "$base"
+	printf '{"time": %s, "repo": "b", "unit": "Z9"}\n' "$t" >"$d/state/starts.json"
+	echo "A1 triage - $(w 100)" | list a 60
+	ask a "$base" --gap 60
+	[ $rc = 0 ] && [ "$key" = A1 ] && pass "S07-AC-3 a start record far in the future (time $t) is malformed: a turn is given" || fail "S07-AC-3 absurd future start $t: rc=$rc $out"
+done
+
+# --- S07-AC-4: non-finite numbers never crash or block
+for junk in inf -inf nan; do
+	reset; hb a "$base"; hb b "$base"
+	{ echo "B1 triage - $junk"; echo "B2 triage - $(w 50)"; } | list b 100
+	echo "A1 fresh L $(w 10)" | list a 100
+	ask a "$base" --gap 10; ra=$rc ka=$key
+	ask b "$base" --gap 10; rb=$rc
+	[ $ra = 0 ] && [ "$ka" = A1 ] && pass "S07-AC-4 a list line with since $junk is dropped; the other loop still gets its turn" || fail "S07-AC-4 since $junk: other loop rc=$ra [$ka]"
+	[ $rb = 0 ] && pass "S07-AC-4 and the loop that listed since $junk exits 0 on ask" || fail "S07-AC-4 ask after since $junk: rc=$rb"
+done
+for junk in 'Infinity' 'NaN' '-Infinity'; do
+	reset; hb a "$base"; hb b "$base"
+	echo "A1 fresh L $(w 10)" | list a 100
+	printf '{"tick": 100, "units": [{"key": "B1", "kind": "triage", "size": "-", "since": %s}], "gaveback": []}\n' "$junk" >"$d/state/b/waiting.json"
+	ask a "$base" --gap 10
+	[ $rc = 0 ] && [ "$key" = A1 ] && pass "S07-AC-4 a hand-written waiting.json with since $junk leaves that loop out; others get turns" || fail "S07-AC-4 hand since $junk: rc=$rc [$out]"
+	ask b "$base" --gap 10
+	[ $rc = 0 ] && pass "S07-AC-4 the same loop's ask exits 0" || fail "S07-AC-4 hand since $junk own ask: rc=$rc [$out]"
+done
+for junk in Infinity NaN; do
+	reset; hb a "$base"; hb b "$base"
+	echo "A1 fresh L $(w 10)" | list a 100
+	printf '{"tick": %s, "units": [{"key": "B1", "kind": "triage", "size": "-", "since": %s}], "gaveback": []}\n' "$junk" $((base - 500)) >"$d/state/b/waiting.json"
+	printf '{"time": %s, "repo": "z", "unit": "Z9"}\n' $((base - 1000)) >"$d/state/starts.json"
+	ask a "$base"
+	[ $rc = 0 ] && [ "$key" = A1 ] && pass "S07-AC-4 a hand-written tick $junk leaves that loop out (no infinite gap); the other loop gets its turn" || fail "S07-AC-4 hand tick $junk: rc=$rc [$out]"
+	ask b "$base"
+	[ $rc = 0 ] && pass "S07-AC-4 and its own ask exits 0" || fail "S07-AC-4 hand tick $junk own ask: rc=$rc [$out]"
+done
+for tk in inf -inf nan 0 -5; do
+	reset; hb a "$base"; hb b "$base"
+	echo "A1 triage - $(w 10)" | list a 100
+	echo "B1 fresh L $(w 10)" | T list --root "$d" --repo b --tick "$tk" --now "$base" >/dev/null 2>&1
+	printf '{"time": %s, "repo": "z", "unit": "Z9"}\n' $((base - 1000)) >"$d/state/starts.json"
+	ask a "$base"
+	[ $rc = 0 ] && [ "$key" = A1 ] && pass "S07-AC-4 list --tick $tk does not make the default gap infinite or crash the other loop's ask" || fail "S07-AC-4 list --tick $tk: other loop rc=$rc [$out]"
+done
+
+# --- S07-AC-4: regression, units missing fields or of the wrong type in another loop's list
+for unit in '{"since": 1, "size": "L", "kind": "triage"}' '{"since": 1, "size": "L", "key": "B1"}' '{"key": "B1", "kind": "fresh", "size": ["L"], "since": 1}' '{"key": "B1", "kind": "fresh", "size": "L"}' '5'; do
+	reset; hb a "$base"; hb b "$base"
+	echo "A1 fresh L $(w 10)" | list a 100
+	printf '{"tick": 100, "units": [%s], "gaveback": []}\n' "$unit" >"$d/state/b/waiting.json"
+	ask a "$base" --gap 10
+	[ $rc = 0 ] && [ "$key" = A1 ] && pass "S07-AC-4 another loop's unit $unit does not crash or block the others' ask" || fail "S07-AC-4 odd unit $unit: rc=$rc [$out]"
+done
+# giving back the same grant twice leaves the earlier record, never deletes it
+reset; hb a "$base"
+printf '{"time": %s, "repo": "b", "unit": "Z9"}\n' $((base - 1000)) >"$d/state/starts.json"
+{ echo "A1 triage - $(w 100)"; echo "A2 triage - $(w 50)"; } | list a 1000
+ask a "$base" --gap 10
+T giveback A1 --root "$d" --repo a --now "$base" >/dev/null 2>&1; r1=$?
+T giveback A1 --root "$d" --repo a --now "$base" >/dev/null 2>&1; r2=$?
+if [ $r1 = 0 ] && [ $r2 = 0 ] && [ -f "$d/state/starts.json" ] && [ "$(sj "$d/state/starts.json" "d['time']")" = $((base - 1000)) ] && [ "$(sj "$d/state/starts.json" "d['unit']")" = Z9 ]; then pass "S07-AC-4 giving back the same grant twice leaves the record from before the grant"; else fail "S07-AC-4 double give-back: $r1 $r2 $(cat "$d/state/starts.json" 2>&1)"; fi
+ask a "$base" --gap 10
+case $out in A2"	"*"ahead of A1"*) pass "S07-AC-4 a given-back unit that waited longer is named in the next grant's 'ahead of'" ;; *) fail "S07-AC-4 ahead of a given-back unit: rc=$rc [$out]" ;; esac
+
+# --- S07-AC-3: the lock; the same loop asking twice, an ask racing a list
+reset; hb a "$base"
+multi=0 none=0 bad=0
+i=0
+while [ $i -lt 30 ]; do
+	rm -f "$d/state/starts.json" "$tmp"/o[1-9] "$tmp"/o1[0-2]
+	{ echo "A1 triage - $(w 100)"; echo "A2 triage - $(w 50)"; } | list a 1000
+	rm -f "$tmp/go"
+	for j in 1 2 3 4 5 6 7 8 9 10 11 12; do ( while [ ! -e "$tmp/go" ]; do :; done; T ask --root "$d" --repo a --now "$base" --gap 60 >"$tmp/o$j" 2>&1 ) & done
+	sleep 0.1; : >"$tmp/go"
+	wait
+	n=0; for j in 1 2 3 4 5 6 7 8 9 10 11 12; do [ -s "$tmp/o$j" ] && n=$((n + 1)); done
+	[ $n -gt 1 ] && multi=$((multi + 1))
+	[ $n = 0 ] && none=$((none + 1))
+	python3 -I -c "import json,sys; json.load(open(sys.argv[1]))" "$d/state/starts.json" 2>/dev/null || bad=$((bad + 1))
+	i=$((i + 1))
+done
+[ $multi = 0 ] && [ $none = 0 ] && [ $bad = 0 ] && pass "S07-AC-3 30 rounds of twelve asks from the same loop at the same moment: exactly one grant each round, starts.json well-formed" || fail "S07-AC-3 same-loop asks: $multi rounds with two grants, $none with none, $bad malformed"
+reset; hb a "$base"; hb b "$base"
+multi=0 bad=0
+i=0
+while [ $i -lt 20 ]; do
+	rm -f "$d/state/starts.json" "$tmp/oa" "$tmp/ob"
+	{ echo "A1 fresh L $(w 100)"; echo "A2 fresh L $(w 90)"; } | list a 1000
+	echo "B1 fresh L $(w 95)" | list b 1000
+	( echo "A3 triage - $(w 10)" | T list --root "$d" --repo b --tick 1000 --now "$base" >/dev/null 2>&1 ) &
+	( T ask --root "$d" --repo a --now "$base" --gap 100 >"$tmp/oa" 2>&1 ) &
+	( T ask --root "$d" --repo b --now "$base" --gap 100 >"$tmp/ob" 2>&1 ) &
+	wait
+	n=0; [ -s "$tmp/oa" ] && n=$((n + 1)); [ -s "$tmp/ob" ] && n=$((n + 1))
+	[ $n -gt 1 ] && multi=$((multi + 1))
+	for f in "$d/state/starts.json" "$d/state/a/waiting.json" "$d/state/b/waiting.json"; do
+		[ -e "$f" ] || continue   # the list may reach b's ask first: then nobody is granted
+		python3 -I -c "import json,sys; json.load(open(sys.argv[1]))" "$f" 2>/dev/null || bad=$((bad + 1))
+	done
+	i=$((i + 1))
+done
+[ $multi = 0 ] && [ $bad = 0 ] && pass "S07-AC-3 an ask racing a list that changes the head unit: never two grants, files well-formed" || fail "S07-AC-3 ask racing list: $multi double grants, $bad malformed files"
+
 echo
 if [ $fails = 0 ]; then echo "all turn tests passed"; else echo "$fails turn test(s) failed"; exit 1; fi
