@@ -681,6 +681,49 @@ sess_is triage 21 "not s.get('limit')" "ending with an allowed_warning rate_limi
 sess_is triage 22 "(s.get('limit') or {}).get('resets_at') == 1794200000" "gives as limit its last rejection (not a later allowed_warning)"
 rm -rf "$a/pr/17" "$a/issue/21" "$a/issue/22"
 
+# ---- P01-AC-6/7 cases added after the S4 review ----
+# (1) /issues: an issue/<N>/ folder as the loop leaves a finished triage (triage_ended): an ended session, session.rc 0, no done marker
+# (the loop writes none for issues), no QUESTION.md and no FAILED is "done"; the same with a non-zero session.rc is not "done".
+mkdir -p "$a/issue/40" "$a/issue/41"
+ended "$a/issue/40"; ended "$a/issue/41"
+echo 0 >"$a/issue/40/session.rc"; echo 1 >"$a/issue/41/session.rc"
+touch -d 2026-11-09T10:00:00Z "$a/issue/40/session.pid" "$a/issue/41/session.pid"
+get P01-AC-6 /v1/repos/acme/alpha/issues issues
+chk P01-AC-6 "alpha's /issues gives a finished triage (ended session, session.rc 0, no markers, no done file) the state done" "{i['number']: i['state'] for i in d['issues'] if i['number'] == 40} == {40: 'done'}"
+chk P01-AC-6 "alpha's /issues does not give an ended session with a non-zero session.rc and no markers the state done" "{i['number']: i['state'] for i in d['issues'] if i['number'] == 41}.get(41) != 'done' and 41 in [i['number'] for i in d['issues']]"
+rm -rf "$a/issue/40" "$a/issue/41"
+# (5) /deploy: deploy.sh's "not deployed: <sha> (version <v>) cannot fast-forward <live> (will retry ...)" line is no failed test run
+printf '2026-11-09T11:40:00Z not deployed: 6666666666666666666666666666666666666666 (version v0.9.3-fixture) cannot fast-forward 7777777777777777777777777777777777777777 (will retry the fast-forward)\n' >>"$data/state/alpha/status.log"
+get P01-AC-6 /v1/deploy deploy
+chk P01-AC-6 "/v1/deploy does not take a 'cannot fast-forward' line as the last failed test run (last_failed stays the 'fails make test' line)" "d['last_failed'] == {'repo': 'acme/alpha', 'time': $(ep 2026-11-09T09:04:00Z), 'line': 'not deployed: 2222222222222222222222222222222222222222 (version v0.9.1-fixture) fails make test'}"
+# (3) AC-7 race: a line appended the moment the client has the response head is delivered (the server takes its start positions
+# before it sends the head). race.py appends the line itself right after getresponse(), with no pause, and waits up to 3 s for it.
+cat >"$tmp/race.py" <<'EOP'
+import http.client, socket, sys, time
+sk, log, line = sys.argv[1], sys.argv[2], sys.argv[3]
+class C(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = S = socket.socket(socket.AF_UNIX); self.sock.connect(sk)
+S = None
+try:
+    c = C("localhost"); c.request("GET", "/v1/events"); S = c.sock; r = c.getresponse()
+    with open(log, "a") as f: f.write(line + "\n")
+    S.settimeout(3); end = time.time() + 3; buf = b""
+    while time.time() < end and line.encode() not in buf:
+        l = r.readline()
+        if not l: break
+        buf += l
+    print("OK" if line.encode() in buf else "MISS")
+except Exception as e:
+    print("ERR", e)
+EOP
+race_ok=0
+for n in 1 2 3 4 5; do
+	r=$(python3 -I "$tmp/race.py" "$sock" "$sl_a" "2026-11-09T11:5$n:00Z ev-test alpha race $n" 2>&1)
+	[ "$r" = OK ] && race_ok=$((race_ok + 1))
+done
+if [ $race_ok = 5 ]; then pass "P01-AC-7: a line appended right after the response head is delivered (5 of 5 connects)"; else fail "P01-AC-7: a line appended right after the response head was lost ($race_ok of 5 connects delivered it)"; fi
+
 snap >"$tmp/snap.before"   # the test appended to the status logs: re-take the AC-2 baseline
 
 # AC-2 end-of-test checks: later slices append their cases ABOVE this block (marked by the line below).
@@ -730,6 +773,21 @@ done <"$fix/tokens.txt"
 # the redaction shows: the response that held the key (re-requested here) has [redacted] where it was
 req GET /v1/repos/acme/alpha/sessions
 if [ "$(jx "any('[redacted]' in (e.get('text') or '') for x in d['sessions'] for e in x['events'])")" = True ]; then pass "P01-AC-9: [redacted] replaces the token where a session log held one"; else fail "P01-AC-9: no [redacted] in the sessions response"; fi
+# ---- P01-AC-9/7: ?since=0 streams from the first line of every status log, redacted ----
+rm -f "$tmp/since0" "$tmp/since0.hdr" "$tmp/since0b" "$tmp/since0b.hdr"
+python3 -I "$tmp/stream.py" "$sock" "/v1/events?since=0" "$tmp/since0" 2 </dev/null >/dev/null 2>&1
+python3 -I "$tmp/stream.py" "$sock" "/v1/events?repo=acme/beta&since=0" "$tmp/since0b" 2 </dev/null >/dev/null 2>&1
+cat "$tmp/since0" "$tmp/since0b" >>"$tmp/allresp"
+if [ "$(evx "$tmp/since0" "any(x['repo'] == 'acme/alpha' and x['line'] == '$(sed -n 1p "$fix/data/state/alpha/status.log")' for x in e)")" = True ]; then pass "P01-AC-7: ?since=0 streams from the first line of a status log (alpha's loop-started line arrives)"; else fail "P01-AC-7: ?since=0 did not stream alpha's first status line (head $(sed -n 1p "$tmp/since0.hdr" 2>/dev/null), $(evn "$tmp/since0") events)"; fi
+if [ "$(evx "$tmp/since0b" "len(e) > 0 and all(x['repo'] == 'acme/beta' for x in e) and any(x['line'] == '$(sed -n 1p "$fix/data/state/beta/status.log")' for x in e)")" = True ]; then pass "P01-AC-7: ?repo=acme/beta&since=0 streams beta's lines from the first, and only beta's"; else fail "P01-AC-7: ?repo=&since=0 events: $(evn "$tmp/since0b") (head $(sed -n 1p "$tmp/since0b.hdr" 2>/dev/null))"; fi
+if [ "$(evx "$tmp/since0" "any('[redacted]' in x['line'] for x in e)")" = True ]; then pass "P01-AC-9: the token-shaped strings in the status logs are served redacted in a ?since=0 event"; else fail "P01-AC-9: no [redacted] in a ?since=0 event (the stream gave $(evn "$tmp/since0") events)"; fi
+while IFS= read -r tok; do
+	[ -n "$tok" ] || continue
+	if [ "$(evn "$tmp/since0")" -gt 0 ] && ! grep -F -q -e "$tok" "$tmp/since0"; then pass "P01-AC-9: token ${tok%"${tok#????}"}... is in no ?since=0 event"; else fail "P01-AC-9: token ${tok%"${tok#????}"}... appears in a ?since=0 event, or the stream gave no events"; fi
+done <"$fix/tokens.txt"
+# ---- P01-AC-2: the read-only resources of S4 are requested after the last baseline re-take, so "changes nothing" covers them ----
+req GET /v1/throttle; req GET /v1/deploy; req GET /v1/repos/acme/alpha/prs; req GET /v1/repos/acme/alpha/issues
+if [ "$code" = 200 ]; then pass "P01-AC-2: throttle, deploy, prs and issues were requested after the last baseline (the snapshot below covers them)"; else fail "P01-AC-2: GET /v1/repos/acme/alpha/issues answered $code"; fi
 # --- end of cases; the final checks follow ---
 snap >"$tmp/snap.after"
 if [ $up = 1 ] && cmp -s "$tmp/snap.before" "$tmp/snap.after"; then pass "P01-AC-2: no file under the runtime root or HOME changed except the socket and the locks"; else fail "P01-AC-2: files changed or no server: $(diff "$tmp/snap.before" "$tmp/snap.after" | head -n 6 | tr '\n' ' ')"; fi
