@@ -17,6 +17,7 @@ Exits 1 when the list is unreadable or --out is unwritable; a repository's own b
 import argparse
 import collections
 import json
+import math
 import os
 import re
 import subprocess
@@ -76,7 +77,7 @@ def first_line(path, n=300):
 
 
 def jdump(obj):
-    return (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+    return (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
 
 
 # ---- the loop's facts
@@ -300,7 +301,11 @@ def repo_file(root, repo, running, hold, home):
     for r in open_rows:
         if not r[1].startswith("spec/"):
             continue
-        new = graph_nodes(git_show(clone, "origin/%s:docs/graph.yaml" % r[1]) or "")
+        raw = git_show(clone, "origin/%s:docs/graph.yaml" % r[1])
+        if raw is None:
+            spec_prs.append({"number": int(r[0]), "branch": cut(text(r[1]), 300), "added": [], "changed": [], "removed": []})
+            continue
+        new = graph_nodes(raw)
         ids = {n["id"] for n in new}
         added = [entry(n) for n in new if n["id"] not in base]
         changed = []
@@ -336,7 +341,7 @@ def throttle_file(root, line):
             usage = {}
     except (OSError, ValueError):
         pass
-    num = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) else None  # noqa: E731
+    num = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None  # noqa: E731
     integ = lambda v: int(v) if num(v) is not None else None  # noqa: E731
     wins = []
     w = usage.get("windows")
