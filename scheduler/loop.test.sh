@@ -300,7 +300,7 @@ case " $* " in
 *" repos/"*"/labels"*)
 	echo "labels $*" >>"$L01_LOG"; cat >/dev/null
 	if [ -e "$L01_FAIL" ]; then echo "fake-label-failure" >&2; exit 1; fi
-	echo '[{"name": "noodlebot"}, {"name": "noodlebot-triaged"}, {"name": "noodlebot-status"}]' ;;
+	echo '[{"name": "noodlebot"}, {"name": "noodlebot-triaged"}, {"name": "noodlebot-status"}, {"name": "noodlebot-unit"}]' ;;
 esac
 exit 0
 EOF
