@@ -11,8 +11,10 @@ Every NOODLEBOT_API_HEAD_CHECK seconds (default 60) it compares its checkout's H
 under and, when it moved, re-execs itself keeping the lock and the listening socket (their fds are passed in
 NOODLEBOT_API_FDS). NOODLEBOT_API_KEEPALIVE (default 15) is the event stream's comment interval.
 
-Resources are registered with @route(<regex>); the handler gets the regex match and returns
-(status, object) (a third item True: served verbatim, no "version" added) or raises Err(status, text). Schemas: scheduler/api-schema/v1/<resource>.json.
+Resources are registered with @route(<regex>); the handler gets the regex match and the request handler
+(req: req.query is the parsed query string, req.headers, req.wfile) and returns (status, object) (a third
+item True: served verbatim, no "version" added; None: the handler wrote the whole response itself, as a
+stream does) or raises Err(status, text). Schemas: scheduler/api-schema/v1/<resource>.json.
 """
 import fcntl
 import http.server
@@ -26,6 +28,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CHECKOUT = os.path.dirname(HERE)
@@ -168,19 +171,19 @@ def repo_info(repo):
 # ---- resources ----
 
 @route(r"/v1/repos")
-def r_repos(m):
+def r_repos(m, req):
     return 200, {"repos": [repo_info(r) for r in repo_list()]}
 
 
 @route(r"/v1/repos/([^/]+/[^/]+)")
-def r_repo(m):
+def r_repo(m, req):
     if m.group(1) not in repo_list():
         raise Err(404, "no such repository: " + m.group(1))
     return 200, repo_info(m.group(1))
 
 
 @route(r"/v1/schema/([A-Za-z0-9_-]+)")
-def r_schema(m):
+def r_schema(m, req):
     s = read_json(os.path.join(SCHEMAS, m.group(1) + ".json"))
     if not isinstance(s, dict):
         raise Err(404, "no such schema: " + m.group(1))
@@ -192,6 +195,7 @@ def r_schema(m):
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "noodlebot-api"
+    timeout = 120   # an idle keep-alive client lets go of its thread; a stream writes, and clears this (req.connection.settimeout(None))
 
     def log_message(self, *a):
         pass
@@ -207,13 +211,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def send_error(self, code, message=None, explain=None):
+        """Malformed requests get a JSON body too, never the stdlib's HTML."""
+        self.close_connection = True
+        self.send_obj(code, {"version": VERSION, "error": message or self.responses.get(code, ("error",))[0]})
+
+    def __getattr__(self, name):
+        if name.startswith("do_"):   # every method but GET, known or not: 405
+            return self.other
+        raise AttributeError(name)
+
     def do_GET(self):
         path = self.path.split("?", 1)[0].split("#", 1)[0]
+        self.query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         try:
             for rx, fn in ROUTES:
                 m = rx.match(path)
                 if m:
-                    res = fn(m)
+                    res = fn(m, self)
+                    if res is None:
+                        return
                     body = res[1]
                     if len(res) == 2:
                         body = dict(body, version=VERSION)
@@ -228,8 +245,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def other(self):
         self.close_connection = True   # an unread body must not be taken for the next request
         self.send_obj(405, {"version": VERSION, "error": "method not allowed: only GET is served"})
-
-    do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = other
 
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -263,9 +278,11 @@ def watch_head(started):
     while True:
         time.sleep(every)
         h = head()
-        if h and started and h != started:
+        # HEAD unreadable at start: the code now running is of unknown age, so the first HEAD read restarts it
+        if h and h != started:
             log("HEAD moved %s..%s; restarting" % (started[:7], h[:7]))
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            argv = getattr(sys, "orig_argv", None) or [sys.executable] + sys.argv   # keeps flags such as -I
+            os.execv(sys.executable, argv)
 
 
 def main():
