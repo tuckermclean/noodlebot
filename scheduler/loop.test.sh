@@ -1438,6 +1438,7 @@ s5loop() {   # s5loop <data root> <gh dir>
 	pids+=("$!"); s5lp=$!
 }
 s5calls() { grep -cE -- "$1" "$S5/calls.log" 2>/dev/null || true; }
+s5cbc() { awk -v n="$1" '$1=="pr-comment" && $2==n && !c {c=NR} $1=="pr-close" && $2==n && !k {k=NR} END {exit !(c && k && c<k)}' "$S5/calls.log"; }
 s5callsis() { [ "$(s5calls "$1")" = "$2" ]; }
 s5ev() { grep -cE -- "$1" "$s5st/status.log" 2>/dev/null || true; }
 s5evis() { [ "$(s5ev "$1")" = "$2" ]; }
@@ -1470,6 +1471,7 @@ s5ok "S05-AC-3: the running session of a removed node: its process group is gone
 s5ok "S05-AC-3: and its child with it" waitf 2 dead "$s5c2"
 s5ok "S05-AC-1: (commit without (#N)) its open PR #22 is closed after one comment naming the node and the commit" waitf 8 sh -c "grep -qE '^pr-close 22 ' '$S5/calls.log'"
 s5ok "S05-AC-1: (commit without (#N)) exactly one comment on PR #22, naming R02 and the commit" sh -c "[ \"\$(grep -cE '^pr-comment 22 ' '$S5/calls.log')\" = 1 ] && grep -E '^pr-comment 22 ' '$S5/calls.log' | grep -F R02 | grep -qF '$s5h2s'"
+s5ok "S05-AC-1: PR #22 gets its comment before it is closed (first pr-comment line precedes the pr-close line)" s5cbc 22
 s5ok "S05-AC-1: (commit without (#N)) one status-log event names the node, PR #22 and the commit" waitf 3 s5evis "R02 removed by $s5h2s[0-9a-f]*: closed its PR #22 without merging" 1
 s5ok "S05-AC-3: a removed node with a session: its evidence is archived under state/archive/R02-out" waitf 8 test -f "$s5st/archive/R02-out/brief.md"
 s5ok "S05-AC-3: (R02) its worktree and state folder are removed" waitf 5 sh -c "[ ! -d '$s5wt/R02' ] && [ ! -d '$s5st/node/R02' ]"
@@ -1481,6 +1483,7 @@ s5ok "S05-AC-2: (R02) one status-log event for issue #105" s5evis "R02 removed b
 s5ok "S05-AC-1: a removed node's open PR #21 is closed" waitf 8 sh -c "grep -qE '^pr-close 21 ' '$S5/calls.log'"
 s5ok "S05-AC-1: exactly one comment on PR #21, naming the node and PR #77" sh -c "[ \"\$(grep -cE '^pr-comment 21 ' '$S5/calls.log')\" = 1 ] && grep -E '^pr-comment 21 ' '$S5/calls.log' | grep -F R01 | grep -qF '#77'"
 s5ok "S05-AC-1: it is closed without merging and its branch is not deleted" sh -c "grep -qE '^pr-close 21 del=0\$' '$S5/calls.log' && [ \"\$(grep -c '^pr-merge' '$S5/calls.log')\" = 0 ] && git -C '$s5cl' rev-parse --verify -q node/R01-n1 >/dev/null"
+s5ok "S05-AC-1: PR #21 gets its comment before it is closed (first pr-comment line precedes the pr-close line)" s5cbc 21
 s5ok "S05-AC-1: it is out of the open list and in the closed list" sh -c "! grep -q '^21 ' '$S5/open.tsv' && grep -q '^21 ' '$S5/closed.tsv'"
 s5ok "S05-AC-1: one status-log event names the node, PR #21 and #77" s5evis "R01 removed by #77: closed its PR #21 without merging" 1
 s5ok "S05-AC-3: (R01) its evidence is archived under state/archive/R01-out" waitf 5 test -f "$s5st/archive/R01-out/brief.md"
@@ -1529,6 +1532,7 @@ rm -f "$S5/fail.prclose"
 s5ok "S05-AC-4: at a later tick the step completes: PR #25 is closed" waitf 8 sh -c "grep -qE '^pr-close 25 ' '$S5/calls.log'"
 s5ok "S05-AC-4: with one comment only, not one per attempt" sh -c "[ \"\$(grep -cE '^pr-comment 25 ' '$S5/calls.log')\" = 1 ] && grep -E '^pr-comment 25 ' '$S5/calls.log' | grep -F R05 | grep -qF '#77'"
 s5ok "S05-AC-4: and a single close" s5callsis '^pr-close 25 ' 1
+s5ok "S05-AC-4: PR #25 gets its comment before it is closed (first pr-comment line precedes the pr-close line)" s5cbc 25
 s5ok "S05-AC-4: and its worktree and state are removed" waitf 8 test ! -d "$s5st/node/R05"
 s5ok "S05-AC-4: (R05) one status-log event for the PR close and one for the removal" sh -c "[ \"\$(grep -cE 'R05 removed by #77: closed its PR #25 without merging' '$s5st/status.log')\" = 1 ] && [ \"\$(grep -cE 'R05 removed by #77: removed its worktree and state' '$s5st/status.log')\" = 1 ]"
 s5ok "S05-AC-2: (R05) its issue #108 is commented on once and closed as not planned once" sh -c "[ \"\$(grep -cE '^issue-comment 108 ' '$S5/calls.log')\" = 1 ] && [ \"\$(grep -cE '^issue-close 108 reason=not planned\$' '$S5/calls.log')\" = 1 ]"
