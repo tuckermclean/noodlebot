@@ -2183,5 +2183,46 @@ ok "U02-AC-4: (S2 pending past midnight) the next issue (#$xs2a) has exactly one
 ok "U02-AC-4: (S2 pending past midnight) no issue is opened twice for a date: one for each of 04-10, 04-11, 04-12" test "$(xq "len(L('2026-04-10'))")$(xq "len(L('2026-04-11'))")$(xq "len(L('2026-04-12'))")" = 111
 ok "U02-AC-4: (S2 pending past midnight) the newest issue (2026-04-12) is open and links #$xs2a" test "$(xq "L('2026-04-12')[0]['state']")$(xlinks "$xs2b" "$xs2a")" = openTrue
 
+# Fresh review finding 4 (G4), U02-AC-5 for log issues: a prefixed owner answer on a CLOSED log issue is recorded while the
+# question it names was posted on that issue and is still open; not when posted elsewhere, answered, or gone; once.
+xinit g4
+for u in X01 X03 X04; do printf 'Q1: unique-%s-question\n' "$u" >"$xs/node/$u/QUESTION.md"; done
+xrun 2026-04-10T10:00:00
+ok "U02-AC-5: (G4) (precondition) the question pointers for X01, X03 and X04 are posted on day 1's log issue #$xold" test "$(xq "len([c for c in C($xold) if re.search(r'## X0[134] asks', c['body'])])")" = 3
+printf 'X01 first answer\n' >"$xs/node/X01/ANSWER.md"
+rm -f "$xs/node/X04/QUESTION.md"
+xrun 2026-04-11T00:05:00; xrun 2026-04-11T00:10:00
+xnew=$(xq "L('2026-04-11')[0]['number']")
+printf 'Q1: unique-x02-question\n' >"$xs/node/X02/QUESTION.md"
+xrun 2026-04-11T00:15:00
+ok "U02-AC-5: (G4) (precondition) day 1's issue is closed, X02's question is posted on the new issue (#$xnew), not on #$xold" test "$(xq "db['issues']['$xold']['state']")$(xq "len([c for c in C($xnew) if '## X02 asks' in c['body']])")$(xq "len([c for c in C($xold) if '## X02 asks' in c['body']])")" = closed10
+xowner "$xold" "X02: asked on another issue"
+xowner "$xold" "X01: answered already"
+xowner "$xold" "X04: question gone"
+xrun 2026-04-11T09:00:00; xrc=$?
+ok "U02-AC-5: (G4) answers on the closed log issue naming a question posted elsewhere (X02), answered (X01) or gone (X04) are not recorded (exit not 3)" test "$xrc" != 3
+ok "U02-AC-5: (G4) no ANSWER.md for X02 and X04, and X01's is unchanged" sh -c "[ ! -e '$xs/node/X02/ANSWER.md' ] && [ ! -e '$xs/node/X04/ANSWER.md' ] && [ \"\$(cat '$xs/node/X01/ANSWER.md')\" = 'X01 first answer' ]"
+ok "U02-AC-5: (G4) X03 is not answered yet" test ! -e "$xs/node/X03/ANSWER.md"
+xowner "$xold" "X03: go up"
+xrun 2026-04-11T09:10:00; xrc=$?
+ok "U02-AC-5: (G4) an answer on the closed log issue naming X03, whose question was posted there and is open, is recorded: exit 3" test "$xrc" = 3
+ok "U02-AC-5: (G4) X03's ANSWER.md holds the answer" grep -q '^X03: go up$' "$xs/node/X03/ANSWER.md" 2>/dev/null
+ok "U02-AC-5: (G4) the bot replies that it recorded X03's answer" test "$(xq "len([c for c in db['comments'] if 'Recorded as X03' in c['body']])")" -ge 1
+xg4r=$(xq "len([c for c in db['comments'] if 'Recorded as X03' in c['body']])")
+xg4a=$(cat "$xs/node/X03/ANSWER.md" 2>/dev/null)
+xrun 2026-04-11T09:20:00; xrun 2026-04-11T09:30:00
+ok "U02-AC-5: (G4) the answer is recorded once: later runs add no reply and leave ANSWER.md as it was" test "$(xq "len([c for c in db['comments'] if 'Recorded as X03' in c['body']])")" = "$xg4r" -a "$(cat "$xs/node/X03/ANSWER.md" 2>/dev/null)" = "$xg4a"
+ok "U02-AC-5: (G4) the refused answers are still not recorded" sh -c "[ ! -e '$xs/node/X02/ANSWER.md' ] && [ ! -e '$xs/node/X04/ANSWER.md' ] && [ \"\$(cat '$xs/node/X01/ANSWER.md')\" = 'X01 first answer' ]"
+
+# G4, last tick: an answer posted on day 1's log issue after the last tick's read, before the rollover, is still recorded.
+xinit g4last
+printf 'Q1: unique-x03-question\n' >"$xs/node/X03/QUESTION.md"
+xrun 2026-04-10T10:00:00
+xrun 2026-04-10T23:55:00
+xowner "$xold" "X03: said in the last tick"
+xrun 2026-04-11T00:05:00; xrun 2026-04-11T00:10:00
+ok "U02-AC-5: (G4 last tick) an answer posted on the log issue after the last tick's read is recorded after the rollover" grep -q '^X03: said in the last tick$' "$xs/node/X03/ANSWER.md" 2>/dev/null
+ok "U02-AC-5: (G4 last tick) the old log issue was closed by the rollover" test "$(xq "db['issues']['$xold']['state']")" = closed
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"
