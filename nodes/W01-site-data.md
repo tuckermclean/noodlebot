@@ -61,7 +61,7 @@ After this node everything the status site shows exists as a few small JSON file
    *W01-AC-4.*
 4. **Activity file.** `activity.json` holds the following:
    - the last 100 status-log events across all published repositories, newest first. Each event has its time, its repository and its text. The text has the loop's `open=[…] merged-prs=[…]; ` prefix removed and is cut to 300 characters.
-   - each published repository's triage issues from `issue/<N>/`: the number, its URL, its state (`running`, `question` with the first line, `failed` with the first line, `answered`) and its spec PR when `WAITING-PR` names one;
+   - each published repository's triage issues from `issue/<N>/`: the number, its URL, its state, the first of `running`, `failed` with the first line, `question` with the first line, `answered` that holds, else `idle` (no session and none of these markers: the triage finished or may start again) and its spec PR when `WAITING-PR` names one;
    - deploys: the live checkout's version (`state/<name>/version`), the recorded previous commit, the rejected commits, and the last 10 deploy events (`deployed`, `not deployed`, `rolled back`).
 
    *W01-AC-5.*
