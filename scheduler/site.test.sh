@@ -472,5 +472,242 @@ cat "$res/checks.out"
 n=$(grep -c '^FAIL' "$res/checks.out")
 if [ "$rc" -gt 1 ]; then fail "the check harness itself failed (rc $rc)"; fi
 fails=$((fails + n))
+
+# ---- W02 site-publish: site.py publish against a fake gh that records arguments, GH_TOKEN and the
+# request body, and answers as told by $tmp/ghd/answer (200, 404, 422, 403, 500, fail).
+PT=ghp_PUBLISHtokenVALUE0123456789abcdefXYZ
+GID=0123abcd0123abcd0123abcd0123abcd
+ghd=$tmp/ghd
+mkdir -p "$ghd" "$tmp/ghbin"
+{
+	printf '#!/bin/sh\nd=%s\nPT=%s\n' "$ghd" "$PT"
+	cat <<'FAKE'
+n=$(date +%s%N).$$
+printf '%s\n' "$@" >"$d/call.$n.args"
+if [ "${GH_TOKEN:-}" = "$PT" ]; then echo ok >"$d/call.$n.tok"; else echo bad >"$d/call.$n.tok"; fi
+prev=
+for a in "$@"; do
+	if [ "$prev" = --input ]; then
+		if [ "$a" = - ]; then cat >"$d/call.$n.body"; else cp "$a" "$d/call.$n.body"; fi
+	fi
+	prev=$a
+done
+[ ! -e "$d/delay" ] || sleep 2
+case $(cat "$d/answer" 2>/dev/null) in
+200) echo '{"id":"x","files":{}}'; exit 0 ;;
+404) echo '{"message":"Not Found","marker":"RESPONSEBODYMARK"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+422) echo '{"message":"Validation Failed","marker":"RESPONSEBODYMARK"}'; echo 'gh: Validation Failed (HTTP 422)' >&2; exit 1 ;;
+403) echo '{"message":"Forbidden","marker":"RESPONSEBODYMARK"}'; echo 'gh: Forbidden (HTTP 403)' >&2; exit 1 ;;
+500) echo '{"message":"Server Error","marker":"RESPONSEBODYMARK"}'; echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;;
+*) echo 'gh: connection refused' >&2; exit 1 ;;
+esac
+FAKE
+} >"$tmp/ghbin/gh"
+chmod +x "$tmp/ghbin/gh"
+rm -rf "$root/site"
+cp "$HOME/.config/noodlebot/repos" "$tmp/pub-repos"
+mkdir -p "$sb/node/B01"; rm -f "$sb/node/B01/starts"
+
+cat >"$res/pub.py" <<'EOF'
+import fcntl, glob, hashlib, json, os, re, subprocess, sys, time
+src, tmp, root, home, tok, gid = sys.argv[1:7]
+ghd = tmp + "/ghd"
+HOLD = "hold: 5-hour window projected 95% before the reset"
+fails = 0
+def check(name, fn):
+    global fails
+    try:
+        ok, why = fn(), ""
+    except Exception as e:  # a missing file, key or call is a failed check, never a crash
+        ok, why = False, " (%s: %s)" % (type(e).__name__, str(e)[:120])
+    if ok: print("PASS: " + name)
+    else:
+        fails += 1; print("FAIL: " + name + why)
+def one(name, fn):
+    check(name, lambda: bool(fn()))
+
+seen_calls, all_calls, outputs = set(), [], []
+def new_calls():
+    out = []
+    for p in sorted(glob.glob(ghd + "/call.*.args")):
+        if p in seen_calls: continue
+        seen_calls.add(p); b = p[:-5]
+        c = {"args": open(p).read().split("\n")[:-1], "tok": open(b + ".tok").read().strip()}
+        c["body"] = json.load(open(b + ".body")) if os.path.exists(b + ".body") else None
+        out.append(c); all_calls.append(c)
+    return out
+def answer(a): open(ghd + "/answer", "w").write(a)
+def pub_args(now, extra=()):
+    return [sys.executable, "-I", src + "/site.py", "publish", "--data-root", root, "--repos", tmp + "/pub-repos",
+            "--gist", gid, "--throttle", HOLD, "--now", str(now)] + list(extra)
+def env():
+    e = dict(os.environ); e["PATH"] = tmp + "/ghbin:" + e["PATH"]; e["GH_TOKEN"] = tok
+    return e
+def pub(now, extra=()):
+    r = subprocess.run(pub_args(now, extra), cwd=tmp + "/cwd", env=env(), stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    o, e = r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+    outputs.append(o + e)
+    return r.returncode, o, e, new_calls()
+def files_of(c): return c["body"]["files"]
+def manifest(c): return json.loads(files_of(c)["manifest.json"]["content"])
+def mfiles(m):
+    d = m["files"]
+    return d
+def bump(k): os.makedirs(tmp + "/data/state/bravo/node/B01", exist_ok=True); open(tmp + "/data/state/bravo/node/B01/starts", "w").write("%d\n" % k)
+def pj():
+    p = root + "/site/published.json"
+    return open(p, "rb").read() if os.path.exists(p) else b"<absent>"
+schema = json.load(open(src + "/site-schema.json"))["version"]
+BR, AL = "repo.acme.bravo.json", "repo.acme.alpha.json"
+BUILT = sorted(["activity.json", AL, BR, "throttle.json"])
+S = {}
+
+# ---- W02-AC-1: first publish, then a second run with nothing changed
+answer("200")
+T0 = 1700001000
+S["rc1"], S["o1"], S["e1"], c1 = pub(T0)
+one("W02-AC-1 first publish: exit 0 and exactly one gh call", lambda: S["rc1"] == 0 and len(c1) == 1)
+one("W02-AC-1 the call is one PATCH gists/<ID> through gh api --input <file>, never a POST",
+    lambda: c1[0]["args"][0] == "api" and "PATCH" in c1[0]["args"] and any(a.lstrip("/").endswith("gists/" + gid) for a in c1[0]["args"]) and "POST" not in c1[0]["args"] and "--input" in c1[0]["args"])
+one("W02-AC-1 the first PATCH holds every built file (public repositories only) and manifest.json, and nothing else",
+    lambda: sorted(files_of(c1[0])) == sorted(BUILT + ["manifest.json"]) and all(isinstance(v["content"], str) for v in files_of(c1[0]).values()))
+M1 = lambda: manifest(c1[0])
+one("W02-AC-1 the manifest holds the schema version of site-schema.json", lambda: schema in [v for k, v in M1().items() if isinstance(v, int) and ("version" in k or "schema" in k)])
+one("W02-AC-1 the manifest holds updated and seen, both the publish time", lambda: M1()["updated"] == T0 and M1()["seen"] == T0)
+one("W02-AC-1 the manifest holds each file's SHA-256", lambda: all(re.fullmatch(r"[0-9a-f]{64}", mfiles(M1())[f]) for f in BUILT))
+one("W02-AC-1 the manifest hashes match the sent files' bytes",
+    lambda: all(hashlib.sha256(files_of(c1[0])[f]["content"].encode("utf-8")).hexdigest() == mfiles(M1())[f] for f in BUILT))
+one("W02-AC-1 the manifest hashes match the files built into $NOODLEBOT_DATA/site/out/",
+    lambda: all(hashlib.sha256(open(root + "/site/out/" + f, "rb").read()).hexdigest() == mfiles(M1())[f] for f in BUILT))
+one("W02-AC-1 published.json is written after a 2xx answer", lambda: pj() != b"<absent>" and len(pj()) > 2)
+S["pj1"] = pj()
+rc, o, e, c = pub(T0 + 10)
+one("W02-AC-1 a second run with nothing changed makes no gh call at all, exit 0", lambda: rc == 0 and c == [])
+one("W02-AC-1 the second run leaves published.json as it was", lambda: pj() == S["pj1"])
+rc, o, e, c = pub(T0 + 899)
+one("W02-AC-1 nothing changed and the keepalive not due (899 s): no gh call", lambda: rc == 0 and c == [])
+
+# ---- W02-AC-2: a change in one repository, within and past --min-interval
+bump(1)
+rc, o, e, c = pub(T0 + 20)
+one("W02-AC-2 a change within --min-interval of the last publish sends nothing, exit 0", lambda: rc == 0 and c == [])
+one("W02-AC-2 a change within --min-interval leaves published.json as it was", lambda: pj() == S["pj1"])
+T1 = T0 + 61
+rc, o, e, c2 = pub(T1)
+one("W02-AC-2 the next run past --min-interval sends the change in one call", lambda: rc == 0 and len(c2) == 1)
+one("W02-AC-2 only that repository's file and manifest.json are sent (plus files whose own hash changed)",
+    lambda: BR in files_of(c2[0]) and AL not in files_of(c2[0]) and "manifest.json" in files_of(c2[0])
+    and sorted(files_of(c2[0])) == sorted(["manifest.json"] + [f for f in BUILT if mfiles(manifest(c2[0]))[f] != mfiles(M1())[f]]))
+one("W02-AC-2 the changed file differs from the first publish's and the manifest has every file's hash",
+    lambda: mfiles(manifest(c2[0]))[BR] != mfiles(M1())[BR] and sorted(mfiles(manifest(c2[0]))) == BUILT)
+one("W02-AC-2 updated moves to the time the content changed, seen is this publish's time", lambda: manifest(c2[0])["updated"] == T1 and manifest(c2[0])["seen"] == T1)
+one("W02-AC-2 the sent changed file is the built bytes (hash matches)", lambda: hashlib.sha256(files_of(c2[0])[BR]["content"].encode("utf-8")).hexdigest() == mfiles(manifest(c2[0]))[BR])
+
+# ---- W02-AC-3: a due keepalive
+rc, o, e, c = pub(T1 + 899)
+one("W02-AC-3 keepalive not yet due (899 s) with nothing changed: no gh call", lambda: rc == 0 and c == [])
+T2 = T1 + 900
+rc, o, e, c3 = pub(T2)
+one("W02-AC-3 a publish 900 s after the last with nothing changed makes one call", lambda: rc == 0 and len(c3) == 1)
+one("W02-AC-3 the keepalive sends only manifest.json", lambda: list(files_of(c3[0])) == ["manifest.json"])
+one("W02-AC-3 the keepalive manifest has a new seen and an unchanged updated", lambda: manifest(c3[0])["seen"] == T2 and manifest(c3[0])["updated"] == T1)
+one("W02-AC-3 the keepalive manifest still lists every file's hash", lambda: mfiles(manifest(c3[0])) == mfiles(manifest(c2[0])))
+rc, o, e, c = pub(T2 + 10)
+one("W02-AC-3 after a keepalive the clock restarts: no call 10 s later", lambda: rc == 0 and c == [])
+
+# ---- W02-AC-2: a repository removed from the list, restored, then made private
+shutil_repos = open(tmp + "/pub-repos").read()
+open(tmp + "/pub-repos", "w").write("\n".join(l for l in shutil_repos.split("\n") if "bravo" not in l) + "\n")
+T3 = T2 + 100
+rc, o, e, c4 = pub(T3)
+one("W02-AC-2 a repository removed from the list: one call", lambda: rc == 0 and len(c4) == 1)
+one("W02-AC-2 the removed repository's file is null in that PATCH", lambda: BR in files_of(c4[0]) and files_of(c4[0])[BR] is None)
+one("W02-AC-2 the PATCH sends the manifest, not the unchanged repository file", lambda: "manifest.json" in files_of(c4[0]) and AL not in files_of(c4[0]))
+one("W02-AC-2 the manifest no longer lists the removed repository's file", lambda: BR not in mfiles(manifest(c4[0])) and AL in mfiles(manifest(c4[0])))
+open(tmp + "/pub-repos", "w").write(shutil_repos)
+T4 = T3 + 100
+rc, o, e, c5 = pub(T4)
+one("W02-AC-2 the repository back in the list is sent again, with its content", lambda: rc == 0 and len(c5) == 1 and isinstance(files_of(c5[0])[BR], dict))
+open(tmp + "/data/state/bravo/visibility", "w").write("private\n")
+T5 = T4 + 100
+rc, o, e, c6 = pub(T5)
+one("W02-AC-2 a repository made private: its file is null in the next PATCH", lambda: rc == 0 and len(c6) == 1 and BR in files_of(c6[0]) and files_of(c6[0])[BR] is None)
+one("W02-AC-2 a repository made private is not in the manifest", lambda: BR not in mfiles(manifest(c6[0])))
+one("W02-AC-6 the private repository, the one without record and the one marked private are in no PATCH",
+    lambda: all(not re.search(r"hidden|novis", json.dumps(c["body"])) for c in all_calls if c["body"]) and
+    all(set(files_of(c)) <= set(BUILT + ["manifest.json"]) for c in all_calls if c["body"]))
+open(tmp + "/data/state/bravo/visibility", "w").write("public\n")
+
+# ---- W02-AC-4: each error answer and a failed call
+T = T5 + 100
+k = 10
+for code in ("404", "422", "403", "500", "fail"):
+    k += 1; bump(k)
+    before = pj()
+    answer(code)
+    rc, o, e, ce = pub(T)
+    lines = [l for l in e.split("\n") if l.strip()]
+    tag = "W02-AC-4 answer %s" % code
+    one(tag + ": exit 1", lambda: rc == 1)
+    one(tag + ": one gh call was made for the change", lambda: len(ce) == 1 and ce[0]["body"] is not None)
+    one(tag + ": exactly one stderr line", lambda: len(lines) == 1)
+    if code == "404":
+        one(tag + ": the line is 'gist <ID> not found or not writable with this token'", lambda: lines[0].strip().endswith("gist %s not found or not writable with this token" % gid))
+    elif code != "fail":
+        one(tag + ": the line names the status", lambda: code in lines[0])
+    one(tag + ": no response body in stdout or stderr", lambda: "RESPONSEBODYMARK" not in o + e and "Validation Failed" not in o + e)
+    one(tag + ": published.json is byte-identical", lambda: pj() == before)
+    answer("200")
+    rc2, o2, e2, cn = pub(T + 100)
+    one(tag + ": the next run sends the same change", lambda: rc2 == 0 and len(cn) == 1 and
+        {f: v for f, v in files_of(cn[0]).items() if f != "manifest.json"} == {f: v for f, v in files_of(ce[0]).items() if f != "manifest.json"})
+    one(tag + ": the next run's PATCH is for the change (bravo file), not a bare keepalive", lambda: BR in files_of(cn[0]))
+    T += 200
+one("W02-AC-4 no call ever was a POST, and every call was to gists/<ID>",
+    lambda: len(all_calls) > 10 and all("POST" not in c["args"] and any(a.lstrip("/").endswith("gists/" + gid) for a in c["args"]) for c in all_calls))
+
+# ---- W02-AC-3: a held lock; two publishes started at once
+os.makedirs(root + "/site", exist_ok=True)
+lk = open(root + "/site/lock", "a")
+fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+k += 1; bump(k)
+t0 = time.time()
+rc, o, e, c = pub(T)
+one("W02-AC-3 with the lock held by another process the publish does nothing and exits 0, without waiting", lambda: rc == 0 and c == [] and time.time() - t0 < 30)
+fcntl.flock(lk, fcntl.LOCK_UN); lk.close()
+open(ghd + "/delay", "w").close()
+ps = [subprocess.Popen(pub_args(T + 100), cwd=tmp + "/cwd", env=env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
+res2 = [(p.communicate(timeout=60), p.returncode) for p in ps]
+for (o_, e_), _ in res2: outputs.append(o_.decode("utf-8", "replace") + e_.decode("utf-8", "replace"))
+cc = new_calls()
+os.remove(ghd + "/delay")
+one("W02-AC-3 of two publishes started at once exactly one makes a request", lambda: len(cc) == 1)
+one("W02-AC-3 the one that lost the lock exits 0 too", lambda: [r for _, r in res2] == [0, 0])
+one("W02-AC-3 the lock file is $NOODLEBOT_DATA/site/lock", lambda: os.path.exists(root + "/site/lock"))
+
+# ---- W02-AC-5 (site.py part): the token is in no argument, no output, no file under the runtime root
+one("W02-AC-5 the fake gh saw GH_TOKEN equal to the token in every call", lambda: len(all_calls) > 10 and all(c["tok"] == "ok" for c in all_calls))
+one("W02-AC-5 the token is in no gh argument", lambda: all(tok not in "\n".join(c["args"]) for c in all_calls) and bool(all_calls))
+one("W02-AC-5 the token is in no request body", lambda: all(tok not in json.dumps(c["body"]) for c in all_calls if c["body"]) and bool(all_calls))
+one("W02-AC-5 the token is in no stdout or stderr of any publish", lambda: bool(outputs) and all(tok not in x for x in outputs))
+def under_root():
+    n = 0
+    for d, _, fs in os.walk(root):
+        for f in fs:
+            try: b = open(os.path.join(d, f), "rb").read()
+            except OSError: continue
+            n += 1
+            if tok.encode() in b or tok[4:].encode() in b: return False
+    return n > 0 and os.path.exists(root + "/site/published.json")
+one("W02-AC-5 the token is in no file under the runtime root (published.json and site/out included)", under_root)
+sys.exit(1 if fails else 0)
+EOF
+python3 -I "$res/pub.py" "$src" "$tmp" "$root" "$HOME" "$PT" "$GID" >"$res/pub.out" 2>&1
+prc=$?
+cat "$res/pub.out"
+n=$(grep -c '^FAIL' "$res/pub.out")
+if [ "$prc" -gt 1 ]; then fail "W02 the publish check harness itself failed (rc $prc)"; fi
+fails=$((fails + n))
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"
