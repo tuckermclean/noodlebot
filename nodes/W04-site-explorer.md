@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | W03 | none | L |
+| now | W03 | W05 | L |
 
 **Owns:** `site/explorer/` (the layout, the graph queries, the explorer view), its tests in `site/test/`, the explorer's place in the repository view of `site/app.js`.
 **Resolves:** #47
