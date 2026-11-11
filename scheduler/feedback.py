@@ -81,7 +81,7 @@ def write_record(state, n, rec):
 def unit_dir(state, n, branch):
     if branch.startswith("spec/"):
         return os.path.join(state, "pr", str(n))
-    m = re.match(r"node/([^-]+)-", branch)
+    m = re.match(r"node/([A-Z][0-9][0-9])-", branch)
     return os.path.join(state, "node", m.group(1)) if m else None
 
 

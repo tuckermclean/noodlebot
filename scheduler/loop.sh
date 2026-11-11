@@ -561,6 +561,11 @@ fb_blocked() {
 		{ [ -e "$1/QUESTION.md" ] && [ ! -e "$1/ANSWER.md" ]; }
 }
 
+# fbsay <name> <text>: a failure of start_feedback, said once per streak of the same failure of a unit (not note: that
+# would alternate with "nothing ready" and break the idle loop's one-line-per-10-minutes rule).
+declare -A fb_said=()
+fbsay() { [ "${fb_said[$1]:-}" = "${2#*; }" ] || { say "$2"; fb_said[$1]=${2#*; }; }; }
+
 # start_feedback <node|spec> <node ID, or PR number for spec> <PR> <branch> <saw>: start the feedback session of a PR's
 # unit (/noodlebot:node --feedback <PR> in the node's worktree, /noodlebot:triage --feedback <PR> in worktrees/<name>/pr-<PR>,
 # in the triage's slot). Nothing is handed over (the PR's feedback is not appended and its record not advanced) unless
@@ -573,42 +578,60 @@ start_feedback() {
 	mkdir -p "$d"
 	fb_blocked "$d" "$n" && return 1
 	[ "$t" = node ] || [ -z "$triaging" ] || return 1
-	[ -r "$here/unattended-feedback.md" ] || { note "$saw; $name: no unattended-feedback.md; feedback not started"; return 1; }
-	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing $name's markers failed"; return 1; }
+	[ -r "$here/unattended-feedback.md" ] || { fbsay "$name" "$saw; $name: no unattended-feedback.md; feedback not started"; return 1; }
+	released=$(sh "$here/release-markers.sh" "$d") || { fbsay "$name" "$saw; releasing $name's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $name: $(echo "$released" | paste -sd';')"; fi
-	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; $name has feedback but has used 2 starts; not started"; return 1; }
+	# new items are handed over below and start the count again; a restart (pending FEEDBACK.md) keeps its 2-starts limit
+	if [ -z "${fbnew[$n]:-}" ] || [ ! -s "$state/feedback/$n.md" ]; then
+		[ "$(starts_of "$d")" -lt 2 ] || { fbsay "$name" "$saw; $name has feedback but has used 2 starts; not started"; return 1; }
+	fi
 	if [ "$t" = node ]; then
 		if [ ! -d "$wt" ]; then
 			git -C "$clone" worktree add -q -b "$br" "$wt" "origin/$br" 2>/dev/null ||
-				git -C "$clone" worktree add -q "$wt" "$br" || { note "$saw; worktree for $name failed"; return 1; }
+				git -C "$clone" worktree add -q "$wt" "$br" || { fbsay "$name" "$saw; worktree for $name failed"; return 1; }
 		fi
 		save_leftover "$key" "$wt" "$d" "$saw" || return 1
-		# on the PR's branch, brought to origin/<branch> (commits of its own that are not pushed stay)
-		{ [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$br" ] || git -C "$wt" checkout -q "$br"; } 2>/dev/null &&
-			{ git -C "$wt" merge-base --is-ancestor "origin/$br" HEAD || git -C "$wt" merge -q --ff-only "origin/$br"; } 2>/dev/null ||
-			{ note "$saw; $name: bringing its worktree to origin/$br failed; feedback not started"; return 1; }
+		# on the PR's branch, brought to origin/<branch>: unpushed commits that origin/<branch> has not got stay when it
+		# is only ahead; commits that diverged from it are kept under refs/noodlebot/leftover/ and the branch is reset
+		{ [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$br" ] || git -C "$wt" checkout -q "$br"; } 2>/dev/null ||
+			{ fbsay "$name" "$saw; $name: checking out $br failed; feedback not started"; return 1; }
+		if ! { git -C "$wt" merge-base --is-ancestor "origin/$br" HEAD || git -C "$wt" merge -q --ff-only "origin/$br"; } 2>/dev/null; then
+			local lref=refs/noodlebot/leftover/$key/$(date -u +%Y%m%dT%H%M%SZ)
+			git -C "$wt" update-ref "$lref" HEAD && git -C "$wt" reset -q --hard "origin/$br" 2>/dev/null ||
+				{ fbsay "$name" "$saw; $name: bringing its worktree to origin/$br failed; feedback not started"; return 1; }
+			say "$saw; $name: its commits had diverged from origin/$br; kept at $lref, worktree reset to origin/$br"
+		fi
 	elif [ -d "$wt" ]; then
 		{ git -C "$wt" merge --abort; git -C "$wt" checkout -q -f -B "$br" "origin/$br" &&
 			git -C "$wt" reset -q --hard "origin/$br" && git -C "$wt" clean -qfd; } 2>/dev/null ||
-			{ note "$saw; resetting the worktree of PR #$n failed; feedback not started"; return 1; }
+			{ fbsay "$name" "$saw; resetting the worktree of PR #$n failed; feedback not started"; return 1; }
 	else
-		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
+		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { fbsay "$name" "$saw; worktree for PR #$n failed"; return 1; }
 	fi
 	# hand over: append the PR's new feedback to the unit's FEEDBACK.md, then advance the PR's record
 	if [ -n "${fbnew[$n]:-}" ] && [ -s "$state/feedback/$n.md" ]; then
-		{ [ ! -s "$d/FEEDBACK.md" ] || { cat "$d/FEEDBACK.md"; echo; }; cat "$state/feedback/$n.md"; } >"$d/FEEDBACK.md.tmp" &&
-			python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" --prs "$state/open-prs.tsv" mark "$n" &&
-			mv -f "$d/FEEDBACK.md.tmp" "$d/FEEDBACK.md" || { rm -f "$d/FEEDBACK.md.tmp"; note "$saw; $name: handing over the feedback of PR #$n failed; not started"; return 1; }
+		# the file is in place before the record advances: a death in between leaves a duplicate, never a loss
+		local had=0; [ -s "$d/FEEDBACK.md" ] && cp -p "$d/FEEDBACK.md" "$d/FEEDBACK.md.old" && had=1
+		if { [ "$had" = 0 ] || { cat "$d/FEEDBACK.md"; echo; }; cat "$state/feedback/$n.md"; } >"$d/FEEDBACK.md.tmp" &&
+			mv -f "$d/FEEDBACK.md.tmp" "$d/FEEDBACK.md" &&
+			python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" --prs "$state/open-prs.tsv" mark "$n"; then
+			rm -f "$d/FEEDBACK.md.old"
+		else
+			rm -f "$d/FEEDBACK.md.tmp"
+			if [ "$had" = 1 ]; then mv -f "$d/FEEDBACK.md.old" "$d/FEEDBACK.md"; else rm -f "$d/FEEDBACK.md"; fi
+			fbsay "$name" "$saw; $name: handing over the feedback of PR #$n failed; not started"; return 1
+		fi
 		set_starts "$d" 0
 	fi
-	[ -s "$d/FEEDBACK.md" ] || { note "$saw; $name: no FEEDBACK.md; feedback not started"; return 1; }
+	[ -s "$d/FEEDBACK.md" ] || { fbsay "$name" "$saw; $name: no FEEDBACK.md; feedback not started"; return 1; }
 	[ "$t" = node ] && [[ $br == node/$key-followup-* ]] && ! fu_branch "$d" >/dev/null && echo "$br" >"$d/FOLLOWUP"
 	ni=$(grep -c '^kind: ' "$d/FEEDBACK.md")
 	while read -r u; do list+="${list:+\n}- $(sedesc "$u")"; done < <(sed -n 's/^url: //p' "$d/FEEDBACK.md")
 	sed -e "s|^@ITEMS@\$|${list:-- (none)}|" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
 		-e "s|@BR@|$(sedesc "$br")|g" -e "s|@FB@|$(sedesc "$d/FEEDBACK.md")|g" -e "s|@CMD@|$cmd|g" -e "s|@LOOP@|$here/loop.sh|g" \
 		-e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-feedback.md" >"$d/unattended.md" ||
-		{ note "$saw; $name: rendering unattended-feedback.md failed; not started"; return 1; }
+		{ fbsay "$name" "$saw; $name: rendering unattended-feedback.md failed; not started"; return 1; }
+	unset "fb_said[$name]"
 	launch "$wt" "$d" "$cmd"
 	echo feedback >"$d/session.kind"
 	if [ "$t" = node ]; then live+=("$pid $key"); pn="feedback session of $name on PR #$n"
@@ -1073,10 +1096,21 @@ tick_run() {
 		fb_failed=1
 	fi
 	while read -r fn fbr; do [[ $fn =~ ^[0-9]+$ ]] && fbnew[$fn]=$fbr; done <<<"$fo"
+	# a pending FEEDBACK.md whose PR is no longer open (merged or closed) and with no session running is finished:
+	# it moves into answered/ so that it blocks nothing and is not appended to later
+	for fdir in "$state"/node/*/ "$state"/pr/*/; do
+		fdir=${fdir%/}
+		[ -s "$fdir/FEEDBACK.md" ] && [ ! -e "$fdir/session.pid" ] || continue
+		fn=$(sed -n 's/^PR: //p' "$fdir/FEEDBACK.md" | tail -n1)
+		[[ $fn =~ ^[0-9]+$ ]] || continue
+		cut -d' ' -f1 "$state/open-prs.tsv" | grep -qx "$fn" && continue
+		mkdir -p "$fdir/answered" && mv "$fdir/FEEDBACK.md" "$fdir/answered/$(date -u +%Y%m%dT%H%M%SZ)-FEEDBACK.md" &&
+			say "$saw; ${fdir#$state/}: PR #$fn is no longer open; its pending FEEDBACK.md moved to answered/"
+	done
 	while read -r fn fbr fo fbot fk; do
 		[ "$fbot" = true ] || continue
 		if [[ $fbr == spec/* ]]; then fk=spec fid=$fn fdir=$state/pr/$fn
-		elif [[ $fbr =~ ^node/([^-]+)- ]]; then fk=node fid=${BASH_REMATCH[1]} fdir=$state/node/${BASH_REMATCH[1]}
+		elif [[ $fbr =~ ^node/([A-Z][0-9][0-9])- ]]; then fk=node fid=${BASH_REMATCH[1]} fdir=$state/node/${BASH_REMATCH[1]}
 		else continue; fi
 		[ -n "${fbnew[$fn]:-}" ] || [ -e "$fdir/FEEDBACK.md" ] || continue
 		fb_blocked "$fdir" "$fn" && continue
@@ -1102,7 +1136,8 @@ tick_run() {
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
 		# feedback work (a FEEDBACK.md, or feedback that the loop just wanted) is the feedback step's, never a plain start
 		[ -n "${wspec[$id]:-}" ] && continue
-		[ -e "$state/node/$id/FEEDBACK.md" ] && [[ " $open " == *" $id "* ]] && continue
+		# (a WAITING-PR holds feedback, so the start that releases it once its spec PR is merged is not skipped)
+		[ -e "$state/node/$id/FEEDBACK.md" ] && [ ! -e "$state/node/$id/WAITING-PR" ] && [[ " $open " == *" $id "* ]] && continue
 		full && break
 		if [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind"; fi
 	done <<<"$ready"
