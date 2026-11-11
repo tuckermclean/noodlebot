@@ -13,7 +13,9 @@ TESTS = \
 	scheduler/turn-lock.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	scheduler/deploy.test.sh \
-	plugin/hooks/guard.test.sh \
+	plugin/hooks/guard-roles.test.sh \
+	plugin/hooks/guard-git.test.sh \
+	plugin/hooks/guard-shell.test.sh \
 	scheduler/loop.test.sh \
 	scheduler/loops-basic.test.sh \
 	scheduler/loops-root.test.sh \

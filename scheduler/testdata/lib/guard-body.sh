@@ -12,23 +12,24 @@ fails=0
 ok() { echo "PASS: $1"; }
 bad() { echo "FAIL: $1"; fails=$((fails + 1)); }
 
-# mkjson <agent_type|-> <cwd> <tool> <key> <value> : the PreToolUse hook input on stdout
-cat >"$tmp/mkjson.py" <<'PY'
-import json, sys
-at, cwd, tool, key, val = sys.argv[1:6]
-d = {"hook_event_name": "PreToolUse", "session_id": "s", "cwd": cwd, "tool_name": tool, "tool_input": {key: val}}
-if at != "-":
-    d["agent_type"] = at
-    d["agent_id"] = "a1"
-print(json.dumps(d))
-PY
+# jesc <string>: the string as JSON string content (backslash, quote, newline, tab, carriage return escaped).
+jesc() {
+	je=$(printf '%sx' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e 's/\r/\\r/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }')
+	printf '%s' "${je%x}"
+}
+# mkjson <agent_type|-> <cwd> <tool> <key> <value> : the PreToolUse hook input on stdout (no python process for it)
+mkjson() {
+	printf '{"hook_event_name": "PreToolUse", "session_id": "s", "cwd": "%s", "tool_name": "%s", "tool_input": {"%s": "%s"}' "$(jesc "$2")" "$(jesc "$3")" "$(jesc "$4")" "$(jesc "$5")"
+	if [ "$1" != - ]; then printf ', "agent_type": "%s", "agent_id": "a1"' "$(jesc "$1")"; fi
+	printf '}\n'
+}
 
 # decide <root> <usecwd 0|1> <agent_type> <tool> <key> <value> : sets rc and err
 decide() {
 	rc=127; err=""
 	[ -f "$guard" ] || return 0
 	mkdir -p "$tmp/home"
-	python3 -I "$tmp/mkjson.py" "$3" "$1" "$4" "$5" "$6" >"$tmp/in.json"
+	mkjson "$3" "$1" "$4" "$5" "$6" >"$tmp/in.json"
 	if [ "$2" = 1 ]; then
 		err=$(env -u CLAUDE_PROJECT_DIR python3 -I "$guard" <"$tmp/in.json" 2>&1 >/dev/null)
 	else
@@ -47,6 +48,9 @@ expect() {
 	fi
 }
 
+# want <part>: this run includes the part (the test files set $parts; the parts run at the same time).
+want() { case " $parts " in *" $1 "*) return 0 ;; esac; return 1; }
+if want 1; then
 # ---------- AC-1: the agents and the skill ----------
 for r in tester implementer reviewer; do
 	f="$plug/agents/$r.md"
@@ -80,6 +84,7 @@ sys.exit(1)
 PY
 then ok "R01-AC-2: hooks.json wires a PreToolUse hook on Edit|Write|NotebookEdit|Bash to guard.py"; else bad "R01-AC-2: plugin/hooks/hooks.json missing or does not wire PreToolUse on Edit|Write|NotebookEdit|Bash to \${CLAUDE_PLUGIN_ROOT}/.../guard.py"; fi
 
+fi
 # ---------- fixtures ----------
 mkrepo() {  # mkrepo <dir> : empty git repo
 	rm -rf "$1" && mkdir -p "$1" && git -C "$1" init -q 2>/dev/null
@@ -93,8 +98,9 @@ mkdir -p "$tmp/scratch"
 T=noodlebot:tester; I=noodlebot:implementer; V=noodlebot:reviewer
 W=Write; E=Edit; B=Bash; fp=file_path; cmd=command
 
-# ---------- AC-2: tester, defaults ----------
 a=R01-AC-2
+if want 1; then
+# ---------- AC-2: tester, defaults ----------
 expect $a "tester may write a *.test.sh" allow "$D" $T $W $fp "scheduler/x.test.sh"
 expect $a "tester may write a tests/ file (absolute path)" allow "$D" $T $E $fp "$D/pkg/tests/t.py"
 expect $a "tester may write a testdata/ file" allow "$D" $T $W $fp "scheduler/testdata/f.txt"
@@ -185,10 +191,14 @@ expect $a "root from cwd: roles.yaml applies (implementer, configured test path)
 expect $a "root from cwd: roles.yaml applies (implementer, replaced default)" allow "$C" $I $W $fp "x.test.sh" 1
 expect $a "root from cwd: relative path (tester, source)" block "$D" $T $W $fp "src/main.py" 1
 
+fi
 # ---------- git commit with staged paths ----------
 staged() {  # staged <dir> <path> : fresh repo with <path> staged
 	mkrepo "$1"; mkdir -p "$1/$(dirname "$2")"; echo x >"$1/$2"; git -C "$1" add "$2" 2>/dev/null
 }
+nl='
+'
+if want 2; then
 G="$tmp/gc"
 staged "$G" src/a.py;      expect $a "tester git commit with staged source" block "$G" $T $B $cmd "git commit -m x"
 staged "$G" a.test.sh;     expect $a "tester git commit with only staged tests" allow "$G" $T $B $cmd "git commit -m x"
@@ -243,8 +253,6 @@ expect $a "implementer git commit -am with a modified tracked test" block "$G3" 
 expect $a "implementer git commit with a test pathspec" block "$G3" $I $B $cmd "git commit -m x a.test.sh"
 
 # ---------- heredoc bodies are data (item 8) ----------
-nl='
-'
 expect $a "reviewer python3 - heredoc whose body has a > comparison" allow "$D" $V $B $cmd "python3 - <<'EOF'${nl}for i in range(3):${nl}    if i > 1: print(i)${nl}EOF"
 expect $a "tester python3 - heredoc whose body has a > comparison" allow "$D" $T $B $cmd "python3 - <<'EOF'${nl}if 2 > 1: print(1)${nl}EOF"
 expect $a "implementer python3 - heredoc whose body has a > comparison" allow "$D" $I $B $cmd "python3 - <<'EOF'${nl}if 2 > 1: print(1)${nl}EOF"
@@ -259,6 +267,8 @@ expect $a "tester cat > src/x.py <<EOF is still judged" block "$D" $T $B $cmd "c
 expect $a "reviewer cat > repo file <<-\"EOF\" is still judged" block "$D" $V $B $cmd "cat > out.txt <<-\"EOF\"${nl}x${nl}EOF"
 expect $a "reviewer write after a heredoc ends is still judged" block "$D" $V $B $cmd "cat <<'EOF'${nl}x${nl}EOF${nl}echo y > out.txt"
 
+fi
+if want 3; then
 # ---------- cd / pushd earlier in the same Bash call (item 9) ----------
 expect $a "reviewer cd scratch && run test with > red.log" allow "$D" $V $B $cmd "cd $tmp/scratch && sh x.test.sh > red.log 2>&1"
 expect $a "reviewer cd \$(mktemp -d) && echo > out.txt" allow "$D" $V $B $cmd 'cd $(mktemp -d) && echo hi > out.txt'
@@ -346,5 +356,6 @@ expect $a "implementer git -C <repo> commit with a staged test" block "$G5" $I $
 expect $a "implementer cd <repo> && git commit with a staged test" block "$G5" $I $B $cmd "cd $G5 && git commit -qm x"
 expect $a "reviewer git -C scratch commit" allow "$D" $V $B $cmd "git -C $S commit -qm x"
 expect $a "reviewer git -C <repo> commit" block "$G5" $V $B $cmd "git -C $G5 commit -qm x"
+fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
-echo "PASS: all guard checks"
+if want 1; then echo "PASS: all guard checks"; fi
