@@ -14,6 +14,13 @@
 # started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
+# The start queue (SCHED_RAMP, default 1; 0 = off, every ready unit starts in the same tick and turn.py is
+# never run): new sessions start one per SCHED_START_GAP seconds (default: the largest SCHED_TICK among the
+# live loops) across every loop of the machine, in the order turn.py gives (triages, spec-PR updates,
+# follow-ups and resumes, then fresh nodes by their spec's Size; a unit that waited over SCHED_STARVE
+# seconds, default 21600, goes first). Each tick the loop lists its waiting units (waiting records
+# state/<name>/{node,issue,pr}/<key>/waiting) and, with the throttle open, asks for a turn. SCHED_START_GAP
+# and SCHED_STARVE are read by turn.py from the environment.
 # Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
 # a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
 # (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
@@ -25,6 +32,8 @@
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
+#                            visibility (public, private or unknown: the repository's, asked at start and again while unknown),
+#                            site.log (stderr of the status-site publish step);
 #                            answered/ keeps released questions and spec PRs;
 #                            issue/<N>/ (a triage) and pr/<N>/ (a spec-PR update: also from, done) hold the same files
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
@@ -36,6 +45,8 @@
 # consumed at the next tick: a ready node the throttle holds starts despite the hold (SCHED_MAX still applies),
 # otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
+# After each tick's report it publishes the status site (site.py publish) when ~/.config/noodlebot/gist and
+# ~/.config/noodlebot/gist-token exist and SCHED_SITE is not 0; the gist token goes only to that one command.
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
 set -u -o pipefail
@@ -50,7 +61,7 @@ wtroot=$root/worktrees/${repo#*/}
 state=$root/state/${repo#*/}
 oauth=$HOME/.config/noodlebot/oauth-token
 log=$state/status.log
-tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600
+tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note=''
 # The runtime root must not lie inside a Git working tree (sessions would load its CLAUDE.md and
 # AGENTS.md). The root may not exist yet: ask from its nearest existing ancestor.
 probe=$root
@@ -124,9 +135,18 @@ install_hook
 
 # The label step, once per loop start (never on a tick): the labels the bot relies on exist in the
 # repository. A failure is logged and the loop goes on.
+# vis_ask <token>: record whether the repository is public, private or unknown in state/visibility.
+vis_ask() {
+	local v
+	case $(GH_TOKEN=$1 gh api "repos/$repo" --jq .private 2>>"$state/report.log") in
+	true) v=private ;; false) v=public ;; *) v=unknown ;;
+	esac
+	echo "$v" >"$state/visibility.tmp" && mv -f "$state/visibility.tmp" "$state/visibility"
+}
 ensure_labels() {
 	local tok out
-	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { say "label step: no GitHub App token; labels not checked"; return; }
+	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { echo unknown >"$state/visibility"; say "label step: no GitHub App token; labels not checked"; return; }
+	vis_ask "$tok"
 	if out=$(GH_TOKEN=$tok python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
 		[ -z "$out" ] || say "label step: $(echo "$out" | sed 's/^created label //' | paste -sd' ' | sed 's/^/created labels: /')"
 	else
@@ -363,9 +383,11 @@ stop_idle() {
 # was over 2 minutes ago and has not been resumed for that reset time, is stopped and its conversation
 # resumed (claude -p --resume) in the same worktree, appending to the same log; no start is counted.
 # With no session id to resume, it is stopped and ends as a limit exit (ended); live is kept in step.
+# With the start queue (SCHED_RAMP=1) such a session is a waiting unit (want, kind resumed) and is left
+# untouched; resume_idle <saw> <dir> then does it, when turn.py grants the turn (returns 1 if it failed).
 resume_idle() {
-	local saw=$1 f d p id rs reset sid a wt nl e name pr why
-	[ "$throttled" = 1 ] && return
+	local saw=$1 only=${2:-} k f d p id rs reset sid a wt nl e name pr why
+	[ "$throttled" = 1 ] && [ "$ramp" != 1 ] && return
 	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
 		[ -e "$f" ] || continue
 		d=$(dirname "$f") id=$(basename "$d") p=$(cat "$f")
@@ -374,10 +396,16 @@ resume_idle() {
 		read -r reset sid <<<"$rs"
 		[ $(($(date +%s) - reset)) -gt 120 ] || continue
 		[ "$(cat "$d/resumed" 2>/dev/null)" = "$reset" ] && continue
+		if [ "$ramp" = 1 ] && [ -z "$only" ]; then
+			case $d in "$state"/issue/*) k="#$id" ;; "$state"/pr/*) k="PR#$id" ;; *) k=$id ;; esac
+			want "$k" resumed - "$d" "resume|$d"
+			continue
+		fi
+		[ -z "$only" ] || [ "$d" = "$only" ] || continue
 		name=$(task_name "$d")
 		mapfile -d '' -t a <"/proc/$p/cmdline"
 		wt=$(readlink "/proc/$p/cwd")
-		stop_idle "$d" "$p" || { note "$saw; session $name (pid $p) survived SIGKILL"; continue; }
+		stop_idle "$d" "$p" || { note "$saw; session $name (pid $p) survived SIGKILL"; [ -n "$only" ] && return 1; continue; }
 		wait "$p" 2>/dev/null
 		nl=()
 		for e in "${live[@]}"; do [ "${e#* }" = "$id" ] || nl+=("$e"); done
@@ -390,6 +418,7 @@ resume_idle() {
 			: >"$d/force-limit"
 			ended "$d" "$saw"
 			[ "$triaging" = "$id" ] && triaging=''
+			[ -n "$only" ] && return 1
 			continue
 		fi
 		echo "$reset" >"$d/resumed"
@@ -400,8 +429,10 @@ resume_idle() {
 		pr=$!
 		echo "$pr" >"$d/session.pid"
 		live+=("$pr $id")
-		say "$saw; resuming session $name (pid $pr) after the usage limit: the window reset at $(date -u -d "@$reset" +%H:%M:%S) UTC (epoch $reset); start not counted"
+		say "$saw; resuming session $name (pid $pr) after the usage limit: the window reset at $(date -u -d "@$reset" +%H:%M:%S) UTC (epoch $reset); start not counted${turn_note:+; $turn_note}"
+		[ -n "$only" ] && return 0
 	done
+	[ -z "$only" ]
 }
 
 # pr_done <ID> <start>: a node's session started at <start> (epoch s) has no more use: sets why to the
@@ -465,7 +496,7 @@ start_triage() {
 	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
-	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
+	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
 # start_update <N> <branch> <main> <head> <saw>: update spec PR N (/noodlebot:triage --update N) in a
@@ -489,7 +520,7 @@ start_update() {
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-update.md" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
 	launch "$wt" "$d" "/noodlebot:triage --update $n"
-	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2"
+	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
 # graph_clash <branch>: origin/<branch>'s graph gives an ID of origin/main's graph to a node of another name.
@@ -566,6 +597,38 @@ report() {
 	GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
 		--version "$version" --signature "$signature" \
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
+}
+
+# publish: after report, send the status site to the gist (site.py publish). The gist token is read
+# into the one command's environment only. A failure never stops the tick: its first one after a
+# success or the start is a status line, the rest go to site.log only.
+site_usage='' site_state='' site_off=0
+publish() {
+	[ "${SCHED_SITE:-1}" != 0 ] || return 0
+	local cfg=$HOME/.config/noodlebot gist repos st prev
+	if [ ! -s "$cfg/gist" ] || [ ! -s "$cfg/gist-token" ]; then
+		[ "$site_off" = 1 ] || say "status site off: no gist configured"
+		site_off=1; return 0
+	fi
+	gist=$(head -n1 "$cfg/gist" | tr -d '[:space:]')
+	repos=$cfg/repos
+	[ -r "$repos" ] || { repos=$state/site-repos; echo "$repo" >"$repos"; }
+	prev=$(wc -c <"$state/site.log" 2>/dev/null || echo 0)
+	if GH_TOKEN="$(cat "$cfg/gist-token")" timeout 60 python3 -I "$here/site.py" publish --data-root "$root" --repos "$repos" \
+			--gist "$gist" --throttle "$site_usage" 2>>"$state/site.log"; then
+		[ "$site_state" != failed ] || say "status site: publishing again"
+		site_state=ok
+	else
+		st=$?
+		if [ "$site_state" != failed ]; then
+			if [ "$st" = 124 ]; then st=timeout
+			else st=$(tail -c +"$((prev + 1))" "$state/site.log" 2>/dev/null | sed -n 's/.*publish failed (\([^)]*\)).*/\1/p' | tail -n1)
+			fi
+			say "status site: publish failed (${st:-unknown})"
+		fi
+		site_state=failed
+	fi
+	return 0
 }
 
 # followup_branch <ID>: the branch for a new follow-up of a merged node: node/<ID>-followup-<n>, n one
@@ -727,7 +790,82 @@ start_node() {
 	launch "$wt" "$d" "$skill $id"
 	[ "$resume" = 1 ] && rm -f "$d/leftover.pending"
 	live+=("$pid $id")
-	say "$saw; started $id ($name)${kind:+ as a follow-up on $br} in $wt, pid $pid, start $(starts_of "$d") of 2"
+	say "$saw; started $id ($name)${kind:+ as a follow-up on $br} in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
+}
+
+# node_size <ID> <name>: the Size in the header row of the node's spec on origin/main (S, M or L), else -.
+node_size() {
+	local s
+	s=$(git -C "$clone" show "origin/main:nodes/$1-$2.md" 2>/dev/null | awk -F'|' '
+		h == 0 && /^\|[ ]*Track[ ]*\|.*\|[ ]*Size[ ]*\|[ ]*$/ { h = 1; next }
+		h == 1 { h = 2; next }
+		h == 2 { gsub(/[ \t]/, "", $(NF-1)); print $(NF-1); exit }')
+	case $s in S|M|L) echo "$s" ;; *) echo - ;; esac
+}
+
+# The start queue (SCHED_RAMP=1). want <key> <kind> <size> <dir> <spec>: the loop would start this unit now
+# if starts were unlimited. Its waiting record in <dir> keeps the time it was first found waiting; <spec> says
+# how to start it (see start_turn). Sets, in tick: wlist (the lines for turn.py), wspec, wdir (by key).
+want() {
+	local since
+	since=$(cat "$4/waiting" 2>/dev/null)
+	[[ $since =~ ^[0-9]+$ ]] || {
+		since=$(date +%s); mkdir -p "$4"
+		echo "$since" >"$4/waiting.tmp" && mv "$4/waiting.tmp" "$4/waiting" || note "could not write $4/waiting"
+	}
+	wlist+=("$1 $2 $3 $since"); wspec[$1]=$5 wdir[$1]=$4
+}
+
+# want_node <ID> <name> <kind>: a ready node without a session; kind is ready.py's third word.
+want_node() {
+	local id=$1 wt=$wtroot/$1 k=fresh n
+	if [ -n "$3" ]; then k=followup
+	elif [ -d "$wt" ]; then
+		n=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+		{ [ "${n:-0}" -gt 0 ] || [ -d "$wt/out/node/$id" ]; } && k=resumed
+	fi
+	want "$id" "$k" "$([ "$k" = fresh ] && node_size "$id" "$2" || echo -)" "$state/node/$id" "node|$id|$2|$3"
+}
+
+# start_turn <key> <saw>: start the unit of a granted turn; fails like the start functions.
+start_turn() {
+	local t a b c d
+	IFS='|' read -r t a b c d <<<"${wspec[$1]:-}"
+	case $t in
+	triage) start_triage "$a" "$2" && live+=("$pid $a") && triaging=$a ;;
+	update) start_update "$a" "$b" "$c" "$d" "$2" && live+=("$pid $a") && triaging=$a ;;
+	node) start_node "$a" "$b" "$2" "$c" ;;
+	resume) resume_idle "$2" "$a" ;;
+	*) return 1 ;;
+	esac
+}
+
+# queue_round <saw>: list the waiting units for turn.py (also while the throttle holds); with the throttle
+# open, ask for a turn and start that unit; a failed start gives the turn back and the next unit is asked for.
+# A failing turn.py is logged and starts nothing.
+queue_round() {
+	local saw=$1 f d out key tries=0 targs=(--root "$root" --repo "${repo#*/}") keep=()
+	for d in "${wdir[@]}"; do keep+=("$d"); done
+	for f in "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting; do
+		# a failed issues.py next says nothing about the issues: their records stay
+		[ "$inext_failed" = 1 ] && [[ $f == */issue/* ]] && continue
+		[ -e "$f" ] && [[ " ${keep[*]} " != *" $(dirname "$f") "* ]] && rm -f "$f"
+	done
+	out=$(printf '%s\n' "${wlist[@]}" | python3 -I "$here/turn.py" list "${targs[@]}" --tick "$tick_s" 2>&1) ||
+		{ note "$saw; turn.py list failed ($(echo "$out" | tr '\n' ' ')); nothing started"; return; }
+	listed=1
+	[ "$throttled" = 1 ] && return
+	while [ $((tries += 1)) -le $((${#wlist[@]} + 1)) ]; do
+		out=$(python3 -I "$here/turn.py" ask "${targs[@]}" --tick "$tick_s" 2>&1) ||
+			{ note "$saw; turn.py ask failed ($(echo "$out" | tr '\n' ' ')); nothing started"; return; }
+		[ -n "$out" ] || return
+		key=${out%%$'\t'*} turn_note=${out#*$'\t'}
+		if start_turn "$key" "$saw"; then
+			turn_note=''; rm -f "${wdir[$key]}/waiting"; return
+		fi
+		turn_note=''
+		python3 -I "$here/turn.py" giveback "$key" "${targs[@]}" >/dev/null 2>&1 || { note "$saw; turn.py giveback failed; nothing more started"; return; }
+	done
 }
 
 # deploy: self-deploy this checkout (deploy.sh); its stdout lines are status events, its stderr goes
@@ -760,12 +898,20 @@ print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 rels=()
+open='' merged='' tick_tok='' live=() throttled=0 listed=0 rels=()
+# tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
+# or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
-	local f
-	date +%s >"$state/heartbeat"
+	listed=0
+	[ "$ramp" = 1 ] || rm -f "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting   # no queue: nothing waits
+	tick_run
+	[ "$listed" = 1 ] || rm -f "$state/waiting.json"
+}
+tick_run() {
+	date +%s >"$state/heartbeat.tmp" && mv "$state/heartbeat.tmp" "$state/heartbeat"
 	# RELEASE markers: taken (and removed) now, so they go also when the tick ends early; see the ready loop
 	rels=()
+	local f
 	for f in "$state"/node/*/RELEASE; do
 		[ -e "$f" ] || continue
 		rels+=("$(basename "$(dirname "$f")")"); rm -f "$f"
@@ -779,6 +925,7 @@ tick() {
 	tick_tok=''
 	tok=$(~/.config/noodlebot/token "$repo") || { note "no GitHub App token; nothing started"; return; }
 	tick_tok=$tok
+	[ "$(cat "$state/visibility" 2>/dev/null)" != unknown ] || vis_ask "$tok"
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
@@ -812,6 +959,7 @@ tick() {
 	# one budget). While it says hold, no new session starts; running ones are never stopped.
 	if [ "${SCHED_THROTTLE:-1}" = 1 ]; then
 		usage=$(python3 -I "$here/usage.py" --state-root "$(dirname "$state")" 2>>"$state/report.log") || usage="open: usage unknown"
+		site_usage=$usage
 		if [[ $usage == hold:* ]]; then
 			[ "$throttled" = 1 ] || say "$saw; throttle engaged, no new sessions: ${usage#hold: }"
 			throttled=1
@@ -819,13 +967,19 @@ tick() {
 			say "$saw; throttle released: ${usage#open: }"; throttled=0
 		fi
 	fi
+	local wlist=(); local -A wspec=() wdir=()   # the start queue's waiting units (want)
 	resume_idle "$saw"
-	full() { [ "$throttled" = 1 ] || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
+	# with the queue on, the throttle does not stop units waiting: it only stops the asking
+	full() { { [ "$throttled" = 1 ] && [ "$ramp" != 1 ]; } || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
 
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
-	local n
-	if [ -z "$triaging" ] && ! full && n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
-		[ -z "$n" ] || { start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; }
+	local n inext_failed=0
+	if [ -z "$triaging" ] && ! full; then
+		if n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
+			if [ -z "$n" ]; then :
+			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
+			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
+		else inext_failed=1; fi
 	fi
 	# A bot's spec PR that needs an update: one session at a time, sharing the triage's slot.
 	if [ -z "$triaging" ] && ! full; then
@@ -833,6 +987,7 @@ tick() {
 		while read -r un ub um uh; do
 			[ -n "$un" ] || continue
 			# a failed start does not keep the later PRs from their turn
+			if [ "$ramp" = 1 ]; then want "PR#$un" update - "$state/pr/$un" "update|$un|$ub|$um|$uh"; continue; fi
 			start_update "$un" "$ub" "$um" "$uh" "$saw" && { live+=("$pid $un"); triaging=$un; break; }
 		done < <(next_update)
 	fi
@@ -869,8 +1024,9 @@ tick() {
 			[ "$throttled" = 1 ] && continue
 			break
 		fi
-		start_node "$id" "$name" "$saw" "$kind" && started[$id]=1
+		if [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind" && started[$id]=1; fi
 	done <<<"$ready"
+	[ "$ramp" = 1 ] && queue_round "$saw"
 	for id in "${rels[@]}"; do
 		[ -z "${handled[$id]:-}" ] || continue
 		if [ -n "${started[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it started as the loop would anyway"
@@ -923,7 +1079,9 @@ while :; do
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
-	report; rc=$?; tick_tok=''; [ $rc = 3 ] && continue
+	report; rc=$?; tick_tok=''
+	publish
+	[ $rc = 3 ] && continue
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
 		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself

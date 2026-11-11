@@ -1,0 +1,10 @@
+{
+ "version": 1,
+ "repo": "acme/gamma",
+ "running": false,
+ "stop": false,
+ "stop_all": true,
+ "heartbeat": null,
+ "heartbeat_age": null,
+ "status_issue": null
+}

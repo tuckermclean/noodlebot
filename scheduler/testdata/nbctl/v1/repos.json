@@ -1,0 +1,32 @@
+{
+ "version": 1,
+ "repos": [
+  {
+   "repo": "acme/alpha",
+   "running": true,
+   "stop": false,
+   "stop_all": false,
+   "heartbeat": "@now-42",
+   "heartbeat_age": 42,
+   "status_issue": 77
+  },
+  {
+   "repo": "acme/beta",
+   "running": false,
+   "stop": true,
+   "stop_all": false,
+   "heartbeat": "@now-95",
+   "heartbeat_age": 95,
+   "status_issue": null
+  },
+  {
+   "repo": "acme/gamma",
+   "running": false,
+   "stop": false,
+   "stop_all": true,
+   "heartbeat": null,
+   "heartbeat_age": null,
+   "status_issue": null
+  }
+ ]
+}

@@ -7,7 +7,7 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
   `#` comments allowed): `start` starts the loops not running, `stop` stops them via `~/STOP-<name>`
   (sessions keep going), `status` prints a line per repository. It reads each loop's lock, sessions and
   markers under the runtime root `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`), and `start`
-  passes that root to each loop, since a tmux server keeps its own environment. `start` refuses while
+  passes that root, and every `USAGE_*` and `SCHED_*` variable set in its environment (for example `USAGE_7D_PACE=1 scheduler/loops.sh start`, which turns on the 7-day pace hold), to each loop, since a tmux server keeps its own environment. `start` refuses while
   `~/STOP` exists and removes a stale `~/STOP-<name>`; it also refuses while a loop from before the
   runtime move still holds `<checkout>/state/<name>/loop.lock`: stop it and run the move first
   (`scheduler/move-runtime.sh`, below). The mechanism underneath, per repository:
@@ -23,13 +23,17 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
   GitHub every 60 s (PR merges). Only one loop runs at a time. Sessions run detached, so stopping or
   restarting the loop never stops a session; a restarted loop takes over the running one.
 
-## Watching it: the status issue
+## Watching it: the daily log
 
-Each repository gets one open issue labelled `noodlebot-status` (`scheduler/report.py`, run by the loop
-after each 60 s tick). Its body shows what waits on you, the running session with the orchestrator's latest
-narration and the active subagent, and recent events. Each start, end (with the session's closing
-summary), release, merge and question is a comment, so GitHub notifies you. It is disposable: close it
-and the loop opens a new one. Its failures go to `$NOODLEBOT_DATA/state/<repo>/report.log` and never stop the loop.
+Each repository gets one log issue a day, "noodlebot log <date>", labelled `noodlebot-status`
+(`scheduler/report.py`, run by the loop after each 60 s tick). Its first comment is the morning overview;
+its body is the status table (what waits on you, the running sessions with the latest narration, usage, the
+deployed commit); each start, end (with its total cost), release, merge and question is one line in its
+comments, so GitHub notifies you. At the first run on a new date it posts the day's summary on the old issue,
+closes it, opens the new one, links the two and tries to pin the new one. Closing today's issue is fine: the
+loop opens another. The open ones are here:
+[open `noodlebot-status` issues](https://github.com/tuckermclean/noodlebot/issues?q=is%3Aissue+label%3Anoodlebot-status+is%3Aopen).
+Its failures go to `$NOODLEBOT_DATA/state/<repo>/report.log` and never stop the loop.
 Nothing in it is specific to one repository: `report.py --repo OWNER/NAME --state DIR`.
 
 ## Handing an issue to the bot
@@ -49,6 +53,31 @@ a triage's done). The home issue of a triage is the issue itself; of a node, the
 resolving it is merged and no unit whose home it is has a question open (or answered but not yet released) or a
 follow-up in progress, and reopens it when a unit whose home it is asks a new question. A question shows on the status issue
 as a short pointer to its comment on the home issue.
+
+## Status site
+
+The loop can publish a status site for the repositories it watches. The files are sent to a public gist you make once by hand;
+the publisher never creates a gist.
+
+1. Create a public gist (any file will do; it is replaced by the first publish) and note its ID, the last part of its URL.
+2. Make a token that can only touch gists: a classic token with only the `gist` scope, or a fine-grained token with only
+   the Gists account permission (read and write).
+3. Put the ID in `~/.config/noodlebot/gist` and the token in `~/.config/noodlebot/gist-token`, both mode 0600.
+   An optional `~/.config/noodlebot/repos` lists the repositories to show, one `owner/name` per line (default: the loop's own).
+
+With either file missing the loop says `site off: no gist configured` once at start and publishes nothing. `SCHED_SITE=0`
+turns the publishing off. The token goes only to the publish command, never to a session; a failed publish is one status
+line (`site: publish failed (<status>)`), the details are in `state/<name>/site.log`, and `site: publishing again` follows
+the next success.
+
+The front end in `site/` is a static page that reads the gist from the browser; `.github/workflows/pages.yml` deploys it to
+GitHub Pages when `site/**` changes on `main` (or by hand, with `workflow_dispatch`). To enable it:
+
+1. In the repository's Settings, Pages, set the source to GitHub Actions.
+2. In Settings, Secrets and variables, Actions, Variables, add the repository variable `NOODLEBOT_GIST_ID` with the gist's ID.
+   The workflow writes it to `site/config.json` and fails with a message while it is unset.
+
+The page also takes `?gist=<id>`, which wins over `config.json`.
 
 ## API
 
@@ -107,6 +136,24 @@ From another machine, forward the socket over SSH and use it there:
     curl --unix-socket /tmp/nb.sock http://localhost/v1/repos
 
 If `/tmp/nb.sock` is left over from an earlier forward, set `StreamLocalBindUnlink yes` (in `ssh_config`, or `-o`).
+
+### The command line: `scheduler/nbctl.py`
+
+`scheduler/nbctl.py` is a client of the socket (Python standard library only). It reads no state file, calls no `gh` and
+needs no token, so it works over the forwarded socket too. It uses `$NOODLEBOT_DATA/api.sock`, or the path given with
+`--socket` (before the command). When nothing listens there, it says so in one line and exits 2: start the API with
+`scheduler/loops.sh start`.
+
+    scheduler/nbctl.py status                  # the throttle and the deploy, then one line per repository
+    scheduler/nbctl.py status <owner/name>     # one repository in detail
+    scheduler/nbctl.py events [--repo <owner/name>] [--since <cursor>]   # follow the events, one line each
+    scheduler/nbctl.py get repos/<owner>/<name>/prs   # the JSON of /v1/<path>; exit 0 for 200, 1 for 404, 2 otherwise
+
+`nbctl.py status <owner/name>` replaces `scheduler/status.sh`: it shows the loop and STOP files, the last GitHub check, the
+status issue and the throttle, each running session (pid, age, log size, last write, last 4 actions, a node's commits,
+pending wakeup, background work, limit rejection), what waits on you (FAILED with its reason, QUESTION with its first line and
+the issue to answer on, answered, spec PRs), each node's state and the open PRs with their mergeable state. Keep it open next
+to htop with `watch -n 10 scheduler/nbctl.py status <owner/name>`. `status.sh` stays for now.
 
 ## Answering a node's question
 

@@ -107,9 +107,9 @@ run_test() {
 		rm -rf "$scratch"
 		die "cannot create a scratch worktree for $new"
 	fi
-	# make test runs in a clean environment: the loop's SCHED_* and NOODLEBOT_DATA are not passed on.
+	# make test runs in a clean environment: the loop's SCHED_*, USAGE_* and NOODLEBOT_DATA are not passed on.
 	(
-		for v in $(env | sed -n 's/^\(SCHED_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
 		unset NOODLEBOT_DATA
 		exec timeout 600 make -C "$scratch/wt" test >"$scratch/test.log" 2>&1 9>&-
 	) &

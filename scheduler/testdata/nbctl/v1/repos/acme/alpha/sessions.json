@@ -1,0 +1,132 @@
+{
+ "version": 1,
+ "sessions": [
+  {
+   "kind": "node",
+   "subject": "N04",
+   "pid": 424242,
+   "alive": true,
+   "started": "@now-300",
+   "log_size": 7340032,
+   "log_modified": "@now-7260",
+   "events": [
+    {
+     "type": "tool_use",
+     "time": "@now-599",
+     "tool": "Bash",
+     "text": "act-01",
+     "subagent": false
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-598",
+     "tool": "Bash",
+     "text": "act-02",
+     "subagent": false
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-597",
+     "tool": "Bash",
+     "text": "act-03",
+     "subagent": false
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-596",
+     "tool": "Bash",
+     "text": "act-04",
+     "subagent": false
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-595",
+     "tool": "Bash",
+     "text": "act-05",
+     "subagent": false
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-594",
+     "tool": "Bash",
+     "text": "act-06",
+     "subagent": false
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-593",
+     "tool": "Bash",
+     "text": "act-07",
+     "subagent": false
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-592",
+     "tool": "Bash",
+     "text": "act-08",
+     "subagent": true
+    },
+    {
+     "type": "tool_use",
+     "time": "@now-591",
+     "tool": "Bash",
+     "text": "act-09",
+     "subagent": false
+    },
+    {
+     "type": "result",
+     "time": "@now-100",
+     "text": null,
+     "subtype": "sub-ten"
+    }
+   ],
+   "rc": null,
+   "wakeup_at": "@now+1800",
+   "bg_commands": [
+    {
+     "id": "bgc1",
+     "text": "sleep-bg-token"
+    }
+   ],
+   "bg_agents": [
+    {
+     "id": "bga1",
+     "text": "agent-bg-token"
+    }
+   ],
+   "limit": null,
+   "commits": [
+    {
+     "sha": "abc1234",
+     "subject": "commit-subject-one"
+    },
+    {
+     "sha": "bcd2345",
+     "subject": "commit-subject-two"
+    },
+    {
+     "sha": "cde3456",
+     "subject": "commit-subject-three"
+    }
+   ]
+  },
+  {
+   "kind": "triage",
+   "subject": "104",
+   "pid": 515151,
+   "alive": true,
+   "started": "@now-4000",
+   "log_size": 2048,
+   "log_modified": "@now-20",
+   "events": [],
+   "rc": null,
+   "wakeup_at": null,
+   "bg_commands": [],
+   "bg_agents": [],
+   "limit": {
+    "at": "@now-60",
+    "resets_at": "@now+3600"
+   }
+  }
+ ]
+}
