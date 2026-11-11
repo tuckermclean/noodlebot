@@ -23,7 +23,10 @@ Each run:
      on one issue is not answered again from the other;
   3. posts new status.log events (starts, ends, releases, merges, FAILED) as one comment, one line each (an
      ended session's line with its total cost; no closing summary);
-  4. posts each new unanswered QUESTION.md once: a short `## <ID> asks` pointer on the status issue (its
+  4. posts each new unanswered QUESTION.md once (a node-PR update's, from a PR folder with a `node` file, only on
+     its node's home issue, created like the node's own when it has none, as the milestone "PR #N asks"; the update
+     has no issue of its own and its answer, taken like a unit's, needs the prefix `PR #N:` when the node or another
+     update waits on the same issue): a short `## <ID> asks` pointer on the status issue (its
      Waiting on you item links the question's comment on the unit's issue), and
      the whole QUESTION.md as a milestone on the unit's home issue;
   5. posts milestones on each unit's home issue, each once, each starting with a `**Stage:**` line: a start
@@ -124,6 +127,17 @@ def nodes(state):
         if os.path.isdir(d):
             out += [fmt % n for n in sorted(os.listdir(d)) if pat.match(n) and os.path.isdir(os.path.join(d, n))]
     return out
+
+
+def pr_node(state, task):
+    """The node ID of a node-PR update ("PR #N" whose folder holds a `node` file), else None (a spec-PR update)."""
+    if not task.startswith("PR #"):
+        return None
+    try:
+        v = open(os.path.join(tdir(state, task), "node")).read().split()[0]
+    except (OSError, IndexError):
+        return None
+    return v if NODE.match(v) else None
 
 
 def tdir(state, task):
@@ -856,6 +870,8 @@ def spec_info(a, node):
 
 def home_issue(a, rs, task):
     """The unit's home issue number: the recorded one, else decided (and for a Build issue created) and recorded."""
+    if pr_node(a.state, task):  # a node-PR update has no issue of its own: its node's
+        return home_issue(a, rs, pr_node(a.state, task))
     f = os.path.join(tdir(a.state, task), "issue")
     try:
         return int(open(f).read().split()[0])
@@ -897,15 +913,15 @@ def home_issue(a, rs, task):
 
 def milestone(a, rs, task, key, stage, body=""):
     """Post one milestone comment on the unit's home issue, once per key (recorded in report.json after the post)."""
-    if task.startswith("PR #"):  # a spec-PR update is not a unit: no issue
-        return
+    if task.startswith("PR #") and not (pr_node(a.state, task) and key.split(":")[0] in ("question", "answer")):
+        return  # a spec-PR update is not a unit: no issue; a node-PR update posts only its question and answer, on its node's
     u = rs.setdefault("units", {}).setdefault(task, {})
     done = u.setdefault("done", [])
     if key in done:
         return
     issue = home_issue(a, rs, task)
     text = "**Stage:** " + stage
-    if not u.get("intro") and not task.startswith("#"):
+    if not u.get("intro") and not task.startswith("#") and not task.startswith("PR #"):
         others = [i for i in spec_info(a, task)[1] if i != issue]
         if others:
             text += "\n\nAlso on this node's Resolves line: " + ", ".join("#%d" % i for i in others) + "."
@@ -1048,7 +1064,7 @@ def record_answer(a, rs, node, c, text):
                 (node, a.owner, c["created_at"], c["html_url"], text))
     os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
     a.answered = True
-    what = None if node.startswith("#") else answered_text(a.state, node)
+    what = None if node.startswith("#") or node.startswith("PR #") else answered_text(a.state, node)
     queue(a, rs, node, "answer:%s" % c["id"], "answer received" + (", " + what if what else ""),
           "The owner's answer was recorded: %s" % c["html_url"])
     flush(a, rs)
@@ -1059,10 +1075,11 @@ def home_units(a):
     """{issue number: [tasks]} for the units whose home issue is recorded."""
     out = {}
     for n in nodes(a.state):
-        if n.startswith("PR #"):
+        if n.startswith("PR #") and not pr_node(a.state, n):
             continue
         try:
-            out.setdefault(int(open(os.path.join(tdir(a.state, n), "issue")).read().split()[0]), []).append(n)
+            d = tdir(a.state, pr_node(a.state, n) or n)
+            out.setdefault(int(open(os.path.join(d, "issue")).read().split()[0]), []).append(n)
         except (OSError, ValueError, IndexError):
             pass
     return out
@@ -1073,6 +1090,8 @@ def finished(a, n):
     in progress; a triage once it ended done. A new QUESTION.md makes it unfinished again."""
     if held(a, n) or has(a.state, n, "session.pid") or has(a.state, n, "FAILED"):
         return False
+    if n.startswith("PR #"):  # a node-PR update: nothing more once it asks nothing
+        return True
     if n.startswith("#"):  # done: its done line was seen (queued or posted)
         rs = getattr(a, "rs", None) or {}
         return any(k.startswith("done:") for k in rs.get("units", {}).get(n, {}).get("done", [])) or \
@@ -1085,7 +1104,7 @@ def held(a, n):
     return has(a.state, n, "QUESTION.md") or has(a.state, n, "FOLLOWUP")
 
 
-ID_PREFIX = re.compile(r"\s*\**(#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
+ID_PREFIX = re.compile(r"\s*\**(PR #\d+|#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
 
 
 def take_home_answers(a, rs, status_issue):
@@ -1215,7 +1234,7 @@ def post_events(a, rs, issue):
 def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
-        if n.startswith("PR #"):
+        if n.startswith("PR #") and not pr_node(a.state, n):
             continue
         q = os.path.join(tdir(a.state, n), "QUESTION.md")
         key = mtime_key(q)
@@ -1225,7 +1244,9 @@ def post_questions(a, rs, issue):
             home = home_issue(a, rs, n)
             if ("question:" + key) not in rs.get("units", {}).get(n, {}).get("done", []):
                 reopen(a, rs, home)
-            if posted.get(n) != key:
+            if posted.get(n) != key and pr_node(a.state, n):
+                posted[n] = key  # a node-PR update's question is only on its node's issue
+            elif posted.get(n) != key:
                 comment(a, issue, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
                         "starting the reply with `%s:`.\n" % (n, home, n))
                 posted[n] = key
