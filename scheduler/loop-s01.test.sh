@@ -8,7 +8,7 @@
 loop4; loop1s=$lp4
 s01ok "S01 setup: six sessions run, each with a child of its own" waitf 20 sh -c "[ \$(ls '$S01'/child.B0[1-6].1 2>/dev/null | wc -l) = 6 ]"
 p1=$(pg B01) p2=$(pg B02) p3=$(pg B03) p4=$(pg B04) p5=$(pg B05) p6=$(pg B06)
-c1=$(cat "$S01/child.B01.1" 2>/dev/null) c2=$(cat "$S01/child.B02.1" 2>/dev/null)
+c1=$(cat "$S01/child.B01.1" 2>/dev/null)
 s01ok "S01 setup: a session's child is in the session's process group" sh -c "[ \"\$(ps -o pgid= -p '$c1' | tr -d ' ')\" = '$p1' ]"
 # the loop has logged the start of all six sessions (the old fixed sleep of 2 s let it settle)
 wait_until 5 s01_started 6

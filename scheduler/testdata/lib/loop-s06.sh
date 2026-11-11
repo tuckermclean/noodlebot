@@ -56,3 +56,6 @@ x6starts_ok() { # <key>: starts is 1 (the original), and one "started" event
 	local k=$1 sd; sd=$(x6sd "$k")
 	[ "$(cat "$sd/starts" 2>/dev/null)" = 1 ] && [ "$(x6evn "$k" 'started ')" = 1 ] && [ "$(x6runs "$k")" = 2 ]
 }
+# The two rate-limit events the S06 runs write into a session log: x6rejected <resetsAt> and x6allowed <five_hour resetsAt> <seven_day resetsAt>.
+x6rejected() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":%s,"status":"rejected"}}}}\n' "$1"; }
+x6allowed() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.01,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":0.0,"resetsAt":%s,"status":"allowed"}}}}\n' "$1" "$2"; }

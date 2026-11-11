@@ -19,13 +19,12 @@ NOODLEBOT_DATA=$data06 PATH=$tmp/bin06:$PATH SCHED_REPORT=0 SCHED_TICK=1 SCHED_P
 pids+=("$!"); lp06=$!
 x6part=$(basename "$0")
 x6wait 20 x6have up.K01 up.K02 up.K03 up.K04 up.K05 up.K06 up.issue-46 || fail "S06 (harness): the six nodes and the triage session are running (in $x6part)"
-printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":%s,"status":"rejected"}}}}\n' $(($(date +%s) + 3600)) >"$data06/state/other/node/Z01/session.jsonl"
+x6rejected $(($(date +%s) + 3600)) >"$data06/state/other/node/Z01/session.jsonl"
 x6wait 8 grep -q 'throttle engaged' "$st06/status.log" || fail "S06 (harness): the throttle engages (in $x6part)"
 touch "$S06/arm"
 x6wait 8 x6have armed.K01 armed.K02 armed.K03 armed.K04 armed.K05 armed.K06 armed.issue-46 || fail "S06 (harness): the sessions write their rejections (in $x6part)"
 wait_ticks 1 "$st06"   # the loop has seen the rejections under the hold (see above)
-printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.01,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":0.0,"resetsAt":%s,"status":"allowed"}}}}\n' \
-	$(($(date +%s) + 7200)) $(($(date +%s) + 3 * 86400)) >>"$data06/state/other/node/Z01/session.jsonl"
+x6allowed $(($(date +%s) + 7200)) $(($(date +%s) + 3 * 86400)) >>"$data06/state/other/node/Z01/session.jsonl"
 x6wait 8 grep -q 'throttle released' "$st06/status.log" || fail "S06-AC-5 (harness): the throttle releases (in $x6part)"
 x6wait 25 x6have resumed-up.K01 resumed-up.K02 resumed-up.issue-46 resumed-up.K06 args.K05.2 args.K06.3 || fail "S06 (harness): the resumes and restarts have run (in $x6part)"
 wait_ticks 4 "$st06"   # the old fixed sleep was 4 s (loop-s06.test.sh makes its checks of the resumes here)

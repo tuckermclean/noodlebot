@@ -31,7 +31,7 @@ pids+=("$!"); lp06=$!
 x6wait 20 x6have up.K01 up.K02 up.K03 up.K04 up.K05 up.K06 up.issue-46
 x6ok "S06 (harness): the six nodes and the triage session are running" x6have up.K01 up.K02 up.K03 up.K04 up.K05 up.K06 up.issue-46
 # the throttle holds, then the sessions write their rejections
-printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":%s,"status":"rejected"}}}}\n' $(($(date +%s) + 3600)) >"$data06/state/other/node/Z01/session.jsonl"
+x6rejected $(($(date +%s) + 3600)) >"$data06/state/other/node/Z01/session.jsonl"
 x6wait 8 grep -q 'throttle engaged' "$st06/status.log"
 x6ok "S06 (harness): the throttle engages" grep -q 'throttle engaged' "$st06/status.log"
 touch "$S06/arm"
@@ -41,8 +41,7 @@ wait_ticks 6 "$st06"
 for k in $x6keys; do
 	x6ok "S06-AC-5: while the throttle holds, $k (idle past its reset) is neither stopped nor resumed" x6untouched "$k"
 done
-printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.01,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":0.0,"resetsAt":%s,"status":"allowed"}}}}\n' \
-	$(($(date +%s) + 7200)) $(($(date +%s) + 3 * 86400)) >>"$data06/state/other/node/Z01/session.jsonl"
+x6allowed $(($(date +%s) + 7200)) $(($(date +%s) + 3 * 86400)) >>"$data06/state/other/node/Z01/session.jsonl"
 x6wait 8 grep -q 'throttle released' "$st06/status.log"
 x6ok "S06-AC-5 (harness): the throttle releases" grep -q 'throttle released' "$st06/status.log"
 x6wait 25 x6have resumed-up.K01 resumed-up.K02 resumed-up.issue-46 resumed-up.K06 args.K05.2 args.K06.3
