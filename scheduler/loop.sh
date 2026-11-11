@@ -108,9 +108,10 @@ site_addr='' site_said=''
 site_links() {
 	local cfg=$HOME/.config/noodlebot a why=''
 	site_addr=''
-	[ -s "$cfg/site" ] || { site_said=''; return 0; }
+	[ -e "$cfg/site" ] || { site_said=''; return 0; }
 	a=$(head -n1 "$cfg/site" 2>/dev/null)
 	case $a in
+	https:///*) why="the address has no host" ;;
 	https://?*) ;;
 	*) why="not an https:// address" ;;
 	esac
@@ -121,8 +122,8 @@ site_links() {
 		esac
 	fi
 	if [ -n "$why" ]; then
-		[ "$site_said" = "$a" ] || say "status site links off: $why"
-		site_said=$a; return 0
+		[ "$site_said" = "x$a" ] || say "status site links off: $why"
+		site_said=x$a; return 0
 	fi
 	site_said=''
 	[ "${SCHED_SITE:-1}" != 0 ] && [ -s "$cfg/gist" ] && [ -s "$cfg/gist-token" ] || return 0

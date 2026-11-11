@@ -189,6 +189,7 @@ export function renderExplorer(r, view = {}) {
     const p = ghostPos.get(g);
     boxes.push(`<g data-node="${e(g.id)}" data-ghost="added" data-pr="${num(g.pr)}" data-x="${p.x}" data-y="${p.y}"${hl(false)} data-selected="${!!ghostSel && g.id === ghostSel.id}" transform="translate(${p.x},${p.y})">` +
       `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="#fff" stroke="#000" stroke-width="1" stroke-dasharray="6 4"/>` +
+      (ghostSel && g.id === ghostSel.id ? `<rect data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="4" fill="none" stroke="#06c" stroke-width="2" pointer-events="none"/>` : '') +
       `<text x="6" y="18" font-size="12">${e(g.id)} ${e(g.name)}</text>${prTag(repo, g, 0)}</g>`);
   }
 

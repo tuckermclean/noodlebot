@@ -53,6 +53,7 @@ TESTS = \
 	scheduler/loop-w02-fail.test.sh \
 	scheduler/loop-w02-off.test.sh \
 	scheduler/loop-w05.test.sh \
+	scheduler/loop-w05b.test.sh \
 	scheduler/loop-g01-lim.test.sh \
 	scheduler/loop-g01-throttle.test.sh \
 	scheduler/loop-s07-records.test.sh \
