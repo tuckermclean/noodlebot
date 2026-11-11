@@ -10,7 +10,6 @@ svg { max-width: 100%; height: auto; }
 [data-highlight="false"] { opacity: 0.25; }
 svg [data-node] a { cursor: pointer; text-decoration: none; }
 [data-node] text { fill: #000; }
-[data-selected="true"] { outline: 2px solid #06c; }
 tr[data-selected="true"] { background: #def; }
 .swatch { display: inline-block; width: 0.9em; height: 0.9em; border: 1px solid #000; vertical-align: middle; }
 .legend span[data-legend], .filters a { margin-right: 0.8rem; }

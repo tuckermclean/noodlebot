@@ -87,7 +87,11 @@ export function mount(doc = document, win = window) {
     const html = app.render();
     if (html === last) return;
     last = html;
+    const old = root.querySelector && root.querySelector('.explorer-scroll');
+    const left = old ? old.scrollLeft : 0, top = old ? old.scrollTop : 0;
     root.innerHTML = html;
+    const cur = old && root.querySelector('.explorer-scroll');
+    if (cur) { cur.scrollLeft = left; cur.scrollTop = top; }
   };
   root.addEventListener('click', (ev) => {
     const th = ev.target.closest && ev.target.closest('th[data-sort]');
@@ -105,7 +109,9 @@ export function mount(doc = document, win = window) {
     if (view.node) win.location.hash = buildHash(route.repo, { ...view, node: null });
   };
   root.addEventListener('click', (ev) => {
-    if (ev.target && ev.target.tagName && ev.target.tagName.toLowerCase() === 'svg') clearSelection();
+    const t = ev.target;
+    if (!t || !t.closest || !t.closest('.explorer-scroll') || t.closest('a')) return;
+    clearSelection();
   });
   doc.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') clearSelection(); });
   win.addEventListener('hashchange', draw);

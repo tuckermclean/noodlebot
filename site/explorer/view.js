@@ -176,12 +176,12 @@ export function renderExplorer(r, view = {}) {
     const dash = tags.some((t) => t.kind === 'changed') ? ' stroke-dasharray="3 3"' : '';
     const rect = `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="${colour(n.state)}" stroke="#000" stroke-width="${heavy ? 4 : 1}"${dash}/>` +
       (n.id === sel ? `<rect data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="4" fill="none" stroke="#06c" stroke-width="2" pointer-events="none"/>` : '');
-    const label = `<a data-select="${e(n.id)}" href="${e(href)}">${rect}<text x="6" y="18" font-size="12"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text></a>`;
-    const tagText = tags.map((t, i) => prTag(repo, t, i)).join('');
     const mark = ready.has(n.id) ? `<circle data-mark="ready-next" cx="${BOX_W - 10}" cy="10" r="5" fill="#fff" stroke="#000" stroke-width="2"/>` : '';
+    const label = `<a data-select="${e(n.id)}" href="${e(href)}">${rect}<text x="6" y="18" font-size="12"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text>${mark}</a>`;
+    const tagText = tags.map((t, i) => prTag(repo, t, i)).join('');
     return `<g data-node="${e(n.id)}" data-state="${e(n.state)}" data-x="${p.x}" data-y="${p.y}" data-selected="${n.id === sel}"` +
       `${heavy ? ' data-chain="true"' : ''}${attrs}${hl(inLit(n.id))} transform="translate(${p.x},${p.y})">` +
-      `${label}${mark}${tagText}</g>`;
+      `${label}${tagText}</g>`;
   });
   for (const g of added) {
     const p = ghostPos.get(g);
