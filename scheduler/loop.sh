@@ -94,6 +94,11 @@ ids() { sed -n 's#^node/\([A-Z][0-9][0-9]\)-.*#\1#p' | sort -u | tr '\n' ' '; }
 starts_of() { cat "$1/starts" 2>/dev/null || echo 0; }
 set_starts() { echo "$2" >"$1/starts"; }
 pf=$(python3 -I -B "$nb/scheduler/harness.py" preflight 2>&1) || { echo "loop.sh: $pf" >&2; exit 2; }
+# The harness's capabilities, read once per loop start; each one lacking is said once and its feature is off.
+hname=${SCHED_HARNESS:-claude-code}
+caps=$(python3 -I -B "$nb/scheduler/harness.py" capabilities 2>/dev/null) || caps='usage resume bg-wait'
+caps=" $(echo $caps) "
+has_cap() { [[ $caps == *" $1 "* ]]; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
 [ -d "$clone/.git" ] || git clone -q "https://github.com/$repo" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
@@ -106,6 +111,9 @@ signature=$(sh "$here/version.sh" --signature "$nb" 2>/dev/null) || signature=
 [ -n "$signature" ] || signature="— n00dl3b0t unknown"
 { echo "$version" >"$state/version.tmp" && mv "$state/version.tmp" "$state/version"; } 2>/dev/null || say "could not write $state/version"
 say "loop started for $repo, version $version"
+has_cap usage || say "harness $hname lacks usage: throttle off"
+has_cap resume || say "harness $hname lacks resume: limit resume off"
+has_cap bg-wait || say "harness $hname lacks bg-wait: cut-off check off"
 # sedesc <text>: text for a sed replacement (delimiter |) with & | \ escaped.
 sedesc() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
 vsub=$(sedesc "$version") ssub=$(sedesc "$signature")
@@ -260,7 +268,7 @@ idle_by_limit() { hev idle "$1"; }
 
 # bg_cut_off <dir>: the harness stopped background tasks still running after the last turn (whatever
 # the exit code). Such an end uses up no start. Skipped when the harness has no such setting.
-bg_cut_off() { hev cutoff "$1"; }
+bg_cut_off() { has_cap bg-wait && hev cutoff "$1"; }
 
 # not_counted <dir>: give back the start a limit exit used.
 not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" $((n - 1)); }
@@ -446,8 +454,9 @@ resume_idle() {
 		nl=()
 		for e in "${live[@]}"; do [ "${e#* }" = "$id" ] || nl+=("$e"); done
 		live=("${nl[@]}")
-		if [ "$sid" = - ] || [ -z "${a[4]:-}" ] || [ ! -d "$wt" ]; then
-			if [ "$sid" = - ]; then why='no session id in its log'
+		if ! has_cap resume || [ "$sid" = - ] || [ -z "${a[4]:-}" ] || [ ! -d "$wt" ]; then
+			if ! has_cap resume; then why='the harness cannot resume; it restarts as a new start'
+			elif [ "$sid" = - ]; then why='no session id in its log'
 			elif [ -z "${a[4]:-}" ]; then why='its command line could not be read'
 			else why='its worktree is missing'; fi
 			say "$saw; session $name was idle by the usage limit and could not be resumed: $why"
@@ -1001,7 +1010,7 @@ tick_run() {
 	local cap=${SCHED_MAX:-0} usage
 	# The throttle: usage.py reads the plan's windows from every repository's sessions (one account,
 	# one budget). While it says hold, no new session starts; running ones are never stopped.
-	if [ "${SCHED_THROTTLE:-1}" = 1 ]; then
+	if [ "${SCHED_THROTTLE:-1}" = 1 ] && has_cap usage; then
 		usage=$(python3 -I "$here/usage.py" --state-root "$(dirname "$state")" 2>>"$state/report.log") || usage="open: usage unknown"
 		site_usage=$usage
 		if [[ $usage == hold:* ]]; then
