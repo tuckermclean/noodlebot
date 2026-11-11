@@ -1,0 +1,4 @@
+{"version":1 ,"prs" :[ {"number":88,"branch":"node/N06-branch-token","head":"a1b2c3d4","bot":true,"mergeable":"MERGEABLE"},
+  {"mergeable":"CONFLICTING","number":89,"head":"b2c3d4e5","bot":false,"branch":"feature/branch-token-89"},
+  {"number":90,"branch":"feature/branch-token-90","head":"c3d4e5f6","bot":false,"mergeable":"UNKNOWN"} ],
+ "modified": null}

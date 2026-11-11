@@ -1,0 +1,15 @@
+{
+ "version": 1,
+ "head": "9f3c2ab",
+ "previous": "7d1e0aa",
+ "rejected": [
+  "5e5e5e5"
+ ],
+ "last_deploy": {
+  "repo": "acme/beta",
+  "time": "@now-900",
+  "line": "2026-11-10T09:00:00Z deployed 9f3c2ab (deploy-line-token)"
+ },
+ "last_failed": null,
+ "modified": "@now-900"
+}
