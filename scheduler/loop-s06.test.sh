@@ -22,81 +22,7 @@
 # A later run without --resume (K05 run 2, K06 run 3): QUESTION.md. The throttle is held (a rejected five_hour window
 # in another repository's log, resetting in the future) from before the sessions write their rejection until the
 # check of S06-AC-5, then released by a later allowed window.
-S06=$tmp/s06; export S06
-mkdir -p "$S06" "$tmp/bin06" "$tmp/nb06/scheduler" "$tmp/nb06/plugin" "$tmp/data06/repos" "$tmp/data06/state/other/node/Z01"
-data06=$(cd "$tmp/data06" && pwd -P)
-nb06=$(cd "$tmp/nb06" && pwd -P)
-st06=$data06/state/s06 wt06=$data06/worktrees/s06
-S06_STATE=$st06; export S06_STATE
-for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/nb06/scheduler/" ;; esac; done
-git init -q -b main "$tmp/work06"; mkdir -p "$tmp/work06/docs"
-{ echo 'nodes:'; for i in 1 2 3 4 5 6; do echo "  - {id: K0$i, name: k$i, deps: []}"; done; } >"$tmp/work06/docs/graph.yaml"
-printf 'base\n' >"$tmp/work06/base.txt"
-git -C "$tmp/work06" add -A && git -C "$tmp/work06" -c user.name=t -c user.email=t@t commit -q -m init
-git -C "$tmp/work06" checkout -q -b spec/u1 && echo spec >"$tmp/work06/spec.txt" && git -C "$tmp/work06" add -A &&
-	git -C "$tmp/work06" -c user.name=t -c user.email=t@t commit -q -m spec && git -C "$tmp/work06" checkout -q main
-git clone -q --bare "$tmp/work06" "$tmp/remote06.git"
-git clone -q "$tmp/remote06.git" "$data06/repos/s06"
-echo '[{"number": 46}]' >"$S06/issues.json"; : >"$S06/open.tsv"
-cat >"$tmp/bin06/gh" <<'EOF'
-#!/bin/sh
-case " $* " in
-*" --state open "*) cat "$S06/open.tsv" ;;
-*" --state merged "* | *" --state closed "*) ;;
-*"/issues?labels=noodlebot"*) cat "$S06/issues.json" ;;
-*"/events"*) echo '[{"event": "labeled", "label": {"name": "noodlebot"}, "actor": {"login": "o"}}]' ;;
-*"/labels"*) cat >/dev/null; echo '{}' ;;
-esac
-exit 0
-EOF
-cat >"$tmp/bin06/claude" <<'EOF'
-#!/bin/sh
-key=$(basename "$(pwd -P)")
-n=$(( $(cat "$S06/runs.$key" 2>/dev/null || echo 0) + 1 )); echo $n >"$S06/runs.$key"
-prompt= sid= app= prev=
-for a in "$@"; do
-	case $prev in -p) prompt=$a ;; --resume) sid=$a ;; --append-system-prompt) app=$a ;; esac
-	prev=$a
-done
-r=$key.$n
-printf '%s\n' "$@" >"$S06/args.$r"; printf '%s' "$prompt" >"$S06/prompt.$r"; printf '%s' "$app" >"$S06/append.$r"
-printf '%s' "$sid" >"$S06/sid.$r"; pwd -P >"$S06/pwd.$r"
-case $key in K0[1-6]) sd=$S06_STATE/node/$key ;; issue-*) sd=$S06_STATE/issue/${key#issue-} ;; *) sd=$S06_STATE/pr/${key#pr-} ;; esac
-out() { printf '%s\n' "$1"; printf '%s\n' "$1" >>"$S06/log0.$key"; }
-rej() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%s,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":%s,"status":"rejected"}}},"session_id":"sid-%s"}\n' "$1" "$1" "$key"; }
-if [ -n "$sid" ]; then   # resumed
-	echo $PPID >"$S06/pg2.$key"
-	git status --porcelain >"$S06/status.$r" 2>&1; git rev-parse HEAD >"$S06/head.$r" 2>&1; cat base.txt >"$S06/base.$r" 2>&1
-	touch "$S06/resumed-up.$key"
-	[ $key = K06 ] && exit 7
-	printf '{"type":"system","subtype":"init","session_id":"%s","resumed_run":true}\n' "$sid"
-	printf '{"type":"assistant","message":{"content":[{"type":"text","text":"resumed run of %s"}]},"resumed_run":true}\n' "$key"
-	while [ -e "$S06/hold.$key" ]; do sleep 0.2; done
-	if [ $key = K02 ]; then
-		r=$(cat "$S06/reset.$key"); rej "$r"
-		echo '{"type":"result","subtype":"error_during_execution","result":"You have hit your usage limit"}'
-		while [ ! -e "$S06/go" ]; do sleep 0.2; done
-	fi
-	case $key in K0*) echo "Q1: x" >"$sd/QUESTION.md" ;; issue-*) echo "Q1: x" >"$sd/QUESTION.md" ;; esac
-	exit 0
-fi
-if [ $n -ge 2 ]; then echo "Q1: x" >"$sd/QUESTION.md"; exit 0; fi   # restarted the usual way
-echo $PPID >"$S06/pg.$key"; sleep 300 & echo $! >"$S06/child.$key"
-echo dirty >>base.txt; echo u >"u.$key.txt"
-git status --porcelain >"$S06/status.$r" 2>&1; git rev-parse HEAD >"$S06/head.$r" 2>&1
-[ $key = K02 ] && out '{"type":"system","subtype":"init","session_id":"sid-K02-old"}'
-[ $key = K05 ] || out "{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"$(pwd -P)\",\"session_id\":\"sid-$key\"}"
-touch "$S06/up.$key"
-while [ ! -e "$S06/arm" ]; do sleep 0.2; done
-back=300; [ $key = K03 ] && back=5
-r=$(( $(date +%s) - back )); echo $r >"$S06/reset.$key"
-out "$(rej "$r")"
-[ $key = K02 ] && out '{"type":"result","subtype":"error_during_execution","result":"You have hit your usage limit"}'
-[ $key = K04 ] && { out '{"type":"assistant","message":{"content":[{"type":"text","text":"working again"}]}}'; out '{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}'; }
-touch "$S06/armed.$key"
-wait
-EOF
-chmod +x "$tmp/bin06/gh" "$tmp/bin06/claude"
+. "$src/testdata/lib/loop-s06-main.sh"
 touch "$S06/hold.K01" "$S06/hold.K02" "$S06/hold.issue-46" "$S06/hold.pr-101"
 x6keys="K01 K02 K03 K04 K05 K06 issue-46"
 NOODLEBOT_DATA=$data06 PATH=$tmp/bin06:$PATH SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 \
@@ -166,23 +92,6 @@ x6ok "S06-AC-3: K01's resumed session ends by the usual path (rc 0, QUESTION.md)
 x6ok "S06-AC-3: K02's resumed session ends by the usual path (rc 0, QUESTION.md)" test "$(x6evn K02 'session K02 ended \(rc 0\) with QUESTION.md')" = 1
 x6ok "S06-AC-3: the resumed triage session ends by the usual path (rc 0, QUESTION.md)" test "$(x6evn issue-46 'triage of #46 ended \(rc 0\) with QUESTION.md')" = 1
 x6ok "S06-AC-3: K02 is not resumed a second time after its resumed run ended" test "$(x6runs K02)" = 2
-# the update session (PR #101) starts once the triage is gone
-echo "101 spec/u1 abc123 true CONFLICTING" >"$S06/open.tsv"
-x6wait 20 x6have resumed-up.pr-101
-wait_ticks 2 "$st06"
-k=pr-101
-x6ok "S06 (harness): the update session ran and was resumed" x6have up.pr-101 args.pr-101.2
-x6ok "S06-AC-5: once the throttle is open, the update session (PR #101) is resumed" x6have args.pr-101.2
-x6ok "S06-AC-2: pr-101 (update session): claude runs again with --resume <the id of the log's last init line> and the original options and unattended.md" x6args_ok "$k"
-x6ok "S06-AC-2: pr-101 (update session): the resume prompt says the usage limit stopped it and has reset, background agents and commands were killed; check, re-dispatch, carry on" x6prompt_says "$S06/prompt.$k.2"
-x6ok "S06-AC-2: pr-101 (update session): its old claude and process group are gone; the new process is the session (S06-AC-3)" x6run_ok "$k"
-x6ok "S06-AC-2: pr-101 (update session): same worktree, same changes and HEAD, no leftover patch" x6wt_ok "$k"
-x6ok "S06-AC-2: pr-101 (update session): the new output is appended to the same session.jsonl" x6log_ok "$k"
-x6ok "S06-AC-2: pr-101 (update session): starts unchanged (1), no new start" x6starts_ok "$k"
-x6ok "S06-AC-2: pr-101 (update session): one status event names it and the reset time" test "$(x6res_n "$k")" = 1
-rm -f "$S06/hold.pr-101"
-x6wait 8 sh -c "grep -qE 'update of PR #101 ended \(rc 0\)' '$st06/status.log'"
-x6ok "S06-AC-3: the resumed update session ends by the usual path (rc 0)" test "$(x6evn pr-101 'update of PR #101 ended \(rc 0\)')" = 1
 kill "$lp06"; wait "$lp06" 2>/dev/null
 for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
 

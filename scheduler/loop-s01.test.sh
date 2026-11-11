@@ -84,7 +84,7 @@ now=$(date +%s)
 echo node/B04-n4 >"$S01/open.txt"
 wait_polls "$S01/polls" "$(polls "$S01/polls")" 2   # two ticks that read open.txt, so none sees #14 closed without its open PR
 printf '13 node/B03-n3 %s 0\n14 node/B04-n4 %s 0\n' $((now - 3600)) "$now" >"$S01/closed.tsv"
-wait_ticks 3
+wait_ticks 4   # the old fixed sleep was 3.5 s: a did-not-happen check waits that many ticks, rounded up
 s01ok "S01-AC-3: a PR closed before the session started does not stop it" grp_up "$p3"
 s01ok "S01-AC-3: a closed PR does not stop the session of a node that also has an open PR" grp_up "$p4"
 s01ok "S01-AC-3: nodes with no PR are untouched" grp_up "$p5"
@@ -108,7 +108,7 @@ s01ok "S01-AC-2: its branch remains" git -C "$data4/repos/sc" rev-parse --verify
 wait_polls "$S01/polls" "$m1" 3
 s01ok "S01-AC-1: the event is not repeated on later ticks" test "$(ev B01 11)" = 1
 s01ok "S01-AC-1: the merged node is not started again" test "$(s01runs B01)" = 1
-wait_ticks 3
+wait_ticks 4   # the old fixed sleep was 3.5 s: a did-not-happen check waits that many ticks, rounded up
 s01ok "S01-AC-2: the event is not repeated on later ticks" test "$(ev B02 12)" = 1
 s01ok "S01-AC-2: it is not started on later ticks" test "$(s01runs B02)" = 1
 rm -f "$state/node/B02/FAILED"
@@ -119,24 +119,7 @@ wait_polls "$S01/polls" "$m2b" 3
 s01ok "S01-AC-2: the new session is not stopped for the PR closed before it began" sh -c "[ \"\$(cat '$S01/runs.B02')\" = 2 ] && kill -0 \"\$(cat '$state/node/B02/session.pid')\""
 s01ok "S01-AC-2: and no second FAILED is written" test ! -e "$state/node/B02/FAILED"
 
-# A session taken over after a restart: the loop is down while B06's PR merges.
 kill "$loop1s"; wait "$loop1s" 2>/dev/null
-sleep 0.5   # nothing to observe: the loop is gone; the session must still be alive a moment after it
-c6=$(cat "$S01/child.B06.1" 2>/dev/null)
-s01ok "S01 setup: stopping the loop leaves B06's session running" grp_up "$p6"
-echo "17 node/B06-n6" >>"$S01/merged.tsv"; printf '17 node/B06-n6 %s 1\n' "$(date +%s)" >>"$S01/closed.tsv"
-loop4; loop2s=$lp4
-s01ok "S01-AC-1: a taken-over session whose PR merged: its process group is gone within a tick" waitf 4 grp_gone "$p6"
-s01ok "S01-AC-1: (taken over) and its child with it" waitf 2 dead "$c6"
-s01ok "S01-AC-1: (taken over) one status-log event names the node and the merged PR" waitf 3 evis B06 17 1
-s01ok "S01-AC-1: (taken over) its evidence is archived to state/archive/B06-out" waitf 3 test -f "$state/archive/B06-out/brief.md"
-s01ok "S01-AC-1: (taken over) its worktree is removed" waitf 3 test ! -d "$wt4/B06"
-m6=$(polls "$S01/polls")
-wait_polls "$S01/polls" "$m6" 2
-s01ok "S01-AC-1: (taken over) the event is not repeated" test "$(ev B06 17)" = 1
-s01ok "S01-AC-3: after the restart the sessions of B03, B04 and B05 still run" bash -c "$(declare -f grp_gone grp_up); grp_up $p3 && grp_up $p4 && grp_up $p5"
-
-kill "$loop2s"; wait "$loop2s" 2>/dev/null
 s01_cleanup
 
 loop_end

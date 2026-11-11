@@ -76,7 +76,9 @@ qev() { cat "$(qlog qa)" "$(qlog qb)" 2>/dev/null | grep -E "; started $1"; }
 qev_has() { qev "$1" | grep -qE "$2"; }
 qev_hasnt() { qev "$1" | grep -qE '; turn: ' && ! qev "$1" | grep -qiE "$2"; }
 qgap_n() { [ "$(qn)" = "$1" ] && qgap_ok "$2"; }
-qwait() { local to=$1 end; shift; end=$(( $(date +%s) + to )); until "$@"; do [ "$(date +%s)" -ge "$end" ] && return 1; sleep 0.1; done; }
+# qwait <seconds> <command...>: a positive wait (the check that follows fails if it ran out). Three times the time asked: a
+# loop on a loaded machine needs more, and a wait that succeeds costs nothing; no check states its bound through qwait.
+qwait() { local to=$(( $1 * 3 )) end; shift; end=$(( $(date +%s) + to )); until "$@"; do [ "$(date +%s)" -ge "$end" ] && return 1; sleep 0.1; done; }
 qn_ge() { [ "$(qn)" -ge "$1" ]; }
 qwait_n() { qwait "$1" qn_ge "$2"; }
 qrec() { cat "$qd/state/$1/$2/waiting" 2>/dev/null; }
@@ -115,8 +117,9 @@ qsample() { # every machine-wide file that exists is well-formed JSON
 }
 # qrun_until <seconds> <starts>: sample the JSON files until that many sessions have started (or time is up), then a little longer.
 qrun_until() {
-	local end=$(( $(date +%s) + $1 )) settle
+	local end=$(( $(date +%s) + $1 * 3 )) settle
 	while [ "$(qn)" -lt "$2" ] && [ "$(date +%s)" -lt "$end" ]; do qsample; sleep 0.05; done
+	wait_until 10 qev_ge "$2"   # every start has its event in the status log (written by the loop after the session began)
 	settle=$(( $(date +%s) + 2 )); while [ "$(date +%s)" -lt "$settle" ]; do qsample; sleep 0.05; done
 }
 

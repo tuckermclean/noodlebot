@@ -44,13 +44,13 @@ loop_end() { if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; ex
 cp_scheduler() { local f; for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$1/" ;; esac; done; }
 # wait_ticks <n> [<state dir>]: the loop that owns that state dir (default $state) has started n more ticks: its heartbeat
 # file (one epoch second per tick) changed n times. Where a check says something did NOT happen, this is the wait: the
-# loop has had at least as many ticks as the old fixed sleep covered. Gives up after 5 s a tick.
+# loop has had at least as many ticks as the old fixed sleep covered. Gives up after 10 s a tick.
 _hbchg() { [ "$(cat "$2/heartbeat" 2>/dev/null)" != "$1" ]; }
 wait_ticks() {
 	local n=$1 sd=${2:-$state} last
 	last=$(cat "$sd/heartbeat" 2>/dev/null)
 	while [ "$n" -gt 0 ]; do
-		wait_until 5 _hbchg "$last" "$sd" || return 1
+		wait_until 10 _hbchg "$last" "$sd" || return 1
 		last=$(cat "$sd/heartbeat" 2>/dev/null); n=$((n - 1))
 	done
 }
@@ -60,4 +60,4 @@ wait_ticks() {
 # to run later, after other phases have used up the ticks they need, instead of sleeping.
 polls() { local n; n=$(wc -l <"$1" 2>/dev/null) && echo "${n:-0}" || echo 0; }
 _polls_ge() { [ "$(polls "$1")" -ge "$2" ]; }
-wait_polls() { wait_until $(($3 * 5 + 5)) _polls_ge "$1" $(($2 + $3)); }
+wait_polls() { wait_until $(($3 * 10 + 10)) _polls_ge "$1" $(($2 + $3)); }

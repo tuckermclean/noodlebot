@@ -13,7 +13,7 @@ qopen
 qwait_n 10 1
 # A02's log has the rejection, and the loop has ticked on it, well before the gap of 4 s since A02's start has passed
 qrejected() { grep -q rate_limit_event "$qd/state/qa/node/A02/session.jsonl" 2>/dev/null; }
-qwait 5 qrejected; qticks 2
+qwait 5 qrejected; qticks 2   # the old sleep was 2.2 s, and the check ends before the gap of 4 s since A02 started: a third tick would pass it under load
 pid_a=$(qpid)
 qok "S07-AC-6: (precondition) A02 started first, and its log has the usage-limit rejection" sh -c "[ \"\$(sed -n 1p '$q/starts.log' | awk '{ print \$3 }')\" = A02 ] && grep -q rate_limit_event '$qd/state/qa/node/A02/session.jsonl'"
 qok "S07-AC-6: while the gap has not passed the idle session is not resumed (no resume start)" test "$(qn)" = 1

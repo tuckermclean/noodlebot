@@ -22,10 +22,12 @@ TESTS = \
 	scheduler/loop-s03.test.sh \
 	scheduler/loop-s01.test.sh \
 	scheduler/loop-s01-fail.test.sh \
+	scheduler/loop-s01-takeover.test.sh \
 	scheduler/loop-s07-slots.test.sh \
 	scheduler/loop-g01.test.sh \
 	scheduler/loop-s07.test.sh \
 	scheduler/loop-s06.test.sh \
+	scheduler/loop-s06-update.test.sh \
 	scheduler/loop-s07-failed.test.sh \
 	scheduler/loop-s07-turnpy.test.sh \
 	scheduler/loop-w02-fail.test.sh \

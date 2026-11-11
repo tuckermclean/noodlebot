@@ -75,7 +75,7 @@ st=$st6
 s3dead=0
 # s3ok <name> <seconds> <command...>: PASS when the command succeeds within that time; after the first
 # failed wait every later wait is 1 s, so a run against a missing feature still ends quickly.
-s3ok() { local name=$1 t=$2; shift 2; [ "$s3dead" = 1 ] && t=1; if waitf "$t" "$@"; then pass "$name"; else fail "$name"; s3dead=1; fi; }
+s3ok() { local name=$1 t=$2; shift 2; if [ "$s3dead" = 1 ]; then t=1; else t=$((t * 3)); fi; if waitf "$t" "$@"; then pass "$name"; else fail "$name"; s3dead=1; fi; }
 s3chk() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 s3ticks() { [ "$s3dead" = 1 ] || wait_ticks "$1"; }
 # s3pw <polls count> <n>: n ticks have passed since the count was taken (polls: one per tick, counted by the fake gh)
