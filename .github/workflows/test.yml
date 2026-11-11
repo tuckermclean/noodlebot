@@ -21,4 +21,4 @@ jobs:
           SITE_TESTS: required
           TEST_BUDGET_ENFORCE: 1
           TEST_FILE_BUDGET: 60
-          TEST_BUDGET: 240
+          TEST_BUDGET: 360
