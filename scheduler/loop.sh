@@ -1004,6 +1004,7 @@ tick_run() {
 		{ note "$saw; ready.py failed; nothing started"; return; }
 	requests   # a request's event is logged before any node starts (a record that came in during ready.py too)
 	local -A isrel=() handled=() isready=() started=()
+	local out took_failed=0
 	for id in "${rels[@]}"; do isrel[$id]=1; done
 	while read -r id name kind; do [ -z "$id" ] || isready[$id]=1; done <<<"$ready"   # all of them, also past a break below
 	while read -r id name kind; do
@@ -1028,12 +1029,17 @@ tick_run() {
 		if [ "$ramp" = 1 ] && [ "$throttled" = 1 ] && [ -n "${isrel[$id]:-}" ]; then
 			# a released node skips the start queue: its start is recorded (turn.py took), then it starts
 			handled[$id]=1
-			if ! out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "${repo#*/}" 2>&1); then
-				say "$saw; $id: RELEASE found, but turn.py took failed ($(echo "$out" | tr '\n' ' ')); not started"
+			if [ "$took_failed" = 1 ]; then
+				want_node "$id" "$name" "$kind"
+				say "$saw; $id: RELEASE found, but an earlier turn.py took failed; nothing more started, it keeps waiting"
+			elif ! out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "${repo#*/}" 2>&1); then
+				took_failed=1; want_node "$id" "$name" "$kind"
+				say "$saw; $id: RELEASE found, but turn.py took failed ($(echo "$out" | tr '\n' ' ')); not started, it keeps waiting"
 			elif start_node "$id" "$name" "$saw" "$kind"; then
 				say "$saw; $id: released past the throttle"; rm -f "$state/node/$id/waiting"
 			else
 				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "${repo#*/}" >/dev/null 2>&1 || note "$saw; turn.py giveback failed"
+				want_node "$id" "$name" "$kind"
 				say "$saw; $id: RELEASE found, but it did not start (see above)"
 			fi
 		elif [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind" && started[$id]=1; fi

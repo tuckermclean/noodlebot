@@ -184,6 +184,12 @@ def took(state, repo, now, key):
     last = read_json(spath)
     prev = {k: v for k, v in last.items() if k != "prev"} if valid_start(last) else None
     write_json(spath, {"time": now, "repo": repo, "unit": key, "prev": prev})
+    # a later giveback of KEY must restore this record, not be taken for an undone grant
+    wpath = os.path.join(state, repo, "waiting.json")
+    d = read_json(wpath)
+    if valid_list(d) and key in d.get("gaveback", []):
+        d["gaveback"] = [k for k in d["gaveback"] if k != key]
+        write_json(wpath, d)
 
 
 def giveback(state, repo, key):
