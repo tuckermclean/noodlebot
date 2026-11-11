@@ -73,9 +73,13 @@ EOF
 chmod +x "$tmp/bin6/gh" "$tmp/bin6/claude"
 st=$st6
 s3dead=0
-# s3ok <name> <seconds> <command...>: PASS when the command succeeds within that time; after the first
+# s3ok <name> <seconds> <command...>: PASS when the command succeeds within three times that time (a positive wait whose
+# label states no bound: a loaded machine needs more, a wait that succeeds costs nothing); after the first
 # failed wait every later wait is 1 s, so a run against a missing feature still ends quickly.
 s3ok() { local name=$1 t=$2; shift 2; if [ "$s3dead" = 1 ]; then t=1; else t=$((t * 3)); fi; if waitf "$t" "$@"; then pass "$name"; else fail "$name"; s3dead=1; fi; }
+# s3okb <name> <seconds> <command...>: s3ok with the time as given, not scaled: for the checks whose label states the bound
+# ("within a tick") and the checks the base made with that same bound ("and its child with it").
+s3okb() { local name=$1 t=$2; shift 2; [ "$s3dead" = 1 ] && t=1; if waitf "$t" "$@"; then pass "$name"; else fail "$name"; s3dead=1; fi; }
 s3chk() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 s3ticks() { [ "$s3dead" = 1 ] || wait_ticks "$1"; }
 # s3pw <polls count> <n>: n ticks have passed since the count was taken (polls: one per tick, counted by the fake gh)
@@ -165,16 +169,16 @@ p2=$(cat "$st6/node/G02/session.pid" 2>/dev/null || echo 999999) p3=$(cat "$st6/
 s3ok "S03-AC-4: (G02, G03) their sessions have recorded their children" 8 sh -c "[ -s '$S03/child.G02.1' ] && [ -s '$S03/child.G03.1' ]"
 c2=$(s3f child.G02.1) c3=$(s3f child.G03.1)
 echo "21 node/G02-followup-1" >>"$S03/merged.tsv"; printf '21 node/G02-followup-1 %s 1\n' "$now" >>"$S03/closed.tsv"
-s3ok "S03-AC-4: a follow-up whose own PR is merged: its process group is gone within a tick" 4 grp_gone "$p2"
-s3ok "S03-AC-4: (G02) and its child with it" 2 dead "${c2:-999999}"
+s3okb "S03-AC-4: a follow-up whose own PR is merged: its process group is gone within a tick" 4 grp_gone "$p2"
+s3okb "S03-AC-4: (G02) and its child with it" 2 dead "${c2:-999999}"
 s3ok "S03-AC-4: (G02) one status-log event names the node and the follow-up's PR #21" 3 s3stopev G02 21 1
 s3chk "S03-AC-4: (G02) that event does not name the earlier PR #90" s3stopev G02 90 0
 s3ok "S03-AC-6: (G02) its FOLLOWUP marker is moved into answered/" 3 sh -c "ls '$st6/node/G02/answered' | grep -q FOLLOWUP && [ ! -e '$st6/node/G02/FOLLOWUP' ]"
 s3ok "S03-AC-6: (G02) once no session runs, its evidence is archived under state/archive/" 4 grep -rqx g02-evidence "$st6/archive"
 s3ok "S03-AC-6: (G02) and its worktree is removed" 3 test ! -d "$(s3f pwd.G02.1)"
 printf '22 node/G03-followup-1 %s 0\n' "$(date +%s)" >>"$S03/closed.tsv"
-s3ok "S03-AC-4: a follow-up whose PR is closed unmerged after it started: its process group is gone within a tick" 4 grp_gone "$p3"
-s3ok "S03-AC-4: (G03) and its child with it" 2 dead "${c3:-999999}"
+s3okb "S03-AC-4: a follow-up whose PR is closed unmerged after it started: its process group is gone within a tick" 4 grp_gone "$p3"
+s3okb "S03-AC-4: (G03) and its child with it" 2 dead "${c3:-999999}"
 s3ok "S03-AC-4: (G03) one status-log event names the node and the closed PR #22" 3 s3stopev G03 22 1
 s3ok "S03-AC-4: (G03) FAILED names the closed PR #22" 3 sh -c "head -n1 '$st6/node/G03/FAILED' | grep -qE '#22([^0-9]|\$)'"
 s3chk "S03-AC-4: (G03) with starts 0" s3eq "$(cat "$st6/node/G03/starts" 2>/dev/null)" 0
