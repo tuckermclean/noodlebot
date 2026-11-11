@@ -13,8 +13,11 @@ Agent guidance for noodlebot. Architecture and principles are in `SPEC.md`; usag
 
 ## Commands
 
-- `make test`: every test (ready, release-markers, report, issues, regime checker, and the end-to-end
-  loop test with fake `gh` and `claude`). Offline, under a minute.
+- `make test`: every test (the scheduler's unit and end-to-end tests with fake `gh` and `claude`, and also
+  `nbctl` and the site; the list is the Makefile's `TESTS`). Offline. It runs through `scheduler/runtests.sh`:
+  the files run at once and print `TIME` lines per file, `SLOW` lines past a budget and a `TOTAL` line, tuned by
+  `TEST_JOBS`, `TEST_FILE_BUDGET` and `TEST_BUDGET`. It takes under three minutes on the scheduler's machine
+  (head runs measured about 175-220 s under load from other sessions).
 - `python3 -I plugin/skills/node/check-regime.py`: checks `docs/graph.yaml` against `nodes/`.
 - `scheduler/status.sh [owner/name]`: one repository's scheduler at a glance.
 - `scheduler/move-runtime.sh <checkout>`: one-time move of an older installation's `repos/`, `worktrees/`,
@@ -33,7 +36,9 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
 - **Tests:** `make test` is both the quick gate and the whole suite. Tests are the `*.test.sh` files
   and `scheduler/testdata/` (the frozen paths). A red target has the form
   `sh scheduler/<name>.test.sh` (or `bash` for `loop.test.sh`). A new script gets its own
-  `*.test.sh`, added to the `Makefile`'s `test` target.
+  `*.test.sh`, added to the `Makefile`'s `test` target. A new case waits for the condition it checks (no
+  fixed sleep where a condition can be observed), uses the shared helpers in `scheduler/testdata/lib/`, and
+  keeps its file under `TEST_FILE_BUDGET` (30 s); a new test file is added to the Makefile's `TESTS` list.
 - **Porting rules:** none; noodlebot ports nothing.
 - **CI evidence:** `.github/workflows/test.yml` runs `make test` on the PR; record the run URL. Behaviour
   that needs a live loop, real GitHub or real Claude sessions is shown by the end-to-end test with fakes;
