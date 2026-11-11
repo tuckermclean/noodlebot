@@ -1,0 +1,39 @@
+{
+ "type": "object",
+ "required": [
+  "version",
+  "control",
+  "target",
+  "wrote",
+  "when"
+ ],
+ "properties": {
+  "version": {
+   "type": "integer",
+   "const": 1
+  },
+  "control": {
+   "type": "string",
+   "enum": [
+    "delete-failed",
+    "stop",
+    "unstop",
+    "release",
+    "retry",
+    "rollback"
+   ]
+  },
+  "target": {
+   "type": "string"
+  },
+  "wrote": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "when": {
+   "type": "string"
+  }
+ }
+}

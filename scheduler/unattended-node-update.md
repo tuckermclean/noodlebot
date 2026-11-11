@@ -1,5 +1,6 @@
 UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to update
 node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is watching.
+@SITE@
 
 - Follow /noodlebot:node --update @N@ (not a dry run). You start in @WT@, a worktree already on the
   PR's branch; work there. Merge origin/main as a merge commit (no rebase, no force push), keep both
