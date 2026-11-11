@@ -34,7 +34,6 @@ After this node the owner's controls are requests to the API, so a client can of
 3. **The one-shot release.** At its next tick the loop consumes every `node/<ID>/RELEASE`:
    - If the throttle holds and `ready.py` would start that node, which has no session, the loop starts it despite the hold. The start counts as usual, `SCHED_MAX` still applies, and the status log says the node was released past the throttle.
    - Otherwise it starts nothing it would not have started anyway, and the status log says why the release did nothing: the throttle was open, or the node's state.
-
    - With the start queue on (`SCHED_RAMP=1`, S07), a released node skips the queue. It starts at that tick as above, without waiting for a turn or the gap. Before starting it, the loop records the start in the machine's start record with `turn.py took <key>`, which writes `state/starts.json` under the same lock as a turn, whatever the gap and the order. So the next turn on the machine, in any loop, comes at least the gap after the release. A failed start gives the record back as `turn.py giveback` does (S07 change 4). A failing `turn.py took` is logged and starts nothing, as S07 change 7 says for `turn.py`. The node's `waiting` record is removed as for any start.
    - With the queue on and the throttle open, the release does nothing out of turn: the node waits for its turn, and the status log says so.
 
