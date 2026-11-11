@@ -3,7 +3,9 @@
 # ready node (ready.py --all), each in its own worktree, all at once (SCHED_MAX caps them; default
 # 0, no cap), plus one triage at a time for issues the owner labels `noodlebot`, or one update session
 # for a bot's spec/* PR that conflicts with main or whose graph gives an ID of main to another node
-# (/noodlebot:triage --update <N>; the same one slot as a triage).
+# (/noodlebot:triage --update <N>; the same one slot as a triage); and one update session for each bot's
+# node/* PR that GitHub reports CONFLICTING (/noodlebot:node --update <N>; no slot, but it counts toward
+# SCHED_MAX, and its node's own session waits for it).
 #   tmux new -d -s sched ~/gitrepos/noodlebot/scheduler/loop.sh [owner/name]   (default tuckermclean/themonolith)
 # One loop per repository, each with its own lock, state and status issue.
 #   touch ~/STOP          (every loop exits within seconds; running sessions keep going)
@@ -16,7 +18,7 @@
 # starting a second one.
 # The start queue (SCHED_RAMP, default 1; 0 = off, every ready unit starts in the same tick and turn.py is
 # never run): new sessions start one per SCHED_START_GAP seconds (default: the largest SCHED_TICK among the
-# live loops) across every loop of the machine, in the order turn.py gives (triages, spec-PR updates,
+# live loops) across every loop of the machine, in the order turn.py gives (triages, PR updates,
 # follow-ups and resumes, then fresh nodes by their spec's Size; a unit that waited over SCHED_STARVE
 # seconds, default 21600, goes first). Each tick the loop lists its waiting units (waiting records
 # state/<name>/{node,issue,pr}/<key>/waiting) and, with the throttle open, asks for a turn. SCHED_START_GAP
@@ -28,14 +30,17 @@
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
-#   worktrees/<name>/pr-<N>  one worktree per spec-PR update, on the PR's branch
+#   worktrees/<name>/pr-<N>  one worktree per update of a spec PR or a node PR, on the PR's branch
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
 #                            visibility (public, private or unknown: the repository's, asked at start and again while unknown),
 #                            site.log (stderr of the status-site publish step);
 #                            answered/ keeps released questions and spec PRs;
-#                            issue/<N>/ (a triage) and pr/<N>/ (a spec-PR update: also from, done) hold the same files
+#                            node/<ID>/detached names the branch the loop detached its idle worktree from for an update (start_node puts it back);
+#                            issue/<N>/ (a triage) and pr/<N>/ (an update of a spec PR or a node PR: also from, done, and node, the
+#                            node ID, for a node PR) hold the same files; a node PR's question moves into its answered/
+#                            once the PR is no longer open (pr_gone)
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # At the start of every iteration (before the ~/STOP check) it logs each API request record under
@@ -77,6 +82,8 @@ if top=$(git -C "$probe" rev-parse --show-toplevel 2>/dev/null); then
 fi
 mkdir -p "$root" || exit 2
 mkdir -p "$state/node" "$state/issue" "$state/pr" "$wtroot"
+# git worktree list prints resolved paths: free_branch and branch_behind_origin compare them with this one
+wtroot_p=$(cd "$wtroot" && pwd -P) || exit 2
 start_head=$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null || true)
 pid='' node='' last_note='' last_note_t=0
 
@@ -364,19 +371,35 @@ triage_ended() {
 	fi
 }
 
-# update_ended <dir> <saw> <rc>: a spec-PR update session is gone. rc 0: its worktree goes and the
-# main and PR-head commits it started from are kept (done); the PR is not started again until one moves.
+# update_ended <dir> <saw> <rc>: an update session (of a spec PR, or of a bot's node PR: pr/<N>/node) is
+# gone. rc 0: its worktree goes and the main and PR-head commits it started from are kept (done); the PR
+# is not started again until one moves (a commit it did not push is dropped: the branch goes back to origin). A
+# node-PR update that left QUESTION.md is one event and waits for ANSWER.md (next_update); its worktree stays.
+# On every end without rc 0 the worktree keeps its branch: the next start resets it to origin/<branch>
+# (start_update), and a node's session takes the branch without the update's unpushed commits (free_branch).
 update_ended() {
-	local d=$1 saw=$2 rc=$3 n
+	local d=$1 saw=$2 rc=$3 n ub dropped=0 why=''
 	n=$(basename "$d")
-	if bg_cut_off "$d"; then
+	if [ -e "$d/node" ] && [ -e "$d/QUESTION.md" ]; then
+		say "$saw; update of PR #$n ended (rc $rc) with QUESTION.md"
+	elif bg_cut_off "$d"; then
 		not_counted "$d"
 		say "$saw; update of PR #$n ended (rc $rc) with its background work cut off; start not counted"
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
-		git -C "$clone" worktree remove --force "$wtroot/pr-$n" 2>/dev/null
+		# a commit it made and did not push is its own: its worktree lets go of the branch, which goes back to
+		# origin (drop_update_commits), else it would hold the next update and be handed to the node's session.
+		# If that fails the worktree keeps the branch: the next update, or the node's session, drops them.
+		ub=$([ -d "$wtroot/pr-$n" ] && git -C "$wtroot/pr-$n" symbolic-ref -q --short HEAD 2>/dev/null)
+		if [ -n "$ub" ] && git -C "$wtroot/pr-$n" checkout -q --detach 2>/dev/null && ! drop_update_commits "$ub"; then
+			git -C "$wtroot/pr-$n" checkout -q "$ub" 2>/dev/null
+			why="; dropping its unpushed commits on $ub failed (fetch or reset), its worktree keeps them"
+		else
+			[ "$dropped" = 0 ] || why="; its unpushed commits on $ub are dropped"
+			git -C "$clone" worktree remove --force "$wtroot/pr-$n" 2>/dev/null
+		fi
 		[ -e "$d/from" ] && mv "$d/from" "$d/done"
-		say "$saw; update of PR #$n ended (rc 0); not started again until main or the PR's head moves"
+		say "$saw; update of PR #$n ended (rc 0)$why; not started again until main or the PR's head moves"
 	elif limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; update of PR #$n stopped by the usage limit (rc $rc); start not counted"
@@ -542,15 +565,108 @@ start_triage() {
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
-# start_update <N> <branch> <main> <head> <saw>: update spec PR N (/noodlebot:triage --update N) in a
-# worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
-# commits it starts from.
+# free_branch <branch> <worktree> <saw> <glob>: no other worktree of the loop (under $wtroot, named like <glob>) has
+# <branch> checked out, so <worktree> can take it (git allows a branch in one worktree only). An idle one holding
+# it is detached where it is (its files and uncommitted work stay); one with a running session makes this fail
+# with a note. A worktree elsewhere or of another name is left alone: the checkout then fails as before.
+# A node worktree it detaches gets the marker node/<ID>/detached (the branch), so start_node puts it back on the
+# branch; an update's worktree (pr-<N>) it detaches gives the branch back without that update's own unpushed
+# commits (drop_update_commits), and first loses a merge in progress and its uncommitted changes (an update cut
+# off mid-merge leaves unmerged paths, which a checkout refuses): they are that update's own, dropped anyway.
+# Paths are compared resolved (as git worktree list prints them).
+free_branch() {
+	local br=$1 keep=$wtroot_p/${2##*/} saw=$3 line p='' base k d dropped
+	while read -r line; do
+		case $line in
+		"worktree "*) p=${line#worktree } ;;
+		"branch refs/heads/$br")
+			[ "$p" = "$keep" ] || [ "$(dirname "$p")" != "$wtroot_p" ] && continue
+			base=$(basename "$p"); case $base in $4) ;; *) continue ;; esac; k=$base d=$state/node/$base
+			case $base in pr-*) k=${base#pr-} d=$state/pr/$k ;; issue-*) k=${base#issue-} d=$state/issue/$k ;; esac
+			# a name that maps to no state folder (e.g. <ID>-spec) is not an idle worktree of ours: never detached
+			[ -d "$d" ] || continue
+			if [ -e "$d/session.pid" ] && alive "$(cat "$d/session.pid" 2>/dev/null)" "$k"; then
+				note "$saw; $br is checked out in $p, where a session runs"; return 1
+			fi
+			case $base in pr-*|issue-*) ;; *) echo "$br" >"$d/detached" || { note "$saw; cannot write $d/detached; $p keeps $br"; return 1; } ;; esac
+			case $base in pr-*) { git -C "$p" merge --abort; git -C "$p" reset -q --hard; } >/dev/null 2>&1 ;; esac
+			git -C "$p" checkout -q --detach 2>/dev/null || { note "$saw; detaching $p from $br failed"; return 1; }
+			case $base in pr-*)
+				# on failure the update's worktree takes the branch again, so a later tick finds it there and retries
+				if ! drop_update_commits "$br"; then
+					git -C "$p" checkout -q "$br" 2>/dev/null; note "$saw; dropping the unpushed commits the update in $p left on $br failed (fetch or reset); not taken"; return 1
+				fi
+				[ "$dropped" = 0 ] || say "$saw; dropped the unpushed commits the update in $p left on $br: it is back at origin/$br" ;;
+			esac ;;
+		esac
+	done < <(git -C "$clone" worktree list --porcelain 2>/dev/null)
+	return 0
+}
+
+# drop_update_commits <branch>: refs/heads/<branch>, checked out nowhere, was last held by an update's worktree
+# (pr-<N>), which took it at origin/<branch>: any commits of it origin/<branch> lacks are that update's own
+# unpushed work (a merge committed before its tests, then a limit exit, a crash, a question or a rejection), never
+# a node's. They are dropped: the branch goes back to origin/<branch>, so no node session continues on an
+# unreviewed merge and the next update starts from the PR's head. origin/<branch> is fetched again first (the
+# update may have pushed after this tick's fetch). Sets dropped=1 when it moved the branch; fails, moving
+# nothing, when that fetch or the reset fails.
+drop_update_commits() {
+	dropped=0
+	git -C "$clone" rev-parse -q --verify "refs/heads/$1" >/dev/null &&
+		git -C "$clone" rev-parse -q --verify "refs/remotes/origin/$1" >/dev/null || return 0
+	git -C "$clone" merge-base --is-ancestor "refs/heads/$1" "origin/$1" && return 0
+	git -C "$clone" fetch -q origin "+refs/heads/$1:refs/remotes/origin/$1" 2>/dev/null || return 1
+	git -C "$clone" merge-base --is-ancestor "refs/heads/$1" "origin/$1" && return 0
+	git -C "$clone" branch -q -f "$1" "origin/$1" 2>/dev/null || return 1
+	dropped=1
+}
+
+# branch_behind_origin <branch>: nothing local of <branch> would be lost by resetting it to origin/<branch>:
+# refs/heads/<branch> and the HEAD of the worktree holding it are ancestors of origin/<branch>, or the worktree
+# holding it is an update's (pr-<N> under $wtroot, compared resolved), which took it at origin/<branch> after this
+# same check: its commits origin lacks are that update's own (G01's reset of pr-<N> drops them). A node's unpushed
+# commits (its worktree holds the branch, or nothing does) make it fail, with no output.
+branch_behind_origin() {
+	local br=$1 line p='' holder='' h
+	while read -r line; do
+		case $line in
+		"worktree "*) p=${line#worktree } ;;
+		"branch refs/heads/$br") holder=$p ;;
+		esac
+	done < <(git -C "$clone" worktree list --porcelain 2>/dev/null)
+	if [ -n "$holder" ] && [ "$(dirname "$holder")" = "$wtroot_p" ] && [[ $(basename "$holder") == pr-* ]]; then return 0; fi
+	if git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
+		! git -C "$clone" merge-base --is-ancestor "refs/heads/$br" "origin/$br"; then return 1; fi
+	if [ -n "$holder" ]; then
+		h=$(git -C "$holder" rev-parse -q --verify HEAD 2>/dev/null) || return 0
+		git -C "$clone" merge-base --is-ancestor "$h" "origin/$br" || return 1
+	fi
+	return 0
+}
+
+# on_branch <worktree> <branch> <dir>: the worktree is on <branch>, or free_branch detached it from <branch>
+# (<dir>/detached names it) at an ancestor of it (an update took the branch).
+on_branch() {
+	[ "$(git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$2" ] && return 0
+	git -C "$1" symbolic-ref -q HEAD >/dev/null && return 1
+	[ "$(cat "$3/detached" 2>/dev/null)" = "$2" ] && git -C "$1" merge-base --is-ancestor HEAD "refs/heads/$2" 2>/dev/null
+}
+
+# start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N)
+# in a worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
+# commits it starts from. With a node ID, N is the bot's node PR of that node (/noodlebot:node --update N,
+# unattended-node-update.md) and the ID is written to pr/N/node.
 start_update() {
-	local n=$1 br=$2 mainc=$3 head=$4 saw=$5 d=$state/pr/$1 wt=$wtroot/pr-$1 released
+	local n=$1 br=$2 mainc=$3 head=$4 saw=$5 nid=${6:-} d=$state/pr/$1 wt=$wtroot/pr-$1 released
+	local tmpl=unattended-update.md skill=triage
+	[ -z "$nid" ] || { tmpl=unattended-node-update.md skill=node; }
+	[ -r "$here/$tmpl" ] || { note "$saw; no $tmpl; PR #$n not started"; return 1; }
 	mkdir -p "$d"
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing PR #$n's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; PR #$n: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; PR #$n needs an update but has used 2 starts; nothing started"; return 1; }
+	branch_behind_origin "$br" || { note "$saw; PR #$n: $br holds commits origin/$br lacks; not started"; return 1; }
+	free_branch "$br" "$wt" "$saw; PR #$n" '*' || return 1
 	if [ -d "$wt" ]; then
 		# left by an earlier end without rc 0: bring it to the PR's current head, not mid-merge
 		{ git -C "$wt" merge --abort; git -C "$wt" checkout -q -f -B "$br" "origin/$br" &&
@@ -561,9 +677,10 @@ start_update() {
 	fi
 	site_sed
 	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
-		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-update.md" >"$d/unattended.md"
+		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/$tmpl" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
-	launch "$wt" "$d" "/noodlebot:triage --update $n"
+	[ -z "$nid" ] || echo "$nid" >"$d/node"
+	launch "$wt" "$d" "/noodlebot:$skill --update $n"
 	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
@@ -582,17 +699,31 @@ except Exception:
 sys.exit(0 if any(i in m and m[i] != nm for i, nm in b.items()) else 1)' "$state/graph.main.yaml" "$state/graph.pr.yaml"
 }
 
-# next_update: every bot spec/* PR (one line each) that needs an update (CONFLICTING, or a clash of IDs with
-# main; UNKNOWN waits), has no FAILED and is not held by a finished update of the same main and head.
+# next_update: every bot spec/* PR and node/* PR (one line each: number, branch, main, head, and for a node
+# PR its node ID) that needs an update (a spec PR: CONFLICTING, or a clash of IDs with main; a node PR:
+# CONFLICTING; UNKNOWN waits), has no FAILED and is not held by a finished update of the same main and head.
+# A node PR whose node has a running session, or whose update runs or asked a question not yet answered
+# (QUESTION.md without ANSWER.md), is left out.
 next_update() {
-	local n br oid bot mg mainc
+	local n br oid bot mg mainc nid
 	mainc=$(git -C "$clone" rev-parse -q --verify origin/main) || return 1
 	while read -r n br oid bot mg; do
-		[[ $br == spec/* ]] && [ "$bot" = true ] || continue
+		[ "$bot" = true ] || continue
 		[ -e "$state/pr/$n/FAILED" ] && continue
-		[ "$(cat "$state/pr/$n/done" 2>/dev/null)" = "$mainc $oid" ] && continue
-		if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && graph_clash "$br"; }; then
-			echo "$n $br $mainc $oid"
+		if [[ $br == spec/* ]]; then
+			[ "$(cat "$state/pr/$n/done" 2>/dev/null)" = "$mainc $oid" ] && continue
+			if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && graph_clash "$br"; }; then
+				echo "$n $br $mainc $oid"
+			fi
+		elif [[ $br == node/* ]] && [ "$mg" = CONFLICTING ]; then
+			nid=${br#node/}; nid=${nid%%-*}
+			[ -e "$state/pr/$n/session.pid" ] && continue
+			[ -e "$state/pr/$n/QUESTION.md" ] && [ ! -e "$state/pr/$n/ANSWER.md" ] && continue
+			[ -e "$state/node/$nid/session.pid" ] && alive "$(cat "$state/node/$nid/session.pid")" "$nid" && continue
+			# only an answered question (QUESTION.md and ANSWER.md) lifts the hold of a finished update
+			{ [ ! -e "$state/pr/$n/QUESTION.md" ] || [ ! -e "$state/pr/$n/ANSWER.md" ]; } &&
+				[ "$(cat "$state/pr/$n/done" 2>/dev/null)" = "$mainc $oid" ] && continue
+			echo "$n $br $mainc $oid $nid"
 		fi
 	done <"$state/open-prs.tsv"
 }
@@ -609,6 +740,28 @@ followup_done() {
 		ts=$(date -u +%Y%m%dT%H%M%SZ)
 		mkdir -p "$d/answered"
 		mv "$f" "$d/answered/$ts-FOLLOWUP" && say "$1; $id: its follow-up PR #$prn is merged, the follow-up is done"
+	done
+}
+
+# pr_gone <saw>: a node-PR update's question (pr/<N>/ with a node file) whose PR is no longer open (the owner
+# merged, closed or fixed it by hand) holds nothing more: QUESTION.md and ANSWER.md, whichever exist, move into
+# pr/<N>/answered/<UTC timestamp>-*, one status-log event each PR. Only from the whole open-PR list (every author,
+# every state of mergeable): a list as long as its --limit may be cut short, and then nothing moves. A pr/<N>/
+# with a session running keeps its files until the session's end is handled.
+pr_gone() {
+	local d n ts f moved
+	[ "$(wc -l <"$state/open-prs.tsv")" -lt "$open_limit" ] || return 0
+	for d in "$state"/pr/*/; do
+		d=${d%/} n=$(basename "$d")
+		[ -e "$d/node" ] && [ ! -e "$d/session.pid" ] || continue
+		[ -e "$d/QUESTION.md" ] || [ -e "$d/ANSWER.md" ] || continue
+		cut -d' ' -f1 "$state/open-prs.tsv" | grep -qxF "$n" && continue
+		ts=$(date -u +%Y%m%dT%H%M%SZ) moved=''
+		mkdir -p "$d/answered" || continue
+		for f in QUESTION.md ANSWER.md; do
+			[ -e "$d/$f" ] && mv "$d/$f" "$d/answered/$ts-$f" && moved="$moved${moved:+ and }$f"
+		done
+		[ -z "$moved" ] || say "$1; PR #$n is no longer open: released its $moved into answered/ ($ts)"
 	done
 }
 
@@ -783,13 +936,18 @@ save_leftover() {
 # A merged node's answer ("followup") starts on a branch of its own, node/<ID>-followup-<n>, which the
 # FOLLOWUP marker keeps until its PR is merged.
 start_node() {
-	local id=$1 name=$2 saw=$3 kind=${4:-} d=$state/node/$1 wt=$wtroot/$1 released skill=/noodlebot:node br=node/$1-$2 prompt=unattended.md
+	local id=$1 name=$2 saw=$3 kind=${4:-} d=$state/node/$1 wt=$wtroot/$1 released skill=/noodlebot:node br=node/$1-$2 prompt=unattended.md fbr
 	mkdir -p "$d"
 	# A follow-up with no marker yet and a worktree here: the merged node's leftover. Hold it before the
 	# answer is released (markers untouched), so cleanup_merged retries and a later tick starts it.
 	if [ "$kind" = followup ] && ! fu_branch "$d" >/dev/null && [ -d "$wt" ]; then
 		note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
 	fi
+	# a leftover update worktree (pr-<N>) may still have the branch: the node's session takes it back, without
+	# the update's unpushed commits. Freed before the answer is released, so a failure leaves the markers in place.
+	# (A new follow-up's branch is named below, one no worktree has: freed there.)
+	fbr=$br; [ "$kind" = followup ] && { fbr=$(fu_branch "$d") || fbr=''; }
+	[ -z "$fbr" ] || free_branch "$fbr" "$wt" "$saw; $id" 'pr-*' || return 1
 	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing $id's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
@@ -797,13 +955,14 @@ start_node() {
 	if [ "$kind" = followup ]; then
 		prompt=unattended-followup.md
 		if br=$(fu_branch "$d"); then
-			if [ -d "$wt" ] && [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$br" ]; then
+			if [ -d "$wt" ] && ! on_branch "$wt" "$br" "$d"; then
 				note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
 			fi
 		else
 			br=$(followup_branch "$id"); echo "$br" >"$d/FOLLOWUP"
 		fi
 	fi
+	[ -n "$fbr" ] || free_branch "$br" "$wt" "$saw; $id" 'pr-*' || return 1
 	if [ ! -d "$wt" ]; then
 		git -C "$clone" worktree add -q -b "$br" "$wt" origin/main 2>/dev/null ||
 			git -C "$clone" worktree add -q "$wt" "$br" || { note "$saw; worktree for $id failed"; return 1; }
@@ -811,6 +970,15 @@ start_node() {
 	local ncommits reason='' resume=0 rsed=() plist='' pn pb
 	[ -r "$here/$prompt" ] || { note "$saw; $id: no $prompt; not started"; return 1; }
 	save_leftover "$id" "$wt" "$d" "$saw" || return 1
+	# detached by free_branch (an update took its branch; node/<ID>/detached names it): back onto the branch, now at
+	# the update's pushed result; the tree is clean. A worktree detached otherwise is left as it is.
+	if [ "$(cat "$d/detached" 2>/dev/null)" = "$br" ] && ! git -C "$wt" symbolic-ref -q HEAD >/dev/null &&
+		git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null; then
+		git -C "$wt" merge-base --is-ancestor HEAD "refs/heads/$br" ||
+			{ note "$saw; $id: its worktree is detached at commits $br lacks; not started"; return 1; }
+		git -C "$wt" checkout -q "$br" || { note "$saw; $id: checking out $br failed; not started"; return 1; }
+	fi
+	rm -f "$d/detached"
 	ncommits=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 	if [ "${ncommits:-0}" -gt 0 ] || [ -d "$wt/out/node/$id" ]; then
 		resume=1
@@ -862,6 +1030,15 @@ want() {
 	wlist+=("$1 $2 $3 $since"); wspec[$1]=$5 wdir[$1]=$4
 }
 
+# node_updating <ID>: a node-PR update session (pr/<N>/node names the ID) of that node is running.
+node_updating() {
+	local f
+	for f in "$state"/pr/*/node; do
+		[ -e "$f" ] && [ "$(cat "$f")" = "$1" ] && [ -e "$(dirname "$f")/session.pid" ] && return 0
+	done
+	return 1
+}
+
 # want_node <ID> <name> <kind>: a ready node without a session; kind is ready.py's third word.
 want_node() {
 	local id=$1 wt=$wtroot/$1 k=fresh n
@@ -875,11 +1052,11 @@ want_node() {
 
 # start_turn <key> <saw>: start the unit of a granted turn; fails like the start functions.
 start_turn() {
-	local t a b c d
-	IFS='|' read -r t a b c d <<<"${wspec[$1]:-}"
+	local t a b c d e
+	IFS='|' read -r t a b c d e <<<"${wspec[$1]:-}"
 	case $t in
 	triage) start_triage "$a" "$2" && live+=("$pid $a") && triaging=$a ;;
-	update) start_update "$a" "$b" "$c" "$d" "$2" && live+=("$pid $a") && triaging=$a ;;
+	update) start_update "$a" "$b" "$c" "$d" "$2" "$e" && live+=("$pid $a") && { [ -n "$e" ] || triaging=$a; } ;;
 	node) start_node "$a" "$b" "$2" "$c" && started[$a]=1 ;;   # started: tick's, for the RELEASE lines
 	resume) resume_idle "$2" "$a" ;;
 	*) return 1 ;;
@@ -944,7 +1121,7 @@ print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 listed=0 rels=()
+open='' merged='' tick_tok='' live=() throttled=0 listed=0 open_limit=500 rels=()
 # tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
@@ -975,7 +1152,7 @@ tick_run() {
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
-		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json number,headRefName,headRefOid,author,mergeable \
+		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit "$open_limit" --json number,headRefName,headRefOid,author,mergeable \
 			-q '.[] | "\(.number) \(.headRefName) \(.headRefOid) \(.author.is_bot) \(.mergeable)"' >"$state/open-prs.tsv" ||
 		! cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" ||
 		! open=$(ids <"$state/open-prs.txt") ||
@@ -995,10 +1172,12 @@ tick_run() {
 		id=$(basename "$(dirname "$f")") p=$(cat "$f")
 		if alive "$p" "$id"; then
 			[[ $f == */node/* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
-			live+=("$p $id"); [[ $f == */issue/* || $f == */pr/* ]] && triaging=$id
+			live+=("$p $id")
+			{ [[ $f == */issue/* ]] || { [[ $f == */pr/* ]] && [ ! -e "$(dirname "$f")/node" ]; }; } && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	followup_done "$saw"
+	pr_gone "$saw"
 	cleanup_merged
 	local cap=${SCHED_MAX:-0} usage
 	# The throttle: usage.py reads the plan's windows from every repository's sessions (one account,
@@ -1027,14 +1206,17 @@ tick_run() {
 			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
 		else inext_failed=1; fi
 	fi
-	# A bot's spec PR that needs an update: one session at a time, sharing the triage's slot.
-	if [ -z "$triaging" ] && ! full; then
-		local un ub um uh
-		while read -r un ub um uh; do
+	# A bot's spec PR that needs an update: one session at a time, sharing the triage's slot. A bot's node PR
+	# that needs one does not take the slot: it counts toward SCHED_MAX like a node session.
+	if ! full; then
+		local un ub um uh ui
+		while read -r un ub um uh ui; do
 			[ -n "$un" ] || continue
+			[ -n "$ui" ] || [ -z "$triaging" ] || continue
+			full && continue   # each start counts toward SCHED_MAX, whatever the kind
 			# a failed start does not keep the later PRs from their turn
-			if [ "$ramp" = 1 ]; then want "PR#$un" update - "$state/pr/$un" "update|$un|$ub|$um|$uh"; continue; fi
-			start_update "$un" "$ub" "$um" "$uh" "$saw" && { live+=("$pid $un"); triaging=$un; break; }
+			if [ "$ramp" = 1 ]; then want "PR#$un" update - "$state/pr/$un" "update|$un|$ub|$um|$uh|$ui"; continue; fi
+			start_update "$un" "$ub" "$um" "$uh" "$saw" "$ui" && { live+=("$pid $un"); [ -n "$ui" ] || triaging=$un; }
 		done < <(next_update)
 	fi
 
@@ -1055,6 +1237,7 @@ tick_run() {
 	while read -r id name kind; do
 		[ -n "$id" ] || continue
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
+		node_updating "$id" && continue   # an update of its PR runs
 		if full; then
 			# the throttle's hold is lifted for a released node; SCHED_MAX is not
 			if [ "$throttled" = 1 ] && [ -n "${isrel[$id]:-}" ]; then
@@ -1095,6 +1278,7 @@ tick_run() {
 		if [ -n "${started[$id]:-}" ] && [ "$ramp" = 1 ]; then say "$saw; $id: RELEASE found, the throttle is open; it started on its turn"
 		elif [ -n "${started[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it started as the loop would anyway"
 		elif [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
+		elif node_updating "$id"; then say "$saw; $id: RELEASE found, nothing started: an update of its PR is running"
 		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
 		elif [ -n "${isready[$id]:-}" ]; then
 			if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then say "$saw; $id: RELEASE found, the throttle is open; not started, SCHED_MAX ($cap) sessions are running"
