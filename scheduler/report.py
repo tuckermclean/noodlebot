@@ -124,16 +124,22 @@ def activity_link(a):
     return "%s/#/activity?repo=%s" % (site_base(a), a.repo)
 
 
+_LINK_PATS = {}  # state dir -> the compiled mention pattern (graph.yaml is read once per run)
+
+
 def link_nodes(a, text):
     """text with each node mention linked to the node's view (with --site; else text as it is). A mention is the ID of a node
-    of the graph as a whole word, not inside a code span, a Markdown link or a URL."""
+    of the graph as a whole word, not inside a code span, a Markdown link, a URL, a path or a branch name."""
     if not site_base(a):
         return text
-    ids = sorted({n["id"] for n in graph_nodes(a.state)}, key=lambda i: (-len(i), i))
-    if not ids:
+    if a.state not in _LINK_PATS:
+        ids = sorted({n["id"] for n in graph_nodes(a.state)}, key=lambda i: (-len(i), i))
+        _LINK_PATS[a.state] = re.compile(
+            r"`[^`\n]*`|\[[^\]]*\]\([^)]*\)|https?://\S+|(?<![A-Za-z0-9_/])(?<![A-Za-z0-9_]-)(%s)(?![A-Za-z0-9_/-])" %
+            "|".join(re.escape(i) for i in ids)) if ids else None
+    pat = _LINK_PATS[a.state]
+    if not pat:
         return text
-    pat = re.compile(r"`[^`\n]*`|\[[^\]]*\]\([^)]*\)|https?://\S+|(?<![A-Za-z0-9_])(%s)(?![A-Za-z0-9_])" %
-                     "|".join(re.escape(i) for i in ids))
     return pat.sub(lambda m: "[%s](%s)" % (m.group(1), node_link(a, m.group(1))) if m.group(1) else m.group(0), text)
 
 
