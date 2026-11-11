@@ -184,5 +184,6 @@ rm -f "$S06/hold.pr-101"
 x6wait 8 sh -c "grep -qE 'update of PR #101 ended \(rc 0\)' '$st06/status.log'"
 x6ok "S06-AC-3: the resumed update session ends by the usual path (rc 0)" test "$(x6evn pr-101 'update of PR #101 ended \(rc 0\)')" = 1
 kill "$lp06"; wait "$lp06" 2>/dev/null
+for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
 
 loop_end

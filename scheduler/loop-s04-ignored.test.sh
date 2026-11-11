@@ -48,7 +48,8 @@ NOODLEBOT_DATA=$data8 PATH=$tmp/bin8:$PATH SCHED_REPORT=0 SCHED_THROTTLE=0 SCHED
 	bash "$tmp/nb8/scheduler/loop.sh" o/s4b >>"$tmp/s04b-loop.out" 2>&1 &
 pids+=("$!"); lp8=$!
 s4wait 25 sh -c "[ -e '$S04B/rec/2/done' ]"
-wait_until 5 test -n "$(ls "$st8"/node/F01/leftover/*.patch 2>/dev/null)"   # the patch is written before the second start
+s4b_patch() { [ -n "$(ls "$st8"/node/F01/leftover/*.patch 2>/dev/null)" ]; }
+wait_until 5 s4b_patch   # the patch is written before the second start
 pt=$(ls "$st8"/node/F01/leftover/*.patch 2>/dev/null | head -1)
 s4bnodel() { # the patch deletes neither keep.ign nor t.ign
 	awk '/^diff --git /{f=$3} /^deleted file mode/{ if (f ~ /(keep|t)\.ign$/) bad=1 } END{exit bad}' "$1"

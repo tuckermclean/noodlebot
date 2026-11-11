@@ -60,6 +60,8 @@ else
 	fail "G01-AC-5/6: no update started, so the cases that need a running update were not run"
 fi
 
+# the same check as the label in loop-g01-list.test.sh, over this part's claude.log: prints only on failure (the PASS label stays once, in that part)
+grep -qE '^update 10[2345] ' "$GD/claude.log" && fail "G01-AC-5: a human's PR, a clean MERGEABLE one, an UNKNOWN one and a node/* PR never got an update (in $(basename "$0"))"
 touch "$HOME/STOP-up"
 wait_until 5 g01_gone "$lp6"
 for f in "$state"/pr/*/session.pid "$state"/issue/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done

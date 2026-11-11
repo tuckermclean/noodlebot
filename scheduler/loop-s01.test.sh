@@ -82,8 +82,9 @@ wait_until 5 s01_started 6
 now=$(date +%s)
 # open.txt first: the loop reads both files in one tick, and B04's open PR must be there when its closed PR is
 echo node/B04-n4 >"$S01/open.txt"
+wait_polls "$S01/polls" "$(polls "$S01/polls")" 2   # two ticks that read open.txt, so none sees #14 closed without its open PR
 printf '13 node/B03-n3 %s 0\n14 node/B04-n4 %s 0\n' $((now - 3600)) "$now" >"$S01/closed.tsv"
-wait_ticks 4
+wait_ticks 3
 s01ok "S01-AC-3: a PR closed before the session started does not stop it" grp_up "$p3"
 s01ok "S01-AC-3: a closed PR does not stop the session of a node that also has an open PR" grp_up "$p4"
 s01ok "S01-AC-3: nodes with no PR are untouched" grp_up "$p5"
@@ -114,6 +115,10 @@ rm -f "$state/node/B02/FAILED"
 s01ok "S01-AC-2: after FAILED is deleted it starts again, as start 1 of 2" waitf 4 countis 'started B02 .*start 1 of 2' 2
 m2b=$(polls "$S01/polls")   # the two checks on the new session are made below, three ticks on
 
+wait_polls "$S01/polls" "$m2b" 3
+s01ok "S01-AC-2: the new session is not stopped for the PR closed before it began" sh -c "[ \"\$(cat '$S01/runs.B02')\" = 2 ] && kill -0 \"\$(cat '$state/node/B02/session.pid')\""
+s01ok "S01-AC-2: and no second FAILED is written" test ! -e "$state/node/B02/FAILED"
+
 # A session taken over after a restart: the loop is down while B06's PR merges.
 kill "$loop1s"; wait "$loop1s" 2>/dev/null
 sleep 0.5   # nothing to observe: the loop is gone; the session must still be alive a moment after it
@@ -127,9 +132,6 @@ s01ok "S01-AC-1: (taken over) one status-log event names the node and the merged
 s01ok "S01-AC-1: (taken over) its evidence is archived to state/archive/B06-out" waitf 3 test -f "$state/archive/B06-out/brief.md"
 s01ok "S01-AC-1: (taken over) its worktree is removed" waitf 3 test ! -d "$wt4/B06"
 m6=$(polls "$S01/polls")
-wait_polls "$S01/polls" "$m2b" 3
-s01ok "S01-AC-2: the new session is not stopped for the PR closed before it began" sh -c "[ \"\$(cat '$S01/runs.B02')\" = 2 ] && kill -0 \"\$(cat '$state/node/B02/session.pid')\""
-s01ok "S01-AC-2: and no second FAILED is written" test ! -e "$state/node/B02/FAILED"
 wait_polls "$S01/polls" "$m6" 2
 s01ok "S01-AC-1: (taken over) the event is not repeated" test "$(ev B06 17)" = 1
 s01ok "S01-AC-3: after the restart the sessions of B03, B04 and B05 still run" bash -c "$(declare -f grp_gone grp_up); grp_up $p3 && grp_up $p4 && grp_up $p5"

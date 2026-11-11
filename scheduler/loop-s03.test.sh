@@ -192,9 +192,6 @@ s3chk "S03-AC-5: and no second follow-up number was taken" s3brs G04 1
 s3ok "S03-AC-5: a follow-up that opened its PR (G05) is logged as ended with a PR" 5 s3has 'session G05 ended \(rc 0\) with a PR'
 m_5=$(polls "$S03/polls")   # G05's "does not start again" checks are made below, three ticks on
 
-# AC-2: a merged node with no markers, or an unanswered question, starts no session.
-s3chk "S03-AC-2: a merged node with no markers starts no session" sh -c "[ '$(s3runs G06)' = 0 ] && ! grep -q 'started G06' '$st6/status.log' && [ \"\$(git -C '$cl6' branch --list 'node/G06-*' | wc -l)\" = 0 ]"
-s3chk "S03-AC-2: a merged node with an unanswered QUESTION.md starts no session" sh -c "[ '$(s3runs G07)' = 0 ] && ! grep -q 'started G07' '$st6/status.log' && [ -e '$st6/node/G07/QUESTION.md' ] && [ ! -d '$st6/node/G07/answered' ]"
 
 # AC-6 (and AC-2, AC-4, AC-5): G01 asks a question, is answered, opens its PR, merges; then a second follow-up.
 s3pw "$m_q" 3
@@ -216,6 +213,9 @@ touch "$S03/go.G01.2"
 s3ok "S03-AC-5: (G01) a follow-up whose PR is open: its end is logged as ended with a PR" 5 s3has 'session G01 ended \(rc 0\) with a PR'
 m_pr=$(polls "$S03/polls")
 s3pw "$m_5" 3
+# AC-2: a merged node with no markers, or an unanswered question, starts no session.
+s3chk "S03-AC-2: a merged node with no markers starts no session" sh -c "[ '$(s3runs G06)' = 0 ] && ! grep -q 'started G06' '$st6/status.log' && [ \"\$(git -C '$cl6' branch --list 'node/G06-*' | wc -l)\" = 0 ]"
+s3chk "S03-AC-2: a merged node with an unanswered QUESTION.md starts no session" sh -c "[ '$(s3runs G07)' = 0 ] && ! grep -q 'started G07' '$st6/status.log' && [ -e '$st6/node/G07/QUESTION.md' ] && [ ! -d '$st6/node/G07/answered' ]"
 s3chk "S03-AC-5: it does not start again while its follow-up PR is open" s3eq "$(s3runs G05)$(s3runs G04)" 12
 s3chk "S03-AC-5: (G05) started once" s3cnt 'started G05 ' 1
 s3pw "$m_pr" 3
