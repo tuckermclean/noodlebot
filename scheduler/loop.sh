@@ -38,6 +38,13 @@
 #                            issue/<N>/ (a triage) and pr/<N>/ (a spec-PR update: also from, done) hold the same files
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
+# At the start of every iteration (before the ~/STOP check) it logs each API request record under
+# state/<name>/requests/*.json (one event naming the control and its target, in name order) and removes it;
+# a broken record is logged as such and removed. The tick does the same again after ready.py and before it starts
+# any node, so a request's event always comes before its effect (each record is logged once). A node/<ID>/RELEASE marker (the API's release control) is
+# consumed at the next tick: a ready node the throttle holds starts despite the hold (SCHED_MAX still applies; with the
+# start queue on, SCHED_RAMP=1, it takes no turn but its start is recorded, turn.py took, and a failed start is given back;
+# with the throttle open it waits for its turn like any node), otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
 # After each tick's report it publishes the status site (site.py publish) when ~/.config/noodlebot/gist and
 # ~/.config/noodlebot/gist-token exist and SCHED_SITE is not 0; the gist token goes only to that one command.
@@ -828,7 +835,7 @@ start_turn() {
 	case $t in
 	triage) start_triage "$a" "$2" && live+=("$pid $a") && triaging=$a ;;
 	update) start_update "$a" "$b" "$c" "$d" "$2" && live+=("$pid $a") && triaging=$a ;;
-	node) start_node "$a" "$b" "$2" "$c" ;;
+	node) start_node "$a" "$b" "$2" "$c" && started[$a]=1 ;;   # started: tick's, for the RELEASE lines
 	resume) resume_idle "$2" "$a" ;;
 	*) return 1 ;;
 	esac
@@ -872,8 +879,27 @@ deploy() {
 	return 0
 }
 
+# requests: log and remove the API's request records ({"control","target","time"}), in name order.
+requests() {
+	local f out
+	for f in "$state"/requests/*.json; do
+		[ -f "$f" ] || continue
+		if out=$(python3 -I -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+c, t = d["control"], d["target"]
+if not isinstance(c, str) or not isinstance(t, str) or not c or not t: raise ValueError
+print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
+			say "request: $out"
+		else
+			say "request record $(basename "$f") is broken; removed"
+		fi
+		rm -f "$f"
+	done
+}
+
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 listed=0
+open='' merged='' tick_tok='' live=() throttled=0 listed=0 rels=()
 # tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
@@ -884,6 +910,13 @@ tick() {
 }
 tick_run() {
 	date +%s >"$state/heartbeat.tmp" && mv "$state/heartbeat.tmp" "$state/heartbeat"
+	# RELEASE markers: taken (and removed) now, so they go also when the tick ends early; see the ready loop
+	rels=()
+	local f
+	for f in "$state"/node/*/RELEASE; do
+		[ -e "$f" ] || continue
+		rels+=("$(basename "$(dirname "$f")")"); rm -f "$f"
+	done
 	git -C "$clone" fetch -q origin || { note "git fetch failed; nothing started"; return; }
 	# Keep the clone's own checkout on origin/main: sessions in its worktrees also load skills and
 	# agents from it, so a stale checkout would offer them stale ones.
@@ -907,7 +940,7 @@ tick_run() {
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
 	cut -d' ' -f1 "$state/merged-prs.tsv" >"$state/merged-prs.txt"
-	local saw="open=[${open% }] merged-prs=[${merged% }]" f id name triaging='' p
+	local saw="open=[${open% }] merged-prs=[${merged% }]" id name triaging='' p
 	tok=''
 
 	# Running sessions: recorded in pid files, so this works after a restart too.
@@ -969,13 +1002,64 @@ tick_run() {
 	ready=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
 		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --all "${args[@]}") ||
 		{ note "$saw; ready.py failed; nothing started"; return; }
+	requests   # a request's event is logged before any node starts (a record that came in during ready.py too)
+	local -A isrel=() handled=() isready=() started=()
+	local out took_failed=0
+	for id in "${rels[@]}"; do isrel[$id]=1; done
+	while read -r id name kind; do [ -z "$id" ] || isready[$id]=1; done <<<"$ready"   # all of them, also past a break below
 	while read -r id name kind; do
 		[ -n "$id" ] || continue
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
-		full && break
-		if [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind"; fi
+		if full; then
+			# the throttle's hold is lifted for a released node; SCHED_MAX is not
+			if [ "$throttled" = 1 ] && [ -n "${isrel[$id]:-}" ]; then
+				handled[$id]=1
+				if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then
+					say "$saw; $id: RELEASE found, but SCHED_MAX ($cap) sessions are running; not started"
+				elif start_node "$id" "$name" "$saw" "$kind"; then
+					say "$saw; $id: released past the throttle"
+				else
+					say "$saw; $id: RELEASE found, but it did not start (see above)"
+				fi
+				continue
+			fi
+			[ "$throttled" = 1 ] && continue
+			break
+		fi
+		if [ "$ramp" = 1 ] && [ "$throttled" = 1 ] && [ -n "${isrel[$id]:-}" ]; then
+			# a released node skips the start queue: its start is recorded (turn.py took), then it starts
+			handled[$id]=1
+			if [ "$took_failed" = 1 ]; then
+				want_node "$id" "$name" "$kind"
+				say "$saw; $id: RELEASE found, but an earlier turn.py took failed; nothing more started, it keeps waiting"
+			elif ! out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "${repo#*/}" 2>&1); then
+				took_failed=1; want_node "$id" "$name" "$kind"
+				say "$saw; $id: RELEASE found, but turn.py took failed ($(echo "$out" | tr '\n' ' ')); not started, it keeps waiting"
+			elif start_node "$id" "$name" "$saw" "$kind"; then
+				say "$saw; $id: released past the throttle"; rm -f "$state/node/$id/waiting"
+			else
+				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "${repo#*/}" >/dev/null 2>&1 || { took_failed=1; note "$saw; turn.py giveback failed; nothing more started"; }
+				want_node "$id" "$name" "$kind"
+				say "$saw; $id: RELEASE found, but it did not start (see above)"
+			fi
+		elif [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind" && started[$id]=1; fi
 	done <<<"$ready"
 	[ "$ramp" = 1 ] && queue_round "$saw"
+	for id in "${rels[@]}"; do
+		[ -z "${handled[$id]:-}" ] || continue
+		if [ -n "${started[$id]:-}" ] && [ "$ramp" = 1 ]; then say "$saw; $id: RELEASE found, the throttle is open; it started on its turn"
+		elif [ -n "${started[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it started as the loop would anyway"
+		elif [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
+		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
+		elif [ -n "${isready[$id]:-}" ]; then
+			if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then say "$saw; $id: RELEASE found, the throttle is open; not started, SCHED_MAX ($cap) sessions are running"
+			elif [ "$ramp" = 1 ]; then say "$saw; $id: RELEASE found, the throttle is open; it takes no turn out of order and waits for its turn"
+			else say "$saw; $id: RELEASE found, the throttle is open; it did not start (see above)"; fi
+		elif grep -q "id: *$id[,} ]" "$state/graph.yaml" 2>/dev/null; then say "$saw; $id: RELEASE found, nothing started: it is not ready"
+		else say "$saw; $id: RELEASE found, nothing started: unknown node"
+		fi
+	done
+	rels=()
 
 	local held=''; [ "$throttled" = 1 ] && held="; throttle holding new sessions"
 	if [ "${#live[@]}" = 0 ]; then note "$saw; nothing ready$held"
@@ -993,8 +1077,8 @@ tick_run() {
 
 # fingerprint: the markers and exit files under node/, issue/ and pr/; a change means "look again now".
 fingerprint() {
-	find "$state/node" "$state/issue" "$state/pr" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
-		-o -name FAILED -o -name session.rc \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
+	find "$state/node" "$state/issue" "$state/pr" "$state/requests" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
+		-o -name FAILED -o -name session.rc -o -name RELEASE -o -path '*/requests/*.json' \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
 }
 
 # pause: until the next GitHub poll is due, or sooner when a marker changes, any session exits or
@@ -1011,8 +1095,10 @@ pause() {
 }
 
 while :; do
+	requests
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
+	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
 	report; rc=$?; tick_tok=''
 	publish
 	[ $rc = 3 ] && continue
