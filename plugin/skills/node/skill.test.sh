@@ -72,7 +72,7 @@ g02_check "G02-AC-5: it checks both sides' intent" "$u" 6 'intent' 'both sides'
 g02_check "G02-AC-5: it checks that test blocks of different nodes share no names or state" "$u" 6 'test block' 'different nodes|other nodes|another node' 'names|state'
 g02_check "G02-AC-5: it checks that no frozen test line changed" "$u" 6 'review' 'frozen test line|frozen line|frozen test' 'no .*(changed|removed|renamed)|not (been )?(changed|removed|renamed)|unchanged'
 g02_check "G02-AC-5: nothing is pushed before the review approves" "$u" 5 'review' 'approv' 'push'
-g02_check "G02-AC-5: the verdict is posted on the PR headed 'Resolution review (<verdict>)'" "$u" 4 'resolution review \(' 'verdict'
+g02_check "G02-AC-5: the verdict is posted on the PR headed 'Resolution review (<verdict>)'" "$u" 4 'resolution review [(]' 'verdict'
 g02_check "G02-AC-5: the review is a comment, never an approval" "$u" 5 'resolution review' 'comment' 'never an approval|not an approval|never approv|not approv'
 g02_check "G02-AC-5: a second rejection pushes nothing and ends with QUESTION.md" "$u" 5 'second' 'reject|request_changes' 'nothing' 'question\.md'
 s6="$d/step6.txt"; g02_section '^## 6\.' "$s6"

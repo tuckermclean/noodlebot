@@ -178,12 +178,12 @@ g02_win() { # g02_win <n> <ere>...: a window of n lines matches every ERE
 }
 g02_push=$(awk 'tolower($0) ~ /^[0-9]+\. *push/ { print NR; exit }' "$g02_d/sec4.txt")
 g02_rv=$(g02_line 'new reviewer|fresh reviewer')
-g02_hd=$(g02_line 'resolution review \(')
+g02_hd=$(g02_line 'resolution review [(]')
 if [ -n "$g02_push" ]; then ok "G02-AC-5: section 4 has a push step"; else bad "G02-AC-5: section 4 has no numbered push step"; fi
 if [ -n "$g02_rv" ] && [ -n "$g02_push" ] && [ "$g02_rv" -lt "$g02_push" ]; then ok "G02-AC-5: a new reviewer is named before the push step"; else bad "G02-AC-5: no new reviewer named before the push step (${g02_rv:-none})"; fi
 if g02_win 4 'merge commit' 'both parents'; then ok "G02-AC-5: the reviewer gets the merge commit and its diffs against both parents"; else bad "G02-AC-5: no merge commit with diffs against both parents"; fi
 if [ -n "$g02_hd" ] && [ -n "$g02_push" ] && [ "$g02_hd" -lt "$g02_push" ]; then ok "G02-AC-5: the 'Resolution review (' heading is defined before the push step"; else bad "G02-AC-5: no 'Resolution review (' heading before the push step (${g02_hd:-none})"; fi
-if g02_win 4 'resolution review \(' 'comment' 'never an approval|not an approval|never approv|not approv'; then ok "G02-AC-5: the verdict is a comment, never an approval"; else bad "G02-AC-5: the verdict is not a comment, never an approval"; fi
+if g02_win 4 'resolution review [(]' 'comment' 'never an approval|not an approval|never approv|not approv'; then ok "G02-AC-5: the verdict is a comment, never an approval"; else bad "G02-AC-5: the verdict is not a comment, never an approval"; fi
 if g02_win 5 'intent' 'both sides'; then ok "G02-AC-5: checks both sides' intent"; else bad "G02-AC-5: does not check both sides' intent"; fi
 if g02_win 6 'test block' 'different nodes|other nodes|another node' 'names|state'; then ok "G02-AC-5: checks that test blocks of different nodes share no names or state"; else bad "G02-AC-5: no check on test blocks sharing names or state"; fi
 if g02_win 6 'frozen' 'no .*(changed|removed|renamed)|not (been )?(changed|removed|renamed)|unchanged'; then ok "G02-AC-5: checks that no frozen test line changed"; else bad "G02-AC-5: no check that no frozen test line changed"; fi
