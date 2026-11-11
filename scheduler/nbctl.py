@@ -198,7 +198,7 @@ def cmd_status_all(sock):
         if r.get("stop_all"):
             stops.append("STOP")
         if r.get("stop"):
-            stops.append("STOP-" + r["repo"].split("/", 1)[1])
+            stops.append("STOP-" + r["repo"].split("/", 1)[-1])
         if stops:
             state += " (%s)" % ", ".join(stops)
         hb = r.get("heartbeat_age")
@@ -217,7 +217,7 @@ def cmd_status_repo(sock, repo):
     issues = getj(sock, base + "/issues")["issues"]
     prs = getj(sock, base + "/prs")["prs"]
     now = time.time()
-    name = repo.split("/", 1)[1]
+    name = repo.split("/", 1)[-1]
     print("== %s" % time.strftime("%F %T %Z"))
     if r.get("running"):
         print("loop:    running; stop with: touch ~/STOP-%s (or ~/STOP for every loop)" % name)
@@ -316,9 +316,15 @@ def cmd_events(sock, repo, since):
             conn = resp = None
         if resp is not None:
             if resp.status != 200:
-                body = resp.read()[:200]
+                try:
+                    body = resp.read()[:200]
+                except (OSError, http.client.HTTPException):
+                    body = b""
                 conn.close()
-                raise Fail("/v1/events: HTTP %d %s" % (resp.status, body.decode("utf-8", "replace")))
+                if first:
+                    raise Fail("/v1/events: HTTP %d %s" % (resp.status, body.decode("utf-8", "replace")))
+                resp = None
+        if resp is not None:
             first = False
             eid, data = None, []
             try:
