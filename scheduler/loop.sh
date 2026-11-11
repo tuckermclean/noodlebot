@@ -677,7 +677,8 @@ start_feedback() {
 	[ "$t" = node ] && [[ $br == node/$key-followup-* ]] && ! fu_branch "$d" >/dev/null && echo "$br" >"$d/FOLLOWUP"
 	ni=$(grep -c '^kind: ' "$d/FEEDBACK.md")
 	while read -r u; do list+="${list:+\n}- $(sedesc "$u")"; done < <(sed -n 's/^url: //p' "$d/FEEDBACK.md")
-	sed -e "s|^@ITEMS@\$|${list:-- (none)}|" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
+	site_sed
+	sed "${ssed[@]}" -e "s|^@ITEMS@\$|${list:-- (none)}|" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
 		-e "s|@BR@|$(sedesc "$br")|g" -e "s|@FB@|$(sedesc "$d/FEEDBACK.md")|g" -e "s|@CMD@|$cmd|g" -e "s|@LOOP@|$here/loop.sh|g" \
 		-e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-feedback.md" >"$d/unattended.md" ||
 		{ fbsay "$name" "$saw; $name: rendering unattended-feedback.md failed; not started"; return 1; }
@@ -1262,6 +1263,8 @@ tick_run() {
 		elif [ -n "${started[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it started as the loop would anyway"
 		elif [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
 		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
+		elif [[ ${wspec[$id]:-} == fbnode\|* ]] || { [ -e "$state/node/$id/FEEDBACK.md" ] && [ ! -e "$state/node/$id/WAITING-PR" ] && [[ " $open " == *" $id "* ]]; }; then
+			say "$saw; $id: RELEASE found, nothing started: its PR feedback is for the feedback step, never a plain start"
 		elif [ -n "${isready[$id]:-}" ]; then
 			if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then say "$saw; $id: RELEASE found, the throttle is open; not started, SCHED_MAX ($cap) sessions are running"
 			elif [ "$ramp" = 1 ]; then say "$saw; $id: RELEASE found, the throttle is open; it takes no turn out of order and waits for its turn"

@@ -1,5 +1,6 @@
 UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to act on the owner's feedback on
 PR #@N@ of @REPO@, the bot's own PR on branch @BR@. Nobody can answer until morning.
+@SITE@
 
 - Follow @CMD@ (not a dry run). You start in @WT@, a worktree already on the PR's branch @BR@, brought to
   origin/@BR@; work there. The feedback is in @FB@ (FEEDBACK.md): read all of it first. It holds each item's
