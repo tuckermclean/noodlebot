@@ -4,6 +4,17 @@ TESTS = \
 	scheduler/version.test.sh \
 	scheduler/release-markers.test.sh \
 	scheduler/report.test.sh \
+	scheduler/report-units.test.sh \
+	scheduler/report-answers.test.sh \
+	scheduler/report-prs.test.sh \
+	scheduler/report-resolves.test.sh \
+	scheduler/report-seeding.test.sh \
+	scheduler/report-signed.test.sh \
+	scheduler/report-log.test.sh \
+	scheduler/report-rollover.test.sh \
+	scheduler/report-first-deploy.test.sh \
+	scheduler/report-review.test.sh \
+	scheduler/report-regress.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
