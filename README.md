@@ -98,11 +98,12 @@ Every request is a GET or one of the controls below (any other write is a 405); 
 
 ### Controls
 
-A control writes only a marker the loop or `deploy.sh` already reads, and a request record in
-`state/<name>/requests/`; the loop logs each record as one status-log event and removes it. The API starts no loop and
-signals no process. A valid request is answered 202 (schema `control`: what was written and when it is carried out), an
-unknown repository, node, issue or commit 404, a request with nothing to do 409; neither changes any file. Anyone who can
-use the socket can use the controls.
+A control writes only a marker the loop or `deploy.sh` already reads, and, for the loop controls, a request record in
+`state/<name>/requests/`; the loop logs each record as one status-log event and removes it. A deploy request (retry,
+rollback) writes no record: the marker in `deploy/` is the request. The API starts no loop and signals no process. A
+valid request is answered 202 (schema `control`: what was written and when it is carried out), an unknown repository,
+node, issue or commit 404, a request with nothing to do 409; neither changes any file. Anyone who can use the socket can
+use the controls.
 
 - Delete a node's or an issue's `FAILED` (the loop starts a ready node at its next tick):
 
@@ -127,7 +128,7 @@ use the socket can use the controls.
 
       curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST http://localhost/v1/deploy/rollback
 
-The loop carries out the first four at its next iteration or tick; `deploy.sh` carries out the retry and the rollback at
+The loop carries out the first three at its next iteration or tick; `deploy.sh` carries out the retry and the rollback at
 its next run, which a loop makes, and logs a line for each.
 
 From another machine, forward the socket over SSH and use it there:
