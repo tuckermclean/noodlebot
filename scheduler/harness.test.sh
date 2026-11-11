@@ -257,6 +257,57 @@ mkdir -p "$tmp/slow-rb"; cp "$sdir/session.jsonl" "$tmp/slow-rb/"; mv "$sdir/eve
 hcli events "$sdir" >/dev/null 2>&1
 ck "S08-AC-3: slow: events.jsonl equals the rebuild from the raw log (whole file)" cmp "$tmp/slow-live.events" "$sdir/events.jsonl"
 
+# A raw line holding a lone surrogate escape (Claude Code can cut a string in the middle of a pair), as a text block
+# and as a tool input, between good lines and before the result. Which event such a line gives is the backend's choice
+# (a text event with an escaped or replacement character, or garbled); what is certain: nothing crashes, the raw log is
+# byte-equal, every later event is written, the events() of the directory exits 0, the rebuild equals the live file,
+# and the line's text does not reach session.stderr.
+python3 -I - "$tmp" <<'PYEOF'
+import sys
+tmp = sys.argv[1]
+raw = ['{"type":"system","subtype":"init","session_id":"sess-sur-1","timestamp":"2026-11-10T10:00:00Z"}',
+       '{"type":"assistant","timestamp":"2026-11-10T10:00:01Z","message":{"content":[{"type":"text","text":"before"}]}}',
+       '{"type":"assistant","timestamp":"2026-11-10T10:00:02Z","message":{"content":[{"type":"text","text":"SURMARK-A cut \\ud83d"}]}}',
+       '{"type":"assistant","timestamp":"2026-11-10T10:00:03Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"echo SURMARK-B \\ud83d"}}]}}',
+       '{"type":"assistant","timestamp":"2026-11-10T10:00:04Z","message":{"content":[{"type":"text","text":"after surrogate"}]}}',
+       '{"type":"result","subtype":"success","timestamp":"2026-11-10T10:00:05Z","total_cost_usd":4.5,"num_turns":6}']
+open(tmp + "/sur.jsonl", "w").write("".join(l + "\n" for l in raw))
+PYEOF
+cp "$tmp/sur.jsonl" "$tmp/raw-sur"; rec=$tmp/rec-sur; errf=; sess "" "$tmp/live-sur" "$tmp/sur.jsonl" 0
+ck "S08-AC-3: surrogate: the raw log is the claude stream, untouched (every line byte-equal)" cmp "$tmp/live-sur/session.jsonl" "$tmp/raw-sur"
+ck "S08-AC-3: surrogate: the session ran to its end (session.rc 0)" sh -c "[ \"\$(cat '$tmp/live-sur/session.rc' 2>/dev/null)\" = 0 ]"
+ck "S08-AC-3: surrogate: a later line is still written live (the 4.5 result event is the last)" sh -c "tail -n 1 '$tmp/live-sur/events.jsonl' | grep -q '\"cost\": *4.5'"
+ck "S08-AC-3: surrogate: the line after the surrogate lines is written live (after surrogate)" grep -q 'after surrogate' "$tmp/live-sur/events.jsonl"
+ck "S08-AC-3: surrogate: events.pos covers the whole raw log" sh -c "[ \"\$(cat '$tmp/live-sur/events.pos' 2>/dev/null | tr -dc 0-9)\" = \"\$(wc -c <'$tmp/live-sur/session.jsonl')\" ] || grep -q '[^0-9]'$(printf '\\') /dev/null || awk '{ for (i = 1; i <= NF; i++) if (\$i == $(wc -c <"$tmp/live-sur/session.jsonl")) ok = 1 } END { exit !ok }' '$tmp/live-sur/events.pos'"
+ck "S08-AC-3: surrogate: the line's text does not reach session.stderr" sh -c "! grep -q SURMARK '$tmp/live-sur/session.stderr'"
+mkdir -p "$tmp/rb-sur"; cp "$tmp/live-sur/session.jsonl" "$tmp/rb-sur/"
+hcli events "$tmp/live-sur" >"$tmp/sur-live.out" 2>"$tmp/sur-live.err"; echo $? >"$tmp/sur-live.rc"
+ck "S08-AC-3: surrogate: events of the live directory exits 0 (no traceback)" sh -c "[ \"\$(cat '$tmp/sur-live.rc')\" = 0 ] && ! grep -q Traceback '$tmp/sur-live.err'"
+ck "S08-AC-3: surrogate: events of the live directory prints the events, the result among them" grep -q '"cost": *4.5' "$tmp/sur-live.out"
+hcli events "$tmp/rb-sur" >"$tmp/sur-rb.out" 2>"$tmp/sur-rb.err"; echo $? >"$tmp/sur-rb.rc"
+ck "S08-AC-3: surrogate: the rebuild from the raw log alone exits 0 (no traceback)" sh -c "[ \"\$(cat '$tmp/sur-rb.rc')\" = 0 ] && ! grep -q Traceback '$tmp/sur-rb.err'"
+ck "S08-AC-3: surrogate: the rebuild holds the result event" grep -q '"cost": *4.5' "$tmp/rb-sur/events.jsonl"
+ck "S08-AC-3: surrogate: the rebuilt events.jsonl equals the live one (whole file)" cmp "$tmp/live-sur/events.jsonl" "$tmp/rb-sur/events.jsonl"
+
+# A raw log ending in a cut line (no trailing newline), then a resume appending a new stream with its init line:
+# the resumed start must not be merged into the cut line. Live equals the rebuild; two start events in both.
+printf '%s\n%s\n%s' \
+	'{"type":"system","subtype":"init","session_id":"sess-cut-1","timestamp":"2026-11-10T11:00:00Z"}' \
+	'{"type":"assistant","timestamp":"2026-11-10T11:00:01Z","message":{"content":[{"type":"text","text":"first part"}]}}' \
+	'{"type":"assistant","timestamp":"2026-11-10T11:00:02Z","message":{"content":[{"type":"te' >"$tmp/cut-1.jsonl"
+printf '%s\n%s\n%s\n' \
+	'{"type":"system","subtype":"init","session_id":"sess-cut-1","timestamp":"2026-11-10T11:10:00Z"}' \
+	'{"type":"assistant","timestamp":"2026-11-10T11:10:01Z","message":{"content":[{"type":"text","text":"resumed work"}]}}' \
+	'{"type":"result","subtype":"success","timestamp":"2026-11-10T11:10:02Z","total_cost_usd":5.5,"num_turns":7}' >"$tmp/cut-2.jsonl"
+rec=$tmp/rec-cut; errf=; sess "" "$tmp/live-cut" "$tmp/cut-1.jsonl" 0; sess "" "$tmp/live-cut" "$tmp/cut-2.jsonl" 0 sess-cut-1
+mkdir -p "$tmp/rb-cut"; cp "$tmp/live-cut/session.jsonl" "$tmp/rb-cut/"
+hcli events "$tmp/rb-cut" >"$tmp/cut-rb.out" 2>"$tmp/cut-rb.err"
+nstart() { grep -c '"type": *"start"' "$1" 2>/dev/null; }
+ck "S08-AC-3: cut line then resume: the live events hold both start events (2)" sh -c "[ \"\$(grep -c '\"type\": *\"start\"' '$tmp/live-cut/events.jsonl')\" = 2 ]"
+ck "S08-AC-3: cut line then resume: the rebuild holds both start events (2)" sh -c "[ \"\$(grep -c '\"type\": *\"start\"' '$tmp/rb-cut/events.jsonl')\" = 2 ]"
+ck "S08-AC-3: cut line then resume: the rebuilt events.jsonl equals the live one (whole file)" cmp "$tmp/live-cut/events.jsonl" "$tmp/rb-cut/events.jsonl"
+ck "S08-AC-3: cut line then resume: the resumed result is in the live events" grep -q '"cost": *5.5' "$tmp/live-cut/events.jsonl"
+
 echo
 [ "$fails" = 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1
