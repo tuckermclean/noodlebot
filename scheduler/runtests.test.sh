@@ -139,4 +139,41 @@ has "D03-AC-4: loop.test.sh runs under bash" "$i" '^PASS: loop-ran-under-bash'
 want=$(sh -c 'echo "PROBE=${BASH_VERSION:-none}"')
 if grep -Fqx "$want" "$i" 2>/dev/null; then pass "D03-AC-4: other test files run under sh"; else fail "D03-AC-4: other test files run under sh"; fi
 
+# default concurrency: with TEST_JOBS unset, up to twice the CPUs run at once (fake nproc says 1 CPU,
+# so two files must run together; each waits, up to 3 s, for the other to have started).
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\necho 1\n' >"$tmp/bin/nproc"
+chmod +x "$tmp/bin/nproc"
+for n in 1 2; do
+	o=$([ $n = 1 ] && echo 2 || echo 1)
+	cat >"$t/c$n.test.sh" <<EOT
+touch "\$MK/c$n.started"
+i=0
+while [ ! -e "\$MK/c$o.started" ] && [ \$i -lt 30 ]; do sleep 0.1; i=\$((i + 1)); done
+[ -e "\$MK/c$o.started" ] && touch "\$MK/c$n.saw-other"
+echo "PASS: c$n-done"
+EOT
+done
+run dflt PATH="$tmp/bin:$PATH" -- "$t/c1.test.sh" "$t/c2.test.sh"
+wait
+if [ -e "$mk/c1.saw-other" ] && [ -e "$mk/c2.saw-other" ]; then pass "D03-AC-4: TEST_JOBS unset, 1 CPU: two files run at once (default is twice the CPUs)"; else fail "D03-AC-4: TEST_JOBS unset, 1 CPU: two files run at once (default is twice the CPUs)"; fi
+[ "$(rc dflt)" -eq 0 ] && pass "D03-AC-4: TEST_JOBS unset: all files pass: exits 0" || fail "D03-AC-4: TEST_JOBS unset: all files pass: exits 0"
+
+# D03-AC-5: CI enforces budgets 60 s per file and 360 s total; the deploy gate sets no budget variable.
+wf=$src/../.github/workflows/test.yml
+got=$(python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+for job in (d.get("jobs") or {}).values():
+    for s in job.get("steps") or []:
+        if "make test" in str(s.get("run", "")):
+            e = s.get("env") or {}
+            for k in ("TEST_BUDGET_ENFORCE", "TEST_FILE_BUDGET", "TEST_BUDGET", "SITE_TESTS"):
+                print(k + "=" + str(e.get(k)))
+' "$wf" 2>/dev/null)
+for kv in TEST_BUDGET_ENFORCE=1 TEST_FILE_BUDGET=60 TEST_BUDGET=360 SITE_TESTS=required; do
+	if printf '%s\n' "$got" | grep -Fqx "$kv"; then pass "D03-AC-5: test.yml make test step sets $kv"; else fail "D03-AC-5: test.yml make test step sets $kv"; fi
+done
+hasnt "D03-AC-5: scheduler/deploy.sh sets none of TEST_BUDGET_ENFORCE, TEST_FILE_BUDGET, TEST_BUDGET, TEST_JOBS" "$src/deploy.sh" 'TEST_(BUDGET|FILE_BUDGET|JOBS)'
+
 [ "$fails" -eq 0 ]
