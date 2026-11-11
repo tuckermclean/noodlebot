@@ -92,4 +92,52 @@ if grep -qi 'tuckermclean' "$d/skill.stripped"; then bad "G02-AC-4: SKILL.md nam
 if grep -qi 'themonolith\|noodlebot' "$d/skill.stripped"; then bad "G02-AC-4: SKILL.md names a repository (noodlebot / themonolith)"; else ok "G02-AC-4: SKILL.md names no repository outside the plugin's own names"; fi
 if grep -Eqi -e '--repo[ =]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|github\.com[:/]|git@github' "$d/skill.stripped"; then bad "G02-AC-4: SKILL.md has a repository slug or URL"; else ok "G02-AC-4: SKILL.md has no repository slug or URL"; fi
 
+
+# ---------- G02 slice 3b (review3 findings 1-4): checks tied to the numbered steps of the update section ----------
+# g02b_steps <in> <out>: one line per numbered step "<n><TAB><text>" (wrapped lines joined, lowercase, no asterisks).
+g02b_steps() {
+	tr -d '*' <"$1" | awk '
+		function flush() { if (cur != "") print tolower(cur); cur = "" }
+		/^[0-9]+\. / { flush(); n = $0; sub(/\..*/, "", n); t = $0; sub(/^[0-9]+\. */, "", t); cur = n "\t" t; next }
+		/^[ \t]*$/ || /^#/ { flush(); next }
+		cur != "" { sub(/^[ \t]+/, ""); cur = cur " " $0 }
+		END { flush() }' >"$2"
+}
+# g02b_no <file> <ere>: number of the first step whose text matches.
+g02b_no() { awk -F'\t' -v re="$2" '$2 ~ re { print $1; exit }' "$1"; }
+g02b_has() { # g02b_has <label> <file> <ere>...: one line (a step, a bullet, a paragraph) matches every ERE
+	lbl=$1; f=$2; shift 2
+	if awk -v pats="$(printf '%s\n' "$@")" 'BEGIN { k = split(pats, P, "\n") }
+		{ l = tolower($0); good = 1; for (p = 1; p <= k; p++) if (l !~ P[p]) { good = 0; break } if (good) found = 1 }
+		END { exit !found }' "$f"; then ok "$lbl"; else bad "$lbl"; fi
+}
+g02b_steps "$u" "$d/usteps.txt"
+tn=$(g02b_no "$d/usteps.txt" 'make test'); rn=$(g02b_no "$d/usteps.txt" 'resolution review'); pn=$(g02b_no "$d/usteps.txt" '^push')
+fn=$(g02b_no "$d/usteps.txt" 'frozen')
+if [ -n "$tn" ] && [ -n "$rn" ] && [ -n "$pn" ] && [ "$tn" -lt "$pn" ] && [ "$rn" -lt "$pn" ]; then ok "G02-AC-4: the push step ($pn) comes after the make-test step ($tn) and the resolution-review step ($rn)"; else bad "G02-AC-4: the push step must come after the make-test step and the resolution-review step (test ${tn:-none}, review ${rn:-none}, push ${pn:-none})"; fi
+pt=$(awk -F'\t' -v n="${pn:-0}" '$1 == n { print $2 }' "$d/usteps.txt")
+for pair in 'resolved file|each file|each resolved:each resolved file' 'added test line|each added test:each added test line' 'test result:the test results' 'verdict:the review.s verdict' 'comment:a PR comment'; do
+	if printf '%s\n' "$pt" | grep -Eqi -e "${pair%%:*}"; then ok "G02-AC-4: the push step names ${pair#*:}"; else bad "G02-AC-4: the push step (${pn:-none}) does not name ${pair#*:}"; fi
+done
+ft=$(awk -F'\t' -v n="${fn:-0}" '$1 == n { print $2 }' "$d/usteps.txt")
+for pair in 'abort:abort the merge' 'push(es)? nothing:push nothing' 'question\.md:QUESTION.md'; do
+	if printf '%s\n' "$ft" | grep -Eqi -e "${pair%%:*}"; then ok "G02-AC-4: the frozen/spec rule step (${fn:-none}) says: ${pair#*:}"; else bad "G02-AC-4: the frozen/spec rule step (${fn:-none}) lacks: ${pair#*:}"; fi
+done
+# the ### Resolution review subsection
+rv="$d/rv.txt"; awk '/^### / { if (on) exit; if (tolower($0) ~ /resolution review/) on = 1; next } on { print }' "$u" >"$rv"
+if [ -s "$rv" ]; then ok "G02-AC-5: a '### Resolution review' subsection exists"; else bad "G02-AC-5: no '### Resolution review' subsection"; fi
+g02b_has "G02-AC-5: the reviewer's checklist (a bullet) names the frozen test line rule" "$rv" '^- ' 'frozen' 'changed|removed|renamed'
+g02b_has "G02-AC-5: the review section says nothing is pushed until it approves" "$rv" 'nothing is pushed until|push(ed)? only after' 'approv'
+if [ "$(tr -d '*' <"$rv" | grep -oi 'new reviewer' | wc -l)" -ge 2 ] && ! grep -Eqi 'earlier reviewer|same reviewer|previous reviewer|first reviewer|resume' "$rv"; then ok "G02-AC-5: both rounds of the review use a new reviewer"; else bad "G02-AC-5: the second round must use a new reviewer too (not the earlier one)"; fi
+# finding 2: a restarted update reads the owner's answer
+g02b_has "G02-AC-4: a restarted update reads the owner's answer in answered/" "$u" 'answered/' 'answer' 'restart|resum|read'
+g02b_has "G02-AC-4: an owner's approval in answered/ permits the change it approves, quoted in the PR comment" "$u" 'approv' 'answered/|answer' 'permit|allow' 'quot' 'comment'
+# finding 3: no merge commit is left when the update ends in QUESTION.md
+cn=$(g02b_no "$d/usteps.txt" 'commit (the|this) (merge|resolution)|commit it|merge is committed')
+if [ -n "$cn" ] && [ -n "$tn" ] && [ "$cn" -le "$tn" ]; then ok "G02-AC-4: the merge is committed (step $cn) no later than the tests step ($tn)"; else bad "G02-AC-4: no step commits the merge before the tests and the review (commit ${cn:-none}, tests ${tn:-none})"; fi
+g02b_has "G02-AC-4: a failing test it cannot fix leaves the branch as it was (reset --hard origin/<branch>)" "$d/usteps.txt" 'fail' 'question\.md' 'reset --hard origin/<branch>'
+g02b_has "G02-AC-5: a second rejection leaves the branch as it was (reset --hard origin/<branch>)" "$rv" 'second' 'question\.md' 'reset --hard origin/<branch>'
+# finding 4: --dry-run and the review's verdict
+g02b_has "G02-AC-5: with --dry-run the review's verdict goes into result.md and is not posted on the PR" "$rv" '--dry-run' 'verdict' 'result\.md' 'not (be )?posted|not post|never posted|instead of post'
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

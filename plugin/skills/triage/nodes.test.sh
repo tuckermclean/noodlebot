@@ -190,4 +190,21 @@ if g02_win 6 'frozen' 'no .*(changed|removed|renamed)|not (been )?(changed|remov
 if g02_win 5 'second' 'reject|request_changes' 'push(es)? nothing|nothing (is )?pushed' 'comment'; then ok "G02-AC-5: a second rejection pushes nothing and comments on the PR"; else bad "G02-AC-5: no rule that a second rejection pushes nothing and comments on the PR"; fi
 if g02_win 4 'push' 'only after|until|before|approv' 'review'; then ok "G02-AC-5: nothing is pushed before the review approves"; else bad "G02-AC-5: no rule that nothing is pushed before the review approves"; fi
 
+
+# ---------- G02 slice 3b (review3 findings 1, 4): checks tied to the numbered steps of section 4 ----------
+g02b_steps="$g02_d/steps.txt"
+tr -d '*' <"$g02_d/sec4.txt" | awk '
+	function flush() { if (cur != "") print tolower(cur); cur = "" }
+	/^[0-9]+\. / { flush(); n = $0; sub(/\..*/, "", n); t = $0; sub(/^[0-9]+\. */, "", t); cur = n "\t" t; next }
+	/^[ \t]*$/ || /^#/ { flush(); next }
+	cur != "" { sub(/^[ \t]+/, ""); cur = cur " " $0 }
+	END { flush() }' >"$g02b_steps"
+g02b_no() { awk -F'\t' -v re="$1" '$2 ~ re { print $1; exit }' "$g02b_steps"; }
+g02b_rn=$(g02b_no 'resolution review'); g02b_pn=$(g02b_no '^push')
+g02b_rt=$(awk -F'\t' -v n="${g02b_rn:-0}" '$1 == n { print $2 }' "$g02b_steps")
+if [ -n "$g02b_rn" ] && [ -n "$g02b_pn" ] && [ "$g02b_rn" -lt "$g02b_pn" ]; then ok "G02-AC-5: the review step ($g02b_rn) precedes the push step ($g02b_pn)"; else bad "G02-AC-5: the review step must precede the push step (review ${g02b_rn:-none}, push ${g02b_pn:-none})"; fi
+if printf '%s\n' "$g02b_rt" | grep -Eqi 'nothing is pushed until[^.]*approv|push(ed)? only after[^.]*approv'; then ok "G02-AC-5: the review step says nothing is pushed until it approves"; else bad "G02-AC-5: the review step lacks 'nothing is pushed until it approves'"; fi
+if [ "$(printf '%s\n' "$g02b_rt" | grep -oi 'new reviewer' | wc -l)" -ge 2 ] && ! printf '%s\n' "$g02b_rt" | grep -Eqi 'earlier reviewer|same reviewer|previous reviewer|first reviewer|resume'; then ok "G02-AC-5: both rounds of the review use a new reviewer"; else bad "G02-AC-5: the second round must use a new reviewer too (not the earlier one)"; fi
+if printf '%s\n' "$g02b_rt" | grep -Eqi -e '--dry-run' && printf '%s\n' "$g02b_rt" | grep -Eqi 'verdict' && printf '%s\n' "$g02b_rt" | grep -Eqi 'result\.md' && printf '%s\n' "$g02b_rt" | grep -Eqi 'not (be )?posted|not post|never posted|instead of post'; then ok "G02-AC-5: with --dry-run the review's verdict goes into result.md and is not posted on the PR"; else bad "G02-AC-5: the review step does not say that with --dry-run the verdict goes into result.md and is not posted"; fi
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
