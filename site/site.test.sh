@@ -221,6 +221,13 @@ mk_clone() {
 	git clone -q "$o" "$root/repos/$1" 2>/dev/null
 }
 mk_clone alpha
+# W04: alpha's open spec PR 51 has its branch: spec/new-thing holds spec-graph.yaml (as scheduler/site.test.sh's mk_clone
+# makes it), fetched into the clone so that origin/spec/new-thing exists
+git -C "$tmp/origin-alpha" checkout -q -b spec/new-thing
+cp "$fx/alpha/spec-graph.yaml" "$tmp/origin-alpha/docs/graph.yaml"
+git -C "$tmp/origin-alpha" -c user.name=t -c user.email=t@t commit -q -am spec
+git -C "$tmp/origin-alpha" checkout -q main
+git -C "$root/repos/alpha" fetch -q origin
 mk_clone bravo
 sa=$root/state/alpha sb=$root/state/bravo
 mkdir -p "$sa/node" "$sa/issue" "$sb/node"
