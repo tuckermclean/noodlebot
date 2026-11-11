@@ -6,7 +6,7 @@ const INTERVAL = 60 * 1000; // between two requests while visible
 const BACKOFF_FIRST = 2 * 60 * 1000;
 const BACKOFF_MAX = 30 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
-const HOURLY_CAP = 55; // requests in any 60 minutes
+const HOURLY_CAP = 55; // requests to api.github.com in any 60 minutes; raw_url fetches go to gist.githubusercontent.com, outside that limit, so they are not counted
 
 function major(v) {
   const n = parseInt(String(v), 10);
@@ -33,8 +33,11 @@ export function createPoller({ gist, fetch, now, hidden }) {
     const header = (n) => (res && res.headers ? res.headers.get(n) : null);
     let wait = null;
     const retry = header('retry-after');
+    const date = retry ? Date.parse(retry) : NaN; // Retry-After may be an HTTP date
     if (retry !== null && retry !== '' && Number.isFinite(Number(retry)) && Number(retry) >= 0) {
       wait = Number(retry) * 1000;
+    } else if (Number.isFinite(date)) {
+      wait = Math.max(0, date - t);
     } else if (header('x-ratelimit-remaining') === '0' && Number.isFinite(Number(header('x-ratelimit-reset')))) {
       wait = Math.max(0, Number(header('x-ratelimit-reset')) * 1000 - t);
     }
@@ -42,7 +45,7 @@ export function createPoller({ gist, fetch, now, hidden }) {
       wait = Math.min(BACKOFF_FIRST * 2 ** backoffStep, BACKOFF_MAX);
       backoffStep++;
     }
-    state.backoffUntil = t + wait;
+    state.backoffUntil = t + Math.max(wait, INTERVAL); // never retry sooner than the poll interval
     state.status = 'backoff';
   }
 
