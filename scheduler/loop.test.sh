@@ -107,7 +107,7 @@ ok "and its start is not counted: it starts again as start 1" within 5 "session 
 ok "both A05 starts were start 1 of 2" test "$(count 'started A05 .*start 1 of 2')" = 2
 echo '[{"number": 46}]' >"$tmp/issues.json"
 ok "an issue the owner labelled noodlebot is triaged" within 5 "started triage of #46 in .*issue-46, pid [0-9]+, start 1 of 2"
-ok "the triage session gets the triage prompt" sh -c "grep -qx 'triage 46' '$tmp/claude.log'"
+ok "the triage session gets the triage prompt" wait_until 5 grep -qx 'triage 46' "$tmp/claude.log"
 ok "a finished triage swaps the label" within 5 "triage of #46 done \(rc 0\); its label is now noodlebot-triaged"
 ok "the label calls add noodlebot-triaged and remove noodlebot" grep -q 'DELETE repos/o/proj/issues/46/labels/noodlebot' "$tmp/labels.log"
 ok "the triage worktree is removed" test ! -d "$nb/worktrees/proj/issue-46"

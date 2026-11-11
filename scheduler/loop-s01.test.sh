@@ -112,9 +112,7 @@ s01ok "S01-AC-2: the event is not repeated on later ticks" test "$(ev B02 12)" =
 s01ok "S01-AC-2: it is not started on later ticks" test "$(s01runs B02)" = 1
 rm -f "$state/node/B02/FAILED"
 s01ok "S01-AC-2: after FAILED is deleted it starts again, as start 1 of 2" waitf 4 countis 'started B02 .*start 1 of 2' 2
-wait_ticks 3
-s01ok "S01-AC-2: the new session is not stopped for the PR closed before it began" sh -c "[ \"\$(cat '$S01/runs.B02')\" = 2 ] && kill -0 \"\$(cat '$state/node/B02/session.pid')\""
-s01ok "S01-AC-2: and no second FAILED is written" test ! -e "$state/node/B02/FAILED"
+m2b=$(polls "$S01/polls")   # the two checks on the new session are made below, three ticks on
 
 # A session taken over after a restart: the loop is down while B06's PR merges.
 kill "$loop1s"; wait "$loop1s" 2>/dev/null
@@ -128,23 +126,15 @@ s01ok "S01-AC-1: (taken over) and its child with it" waitf 2 dead "$c6"
 s01ok "S01-AC-1: (taken over) one status-log event names the node and the merged PR" waitf 3 evis B06 17 1
 s01ok "S01-AC-1: (taken over) its evidence is archived to state/archive/B06-out" waitf 3 test -f "$state/archive/B06-out/brief.md"
 s01ok "S01-AC-1: (taken over) its worktree is removed" waitf 3 test ! -d "$wt4/B06"
-wait_ticks 2
+m6=$(polls "$S01/polls")
+wait_polls "$S01/polls" "$m2b" 3
+s01ok "S01-AC-2: the new session is not stopped for the PR closed before it began" sh -c "[ \"\$(cat '$S01/runs.B02')\" = 2 ] && kill -0 \"\$(cat '$state/node/B02/session.pid')\""
+s01ok "S01-AC-2: and no second FAILED is written" test ! -e "$state/node/B02/FAILED"
+wait_polls "$S01/polls" "$m6" 2
 s01ok "S01-AC-1: (taken over) the event is not repeated" test "$(ev B06 17)" = 1
 s01ok "S01-AC-3: after the restart the sessions of B03, B04 and B05 still run" bash -c "$(declare -f grp_gone grp_up); grp_up $p3 && grp_up $p4 && grp_up $p5"
 
-# S01-AC-5: listing closed PRs fails.
 kill "$loop2s"; wait "$loop2s" 2>/dev/null
-sleep 0.5   # nothing to observe: the loop is gone
-printf '16 node/B05-n5 %s 0\n' "$(date +%s)" >>"$S01/closed.tsv"
-touch "$S01/closed.fail"; rm -f "$state/node/B07/FAILED"
-lines=$(wc -l <"$state/status.log")
-loop4; loop3s=$lp4
-wait_ticks 4
-s01ok "S01-AC-5: a failing closed-PR query stops no session (B05's PR is closed)" grp_up "$p5"
-s01ok "S01-AC-5: and starts none (B07 is ready)" test "$(s01runs B07)" = 0
-s01ok "S01-AC-5: and the failure is logged" sh -c "tail -n +$((lines + 1)) '$state/status.log' | grep -qiE 'list.*fail|fail.*(list|closed)'"
-s01ok "S01-AC-5: and no FAILED is written for B05" test ! -e "$state/node/B05/FAILED"
-kill "$loop3s"; wait "$loop3s" 2>/dev/null
 s01_cleanup
 
 loop_end

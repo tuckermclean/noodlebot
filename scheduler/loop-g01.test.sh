@@ -4,15 +4,9 @@
 . "$(dirname "$0")/testdata/lib/loop-prelude.sh"
 . "$src/testdata/lib/loop-g01.sh"
 
-# AC-5: while the throttle holds, no update starts.
-rl6 0.99 $(($(date +%s) + 3600))
-loop6
-ok "G01-AC-5 setup: the throttle engages" within 8 "throttle engaged"
-wait_ticks 3
-ok "G01-AC-5: while the throttle holds, a bot's CONFLICTING spec PR gets no update" runsis 101 0
-ok "G01-AC-5: while the throttle holds, a clashing one gets none either" runsis 106 0
+# The state the throttle case (loop-g01-throttle.test.sh) leaves the main run in: an allowed window, the throttle open.
 rl6 0.01 $(($(date +%s) + 7200))
-ok "G01-AC-5 setup: the throttle is released" within 6 "throttle released"
+loop6
 
 # AC-5: the CONFLICTING bot PR gets one update session.
 ok "G01-AC-5: a bot's CONFLICTING spec PR gets an update session" waitf 8 runsis 101 1

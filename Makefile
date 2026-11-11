@@ -13,11 +13,15 @@ TESTS = \
 	plugin/hooks/guard.test.sh \
 	scheduler/loop.test.sh \
 	scheduler/loop-s07-kinds.test.sh \
+	scheduler/loop-s07-units.test.sh \
 	scheduler/loop-s07-resume.test.sh \
+	scheduler/loop-s07-resume2.test.sh \
 	scheduler/loop-s07-starve.test.sh \
+	scheduler/loop-s07-same.test.sh \
 	scheduler/loop-s07-caps.test.sh \
 	scheduler/loop-s03.test.sh \
 	scheduler/loop-s01.test.sh \
+	scheduler/loop-s01-fail.test.sh \
 	scheduler/loop-s07-slots.test.sh \
 	scheduler/loop-g01.test.sh \
 	scheduler/loop-s07.test.sh \
@@ -27,6 +31,7 @@ TESTS = \
 	scheduler/loop-w02-fail.test.sh \
 	scheduler/loop-w02-off.test.sh \
 	scheduler/loop-g01-lim.test.sh \
+	scheduler/loop-g01-throttle.test.sh \
 	scheduler/loop-s07-records.test.sh \
 	scheduler/loop-s04.test.sh \
 	scheduler/loop-d01.test.sh \

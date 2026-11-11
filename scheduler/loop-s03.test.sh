@@ -40,7 +40,7 @@ mkdir -p "$st6/node/G07"; echo "Q1: still open" >"$st6/node/G07/QUESTION.md"
 cat >"$tmp/bin6/gh" <<'EOF'
 #!/bin/sh
 case " $* " in
-*" --state merged "*) cat "$S03/merged.tsv" ;;
+*" --state merged "*) echo >>"$S03/polls"; cat "$S03/merged.tsv" ;;
 *" --state open "*) cat "$S03/open.txt" ;;
 *" --state closed "*) S01=$S03 exec python3 -I "$S03/closed.py" "$@" ;;
 *"/issues?labels=noodlebot"*) echo '[]' ;;
@@ -78,6 +78,8 @@ s3dead=0
 s3ok() { local name=$1 t=$2; shift 2; [ "$s3dead" = 1 ] && t=1; if waitf "$t" "$@"; then pass "$name"; else fail "$name"; s3dead=1; fi; }
 s3chk() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 s3ticks() { [ "$s3dead" = 1 ] || wait_ticks "$1"; }
+# s3pw <polls count> <n>: n ticks have passed since the count was taken (polls: one per tick, counted by the fake gh)
+s3pw() { [ "$s3dead" = 1 ] || wait_polls "$S03/polls" "$1" "$2"; }
 s3runs() { cat "$S03/runs.$1" 2>/dev/null || echo 0; }
 s3n() { local n; n=$(grep -cE "$1" "$st6/status.log" 2>/dev/null); echo "${n:-0}"; }
 s3has() { grep -qE "$1" "$st6/status.log" 2>/dev/null; }
@@ -145,8 +147,14 @@ s3chk "S03-AC-3: it keeps the rules for GitHub access" sh -c "grep -qF '~/.confi
 s3chk "S03-AC-3: it keeps the rule for closing keywords" s3prompt 'closing keyword'
 s3chk "S03-AC-3: it has no unfilled placeholder" sh -c "[ -s '$S03/sys.G01.1' ] && ! grep -qE '@[A-Z]+@' '$S03/sys.G01.1'"
 
+# G01 goes on to ask its question now, so that the ticks the checks below wait for (counted from the moments they used to
+# be counted from) are used by both: a check of "this did not happen" is made once the same number of ticks have passed.
+m_a=$(polls "$S03/polls")
+touch "$S03/go.G01.1"
+s3ok "S03-AC-6: a follow-up that asks a question: the session ends with QUESTION.md" 5 s3has 'session G01 ended \(rc 0\) with QUESTION.md'
+m_q=$(polls "$S03/polls")
 # AC-4: G02 and G03, running follow-ups.
-s3ticks 3
+s3pw "$m_a" 3
 s3chk "S03-AC-4: a running follow-up (G02) is not stopped while the node's earlier PR is merged" s3pg G02
 s3chk "S03-AC-4: (G02) and no event says it was stopped" test "$(s3n 'stopped session G02')" = 0
 s3chk "S03-AC-4: the same for G03" s3pg G03
@@ -182,18 +190,14 @@ s3chk "S03-AC-5: neither end is logged as ended with a PR" s3cnt 'session G04 en
 s3chk "S03-AC-5: both runs were on the same follow-up branch, in the same worktree" sh -c "[ '$(s3f br.G04.1)' = node/G04-followup-1 ] && [ '$(s3f br.G04.2)' = node/G04-followup-1 ] && [ '$(s3f pwd.G04.1)' = '$(s3f pwd.G04.2)' ]"
 s3chk "S03-AC-5: and no second follow-up number was taken" s3brs G04 1
 s3ok "S03-AC-5: a follow-up that opened its PR (G05) is logged as ended with a PR" 5 s3has 'session G05 ended \(rc 0\) with a PR'
-s3ticks 3
-s3chk "S03-AC-5: it does not start again while its follow-up PR is open" s3eq "$(s3runs G05)$(s3runs G04)" 12
-s3chk "S03-AC-5: (G05) started once" s3cnt 'started G05 ' 1
+m_5=$(polls "$S03/polls")   # G05's "does not start again" checks are made below, three ticks on
 
 # AC-2: a merged node with no markers, or an unanswered question, starts no session.
 s3chk "S03-AC-2: a merged node with no markers starts no session" sh -c "[ '$(s3runs G06)' = 0 ] && ! grep -q 'started G06' '$st6/status.log' && [ \"\$(git -C '$cl6' branch --list 'node/G06-*' | wc -l)\" = 0 ]"
 s3chk "S03-AC-2: a merged node with an unanswered QUESTION.md starts no session" sh -c "[ '$(s3runs G07)' = 0 ] && ! grep -q 'started G07' '$st6/status.log' && [ -e '$st6/node/G07/QUESTION.md' ] && [ ! -d '$st6/node/G07/answered' ]"
 
 # AC-6 (and AC-2, AC-4, AC-5): G01 asks a question, is answered, opens its PR, merges; then a second follow-up.
-touch "$S03/go.G01.1"
-s3ok "S03-AC-6: a follow-up that asks a question: the session ends with QUESTION.md" 5 s3has 'session G01 ended \(rc 0\) with QUESTION.md'
-s3ticks 3
+s3pw "$m_q" 3
 w1=$(s3f pwd.G01.1)
 s3chk "S03-AC-6: its worktree stays" test -d "$w1"
 s3chk "S03-AC-6: its branch stays" git -C "$cl6" rev-parse --verify -q node/G01-followup-1
@@ -210,7 +214,11 @@ s3chk "S03-AC-6: no new follow-up number is taken" sh -c "[ \"\$(git -C '$cl6' b
 s3chk "S03-AC-6: the second start names the same branch, as start 1 of 2" s3cnt 'started G01 .*node/G01-followup-1.*start 1 of 2' 2
 touch "$S03/go.G01.2"
 s3ok "S03-AC-5: (G01) a follow-up whose PR is open: its end is logged as ended with a PR" 5 s3has 'session G01 ended \(rc 0\) with a PR'
-s3ticks 3
+m_pr=$(polls "$S03/polls")
+s3pw "$m_5" 3
+s3chk "S03-AC-5: it does not start again while its follow-up PR is open" s3eq "$(s3runs G05)$(s3runs G04)" 12
+s3chk "S03-AC-5: (G05) started once" s3cnt 'started G05 ' 1
+s3pw "$m_pr" 3
 s3chk "S03-AC-5: (G01) it does not start again while its follow-up PR is open" s3eq "$(s3runs G01)" 2
 sed -i '/node\/G01-followup-1/d' "$S03/open.txt"
 echo "31 node/G01-followup-1" >>"$S03/merged.tsv"; printf '31 node/G01-followup-1 %s 1\n' "$(date +%s)" >>"$S03/closed.tsv"
