@@ -114,8 +114,8 @@ nothing else.
    (with `--dry-run` it goes into `result.md`, step 5, and is not posted). Nothing is pushed until the
    review approves. On `request_changes`, fix the findings as new commits and run one more new
    reviewer on the result. A second rejection pushes nothing: comment on the PR with the findings
-   (with `--dry-run`, write them to `result.md`), run `git reset --hard origin/<branch>` (no merge commit left) and end. A
-   update that ends without pushing after committing its merge does the same.
+   (with `--dry-run`, write them to `result.md`), run `git reset --hard origin/<branch>` (no merge commit left) and end. An
+   update (not a dry run) that ends without pushing after committing its merge does the same.
 5. With `--dry-run`, stop here (no push, no PR edit, no comment) and write `out/triage/pr-<N>/result.md`:
    the merge, each renumbering (old -> new), the checker's output and the review's verdict.
    A conflict that needs a judgment (step 1) is written to the same `result.md` and gets no comment.
