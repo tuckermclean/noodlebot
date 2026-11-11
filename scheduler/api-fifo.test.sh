@@ -31,7 +31,7 @@ for id in B01 B02; do req GET /v1/repos/acme/beta/nodes/$id; done
 req GET /v1/nothing; req POST /v1/repos
 t0=$(date +%s%N)   # the requests are done: the serving time of the window below counts from here
 # the event stream stays open: read it for 2 seconds from the first line of each status log
-# (the three reads, the two ?since=0 reads of the next block and the one-second look at the FIFOs run at the same time: each keeps its own window)
+# (the three reads, the two ?since=0 reads of the next block run at the same time: each keeps its own window)
 curl_pids=''
 if command -v curl >/dev/null 2>&1; then
 	cq=0

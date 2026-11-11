@@ -114,6 +114,29 @@ else
 	req() { code=$(python3 -I "$tmp/client.py" "$sock" "$1" "$2" "$tmp/resp" 2>/dev/null); : >"$tmp/hdr"; cat "$tmp/resp" >>"$tmp/allresp"; }
 fi
 }
+# stream.py: reads an event stream for N seconds into a file (used by api-events.test.sh and api-fifo.test.sh)
+cat >"$tmp/stream.py" <<'EOP'
+import http.client, signal, socket, sys
+sk, path, out, secs = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+class Stop(Exception): pass
+def h(*a): raise Stop()
+class C(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX); self.sock.connect(sk)
+signal.signal(signal.SIGALRM, h); signal.alarm(secs)
+f = open(out, "wb", buffering=0)
+try:
+    c = C("localhost")
+    c.request("GET", path, headers={"Last-Event-ID": sys.argv[5]} if len(sys.argv) > 5 else {})
+    r = c.getresponse()
+    open(out + ".hdr", "w").write("%d\n%s\n" % (r.status, r.getheader("Content-Type")))
+    while True:
+        l = r.readline()
+        if not l: break
+        f.write(l)
+except Exception:
+    pass
+EOP
 # quiet_final: the end-of-part checks of the AC-2 snapshot, the fake gh, the token script and the AC-9 token scan for a part
 # that is not the one that prints their PASS lines (the PASS labels are printed once, by api-events.test.sh, and
 # api-fifo.test.sh; passdiff compares the label counts). Each part covers its own server's run: a failure prints a FAIL

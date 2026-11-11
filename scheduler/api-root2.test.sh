@@ -132,7 +132,9 @@ else
 fi
 kill -9 "$r2pid" 2>/dev/null; wait "$r2pid" 2>/dev/null
 unset GIT_CEILING_DIRECTORIES
-
+# P01-AC-2: the fake gh recorded no call during this part's run (the second-root server ran with it on PATH); FAIL-only,
+# the PASS line is in api-events.test.sh
+[ ! -s "$tmp/gh.log" ] || fail "P01-AC-2: gh was called: $(head -n 3 "$tmp/gh.log" | tr '\n' ' ')"
 
 [ $fails = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"

@@ -155,6 +155,4 @@ done
 [ $multi = 0 ] && [ $bad = 0 ] && pass "S07-AC-3 an ask racing a list that changes the head unit: never two grants, files well-formed" || fail "S07-AC-3 ask racing list: $multi double grants, $bad malformed files"
 
 echo
-
-echo
 if [ $fails = 0 ]; then echo "all turn tests passed"; else echo "$fails turn test(s) failed"; exit 1; fi

@@ -19,28 +19,6 @@ record_all
 #  test never looks inside; it is the id of an event of this or an earlier connection, global over all repositories).
 #  With a cursor the stream first sends every line after that cursor, once and in order, then goes on with new lines; without
 #  one it starts at the end (no old lines). ?repo= filters events (and the lines after a cursor) to that repository.
-cat >"$tmp/stream.py" <<'EOP'
-import http.client, signal, socket, sys
-sk, path, out, secs = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-class Stop(Exception): pass
-def h(*a): raise Stop()
-class C(http.client.HTTPConnection):
-    def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX); self.sock.connect(sk)
-signal.signal(signal.SIGALRM, h); signal.alarm(secs)
-f = open(out, "wb", buffering=0)
-try:
-    c = C("localhost")
-    c.request("GET", path, headers={"Last-Event-ID": sys.argv[5]} if len(sys.argv) > 5 else {})
-    r = c.getresponse()
-    open(out + ".hdr", "w").write("%d\n%s\n" % (r.status, r.getheader("Content-Type")))
-    while True:
-        l = r.readline()
-        if not l: break
-        f.write(l)
-except Exception:
-    pass
-EOP
 cat >"$tmp/sse.py" <<'EOP'
 import json, sys
 ev, cur = [], {}
@@ -223,7 +201,7 @@ for id in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11; do req GET /v1/repos/acme
 for id in B01 B02; do req GET /v1/repos/acme/beta/nodes/$id; done
 req GET /v1/nothing; req POST /v1/repos
 # the event stream stays open: read it for 2 seconds from the first line of each status log (a later slice's resource)
-# (the three reads, the two ?since=0 reads of the next block and the one-second look at the FIFOs run at the same time: each keeps its own window)
+# (the three reads, the two ?since=0 reads of the next block run at the same time: each keeps its own window)
 curl_pids=''
 if command -v curl >/dev/null 2>&1; then
 	cq=0
@@ -238,7 +216,6 @@ python3 -I "$tmp/stream.py" "$sock" "/v1/events?since=0" "$tmp/since0" 2 </dev/n
 curl_pids="$curl_pids $!"
 python3 -I "$tmp/stream.py" "$sock" "/v1/events?repo=acme/beta&since=0" "$tmp/since0b" 2 </dev/null >/dev/null 2>&1 &
 curl_pids="$curl_pids $!"
-sleep 1
 for p in $curl_pids; do wait "$p" 2>/dev/null; done
 cat "$tmp"/curl.[1-3] 2>/dev/null >>"$tmp/allresp"
 [ ! -e "$home/token-was-run" ] || fail "P01-AC-9: the token script was run"   # its PASS line is in api-fifo.test.sh
