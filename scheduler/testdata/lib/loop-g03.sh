@@ -136,3 +136,6 @@ g03_stop() {
 	rm -f "$GD"/hold.*
 	for f in "$state"/node/*/session.pid "$state"/pr/*/session.pid "$state"/issue/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
 }
+# The fake claude writes runs.<id> first, so a check right after "runsis" could read fbseen.* / claude.log before they exist:
+# rewrite the fake so that it writes runs.<id> last of its start-up files (nothing else about it changes).
+sed -i -e 's/; echo \$n >"\$GD\/runs\.\$id"$//' -e '/^echo "\$kind \$k run \$n /a echo $n >"$GD/runs.$id"' "$tmp/bin6/claude"

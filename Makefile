@@ -65,6 +65,7 @@ TESTS = \
 	scheduler/loop-g03-ends.test.sh \
 	scheduler/loop-g03-limit.test.sh \
 	scheduler/loop-g03-fail.test.sh \
+	scheduler/loop-g03-starts.test.sh \
 	scheduler/loop-s07-records.test.sh \
 	scheduler/loop-s04.test.sh \
 	scheduler/loop-d01.test.sh \
