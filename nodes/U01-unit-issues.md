@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | S03 | U02 | L |
+| now | S03 | G02, U02 | L |
 
 **Owns:** in `scheduler/report.py`: each unit's home issue (its choice, the Build issue, the record `node/<ID>/issue` and `issue/<N>/issue`), the milestone comments, answers taken on home issues, closing and reopening home issues and the other issues a merged node resolves, and the status issue's links to them in place of the questions it posted; the `noodlebot-unit` label in `scheduler/labels.py`; the answering and closing-keyword lines of `scheduler/unattended.md`, `scheduler/unattended-triage.md` and `scheduler/unattended-followup.md`; the lines on what the node's PR says about its issues in `plugin/skills/triage/SKILL.md` and `plugin/skills/adopt/SKILL.md`; the README's sections on handing an issue to the bot and answering a question; their cases in `scheduler/report.test.sh`, `scheduler/labels.test.sh` and `scheduler/loop.test.sh`.
 **Resolves:** #23
