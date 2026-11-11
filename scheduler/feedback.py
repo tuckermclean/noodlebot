@@ -23,6 +23,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -69,8 +70,12 @@ def read_record(state, n):
     return rec
 
 
+def record_text(rec):
+    return "".join("%s %d\n" % (k, rec[k]) for k in KINDS)
+
+
 def write_record(state, n, rec):
-    write_atomic(os.path.join(state, "feedback", str(n)), "".join("%s %d\n" % (k, rec[k]) for k in KINDS))
+    write_atomic(os.path.join(state, "feedback", str(n)), record_text(rec))
 
 
 def unit_dir(state, n, branch):
@@ -78,6 +83,11 @@ def unit_dir(state, n, branch):
         return os.path.join(state, "pr", str(n))
     m = re.match(r"node/([^-]+)-", branch)
     return os.path.join(state, "node", m.group(1)) if m else None
+
+
+def answer_urls(udir):
+    """The set of URLs written in the unit's ANSWER.md files."""
+    return {u.rstrip(".,;:!?*_") for u in re.findall(r"https?://[^\s<>()\[\]\"'`]+", answer_text(udir))}
 
 
 def answer_text(udir):
@@ -152,18 +162,16 @@ def feedback_md(n, branch, items):
 
 
 def mark(state, n):
+    """Advance the record to DIR/feedback/N.next, the IDs written together with N.md (not parsed from its bodies)."""
+    rec = read_record(state, n)
     try:
-        with open(os.path.join(state, "feedback", "%d.md" % n), encoding="utf-8") as f:
-            lines = f.read().splitlines()
+        with open(os.path.join(state, "feedback", "%d.next" % n), encoding="utf-8") as f:
+            for line in f:
+                k, _, v = line.partition(" ")
+                if k in rec and v.strip().isdigit():
+                    rec[k] = max(rec[k], int(v))
     except OSError:
         return
-    rec, kind = read_record(state, n), None
-    for ln in lines:
-        if ln.startswith("kind: "):
-            kind = ln[6:].strip()
-        elif ln.startswith("id: ") and kind in rec and ln[4:].strip().isdigit():
-            rec[kind] = max(rec[kind], int(ln[4:].strip()))
-    os.makedirs(os.path.join(state, "feedback"), exist_ok=True)
     write_record(state, n, rec)
 
 
@@ -192,14 +200,19 @@ def main():
         log("cannot read %s: %s" % (a.prs, e))
         return 1
     first = not os.path.isdir(fdir)
-    os.makedirs(fdir, exist_ok=True)
     open_nums = {str(n) for n, _, _ in prs}
-    for name in os.listdir(fdir):
-        if name.split(".")[0] not in open_nums:
-            try:
-                os.remove(os.path.join(fdir, name))
-            except OSError:
-                pass
+    if first:
+        # built aside and renamed only when every read succeeded, so a failed first run is still a first run
+        fdir = os.path.join(a.state, "feedback.new")
+        shutil.rmtree(fdir, ignore_errors=True)
+        os.makedirs(fdir)
+    else:
+        for name in os.listdir(fdir):
+            if name.split(".")[0] not in open_nums:
+                try:
+                    os.remove(os.path.join(fdir, name))
+                except OSError:
+                    pass
     rc = 0
     for n, branch, is_bot in prs:
         if not is_bot:
@@ -210,15 +223,31 @@ def main():
         try:
             items, newest = read_pr(a.repo, n)
             if first:
-                write_record(a.state, n, newest)
+                write_atomic(os.path.join(fdir, str(n)), record_text(newest))
                 continue
-            found = new_items(items, read_record(a.state, n), a.owner, answer_text(udir))
+            found = new_items(items, read_record(a.state, n), a.owner, answer_urls(udir))
             if found:
+                nxt = read_record(a.state, n)
+                for it in found:
+                    nxt[it["kind"]] = max(nxt[it["kind"]], it["raw"]["id"])
+                # N.next first, then N.md: the pair is only complete once N.md is there
+                write_atomic(os.path.join(fdir, "%d.next" % n), record_text(nxt))
                 write_atomic(os.path.join(fdir, "%d.md" % n), feedback_md(n, branch, found))
                 print("%d %s" % (n, branch))
+            else:
+                for ext in (".md", ".next"):
+                    try:
+                        os.remove(os.path.join(fdir, "%d%s" % (n, ext)))
+                    except OSError:
+                        pass
         except (RuntimeError, ValueError, KeyError, TypeError, OSError) as e:
             log("PR %d: %s" % (n, e))
             rc = 1
+    if first:
+        if rc:
+            shutil.rmtree(fdir, ignore_errors=True)
+        else:
+            os.rename(fdir, os.path.join(a.state, "feedback"))
     sys.stdout.flush()
     return rc
 
