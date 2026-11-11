@@ -33,7 +33,7 @@ export function createPoller({ gist, fetch, now, hidden }) {
     const header = (n) => (res && res.headers ? res.headers.get(n) : null);
     let wait = null;
     const retry = header('retry-after');
-    const date = retry ? Date.parse(retry) : NaN; // Retry-After may be an HTTP date
+    const date = retry && /^\w{3}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(retry) ? Date.parse(retry) : NaN; // Retry-After may be an HTTP date
     if (retry !== null && retry !== '' && Number.isFinite(Number(retry)) && Number(retry) >= 0) {
       wait = Number(retry) * 1000;
     } else if (Number.isFinite(date)) {

@@ -28,7 +28,7 @@ const hm = (s) => new Date(s * 1000).toISOString().slice(11, 16);
 
 const NAV = '<nav><a href="#/">Repositories</a> <a href="#/throttle">Throttle</a> <a href="#/activity">Activity</a></nav>';
 
-function page(view, data, ctx, body) {
+export function page(view, data, ctx, body) {
   const m = data.manifest;
   const stale = isStale({ seen: m.seen, lastSuccess: ctx.lastSuccess, now: ctx.now });
   return `<div data-view="${view}" data-stale="${stale}">\n${NAV}` +
@@ -41,12 +41,14 @@ const link = (href, text) => `<a href="${e(href)}">${e(text)}</a>`;
 const prLink = (repo, n) => link(ghUrl(repo, 'pull', n), `#${n}`);
 const issueLink = (repo, n) => link(ghUrl(repo, 'issues', n), `#${n}`);
 
+const loopState = (r) => `${r.running ? 'running' : 'idle'}${r.stop ? ', STOP requested' : ''}`;
+
 export function renderRepos(data, ctx) {
   const items = repoFiles(data).map((r) => {
-    const nodes = r.nodes || [];
-    const merged = nodes.filter((n) => n.state === 'merged').length;
-    return `<li><a href="#/repo/${e(r.repo)}">${e(r.repo)}</a> ${merged}/${nodes.length} merged` +
-      `${r.running ? ', running' : ''}${r.stop ? ', stop requested' : ''}</li>`;
+    const counts = {};
+    for (const n of r.nodes || []) counts[n.state] = (counts[n.state] || 0) + 1;
+    const parts = Object.entries(counts).map(([k, v]) => `${v} ${e(k)}`).join(', ') || 'no nodes';
+    return `<li><a href="#/repo/${e(r.repo)}">${e(r.repo)}</a> <span class="loop">${loopState(r)}</span>: ${parts}</li>`;
   });
   return page('repos', data, ctx, `<h1>Repositories</h1><ul>${items.join('')}</ul>`);
 }
@@ -85,7 +87,9 @@ export function renderActivity(data, ctx) {
   const deploys = `<p>version ${e(d.version ?? 'none')}, previous ${e(d.previous ?? 'none')}</p>` +
     `<p>rejected: ${(d.rejected || []).map(e).join(', ') || 'none'}</p>` +
     `<ul>${(d.events || []).map((v) => `<li>${e(v.time)} ${e(v.repo)} ${e(v.text)}</li>`).join('')}</ul>`;
-  const body = `<h1>Activity${ctx.repo ? ` of ${e(ctx.repo)}` : ''}</h1>` +
+  const filters = `<p class="filter">filter: <a href="#/activity">all</a>` +
+    `${repoFiles(data).map((r) => ` <a href="#/activity?repo=${e(r.repo)}">${e(r.repo)}</a>`).join('')}</p>`;
+  const body = `<h1>Activity${ctx.repo ? ` of ${e(ctx.repo)}` : ''}</h1>${filters}` +
     `<section data-section="events"><h2>Events</h2><ul>${events}</ul></section>` +
     `<section data-section="prs"><h2>Open PRs</h2><ul>${prs}</ul></section>` +
     `<section data-section="triage"><h2>Triage</h2><ul>${triage}</ul></section>` +
@@ -125,7 +129,9 @@ export function renderRepo(data, ctx) {
   }).join('');
   const head = Object.keys(COLUMNS).map((c) => `<th data-sort="${c}">${c}</th>`).join('');
   const prs = (r.open_prs || []).map((p) => `<li>${prLink(r.repo, p.number)} ${e(p.branch)} ${e(p.mergeable)}</li>`).join('');
-  const body = `${title}<section data-section="prs"><h2>Open PRs</h2><ul>${prs}</ul></section>` +
+  const loop = `<p class="loop" data-loop="${r.running ? 'running' : 'idle'}">loop: ${r.running ? 'running' : 'idle'}</p>` +
+    `<p class="stop" data-stop="${r.stop ? 'true' : 'false'}">STOP: ${r.stop ? 'requested' : 'not set'}</p>`;
+  const body = `${title}${loop}<section data-section="prs"><h2>Open PRs</h2><ul>${prs}</ul></section>` +
     `<table data-table="nodes"><tr>${head}</tr>${rows}</table>`;
   return page('repo', data, ctx, body);
 }
