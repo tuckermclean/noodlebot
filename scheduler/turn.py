@@ -228,7 +228,9 @@ def main():
     p.add_argument("--gap", type=float)
     p.add_argument("--starve", type=float)
     p.add_argument("--now", type=float)
-    args = p.parse_args()
+    # KEY may follow the options (`took --root D --repo R A1`);
+    # an older parse_args (3.12.3) binds an empty KEY with COMMAND and rejects it
+    args = p.parse_intermixed_args()
     if args.now is not None and not math.isfinite(args.now):
         p.error("--now must be finite")
     state = os.path.join(args.root, "state")
