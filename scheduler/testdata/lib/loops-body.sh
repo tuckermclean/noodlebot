@@ -2,7 +2,7 @@
 # Test of scheduler/loops.sh (start | stop | status over the repositories in
 # ~/.config/noodlebot/repos) with a fake tmux and a fake loop.sh on a temporary PATH.
 # Each scenario gets its own noodlebot root and HOME under a temporary directory.
-#   sh scheduler/loops.test.sh   (make test)
+#   Run through loops.test.sh, loops-root.test.sh, loops-status.test.sh and loops-api.test.sh (make test); sourced by them, not run on its own.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 tmp=$(mktemp -d)

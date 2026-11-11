@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests the role guard (guard.py) and the plugin's generic role agents.
-#   sh plugin/hooks/guard.test.sh   (make test)
+#   Run through plugin/hooks/guard.test.sh, guard-git.test.sh and guard-shell.test.sh (make test); sourced by them, not run on its own.
 # R01-AC-1: agents exist, name no repository, the skill names them. R01-AC-2: the guard's decisions.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)

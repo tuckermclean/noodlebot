@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests scheduler/turn.py (S07), part: the order of the kinds, ties, merged repositories (S07-AC-2).
-#   sh scheduler/turn-order.test.sh   (make test)
+#   sh scheduler/turn.test.sh   (make test)
 # The interface of turn.py and the helpers are in testdata/lib/turn-common.sh; the parts run at once.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)

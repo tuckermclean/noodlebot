@@ -50,7 +50,8 @@ ask() {
 # w <seconds waited>: the since field for a unit that has waited that long at $base.
 w() { echo $((base - $1)); }
 # nbad <file>...: how many of the files are not well-formed JSON (one python start for all of them).
-nbad() { python3 -I -c "
+nbad() { # a python that does not start counts every file as bad (and says so), so the sum below never breaks
+	n=$(python3 -I -c "
 import json, sys
 n = 0
 for f in sys.argv[1:]:
@@ -58,7 +59,9 @@ for f in sys.argv[1:]:
         json.load(open(f))
     except Exception:
         n += 1
-print(n)" "$@" 2>/dev/null; }
+print(n)" "$@" 2>/dev/null) || { echo "FAIL: nbad: python3 did not run" >&2; echo $#; return; }
+	echo "$n"
+}
 sj() { python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))" "$1" "$2" 2>/dev/null; }
 
 # Drain: the order in which units are given turns, one turn per 10 s, each started unit leaving its list.

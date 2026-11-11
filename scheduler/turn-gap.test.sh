@@ -144,12 +144,12 @@ while [ $i -lt 20 ]; do
 	wait
 	n=0; [ -s "$tmp/oa" ] && n=$((n + 1)); [ -s "$tmp/ob" ] && n=$((n + 1))
 	[ $n -gt 1 ] && multi=$((multi + 1))
-	fs=
+	set --
 	for f in "$d/state/starts.json" "$d/state/a/waiting.json" "$d/state/b/waiting.json"; do
 		[ -e "$f" ] || continue   # the list may reach b's ask first: then nobody is granted
-		fs="$fs $f"
+		set -- "$@" "$f"
 	done
-	bad=$((bad + $(nbad $fs)))
+	bad=$((bad + $(nbad "$@")))
 	i=$((i + 1))
 done
 [ $multi = 0 ] && [ $bad = 0 ] && pass "S07-AC-3 an ask racing a list that changes the head unit: never two grants, files well-formed" || fail "S07-AC-3 ask racing list: $multi double grants, $bad malformed files"
