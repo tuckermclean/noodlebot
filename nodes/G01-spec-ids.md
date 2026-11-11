@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | G02 | M |
+| now | none | G02, G03 | M |
 
 **Owns:** `plugin/skills/triage/nodes.py` (the IDs in open spec PRs, the next free ID, the clash report), `plugin/skills/triage/nodes.test.sh`, its line in the `Makefile`'s `test` target, the ID rule and the update procedure (`--update <PR>`) in `plugin/skills/triage/SKILL.md`, `scheduler/unattended-update.md`, the spec-PR update step in `scheduler/loop.sh` (finding the bot's spec PRs that need an update, starting and ending their sessions, `state/<name>/pr/<N>/`), the `PR #N` tasks in `scheduler/report.py`, the update sessions (`pr/<N>/`) that `scheduler/usage.py` reads for the throttle, their cases in `scheduler/loop.test.sh`, `scheduler/report.test.sh` and `scheduler/usage.test.sh`.
 **Resolves:** #32
