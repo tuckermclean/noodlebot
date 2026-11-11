@@ -230,7 +230,7 @@ def main():
         if udir is not None:
             todo.append((n, branch, udir))
     # the reads of all PRs run at once (a small pool); the results are used in file order
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=8) if todo else None
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=4) if todo else None
     fetched = {n: fetch_pr(pool, a.repo, n) for n, _, _ in todo}
     for n, branch, udir in todo:
         try:

@@ -115,10 +115,10 @@ nothing else.
 Run by the loop for one of the bot's own open `spec/*` PRs that has new feedback from the owner. Work in a worktree checked out on the PR's named branch, brought to `origin/<branch>` (a fast-forward); read `FEEDBACK.md` in your state folder: each item has its kind, URL, author, body and, for a line comment, its file, line and thread.
 1. Change the PR's specs as `FEEDBACK.md` asks, by the triage rules above (graph first, current-state wording, a new node's ID from the `next free:` line of `nodes.py`, never a merged node's criteria), as one new commit: never an amend, a rebase or a force push.
 2. Rerun the spec checker until it reports PROBLEMS 0.
-3. A point that needs a judgment only the owner can make (a placement that is reasonable both ways, a principle or scope change) is not guessed: write it to QUESTION.md with your recommendation, after pushing and replying to the points you could settle.
-4. With `--dry-run`, stop here (no push, no PR edit, no reply, no thread resolved) and write `out/triage/pr-<N>/result.md`: the commit, the checker's output and the replies you would post.
-5. Push the branch. Update the PR's title and body when its nodes or criteria changed.
-6. Reply to each point: a line comment in its own thread, every other point in one PR comment that links each of them. Each reply says what changed, with the commit, or why nothing did. Resolve the line threads you fixed (GitHub's GraphQL `resolveReviewThread`); leave the others open. Write no closing keyword before an issue number.
+3. A point that needs a judgment only the owner can make (a placement that is reasonable both ways, a principle or scope change) is not guessed: it goes to QUESTION.md with your recommendation (step 4 or 5 says when it is written).
+4. With `--dry-run`: no push, no PR edit, no reply, no thread resolved. Write `out/triage/pr-<N>/result.md` holding the commit, the checker's output and one reply per item, each naming the commit (or why nothing changed) and, for a fixed line comment, the thread it would resolve; and write QUESTION.md for the points of step 3. Stop there.
+5. Otherwise push the branch and update the PR's title and body when its nodes or criteria changed.
+6. Reply to each point: a line comment in its own thread, every other point in one PR comment that links each of them. Each reply says what changed, with the commit, or why nothing did. Resolve the line threads you fixed (GitHub's GraphQL `resolveReviewThread`); leave the others open. Write no closing keyword before an issue number. Write QUESTION.md last, for the points of step 3.
 
 ## 6. Report
 End with: the issue, the placement, the PR (or comment) URL, the nodes touched, and anything the

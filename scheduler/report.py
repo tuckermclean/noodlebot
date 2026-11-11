@@ -1087,8 +1087,9 @@ def home_units(a):
     """{issue number: [tasks]} for the units whose home issue is recorded."""
     out = {}
     for n in nodes(a.state):
-        if pr_feedback(a.state, n):
-            out.setdefault(pr_home(a.state, n), []).append(n)
+        if pr_feedback(a.state, n):  # listed only while its question waits for an answer
+            if n in waiting(a.state):
+                out.setdefault(pr_home(a.state, n), []).append(n)
             continue
         if n.startswith("PR #"):
             continue
@@ -1116,13 +1117,19 @@ def held(a, n):
     return has(a.state, n, "QUESTION.md") or has(a.state, n, "FOLLOWUP")
 
 
-ID_PREFIX = re.compile(r"\s*\**(#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
+ID_PREFIX = re.compile(r"\s*\**((?:PR )?#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
+
+
+def pr_homes(a):
+    """The PR numbers that are the home of their own feedback unit: the owner's comments there are feedback."""
+    return {pr_home(a.state, n) for n in nodes(a.state) if pr_feedback(a.state, n) and pr_home(a.state, n) == int(n[4:])}
 
 
 def take_home_answers(a, rs, status_issue):
     """The owner's new comments on the units' home issues: the answer to the one open question there, with a +1;
     a reply only when none is open, or several are and the comment does not start with one's ID."""
     seen = rs.setdefault("home", {})
+    on_pr = pr_homes(a)
     for issue, tasks in sorted(home_units(a).items()):
         st = seen.get(str(issue))
         for rid in list((st or {}).get("react", [])):  # a failed +1 is retried even when the unit is finished
@@ -1162,7 +1169,9 @@ def take_home_answers(a, rs, status_issue):
                         return c["id"] > qc["id"] if isinstance(qc.get("id"), int) else (qc.get("at") or "") < c["created_at"]
                     cands = [t for t in opened if after(t)]
                     m = ID_PREFIX.match(text)
-                    if not pending:
+                    if issue in on_pr and not cands:
+                        pass  # a comment on a bot PR is feedback, not a stray answer
+                    elif not pending:
                         comment(a, issue, "Not recorded as an answer: no question is waiting on this issue.")
                     elif len(cands) > 1 and not (m and m.group(1) in cands):
                         comment(a, issue, "Not recorded as an answer: more than one unit is waiting on this issue (%s). "
@@ -1210,7 +1219,7 @@ def take_answers(a, rs, issue):
                      "more than one node is waiting (%s)" % ", ".join(open_q), open_q[0] if open_q else "B03"))
             continue
         what = record_answer(a, rs, node, c, text)
-        if node.startswith("#"):
+        if node.startswith(("#", "PR #")):
             comment(a, issue, "Recorded as %s's ANSWER.md." % node)
         else:
             comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
@@ -1366,7 +1375,10 @@ def closing_candidates(a, rs):
 
 def reopen(a, rs, issue):
     """Make a unit's home issue open for its new question (closed by the loop, or by someone else)."""
-    if gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
+    cur = gh("GET", "repos/%s/issues/%s" % (a.repo, issue))
+    if cur.get("pull_request"):  # never reopen a PR: a closed PR home is skipped
+        return
+    if cur.get("state") == "closed":
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "open"})
     if (rs.get("closed") or {}).pop(str(issue), None) is not None:
         a.save()
