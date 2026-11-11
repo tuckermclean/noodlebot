@@ -7,6 +7,7 @@
 #   bash scheduler/loop.test.sh   (make test)
 set -u
 unset NOODLEBOT_VERSION   # V01: run from a clean environment, even inside a noodlebot session
+export SCHED_RAMP=0   # S07: the start queue is off for every run below; the start-queue run sets SCHED_RAMP=1 on its own loops
 src=$(cd "$(dirname "$0")" && pwd -P)
 tmp=$(mktemp -d)
 pids=()
@@ -419,6 +420,8 @@ ok "D01-AC-1: the checkout moves to a passing commit within a tick or two" timeo
 ok "D01-AC-1: the loop re-execs into the new commit's loop.sh" timeout 3 sh -c "until grep -q '^v2 pid ' '$tmp/marker' 2>/dev/null; do sleep 0.2; done"
 ok "D01-AC-1: the re-exec keeps the loop's pid" sh -c "kill -0 $loop3 && grep -qx 'v2 pid $loop3' '$tmp/marker'"
 ok "D01-AC-1: the loop re-execs once" test "$(grep -c '^v2 pid ' "$tmp/marker" 2>/dev/null || echo 0)" = 1
+ok "T03-AC-5: after the re-exec the loop's environment still holds SCHED_TICK=1 it was started with" sh -c "kill -0 $loop3 && grep -qx 'v2 pid $loop3' '$tmp/marker' && tr '\\0' '\\n' <'/proc/$loop3/environ' | grep -qx 'SCHED_TICK=1'"
+ok "T03-AC-5: after the re-exec the loop's environment still holds SCHED_POLL=0.2 and SCHED_REPORT=0" sh -c "kill -0 $loop3 && grep -qx 'v2 pid $loop3' '$tmp/marker' && tr '\\0' '\\n' <'/proc/$loop3/environ' | grep -qx 'SCHED_POLL=0.2' && tr '\\0' '\\n' <'/proc/$loop3/environ' | grep -qx 'SCHED_REPORT=0'"
 v01_v2=$(git -C "$nbd" describe --tags --always)
 ok "V01-AC-3: after the deploy the re-exec writes a start line naming the deployed commit's version" withind 5 "loop started for o/dep, version $v01_v2\$"
 ok "V01-AC-3: the deployed version is not the first one (a commit after the tag)" test "$v01_v2" != v1.0
@@ -2339,6 +2342,467 @@ x6ok "S06-AC-4: update of PR #102 starts again by the usual path (run 2, no --re
 rm -f "$S06/hold.pr-102" "$S06/hold.L01"
 kill "$lp06b"; wait "$lp06b" 2>/dev/null
 for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
+# ---- S07: the start queue (SCHED_RAMP=1) ----
+# Own fixture per phase (fresh $NOODLEBOT_DATA $q/data): two repositories o/qa and o/qb, each with its own
+# bare remote, clone and loop. Fakes: claude (every session logs "<epoch.ns> <repo> <id>" to $q/starts.log, id =
+# node ID, or t<N> for a triage, and runs until $q/end or $q/end.<id> exists), gh (issues per repository from
+# $q/issues.<repo>.json, no PRs), usage.py copied into the run's scheduler/ (prints the line in $q/usage:
+# "open: ..." or "hold: ..."), and turn.py copied from the repository (a failing fake in the turn.py case).
+# Conventions the loop must honour:
+#   waiting record: a file `waiting` in the unit's state folder (state/<name>/node/<ID>/, issue/<N>/, pr/<N>/):
+#   one line, the epoch second its loop first found the unit waiting; written then, kept across a restart,
+#   removed when the unit starts or stops waiting (QUESTION.md, FAILED, label removed, repository at SCHED_MAX).
+#   A loop lists its waiting units (turn.py list) every tick, also while the throttle holds, so that the
+#   machine's order is known before the throttle opens; it asks for a turn (turn.py ask) only when the throttle is open.
+#   Phases whose order matters start both loops with the throttle holding, wait for each first tick, then open it.
+declare -A qp=()
+qsetup() { # <tag> "<ID:Size> ..." (o/qa) "<ID:Size> ..." (o/qb)
+	local k ids spec id w
+	qtag=$1 q=$tmp/q-$1; qd=$q/data qnb=$q/nb
+	mkdir -p "$q/bin" "$qnb/scheduler" "$qnb/plugin" "$qd/repos"
+	for k in qa qb; do
+		if [ $k = qa ]; then ids=$2; else ids=$3; fi
+		w=$q/work-$k
+		git init -q -b main "$w"; mkdir -p "$w/docs" "$w/nodes"
+		{ echo "nodes:"; for spec in $ids; do echo "  - {id: ${spec%%:*}, name: u-${spec%%:*}, deps: []}"; done; } >"$w/docs/graph.yaml"
+		for spec in $ids; do
+			id=${spec%%:*}
+			printf '# %s\n\n| Track | Deps | Unlocks | Size |\n|---|---|---|---|\n| now | none | none | %s |\n' "$id" "${spec#*:}" >"$w/nodes/$id-u-$id.md"
+		done
+		git -C "$w" add -A && git -C "$w" -c user.name=t -c user.email=t@t commit -q -m init
+		git clone -q --bare "$w" "$q/$k.git"
+		git clone -q "$q/$k.git" "$qd/repos/$k"
+		echo '[]' >"$q/issues.$k.json"
+	done
+	cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/issues.py "$src"/unattended*.md "$qnb/scheduler/"
+	[ -f "$src/turn.py" ] && cp "$src/turn.py" "$qnb/scheduler/"
+	: >"$q/starts.log"; echo "open: test opens" >"$q/usage"
+	printf '#!/usr/bin/env python3\nprint(open("%s/usage").read().strip())\n' "$q" >"$qnb/scheduler/usage.py"
+	sed "s|@Q@|$q|g" >"$q/bin/claude" <<'EOF'
+#!/bin/sh
+q=@Q@
+case "$2" in "/noodlebot:triage "*) id=t${2##* } ;; *) id=${2##* } ;; esac
+r=$(pwd -P | sed 's#.*/worktrees/\([^/]*\)/.*#\1#')
+echo "$(date +%s.%N) $r $id" >>"$q/starts.log"
+while [ ! -e "$q/end" ] && [ ! -e "$q/end.$id" ]; do sleep 0.2; done
+case $id in t*) ;; *) echo "Q1: x" >"$q/data/state/$r/node/$id/QUESTION.md" ;; esac
+exit 0
+EOF
+	sed "s|@Q@|$q|g" >"$q/bin/gh" <<'EOF'
+#!/bin/sh
+q=@Q@
+r=$(echo "$*" | sed -n 's#.*repos/o/\([a-z]*\)[/ ?].*#\1#p')
+case " $* " in
+*" --state "*) exit 0 ;;
+*"/issues?labels=noodlebot"*) cat "$q/issues.$r.json" ;;
+*"/events"*) echo '[{"event": "labeled", "label": {"name": "noodlebot"}, "actor": {"login": "o"}}]' ;;
+*" DELETE "*"/labels/noodlebot"*)
+	n=$(echo "$*" | sed -n 's#.*issues/\([0-9]*\)/labels.*#\1#p')
+	python3 -I -c 'import json,sys; f=sys.argv[1]; n=int(sys.argv[2]); json.dump([i for i in json.load(open(f)) if i["number"] != n], open(f, "w"))' "$q/issues.$r.json" "$n"; echo '[]' ;;
+*"/labels"*) cat >/dev/null; echo '{}' ;;
+esac
+exit 0
+EOF
+	chmod +x "$q/bin/claude" "$q/bin/gh"
+}
+qlog() { echo "$qd/state/$1/status.log"; }
+qn() { wc -l <"$q/starts.log"; }
+qhave() { grep -q " $1\$" "$q/starts.log"; }
+qt() { awk -v i="$1" '$3 == i { print $1 }' "$q/starts.log" | head -n1; }
+qseq() { sort -n "$q/starts.log" | awk '{ printf "%s ", $3 }' | sed 's/ $//'; }
+qpairs() { awk '{ print $2 ":" $3 }' "$q/starts.log" | sort | tr '\n' ' ' | sed 's/ $//'; }
+# qgap_ok <min seconds>: consecutive starts (all repositories, by the sessions' own clocks) are at least that far apart.
+qgap_ok() { sort -n "$q/starts.log" | awk -v g="$1" 'NR > 1 && $1 - p < g { bad = 1 } { p = $1 } END { exit bad }'; }
+# the start events of both status logs: their times (epoch seconds, sorted), and the events of one unit
+qlogtimes() { cat "$(qlog qa)" "$(qlog qb)" 2>/dev/null | grep -E '; started (triage|update|[A-Z][0-9][0-9])' | awk '{ print $1 }' | while read -r t; do date -d "$t" +%s; done | sort -n; }
+qlog_gap_ok() { qlogtimes | awk -v g="$1" 'NR > 1 && $1 - p < g { bad = 1 } { p = $1 } END { exit bad }'; }
+qev() { cat "$(qlog qa)" "$(qlog qb)" 2>/dev/null | grep -E "; started $1"; }
+qev_has() { qev "$1" | grep -qE "$2"; }
+qev_hasnt() { qev "$1" | grep -qE '; turn: ' && ! qev "$1" | grep -qiE "$2"; }
+qgap_n() { [ "$(qn)" = "$1" ] && qgap_ok "$2"; }
+qwait() { local to=$1 end; shift; end=$(( $(date +%s) + to )); until "$@"; do [ "$(date +%s)" -ge "$end" ] && return 1; sleep 0.1; done; }
+qn_ge() { [ "$(qn)" -ge "$1" ]; }
+qwait_n() { qwait "$1" qn_ge "$2"; }
+qrec() { cat "$qd/state/$1/$2/waiting" 2>/dev/null; }
+qseed() { mkdir -p "$qd/state/$1/$2"; echo $(( $(date +%s) - $3 )) >"$qd/state/$1/$2/waiting"; }
+qfirst() { grep -q 'open=\[' "$(qlog "$1")" 2>/dev/null; }
+qopen() { echo "open: test opens" >"$q/usage"; }
+qhold() { echo "hold: test holds" >"$q/usage"; }
+qalive() { local p; p=$(cat "$qd/state/$1/session.pid" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+qloop() { # <qa|qb> <tick> [VAR=value...]
+	local n=$1 t=$2; shift 2
+	( exec env NOODLEBOT_DATA="$qd" PATH="$q/bin:$PATH" SCHED_RAMP=1 SCHED_REPORT=0 SCHED_TICK="$t" SCHED_POLL=0.2 "$@" \
+		bash "$qnb/scheduler/loop.sh" "o/$n" >>"$q/loop-$n.out" 2>&1 ) &
+	qp[$n]=$!; pids+=("$!")
+}
+# qboth <qa tick> <qb tick> [VAR=value...]: both loops start with the throttle holding; each does its first tick.
+qboth() { local ta=$1 tb=$2; shift 2; qhold; qloop qa "$ta" "$@"; qloop qb "$tb" "$@"; qwait 8 qfirst qa; qwait 8 qfirst qb; }
+qstop() {
+	local n
+	for n in qa qb; do [ -n "${qp[$n]:-}" ] && { kill -KILL "${qp[$n]}"; wait "${qp[$n]}"; } 2>/dev/null; done
+	touch "$q/end"; sleep 0.3; pkill -f "$q/" 2>/dev/null; rm -f "$HOME/STOP-qa" "$HOME/STOP-qb"; qp=()
+}
+qok() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; echo "      starts: $(qseq 2>/dev/null)"; fi; }
+qjson_n=0 qjson_bad=0
+qsample() { # every machine-wide file that exists is well-formed JSON
+	local f
+	for f in "$qd/state/starts.json" "$qd/state/qa/waiting.json" "$qd/state/qb/waiting.json"; do
+		[ -e "$f" ] || continue
+		qjson_n=$((qjson_n + 1))
+		python3 -I -c 'import json,sys; json.load(open(sys.argv[1]))' "$f" 2>/dev/null || qjson_bad=$((qjson_bad + 1))
+	done
+}
+# qrun_until <seconds> <starts>: sample the JSON files until that many sessions have started (or time is up), then a little longer.
+qrun_until() {
+	local end=$(( $(date +%s) + $1 )) settle
+	while [ "$(qn)" -lt "$2" ] && [ "$(date +%s)" -lt "$end" ]; do qsample; sleep 0.05; done
+	settle=$(( $(date +%s) + 2 )); while [ "$(date +%s)" -lt "$settle" ]; do qsample; sleep 0.05; done
+}
+
+# -- Phase A: five ready units, throttle open: order, spacing (gap 2), each unit once by its own loop, the events
+# Units: a triage (#7) and A02 (M), A03 (L, waited longest but under the limit) in qa; B01 (S), B04 (L) in qb.
+qsetup A "A02:M A03:L" "B01:S B04:L"
+echo '[{"number": 7}]' >"$q/issues.qa.json"
+qseed qa issue/7 100; qseed qa node/A02 100; qseed qa node/A03 300; qseed qb node/B01 100; qseed qb node/B04 100
+qboth 1 1 SCHED_START_GAP=2 SCHED_STARVE=3600
+qopen
+qrun_until 30 5
+qok "S07-AC-1: five ready units, throttle open: exactly five sessions start, none twice" test "$(qn)" = 5 -a "$(sort "$q/starts.log" | awk '{ print $3 }' | sort -u | wc -l)" = 5
+qok "S07-AC-1: every unit is started by the loop of its repository" test "$(qpairs)" = "qa:A02 qa:A03 qa:t7 qb:B01 qb:B04"
+qok "S07-AC-1: one start per turn: the five starts are at least SCHED_START_GAP (2 s) apart (the sessions' clocks)" qgap_n 5 1.7
+qok "S07-AC-1: the status logs' five start times are at least the gap less a second apart" test "$(qlogtimes | wc -l)" = 5
+qok "S07-AC-1: the status logs' start times are at least a second apart (whole seconds, gap 2)" qlog_gap_ok 1
+qok "S07-AC-2: the order is the triage and S, then M, then the Ls (the longer wait first)" test "$(qseq)" = "t7 B01 A02 A03 B04"
+qok "S07-AC-3: starts.json and both waiting.json exist and every sample of them was well-formed JSON" test "$qjson_n" -ge 6 -a "$qjson_bad" = 0 -a -e "$qd/state/starts.json" -a -e "$qd/state/qa/waiting.json" -a -e "$qd/state/qb/waiting.json"
+for u in 'triage of #7 ' 'A02 ' 'A03 ' 'B01 ' 'B04 '; do
+	qok "S07-AC-5: ${u% } has exactly one start event" test "$(qev "$u" | wc -l)" = 1
+done
+qok "S07-AC-5: the triage's event names its kind and wait" qev_has 'triage of #7 ' '; turn: triage, waited [^,;]+'
+qok "S07-AC-5: B01's event names its Size (S) and wait" qev_has 'B01 ' '; turn: S, waited [^,;]+'
+qok "S07-AC-5: A02's event names its Size (M) and wait" qev_has 'A02 ' '; turn: M, waited [^,;]+'
+qok "S07-AC-5: A03's event names its Size (L) and wait" qev_has 'A03 ' '; turn: L, waited [^,;]+'
+qok "S07-AC-5: the triage's event names A03, which had waited longer and still waited" qev_has 'triage of #7 ' 'ahead of .*A03'
+qok "S07-AC-5: B01's event names A03 of the other repository (qa/A03)" qev_has 'B01 ' 'ahead of .*qa/A03'
+qok "S07-AC-5: A02's event names A03 too" qev_has 'A02 ' 'ahead of .*A03'
+qok "S07-AC-5: A03 went ahead of nobody that had waited longer: its event has turn but no 'ahead of'" qev_hasnt 'A03 ' 'ahead of'
+qok "S07-AC-5: each of the five events carries a turn (nobody was past the starvation limit)" test "$(qev '' | grep -c '; turn: ')" = 5
+qok "S07-AC-5: no start event mentions the starvation limit" test "$(qev '' | grep -ci starvation)" = 0
+qok "S07-AC-5: a started unit's waiting record is removed" sh -c "[ ! -e '$qd/state/qa/issue/7/waiting' ] && [ ! -e '$qd/state/qa/node/A02/waiting' ] && [ ! -e '$qd/state/qa/node/A03/waiting' ] && [ ! -e '$qd/state/qb/node/B01/waiting' ] && [ ! -e '$qd/state/qb/node/B04/waiting' ] && [ $(qn) = 5 ]"
+qstop
+
+# -- Phase B: an M node past the starvation limit goes first; no SCHED_START_GAP: the gap is the largest tick (qb's 2 s)
+qsetup B "A02:M" "B01:S"
+echo '[{"number": 7}]' >"$q/issues.qa.json"
+qseed qa issue/7 100; qseed qa node/A02 7200; qseed qb node/B01 100
+qboth 1 2 SCHED_STARVE=3600
+qopen
+qwait_n 25 3; sleep 1
+qok "S07-AC-2: an M node past SCHED_STARVE starts before the triage and the S node" test "$(qseq)" = "A02 t7 B01"
+qok "S07-AC-5: its event says the starvation limit put it first, and its wait (2 h)" qev_has 'A02 ' '; turn: M, waited 2h.*starvation'
+qok "S07-AC-5: the triage, which did not pass the limit, has no starvation note" qev_hasnt 'triage of #7 ' starvation
+qok "S07-AC-5: B01, which did not pass the limit, has no starvation note" qev_hasnt 'B01 ' starvation
+qok "S07-AC-1: without SCHED_START_GAP the gap is the largest SCHED_TICK of the two loops (2 s)" qgap_ok 1.7
+qstop
+
+# -- Phase C: the throttle holds from the second turn; the waiting records; the next start comes at the first turn after it opens
+# qa: triage #7, A02 (M), A03 (L); qb: triage #9, B01 (S), B04 (L). No seeds: the loops write the records.
+qsetup C "A02:M A03:L" "B01:S B04:L"
+echo '[{"number": 7}]' >"$q/issues.qa.json"; echo '[{"number": 9}]' >"$q/issues.qb.json"
+QENV="SCHED_START_GAP=1 SCHED_STARVE=3600"
+qopen
+t_c0=$(date +%s)
+qloop qa 1 $QENV; qwait 8 qfirst qa; qloop qb 1 $QENV
+qwait 12 qhave t7; qhold
+sleep 2.8
+qok "S07-AC-1: the throttle holding from the second turn: only the first unit started" test "$(qseq)" = "t7"
+qrecs() { local f; for f in qa/node/A02 qa/node/A03 qb/node/B01 qb/node/B04 qb/issue/9; do [ -e "$qd/state/$f/waiting" ] || return 1; done; }
+qwait 3 qrecs
+qrecs_valid() { local f r; for f in qa/node/A02 qa/node/A03 qb/node/B01 qb/node/B04 qb/issue/9; do r=$(cat "$qd/state/$f/waiting" 2>/dev/null) || return 1; case $r in ''|*[!0-9]*) return 1 ;; esac; [ "$r" -ge $((t_c0 - 1)) ] && [ "$r" -le "$(date +%s)" ] || return 1; done; }
+qok "S07-AC-5: each unit found waiting has a record (epoch seconds, no earlier than the loop's start)" qrecs_valid
+qok "S07-AC-5: the record of the started triage is removed" test ! -e "$qd/state/qa/issue/7/waiting"
+ra02=$(qrec qa node/A02); ra03=$(qrec qa node/A03); rb04=$(qrec qb node/B04); rb9=$(qrec qb issue/9)
+touch "$HOME/STOP-qa"; qwait 6 sh -c "! kill -0 ${qp[qa]} 2>/dev/null"; rm -f "$HOME/STOP-qa"
+qloop qa 1 $QENV; qwait 8 sh -c "[ \$(grep -c 'loop started' '$(qlog qa)') -ge 2 ]"; sleep 1.5
+qok "S07-AC-5: a record survives a loop restart with its time unchanged" test -n "$ra02" -a "$(qrec qa node/A02)" = "$ra02" -a "$(qrec qa node/A03)" = "$ra03"
+echo "Q1: q" >"$qd/state/qa/node/A03/QUESTION.md"; touch "$qd/state/qb/node/B04/FAILED"; echo '[]' >"$q/issues.qb.json"
+qgone_after() { [ -n "$2" ] || return 1; qwait 5 test ! -e "$1"; }
+qok "S07-AC-5: a record is removed when the node gets a QUESTION.md" qgone_after "$qd/state/qa/node/A03/waiting" "$ra03"
+qok "S07-AC-5: a record is removed when the node gets a FAILED" qgone_after "$qd/state/qb/node/B04/waiting" "$rb04"
+qok "S07-AC-5: a record is removed when the issue's label is removed" qgone_after "$qd/state/qb/issue/9/waiting" "$rb9"
+echo "Q1: a" >"$qd/state/qa/node/A03/ANSWER.md"; rm -f "$qd/state/qb/node/B04/FAILED"
+qnewer() { [ -n "$2" ] && qwait 5 test -e "$1" && [ "$(cat "$1")" -gt "$2" ]; }
+qok "S07-AC-5: an answered node's wait restarts: a new record, later than the old" qnewer "$qd/state/qa/node/A03/waiting" "$ra03"
+qok "S07-AC-5: a node that lost its FAILED waits anew: a new record, later than the old" qnewer "$qd/state/qb/node/B04/waiting" "$rb04"
+qopen; t_open=$(date +%s.%N)
+qwait_n 8 2; sleep 0.3
+qsecond_soon() { [ "$(sort -n "$q/starts.log" | sed -n 2p | awk '{ print $3 }')" = B01 ] && awk -v a="$t_open" -v b="$(qt B01)" 'BEGIN { exit !(b - a >= 0 && b - a <= 2.6) }'; }
+qok "S07-AC-1: the next unit (the S node) starts at the first turn after the throttle opens, within 2.6 s" qsecond_soon
+qok "S07-AC-5: the started node's record is removed" test ! -e "$qd/state/qb/node/B01/waiting" -a -n "$ra03"
+qstop
+
+# -- Phase D: both loops reach a turn at the same moment (both start together, the throttle opens for both)
+qsetup D "A03:L A04:L" "B04:L B05:L"
+qboth 1 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+qopen
+qrun_until 25 4
+qok "S07-AC-3: four units, two loops at the same moments: four sessions start, each unit once, by its own loop" test "$(qn)" = 4 -a "$(qpairs)" = "qa:A03 qa:A04 qb:B04 qb:B05"
+qok "S07-AC-3: one unit starts between the loops per turn, not two: the four starts are at least the gap (1 s) apart" qgap_n 4 0.6
+qok "S07-AC-3: starts.json and both waiting.json exist and every sample was well-formed JSON" test "$qjson_n" -ge 6 -a "$qjson_bad" = 0 -a -e "$qd/state/starts.json" -a -e "$qd/state/qa/waiting.json" -a -e "$qd/state/qb/waiting.json"
+qstop
+qjson_n=0 qjson_bad=0
+
+# -- Phase E: a unit whose start fails does not hold the queue
+# A02 (S, qa) cannot start: its branch is checked out in another worktree, so the worktree for it cannot be made.
+# A03 (L, qa) is next in the order; B01 (L, qb) after it.
+qsetup E "A02:S A03:L" "B01:L"
+git -C "$qd/repos/qa" worktree add -q -b node/A02-u-A02 "$q/blocker" origin/main
+qseed qa node/A02 100; qseed qa node/A03 100; qseed qb node/B01 100
+qboth 1 1 SCHED_START_GAP=2 SCHED_STARVE=3600
+qopen
+qwait 10 qhave A03; sleep 0.4
+qok "S07-AC-4: the failed unit (A02) does not hold the queue: the next in the order (A03) starts, and only it" test "$(qseq)" = "A03"
+qok "S07-AC-4: the failed start is logged" grep -q 'worktree for A02 failed' "$(qlog qa)"
+qok "S07-AC-4: the next unit starts in the same tick as the failure" sh -c "f=\$(grep -m1 'worktree for A02 failed' '$(qlog qa)' | awk '{print \$1}'); s=\$(grep -m1 '; started A03' '$(qlog qa)' | awk '{print \$1}'); [ -n \"\$f\" ] && [ -n \"\$s\" ] && d=\$((\$(date -d \$s +%s) - \$(date -d \$f +%s))) && [ \$d -ge 0 ] && [ \$d -le 1 ]"
+qok "S07-AC-4: the failed unit still has its waiting record" test -e "$qd/state/qa/node/A02/waiting"
+git -C "$qd/repos/qa" worktree remove --force "$q/blocker"; git -C "$qd/repos/qa" branch -q -D node/A02-u-A02
+qwait_n 14 3; sleep 0.3
+qok "S07-AC-4: the failed unit is tried again from the next tick, and starts (the S node before B01)" test "$(qseq)" = "A03 A02 B01"
+qstop
+
+# -- Phase F: a stopped loop does not block a live one
+# qa's loop (with the oldest unit, A03) is killed after its first tick; qb's two units start once its heartbeat is three ticks old.
+qsetup F "A03:L" "B01:L B04:L"
+qseed qa node/A03 300; qseed qb node/B01 100; qseed qb node/B04 100
+qboth 1 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+{ kill -KILL "${qp[qa]}"; wait "${qp[qa]}"; } 2>/dev/null
+qopen
+qwait_n 15 2; sleep 0.5
+qok "S07-AC-4: a loop whose heartbeat is older than three ticks is left out: the live loop's units start" test "$(qseq)" = "B01 B04"
+qok "S07-AC-4: and the queue still spaces them by the gap (1 s)" qgap_n 2 0.6
+qstop
+
+# -- Phase G: one triage or update per repository, SCHED_MAX, running sessions untouched
+# G1: two labelled issues and a node in qa, no cap: the second triage waits until the first ends.
+qsetup G1 "A02:S" "B01:S"
+echo '[{"number": 7}, {"number": 8}]' >"$q/issues.qa.json"
+QENV="SCHED_START_GAP=1 SCHED_STARVE=3600"
+qloop qa 1 $QENV
+qwait_n 12 2; sleep 2.5
+qok "S07-AC-7: the triage and the node start (the triage first)" test "$(qseq)" = "t7 A02"
+qok "S07-AC-7: a second labelled issue does not start while the first triage runs" sh -c "! grep -q ' t8\$' '$q/starts.log'"
+qok "S07-AC-5: the second issue does not wait to start while the triage holds the slot (no record)" test ! -e "$qd/state/qa/issue/8/waiting" -a "$(qn)" = 2
+qok "S07-AC-7: the running node is not stopped by the queue" qalive qa/node/A02
+touch "$q/end.t7"
+qwait 12 qhave t8
+qok "S07-AC-7: the second triage starts once the first has ended" test "$(qseq)" = "t7 A02 t8"
+qok "S07-AC-7: the running node session is still running" qalive qa/node/A02
+qstop
+# G2: SCHED_MAX=2 in qa with three nodes.
+qsetup G2 "A02:S A03:M A04:L" "B01:S"
+qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600 SCHED_MAX=2
+qwait_n 12 2; sleep 3
+qok "S07-AC-7: SCHED_MAX=2 caps the repository's sessions at two, started in the queue's order" test "$(qseq)" = "A02 A03" -a "$(qn)" = 2
+qok "S07-AC-1: the two starts of a capped repository are at least the gap apart" qgap_n 2 0.6
+qok "S07-AC-7: the sessions the cap lets run are not stopped" bash -c "$(declare -f qalive); qd='$qd'; qalive qa/node/A02 && qalive qa/node/A03"
+qok "S07-AC-7: at the cap the third node does not wait to start (no record)" test ! -e "$qd/state/qa/node/A04/waiting" -a "$(qn)" = 2
+touch "$q/end.A02"
+qwait 12 qhave A04
+qok "S07-AC-7: when a session ends the cap has room: the third node starts" test "$(qseq)" = "A02 A03 A04"
+qstop
+
+# -- Phase H: turn.py fails: no session starts that tick, the status log says so; running sessions go on
+qsetup H "A02:S A03:L" "B01:S"
+if [ -f "$qnb/scheduler/turn.py" ]; then cp "$qnb/scheduler/turn.py" "$q/turn.real.py"; else : >"$q/turn.real.py"; fi
+printf '#!/usr/bin/env python3\nimport sys\nsys.stderr.write("fake turn.py failure\\n")\nsys.exit(1)\n' >"$q/turn.fake.py"
+swap_turn() { cp "$1" "$qnb/scheduler/turn.py.new" && mv "$qnb/scheduler/turn.py.new" "$qnb/scheduler/turn.py"; }
+qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+qwait 8 qhave A02
+swap_turn "$q/turn.fake.py"
+sleep 3.5
+qok "S07-AC-7: turn.py failing: no session starts that tick or the next ones (A03 waits)" test "$(qseq)" = "A02"
+qok "S07-AC-7: turn.py failing: the status log says so" grep -qi 'turn\.py' "$(qlog qa)"
+qok "S07-AC-7: turn.py failing: the running session goes on" qalive qa/node/A02
+swap_turn "$q/turn.real.py"
+qwait 8 qhave A03
+qok "S07-AC-7: turn.py working again: the waiting unit starts" test "$(qseq)" = "A02 A03"
+qstop
+
+# -- Review phases (GREEN 5dc78a6 review): liveness of a loop whose tick ends early, the triage/update slot, a failed
+# issues.py next, and the units of kind update, follow-up, resumed and a fresh node with no Size.
+# qghx: the fake gh with more answers (the base fake is kept as gh.base). Files in $q:
+#   ghfail.<repo>   every `gh pr list` of that repository fails      issfail   the issue list fails
+#   open.<repo>.tsv / merged.<repo>.tsv   the open / merged PR lines ("<number> <branch> <oid> <is_bot> <mergeable>" / "<number> <branch>")
+qghx() {
+	mv "$q/bin/gh" "$q/bin/gh.base"
+	sed "s|@Q@|$q|g" >"$q/bin/gh" <<'EOF'
+#!/bin/sh
+q=@Q@
+r=$(echo "$*" | sed -n 's#.*--repo o/\([a-z]*\).*#\1#p')
+case " $* " in
+*" --state "*) [ -e "$q/ghfail.$r" ] && exit 1 ;;
+esac
+case " $* " in
+*" --state merged "*) [ -e "$q/merged.$r.tsv" ] && { cat "$q/merged.$r.tsv"; exit 0; } ;;
+*" --state open "*) [ -e "$q/open.$r.tsv" ] && { cat "$q/open.$r.tsv"; exit 0; } ;;
+*"/issues?labels=noodlebot"*) [ -e "$q/issfail" ] && exit 1 ;;
+esac
+exec "$q/bin/gh.base" "$@"
+EOF
+	chmod +x "$q/bin/gh"
+}
+
+# -- Phase L1: a loop whose tick ends before the queue (gh fails) while its heartbeat stays fresh must not hold the other loop
+qsetup L1 "A03:L" "B01:L"; qghx
+qseed qa node/A03 300; qseed qb node/B01 100
+qboth 1 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+qwait 5 test -e "$qd/state/qa/waiting.json"; touch "$q/ghfail.qa"; sleep 2.5
+qopen
+qwait 12 qhave B01; sleep 0.5
+qok "S07-AC-4: (precondition) qa's ticks end early: its status log says gh failed" grep -q 'gh pr list failed' "$(qlog qa)"
+qok "S07-AC-4: a loop whose tick ends before the queue (heartbeat fresh) does not keep its old waiting list in the order: the other loop's unit starts" qhave B01
+qok "S07-AC-4: and only that unit starts (qa's tick ends before the queue)" test "$(qseq)" = "B01"
+qstop
+
+# -- Phase L2: a loop restarted with SCHED_RAMP=0 over its old waiting.json must not hold the other loop
+qsetup L2 "A03:L" "B01:L"
+qseed qa node/A03 300; qseed qb node/B01 100
+QENV="SCHED_START_GAP=1 SCHED_STARVE=3600"
+qhold; qloop qa 1 $QENV; qwait 8 qfirst qa
+qwait 5 test -e "$qd/state/qa/waiting.json"
+qok "S07-AC-3: (precondition) qa listed A03 in its waiting.json" test -e "$qd/state/qa/waiting.json"
+touch "$HOME/STOP-qa"; qwait 6 sh -c "! kill -0 ${qp[qa]} 2>/dev/null"; rm -f "$HOME/STOP-qa"
+qloop qa 1 $QENV SCHED_RAMP=0; qwait 8 sh -c "[ \$(grep -c 'loop started' '$(qlog qa)') -ge 2 ]"; sleep 1.5
+qloop qb 1 $QENV SCHED_THROTTLE=0
+qwait 12 qhave B01; sleep 0.5
+qok "S07-AC-4: a loop restarted with SCHED_RAMP=0 (its throttle holding) does not hold the other loop with its old waiting.json: B01 starts" qhave B01
+qok "S07-AC-7: the SCHED_RAMP=0 loop under a throttle hold starts nothing" test "$(qseq)" = "B01"
+qstop
+
+# -- Phase J1/J0: one triage or update per repository. A triage that cannot start (its issue has used 2 starts) does not keep
+# the spec-PR updates out of the slot: the next candidate starts; and only one at a time. J0 is the same with SCHED_RAMP=0 (as before).
+qslot() { # <tag> <label> [VAR=value...]
+	local tag=$1 lab=$2; shift 2
+	qsetup "$tag" "A02:S" "B01:S"; qghx
+	mkdir -p "$qd/state/qa/node/A02" "$qd/state/qa/issue/7"; touch "$qd/state/qa/node/A02/FAILED"
+	echo 2 >"$qd/state/qa/issue/7/starts"; echo '[{"number": 7}]' >"$q/issues.qa.json"
+	git -C "$q/qa.git" branch spec/u1 main; git -C "$q/qa.git" branch spec/u2 main
+	printf '31 spec/u1 oid31 true CONFLICTING\n32 spec/u2 oid32 true CONFLICTING\n' >"$q/open.qa.tsv"
+	qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600 "$@"
+	qwait 12 qhave t31; sleep 2.5
+	qok "S07-AC-7: $lab: a triage that cannot start does not keep the spec-PR updates out of the slot: the next candidate (PR 31) starts, and only it" test "$(qseq)" = "t31"
+	qok "S07-AC-7: $lab: one triage or update at a time: the update session runs" qalive qa/pr/31
+	touch "$q/end.t31"
+	qwait 12 qhave t32; sleep 0.5
+	qok "S07-AC-7: $lab: when the update ends the next candidate (PR 32) starts, once" test "$(grep -c ' t32$' "$q/starts.log")" = 1
+	qstop
+}
+qslot J0 "SCHED_RAMP=0" SCHED_RAMP=0
+qslot J1 "SCHED_RAMP=1" SCHED_RAMP=1
+
+# -- Phase K: a failed issues.py next (API error) does not delete the triage's waiting record
+qsetup K "A02:S" "B01:S"; qghx
+mkdir -p "$qd/state/qa/node/A02"; touch "$qd/state/qa/node/A02/FAILED"
+echo '[{"number": 7}]' >"$q/issues.qa.json"
+qhold; qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600; qwait 8 qfirst qa
+qwait 4 test -e "$qd/state/qa/issue/7/waiting"; rk=$(qrec qa issue/7)
+touch "$q/issfail"; sleep 3.2
+qok "S07-AC-5: a failed issues.py next keeps the triage's waiting record, its time unchanged" test -n "$rk" -a "$(qrec qa issue/7)" = "$rk"
+echo '[]' >"$q/issues.qa.json"; rm -f "$q/issfail"
+qgone() { qwait 5 test ! -e "$1"; }
+qok "S07-AC-5: the record is removed once the issue stops waiting (label removed)" qgone "$qd/state/qa/issue/7/waiting"
+echo '[{"number": 7}]' >"$q/issues.qa.json"
+qnewer2() { qwait 5 test -e "$1" && [ "$(cat "$1")" -gt "$2" ]; }
+qok "S07-AC-5: relabelled, the wait restarts: a new record, later than the old" qnewer2 "$qd/state/qa/issue/7/waiting" "${rk:-0}"
+qstop
+
+# -- Phase I: a spec-PR update, a follow-up, a resumed node (an answered one, not S06's idle session) and a fresh node with
+# no Size each start with a turn event naming the kind (L for the missing Size) and the wait, in the AC-2 order.
+# qa: update PR 31 (waited 100 s), follow-up A02 (200), resumed A03 (300), fresh A04 without Size (500); qb: B01 (S, 50).
+qsetup I "A02:S A03:S A04:" "B01:S"; qghx
+git -C "$q/qa.git" branch spec/u1 main
+printf '31 spec/u1 oid31 true CONFLICTING\n' >"$q/open.qa.tsv"; echo "20 node/A02-u-A02" >"$q/merged.qa.tsv"
+mkdir -p "$qd/state/qa/node/A02" "$qd/state/qa/node/A03"
+for i in A02 A03; do echo "Q1: q" >"$qd/state/qa/node/$i/QUESTION.md"; echo "Q1: a" >"$qd/state/qa/node/$i/ANSWER.md"; done
+git -C "$qd/repos/qa" worktree add -q -b node/A03-u-A03 "$qd/worktrees/qa/A03" origin/main
+git -C "$qd/worktrees/qa/A03" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wip
+qseed qa pr/31 100; qseed qa node/A02 200; qseed qa node/A03 300; qseed qa node/A04 500; qseed qb node/B01 50
+qboth 1 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+qopen
+qrun_until 30 5
+qok "S07-AC-2: the order: resumed and follow-up and update by wait (A03 300 s, A02 200 s, PR 31 100 s), then S (B01), then the node with no Size as L (A04)" test "$(qseq)" = "A03 A02 t31 B01 A04"
+qok "S07-AC-5: the update's event names its kind and wait" qev_has 'update' '; turn: update, waited [^,;]+'
+qok "S07-AC-5: the follow-up's event names its kind and wait" qev_has 'A02 ' '; turn: followup, waited [^,;]+'
+qok "S07-AC-5: the resumed node's event names its kind and wait" qev_has 'A03 ' '; turn: resumed, waited [^,;]+'
+qok "S07-AC-5: the fresh node with no Size is named L, with its wait" qev_has 'A04 ' '; turn: L, waited [^,;]+'
+qok "S07-AC-5: the update's event names the unit that waited longer and still waited (A04)" qev_has 'update' 'ahead of .*A04'
+qok "S07-AC-5: B01's event names A04, which waited longer and still waited" qev_has 'B01 ' 'ahead of .*qa/A04'
+qok "S07-AC-5: A04's event, the last, names nobody ahead" qev_hasnt 'A04 ' 'ahead of'
+qstop
+
+# -- Phase R: S06's resume takes a turn (S07-AC-6). A02 (qa) starts first and goes idle by the usage limit (its fake claude writes
+# an init line and a rejected rate_limit_event that reset 300 s ago, and waits); B01 (qb) is a fresh S node. Gap 4 s.
+# A resume (claude --resume, found by its argument) is logged as "<ID>.r" in $q/starts.log.
+qresetup() { # <tag> : as qsetup A02:S / B01:S, with a claude that can go idle and resume
+	qsetup "$1" "A02:S" "B01:S"
+	cp "$src"/limit-resume.md "$qnb/scheduler/"
+	sed "s|@Q@|$q|g" >"$q/bin/claude" <<'EOF'
+#!/bin/sh
+q=@Q@
+r=$(pwd -P | sed 's#.*/worktrees/\([^/]*\)/.*#\1#')
+case " $* " in
+*" --resume "*) id=$(basename "$(pwd -P)").r; res=1 ;;
+*) id=${2##* }; res=0 ;;
+esac
+echo "$(date +%s.%N) $r $id" >>"$q/starts.log"
+if [ $res = 1 ]; then
+	echo '{"type":"system","subtype":"init","session_id":"sid-resumed","resumed_run":true}'
+elif [ "$id" = A02 ]; then
+	echo '{"type":"system","subtype":"init","session_id":"sid-A02"}'
+	t=$(( $(date +%s) - 300 ))
+	echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":'$t',"rateLimitType":"five_hour"}}'
+fi
+while [ ! -e "$q/end" ] && [ ! -e "$q/end.$id" ]; do sleep 0.2; done
+exit 0
+EOF
+	chmod +x "$q/bin/claude"
+}
+qpid() { cat "$qd/state/qa/node/A02/session.pid" 2>/dev/null; }
+qresev() { grep -E 'resuming session A02' "$(qlog qa)"; }
+qres_has() { qresev | grep -qE "$1"; }
+
+# R1: neither the competing fresh node nor the starvation limit is in play: the resume goes before B01. While the gap has
+# not passed after A02's start, the idle session is neither stopped nor resumed.
+qresetup R1
+qseed qa node/A02 100; qseed qb node/B01 50
+qboth 1 1 SCHED_START_GAP=4 SCHED_STARVE=3600
+qopen
+qwait_n 10 1; sleep 2.2
+pid_a=$(qpid)
+qok "S07-AC-6: (precondition) A02 started first, and its log has the usage-limit rejection" sh -c "[ \"\$(sed -n 1p '$q/starts.log' | awk '{ print \$3 }')\" = A02 ] && grep -q rate_limit_event '$qd/state/qa/node/A02/session.jsonl'"
+qok "S07-AC-6: while the gap has not passed the idle session is not resumed (no resume start)" test "$(qn)" = 1
+qok "S07-AC-6: while the gap has not passed the idle session is not stopped (same process, still alive, no session.rc)" sh -c "[ -n '$pid_a' ] && kill -0 '$pid_a' 2>/dev/null && [ ! -e '$qd/state/qa/node/A02/session.rc' ] && [ ! -e '$qd/state/qa/node/A02/resumed' ]"
+qwait_n 14 3; sleep 0.5
+qok "S07-AC-6: the resume goes before the fresh node (resumed unit before fresh S): A02, then its resume, then B01" test "$(qseq)" = "A02 A02.r B01"
+qok "S07-AC-6: the resume start is a gap (4 s) after A02's start, and B01 a gap after the resume" qgap_n 3 3.6
+qok "S07-AC-6: the idle session was resumed in its own process: a new session pid" sh -c "[ -n '$pid_a' ] && [ \"\$(cat '$qd/state/qa/node/A02/session.pid')\" != '$pid_a' ]"
+qok "S07-AC-6: the node's starts is unchanged by the resume (1)" test "$(cat "$qd/state/qa/node/A02/starts" 2>/dev/null)" = 1
+qok "S07-AC-6: the resume was done as S06 says (status log: resuming session A02 ... start not counted)" qres_has 'after the usage limit.*start not counted'
+qok "S07-AC-6: the resume's event carries the turn text: kind resumed and its wait" qres_has '; turn: resumed, waited [^,;]+'
+qok "S07-AC-6: the resume's event names the unit that waited longer and still waited (B01)" qres_has 'ahead of .*qb/B01'
+qok "S07-AC-6: the resume event has no starvation note (nobody was past the limit)" test -n "$(qresev)" -a -z "$(qresev | grep -i starvation)"
+qstop
+
+# R2: B01 has waited longer than SCHED_STARVE: it goes before the resume.
+qresetup R2
+qseed qa node/A02 200; qseed qb node/B01 100
+qboth 1 1 SCHED_START_GAP=4 SCHED_STARVE=60
+qopen
+qwait_n 14 3; sleep 0.5
+qok "S07-AC-6: a fresh node past the starvation limit goes before the resume: A02, B01, then the resume" test "$(qseq)" = "A02 B01 A02.r"
+qok "S07-AC-6: the starved node's start is a gap after A02's, the resume a gap after that" qgap_n 3 3.6
+qok "S07-AC-6: the resume still leaves the node's starts unchanged (1)" test "$(cat "$qd/state/qa/node/A02/starts" 2>/dev/null)" = 1
+qok "S07-AC-6: the resume's event carries the turn text (kind resumed, its wait)" qres_has '; turn: resumed, waited [^,;]+'
+qstop
 # ---- W02: the visibility record (W02-AC-6) and the publish step (W02-AC-5) ----
 # A fresh scheduler copy (own data root, own HOME config). The fake report.py and a wrapper around the
 # real site.py log their calls, in order, to $W02/order.log; the wrapper also logs GH_TOKEN and then
