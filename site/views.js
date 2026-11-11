@@ -1,6 +1,7 @@
 // The status site's views (W03): pure functions from the gist's data to an HTML string. No DOM, no clock of its own.
 // Every text from the data goes through escapeHtml; links are built from the repository name and numbers, never
 // taken from the data as they are.
+import { renderExplorer, buildHash } from './explorer/view.js';
 const MIN = 60 * 1000;
 const STALE_SEEN = 20 * MIN; // the manifest's `seen` older than this: stale
 const STALE_SUCCESS = 5 * MIN; // the last successful request older than this: stale
@@ -116,6 +117,7 @@ export function renderRepo(data, ctx) {
     });
   }
   const issueNo = (n) => { const m = /\/issues\/(\d+)$/.exec(n.url || ''); return m ? m[1] : null; };
+  const view = ctx.view || {};
   const rows = nodes.map((n) => {
     const det = [];
     if (n.text) det.push(e(n.text));
@@ -123,8 +125,8 @@ export function renderRepo(data, ctx) {
     if (issueNo(n)) det.push(`issue ${issueLink(r.repo, issueNo(n))}`);
     if (n.mergeable) det.push(e(n.mergeable));
     if ((n.waiting_for || []).length) det.push(`waiting for ${n.waiting_for.map(e).join(', ')}`);
-    return `<tr data-node="${e(n.id)}"><td>${link(`https://github.com/${r.repo}/blob/main/nodes/${n.id}-${n.name}.md`, n.id)}</td>` +
-      `<td>${e(n.name)}</td><td>${e(n.track)}</td><td>${e(n.state)}${det.length ? ` (${det.join('; ')})` : ''}</td>` +
+    return `<tr data-node="${e(n.id)}" data-selected="${n.id === view.node}"><td>${link(`https://github.com/${r.repo}/blob/main/nodes/${n.id}-${n.name}.md`, n.id)}</td>` +
+      `<td><a data-select="${e(n.id)}" href="${e(buildHash(r.repo, { ...view, node: n.id }))}">${e(n.name)}</a></td><td>${e(n.track)}</td><td>${e(n.state)}${det.length ? ` (${det.join('; ')})` : ''}</td>` +
       `<td>${(n.deps || []).map(e).join(', ')}</td><td>${e(n.starts)}</td></tr>`;
   }).join('');
   const head = Object.keys(COLUMNS).map((c) => `<th data-sort="${c}">${c}</th>`).join('');
@@ -132,6 +134,7 @@ export function renderRepo(data, ctx) {
   const loop = `<p class="loop" data-loop="${r.running ? 'running' : 'idle'}">loop: ${r.running ? 'running' : 'idle'}</p>` +
     `<p class="stop" data-stop="${r.stop ? 'true' : 'false'}">STOP: ${r.stop ? 'requested' : 'not set'}</p>`;
   const body = `${title}${loop}<section data-section="prs"><h2>Open PRs</h2><ul>${prs}</ul></section>` +
+    `${renderExplorer(r, view)}` +
     `<table data-table="nodes"><tr>${head}</tr>${rows}</table>`;
   return page('repo', data, ctx, body);
 }

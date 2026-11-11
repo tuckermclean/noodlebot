@@ -2,7 +2,7 @@
 // changed. Results list ids in graph order.
 const inOrder = (nodes, set) => nodes.map((x) => x.id).filter((id) => set.has(id));
 
-// every id reachable from `id` by `next` (not `id` itself, unless a cycle leads back to it)
+// every id reachable from `id` by `next` (never `id` itself, even when a cycle leads back to it)
 function reach(id, next) {
   const seen = new Set();
   const stack = [id];
@@ -55,4 +55,20 @@ export function longestChain(nodes) {
     if (better(c, best)) best = c;
   }
   return best;
+}
+
+// The ghosts of the open spec PRs (spec_prs[]): one per added, changed or removed node, in the order of the PRs and,
+// within a PR, added, changed, removed; each tagged with its PR's number. A changed ghost holds only the fields that differ.
+export function ghosts(specPrs) {
+  const out = [];
+  for (const p of specPrs || []) {
+    for (const a of p.added || []) out.push({ kind: 'added', pr: p.number, id: a.id, name: a.name, track: a.track, deps: a.deps, summary: a.summary });
+    for (const c of p.changed || []) {
+      const fields = {};
+      for (const f of ['name', 'track', 'deps', 'summary']) if (c[f] !== null && c[f] !== undefined) fields[f] = c[f];
+      out.push({ kind: 'changed', pr: p.number, id: c.id, fields });
+    }
+    for (const id of p.removed || []) out.push({ kind: 'removed', pr: p.number, id });
+  }
+  return out;
 }

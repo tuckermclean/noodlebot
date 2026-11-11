@@ -1,6 +1,7 @@
 // The status site's page (W03): the gist ID, the routes, the poller and the views. Nothing here names a repository.
 // Importable without a DOM: `document` is touched only in mount().
 import { createPoller } from './poll.js';
+import { parseViewState, buildHash } from './explorer/view.js';
 import { escapeHtml, renderRepos, renderThrottle, renderActivity, renderRepo, page } from './views.js';
 
 export function resolveGist({ search, config }) {
@@ -63,7 +64,7 @@ export function createApp({ location, fetch, now, hidden }) {
       const view = route.name === 'not-found' ? 'not-found' : route.name;
       return `<div data-view="${view}" data-stale="true">${notes}<p>${st.status === 'schema' ? '' : `No data yet${msg}.`}</p></div>`;
     }
-    const ctx = { now: now(), lastSuccess: st.lastSuccess, repo: route.repo, ...(app.sort || {}) };
+    const ctx = { now: now(), lastSuccess: st.lastSuccess, repo: route.repo, view: parseViewState(location.hash), ...(app.sort || {}) };
     if (route.name === 'not-found') {
       return notes + page('not-found', st.data, ctx, `<p>No such page: ${escapeHtml(location.hash)}</p>`);
     }
@@ -96,6 +97,17 @@ export function mount(doc = document, win = window) {
     app.setSort(col, same && app.sort.dir === 'asc' ? 'desc' : 'asc');
     draw();
   });
+  // clearing the selection: the same view without node=
+  const clearSelection = () => {
+    const route = parseRoute(win.location.hash);
+    if (route.name !== 'repo') return;
+    const view = parseViewState(win.location.hash);
+    if (view.node) win.location.hash = buildHash(route.repo, { ...view, node: null });
+  };
+  root.addEventListener('click', (ev) => {
+    if (ev.target && ev.target.tagName && ev.target.tagName.toLowerCase() === 'svg') clearSelection();
+  });
+  doc.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') clearSelection(); });
   win.addEventListener('hashchange', draw);
   doc.addEventListener('visibilitychange', async () => { await app.tick(); draw(); });
   draw();
