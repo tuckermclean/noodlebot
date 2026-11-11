@@ -29,6 +29,44 @@ TESTS = \
 	plugin/hooks/guard-git.test.sh \
 	plugin/hooks/guard-shell.test.sh \
 	scheduler/loop.test.sh \
+	scheduler/loop-s07-kinds.test.sh \
+	scheduler/loop-s07-units.test.sh \
+	scheduler/loop-s07-resume.test.sh \
+	scheduler/loop-s07-resume2.test.sh \
+	scheduler/loop-s07-starve.test.sh \
+	scheduler/loop-s07-same.test.sh \
+	scheduler/loop-s07-caps.test.sh \
+	scheduler/loop-s03.test.sh \
+	scheduler/loop-s01.test.sh \
+	scheduler/loop-s01-closed.test.sh \
+	scheduler/loop-s01-fail.test.sh \
+	scheduler/loop-s01-takeover.test.sh \
+	scheduler/loop-s07-slots.test.sh \
+	scheduler/loop-g01.test.sh \
+	scheduler/loop-s07.test.sh \
+	scheduler/loop-s06.test.sh \
+	scheduler/loop-s06-later.test.sh \
+	scheduler/loop-s06-update.test.sh \
+	scheduler/loop-s07-failed.test.sh \
+	scheduler/loop-s07-turnpy.test.sh \
+	scheduler/loop-w02-fail.test.sh \
+	scheduler/loop-w02-off.test.sh \
+	scheduler/loop-g01-lim.test.sh \
+	scheduler/loop-g01-throttle.test.sh \
+	scheduler/loop-s07-records.test.sh \
+	scheduler/loop-s04.test.sh \
+	scheduler/loop-d01.test.sh \
+	scheduler/loop-l01.test.sh \
+	scheduler/loop-s04-more.test.sh \
+	scheduler/loop-s04-reset.test.sh \
+	scheduler/loop-w02.test.sh \
+	scheduler/loop-d02.test.sh \
+	scheduler/loop-s04-unusual.test.sh \
+	scheduler/loop-g01-list.test.sh \
+	scheduler/loop-s06-review.test.sh \
+	scheduler/loop-s02.test.sh \
+	scheduler/loop-v01.test.sh \
+	scheduler/loop-s04-ignored.test.sh \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
