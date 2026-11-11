@@ -78,6 +78,7 @@ qstop
 # -- Phase C: a failing `turn.py took` is logged and starts nothing
 qsetup PC "R1:S" "B01:S"; pwrap
 : >"$q/took.fail"
+qseed qa/node R1 1000; rc0=$(qrec qa/node R1)
 qhold; qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600
 qwait 8 qfirst qa
 release R1
@@ -88,6 +89,9 @@ qok "P03-AC-4: (SCHED_RAMP=1) a failing turn.py took starts nothing" test "$(qn)
 qok "P03-AC-4: (SCHED_RAMP=1) a failing turn.py took is logged" grep -qi 'took' "$(qlog qa)"
 qok "P03-AC-4: (SCHED_RAMP=1) a failing turn.py took leaves no start record" test ! -e "$qd/state/starts.json"
 qok "P03-AC-4: (SCHED_RAMP=1) its RELEASE is removed" no_release R1
+qok "P03-AC-4: (SCHED_RAMP=1) a failing turn.py took keeps its waiting record with the original time (the wait does not restart)" test "$(qrec qa/node R1)" = "$rc0"
+qticks 2
+qok "P03-AC-4: (SCHED_RAMP=1) after a further tick the record still has the original time" test "$(qrec qa/node R1)" = "$rc0"
 qstop
 
 # -- Phase D: a failed start of the released node gives the record back (R1's worktree cannot be made: its branch is checked out elsewhere)
@@ -95,6 +99,7 @@ qsetup PD "R1:S" "B01:S"; pwrap
 git -C "$qd/repos/qa" worktree add -q -b node/R1-u-R1 "$q/blocker" origin/main
 now=$(date +%s); mkdir -p "$qd/state"
 printf '{"time": %s, "repo": "qb", "unit": "B01"}\n' $((now - 1000)) >"$qd/state/starts.json"
+qseed qa/node R1 1000; rd0=$(qrec qa/node R1)
 qhold; qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600
 qwait 8 qfirst qa
 release R1
@@ -105,7 +110,23 @@ qok "P03-AC-4: (SCHED_RAMP=1) the failed start is logged, nothing started" sh -c
 qok "P03-AC-4: (SCHED_RAMP=1) a failed start of the released node: took R1, then giveback R1" sh -c "$(declare -f pline); q='$q'; a=\$(pline 'took R1'); b=\$(pline 'giveback R1'); [ -n \"\$a\" ] && [ -n \"\$b\" ] && [ \"\$a\" -lt \"\$b\" ]"
 qok "P03-AC-4: (SCHED_RAMP=1) the previous start record is back (qb/B01 at its old time)" test "$(srec)" = "qb/B01@$((now - 1000))"
 qok "P03-AC-4: (SCHED_RAMP=1) its RELEASE is removed" no_release R1
+qok "P03-AC-4: (SCHED_RAMP=1) a failed start keeps its waiting record with the original time (the wait does not restart)" test "$(qrec qa/node R1)" = "$rd0"
+qticks 2
+qok "P03-AC-4: (SCHED_RAMP=1) after a further tick the record still has the original time" test "$(qrec qa/node R1)" = "$rd0"
 git -C "$qd/repos/qa" worktree remove --force "$q/blocker"; git -C "$qd/repos/qa" branch -q -D node/R1-u-R1
 qstop
+# -- Phase E: after a failing `turn.py took`, a second released node does not start in that tick (the first took fails once)
+qsetup PE "R1:S R2:S" "B01:S"; pwrap
+sed -i 's|^if a and a\[0\] == "took" and os.path.exists(q + "/took.fail"):|if a and a[0] == "took" and os.path.exists(q + "/took.fail"):\n    os.remove(q + "/took.fail")|' "$qnb/scheduler/turn.py"
+: >"$q/took.fail"
+qhold; qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+qwait 8 qfirst qa
+mkdir -p "$qd/state/qa/node/R1" "$qd/state/qa/node/R2"; d_=$(date -u +%FT%TZ); echo "$d_" >"$qd/state/qa/node/R1/RELEASE"; echo "$d_" >"$qd/state/qa/node/R2/RELEASE"
+wait_until 8 grep -q '^took' "$q/turn.calls"
+qticks 2
+pafter() { awk '/^took/ && !f { f = 1; next } f { print; exit }' "$q/turn.calls"; }
+qok "P03-AC-4: (SCHED_RAMP=1) a failing turn.py took is followed by no other took in that tick (a second released node does not start)" sh -c "$(declare -f pafter); q='$q'; n=\$(pafter); [ -n \"\$n\" ] && case \"\$n\" in took*) false ;; esac"
+qstop
+
 
 loop_end

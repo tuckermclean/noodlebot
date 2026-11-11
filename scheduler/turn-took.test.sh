@@ -66,6 +66,19 @@ tookrc=$rc
 giveback_out=$(T giveback --root "$d" --repo a A1 2>&1); grc=$?
 if [ $tookrc = 0 ] && [ $grc = 0 ] && [ ! -e "$d/state/starts.json" ]; then pass "P03-AC-4 giveback after a took with no start before leaves no start record"; else fail "giveback after took, none before: took rc=$tookrc rc=$grc out=$giveback_out, starts.json $(ls "$d/state")"; fi
 
+# --- ask, giveback, then (same loop, no new list) took, giveback: the giveback restores the record before the took
+reset; hb a "$base"
+printf '{"time": %s, "repo": "b", "unit": "B9"}\n' $((base - 100)) >"$d/state/starts.json"
+echo "A1 fresh L $(w 100)" | list a 10
+ask a "$base" --gap 10
+akey=$key
+gb1=$(T giveback --root "$d" --repo a A1 2>&1); g1=$?
+r_after_gb1=$(rec)
+took a $((base + 20)) A1
+tookrc=$rc
+gb2=$(T giveback --root "$d" --repo a A1 2>&1); g2=$?
+if [ "$akey" = A1 ] && [ $g1 = 0 ] && [ "$r_after_gb1" = "b/B9@$((base - 100))" ] && [ $tookrc = 0 ] && [ $g2 = 0 ] && [ "$(rec)" = "b/B9@$((base - 100))" ]; then pass "P03-AC-4 ask, giveback, took, giveback (same loop, no list between) restores the record before the took"; else fail "P03-AC-4 ask, giveback, took, giveback: ask key='$akey' gb=$g1/$g2 took rc=$tookrc rec after first giveback=$r_after_gb1, last=$(rec) ($gb1 $gb2)"; fi
+
 # --- no KEY is an error
 reset; hb a "$base"
 printf '{"time": %s, "repo": "b", "unit": "B9"}\n' "$base" >"$d/state/starts.json"
