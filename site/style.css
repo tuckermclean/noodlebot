@@ -7,3 +7,12 @@ th[data-sort] { cursor: pointer; }
 .held { color: #b00; }
 .notice { background: #fee; padding: 0.3rem; }
 svg { max-width: 100%; height: auto; }
+[data-highlight="false"] { opacity: 0.25; }
+svg [data-node] a { cursor: pointer; text-decoration: none; }
+[data-node] text { fill: #000; }
+tr[data-selected="true"] { background: #def; }
+.swatch { display: inline-block; width: 0.9em; height: 0.9em; border: 1px solid #000; vertical-align: middle; }
+.legend span[data-legend], .filters a { margin-right: 0.8rem; }
+[data-explorer] .explorer-scroll { overflow-x: auto; }
+[data-explorer] svg { max-width: none; }
+[data-explorer] aside { border: 1px solid #ccc; padding: 0.3rem 0.6rem; margin: 0.5rem 0; }
