@@ -14,12 +14,14 @@ the operations are described in harnesses/README.md.
   harness.py preflight
   harness.py events <state-dir>
   harness.py capabilities
+  harness.py log-stat <state-dir>                      (the raw log: one JSON object with path, size, mtime)
 """
 import importlib.util
+import json
 import os
 import sys
 
-sys.dont_write_bytecode = True   # a deployed checkout must stay clean (no __pycache__ beside the scripts)
+sys.dont_write_bytecode = True   # the backends loaded below leave no __pycache__ in a deployed checkout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKENDS = {"claude-code": os.path.join(HERE, "harnesses", "claude_code.py"),
@@ -68,6 +70,20 @@ def resume(worktree, state_dir, session_id, prompt):
 
 def events(state_dir):
     return backend().events(state_dir)
+
+
+def log_stat(state_dir):
+    """{"path", "size", "mtime"} of the session's raw log (size and mtime None when it does not exist): for the readers
+    that show its size and age. A backend without log_stat has the raw log at <state-dir>/session.jsonl."""
+    be = backend()
+    if hasattr(be, "log_stat"):
+        return be.log_stat(state_dir)
+    path = os.path.join(state_dir, "session.jsonl")
+    try:
+        st = os.stat(path)
+        return {"path": path, "size": st.st_size, "mtime": st.st_mtime}
+    except OSError:
+        return {"path": path, "size": None, "mtime": None}
 
 
 def _usage():
@@ -132,6 +148,9 @@ def main(argv):
         except OSError:
             pass
         sys.stdout.flush()
+        return 0
+    if op == "log-stat" and len(a) == 1:
+        print(json.dumps(log_stat(a[0])))
         return 0
     if op == "capabilities" and not a:
         for c in capabilities():

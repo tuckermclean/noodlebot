@@ -8,11 +8,11 @@
 # usage limit left it idle; <prompt> then only names the task, as the loop's process check reads it.
 set -u
 wt=$1 dir=$2 prompt=$3 sid=${4:-}
-plugin=$(cd "$(dirname "$0")/../plugin" && pwd -P)
+here=$(cd "$(dirname "$0")" && pwd -P)   # before the cd: $0 may be relative
+plugin=$(cd "$here/../plugin" && pwd -P)
 cd "$wt" || { echo 2 >"$dir/session.rc"; exit 2; }
 unset ANTHROPIC_API_KEY GH_TOKEN GITHUB_TOKEN
 [ -z "${NOODLEBOT_VERSION:-}" ] || export NOODLEBOT_VERSION
-here=$(cd "$(dirname "$0")" && pwd -P)
 # the harness backend (harness.py, SCHED_HARNESS) runs the session, keeps its credential and writes events.jsonl: its
 # first stage becomes the agent CLI (a direct child of this script, the process the loop signals), the second one
 # passes the raw stream on and records the events. The exit code is the first stage's.

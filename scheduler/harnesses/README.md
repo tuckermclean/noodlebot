@@ -4,12 +4,13 @@ The scheduler reaches the agent harness only through `scheduler/harness.py` (S08
 folder (`claude_code.py`, the first) or the fake harness of `scheduler/testdata/harness/fake.py` (its header is the
 contract). `$SCHED_HARNESS` chooses it: unset or `claude-code`, or `fake`; any other name exits 2 with a message.
 
-A backend exports `NAME`, `capabilities()`, `skill_command()`, `matches()`, `preflight()`, `start()`, `resume()` and
-`events()`; `harness.py` re-exports each as a function and as a CLI subcommand (`harness.py skill-command ...`). The
+A backend exports `NAME`, `capabilities()`, `skill_command()`, `matches()`, `preflight()`, `start()`, `resume()`,
+`events()` and `log_stat()`; `harness.py` re-exports each as a function and as a CLI subcommand (`harness.py skill-command ...`). The
 raw log `session.jsonl` is the harness's own stream (stdout of `run-session.sh`, set up by the loop); only the backend
 reads it, and writes the normalised log `events.jsonl` next to it as the session runs. `events()` rebuilds
 `events.jsonl` from the raw log (and `session.stderr` for `cutoff`) when it is missing or behind the raw log (the
-Claude Code backend records the raw size it has covered in `events.pos`).
+Claude Code backend records the raw size it has covered in `events.pos`; its recorder holds `events.lock` while the
+session runs, so a rebuild never replaces `events.jsonl` under it).
 
 ## Inventory
 
@@ -31,6 +32,11 @@ and the interface operation that serves it. Capabilities (`usage`, `resume`, `bg
 | `loops.sh` (~l.221) | a loop's live sessions listed for `loops.sh` status and stop | `/proc/<pid>/cmdline` of each `session.pid` | `matches` |
 | `status.sh` (~l.40) | which node sessions of a loop are live | `/proc/<pid>/cmdline` | `matches` |
 | `status.sh` (~l.43-65) | the last four actions of a live session | tool uses (name, description or command or file or skill, subagent marker) and result (subtype, turns) of the log | `events` |
+| `api.py` `session_of` (~l.543-548) | the log's size and last-modified time shown in the session record | size and mtime of the raw log `session.jsonl` | `log_stat` |
+| `status.sh` (~l.43-45) | a live session's log size (`du -h`) and last write (`date -r`) | size and mtime of the raw log | `log_stat` |
+| `usage.py` `readings` (~l.33) | skips sessions whose log was not written in the last 7 days | mtime of the raw log (not of `events.jsonl`, whose mtime changes on a rebuild) | `log_stat` |
+| `loop.sh` `stop_idle` (~l.415-421) | stops an idle session: `pgrep -P` and TERM to the children of `run-session.sh` (the agent CLI; the recorder ignores TERM) | the process tree of the scheduler's own `run-session.sh` | none: `run-session.sh`'s process is the scheduler's own, not the harness's |
+| `loop.sh` `resume_idle` (~l.448-449) | the argv and cwd of the idle `run-session.sh`, to start it again | `/proc/<pid>/cmdline` and `cwd` of the scheduler's own `run-session.sh` | none: `run-session.sh`'s process is the scheduler's own, not the harness's |
 | `run-session.sh` | one unattended session: forge tokens unset, start or resume, `session.rc` written atomically | the start prompt and `unattended.md`, or the session id and `resume-prompt.md` | `start`, `resume` |
 | `usage.py` `readings` (~l.28-50) | the plan's usage windows of every session changed in the last 7 days | each usage reading: windows, status, utilization, reset | `events` |
 | `api.py` `session_alive` (~l.245-255) | whether a node or issue unit has a live session | `/proc/<pid>/cmdline` | `matches` |
@@ -52,15 +58,15 @@ order. Readers must not rely on more fields than listed.
 | Type | Fields | One per |
 |---|---|---|
 | `start` | `session` | init line of the harness: the session id (a resumed session has one more per resume) |
-| `usage` | `status`, `reset`, `window`, `utilization`, `windows` | usage reading; `windows` maps each window name to `{status, utilization, reset}` |
-| `tool` | `id`, `name`, `text`, `label`, `subagent`, `background`, `delay`, `desc` | tool use; `text` the first line of its short input (cut to 200), `label` for the status script (cut to 100), `background` for a background `Bash` or `Agent`, `delay` of a `ScheduleWakeup`, `desc` of an `Agent` or `Task` |
+| `usage` | `status`, `has_status`, `info_bad`, `reset`, `window`, `utilization`, `windows` | usage reading; `status` is null both when absent and when null, `has_status` tells them apart (absent counts as allowed); `info_bad` is true when `rate_limit_info` is present but no object (the readers treat the line as unreadable); `windows` maps each window name to `{status, has_status, utilization, reset}` |
+| `tool` | `id`, `name`, `text`, `text_full`, `label`, `subagent`, `background`, `delay`, `desc` | tool use; `text` the first line of its short input (cut to 200), `text_full` the same line uncut (api.py redacts, then cuts), `label` for the status script (cut to 100), `background` for a background `Bash` or `Agent`, `delay` of a `ScheduleWakeup` (a bool counts as 0 or 1), `desc` of an `Agent` or `Task` |
 | `tool_result` | `id`, `subagent`, `bg_id` | tool result; `bg_id` the background task id it names |
 | `text` | `text`, `subagent` | text block, whitespace collapsed, cut to 400 |
-| `result` | `subtype`, `text`, `cost`, `turns`, `limit` | end of a turn: closing text, cost and turns when well formed, whether it names a usage limit |
+| `result` | `subtype`, `text`, `cost`, `turns`, `limit` | end of a turn: closing text, cost and turns when well formed (`turns`: a non-negative int that fits a float; `cost`: a finite number that fits a float; else null), whether it names a usage limit |
 | `task_done` | `ids` | background task completion |
 | `cutoff` | none | session end with background tasks stopped by the CLI (last, once) |
 | `other` | none | well-formed line that gave no other event (so the last event is the last line) |
-| `garbled` | none | non-blank line that is no JSON object (the last line is unknown) |
+| `garbled` | none | non-blank line that is no JSON object, or that cannot be read or translated (nested too deeply to parse, say); the last line is unknown |
 
 ## Across harnesses
 
@@ -75,6 +81,7 @@ loop turns the feature off (`harness <name> lacks <capability>: <feature> off`).
 | `op:skill_command` | `/noodlebot:node B03`, or `/node B03` for a shipped skill ([skills](https://code.claude.com/docs/en/skills)) | `$skill-name` in the prompt; skills are folders in `.agents/skills` ([build-skills](https://learn.chatgpt.com/codex/build-skills)) | `/skill:name args` in the prompt; folders with a SKILL.md ([skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md)) | `@skill-id` names a skill; the model loads it with its `skill` tool ([skills](https://opencode.ai/docs/skills/)) |
 | `op:matches` | `run-session.sh ... <unit>` or `claude -p /node <unit>` in `/proc/<pid>/cmdline` ([cli-reference](https://code.claude.com/docs/en/cli-reference)) | `run-session.sh ... <unit>` (the scheduler's own wrapper; the harness's command line is not matched) ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | `run-session.sh ... <unit>` (the scheduler's own wrapper) ([cli](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)) | `run-session.sh ... <unit>` (the scheduler's own wrapper) ([cli](https://opencode.ai/docs/cli/)) |
 | `op:preflight` | `~/.config/noodlebot/oauth-token` readable, passed as `CLAUDE_CODE_OAUTH_TOKEN` ([cli-reference](https://code.claude.com/docs/en/cli-reference)) | its login or an API key in the environment (not checked here) ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | a provider API key in the environment or its login (not checked here) ([cli](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)) | `opencode auth login` (interactive), or a provider API key in the environment ([providers](https://opencode.ai/docs/cli/providers/)) |
+| `op:log_stat` | the raw log `session.jsonl` itself: its path, size and mtime ([headless](https://code.claude.com/docs/en/headless)) | the log of the JSON lines of `--json`, a file of the scheduler's ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | the log of the JSON lines of `--mode json`, a file of the scheduler's ([json](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md)) | the log of the command's output, a file of the scheduler's ([cli](https://opencode.ai/docs/cli/)) |
 | `op:events` | stream-json lines translated by `claude_code.py` into `events.jsonl` ([headless](https://code.claude.com/docs/en/headless)) | the JSON lines of `--json` translated the same way ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | the JSON lines of `--mode json` translated the same way ([json](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md)) | machine-readable event output: not documented ([cli](https://opencode.ai/docs/cli/)) |
 | `op:capabilities` | `usage`, `resume`, `bg-wait` all on ([cli-reference](https://code.claude.com/docs/en/cli-reference)) | `resume` only; `usage` and `bg-wait`: none: capability off ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | `resume` only; `usage` and `bg-wait`: none: capability off ([json](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md)) | none yet (`resume`: not documented, `usage` and `bg-wait`: none): capability off ([cli](https://opencode.ai/docs/cli/)) |
 | `event:start` | `system` init line, `session_id` ([headless](https://code.claude.com/docs/en/headless)) | `thread.started` event; its id field: not documented ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | the first record, `{"type":"session","id":...}` ([json](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md)) | session id in the output: not documented ([cli](https://opencode.ai/docs/cli/)) |

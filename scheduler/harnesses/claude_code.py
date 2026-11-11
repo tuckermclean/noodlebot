@@ -5,6 +5,7 @@ names a skill, how a session's process is recognised, and the translation of its
 normalised event log events.jsonl. The contract of a backend is in scheduler/testdata/harness/fake.py (its header);
 the operations and events are documented in scheduler/harnesses/README.md.
 """
+import fcntl
 import json
 import math
 import os
@@ -14,6 +15,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 
 NAME = "claude-code"
 CAPS = ["usage", "resume", "bg-wait"]
@@ -54,11 +56,12 @@ def _first(v, n):
 
 
 def _tool_text(inp):
+    """(the first line of input.description, else command, else path, else file_path, uncut) or None."""
     for k in ("description", "command", "path", "file_path"):
         v = inp.get(k)
         if isinstance(v, str) and v.strip():
             lines = v.splitlines()
-            return lines[0][:200] if lines else None
+            return lines[0] if lines else None
     return None
 
 
@@ -78,8 +81,26 @@ def _bg_id(content):
     return m.group(1) if m else None
 
 
+def _num(v):
+    """A finite number (not a bool) that fits a float; an integer too large for one is not."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:
+        return False
+
+
 def translate(line):
-    """The events of one raw line (str), as dicts. Pure: the same line gives the same events live and rebuilt."""
+    """The events of one raw line (str), as dicts. Pure: the same line gives the same events live and rebuilt. A line
+    that cannot be decoded or translated for any reason (nested too deeply to parse, say) is a "garbled" event."""
+    try:
+        return _translate(line)
+    except Exception:   # RecursionError, OverflowError, MemoryError ...: never lose the lines after this one
+        return [{"t": None, "type": "garbled"}] if line.strip() else []
+
+
+def _translate(line):
     if not line.strip():
         return []
     try:
@@ -96,14 +117,17 @@ def translate(line):
     elif kind == "system" and d.get("subtype") == "task_notification" and (d.get("task_id") or d.get("tool_use_id")):
         out.append({"t": t, "type": "task_done", "ids": [x for x in (d.get("task_id"), d.get("tool_use_id")) if x]})
     elif kind == "rate_limit_event":
-        info = d.get("rate_limit_info") if isinstance(d.get("rate_limit_info"), dict) else {}
+        ri = d.get("rate_limit_info")
+        info = ri if isinstance(ri, dict) else {}
         wins = {}
         uw = info.get("unifiedWindows")
         if isinstance(uw, dict):
             for k, w in uw.items():
                 if isinstance(w, dict):
-                    wins[k] = {"status": w.get("status"), "utilization": w.get("utilization"), "reset": w.get("resetsAt")}
-        out.append({"t": t, "type": "usage", "status": info.get("status"), "reset": info.get("resetsAt"),
+                    wins[k] = {"status": w.get("status"), "has_status": "status" in w, "utilization": w.get("utilization"),
+                               "reset": w.get("resetsAt")}
+        out.append({"t": t, "type": "usage", "status": info.get("status"), "has_status": "status" in info,
+                    "info_bad": bool(ri) and not isinstance(ri, dict), "reset": info.get("resetsAt"),
                     "window": info.get("rateLimitType"), "utilization": info.get("utilization"), "windows": wins})
     elif kind in ("assistant", "user"):
         msg = d.get("message")
@@ -119,9 +143,12 @@ def translate(line):
             elif bt == "tool_use" and kind == "assistant":
                 inp = b.get("input") if isinstance(b.get("input"), dict) else {}
                 name = b.get("name")
-                delay = inp.get("delaySeconds") if name == "ScheduleWakeup" and isinstance(inp.get("delaySeconds"), (int, float)) \
-                    and not isinstance(inp.get("delaySeconds"), bool) else None
-                e = {"t": t, "type": "tool", "id": b.get("id"), "name": name, "text": _tool_text(inp), "label": _label(inp),
+                ds = inp.get("delaySeconds")   # a bool counts as 0 or 1, as api.py reads it
+                delay = int(ds) if name == "ScheduleWakeup" and isinstance(ds, bool) else \
+                    ds if name == "ScheduleWakeup" and isinstance(ds, (int, float)) else None
+                full = _tool_text(inp)
+                e = {"t": t, "type": "tool", "id": b.get("id"), "name": name, "text": None if full is None else full[:200],
+                     "text_full": full, "label": _label(inp),
                      "subagent": sub, "background": inp.get("run_in_background") is True and name in ("Bash", "Agent"),
                      "delay": delay, "desc": None}
                 if name in ("Agent", "Task"):
@@ -133,8 +160,8 @@ def translate(line):
     elif kind == "result":
         r, st = d.get("result"), d.get("subtype")
         cost, turns = d.get("total_cost_usd"), d.get("num_turns")
-        cost_ok = isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost)
-        turns_ok = isinstance(turns, int) and not isinstance(turns, bool) and turns >= 0
+        cost_ok = _num(cost)
+        turns_ok = isinstance(turns, int) and _num(turns) and turns >= 0
         text = r.strip() if isinstance(r, str) and r.strip() else None
         out.append({"t": t, "type": "result", "subtype": st, "text": text, "cost": cost if cost_ok else None,
                     "turns": turns if turns_ok else None,
@@ -164,23 +191,46 @@ def _cut_off(stderr_path):
     return CUTOFF_RE.search(tail.replace("\n", " ")) is not None
 
 
+def _tmp(path):
+    return "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())   # readers and the recorder never share one
+
+
 def _replace(path, text):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, path)
+    tmp = _tmp(path)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _write_pos(path, n):
     _replace(path, "%d\n" % n)
 
 
-def rebuild(state_dir):
-    """events.jsonl from session.jsonl (and session.stderr for the cutoff)."""
+def _lock(state_dir, block):
+    """The lock the recorder holds for as long as it writes events.jsonl: a rebuild takes it too, so it never replaces
+    the file under a live recorder. None when it is not to be had without waiting (block false)."""
+    fd = os.open(os.path.join(state_dir, "events.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _build(state_dir, limit=None):
     raw, ev, pos, err = _paths(state_dir)
     parts, size = [], 0
     with open(raw, "rb") as f:
         for line in f:
+            if limit is not None and size >= limit:
+                break
             size += len(line)
             for e in translate(line.decode("utf-8", "replace")):
                 parts.append(_dump(e))
@@ -188,6 +238,18 @@ def rebuild(state_dir):
         parts.append(_dump({"t": None, "type": "cutoff"}))
     _replace(ev, "".join(parts))
     _write_pos(pos, size)
+
+
+def rebuild(state_dir):
+    """events.jsonl from session.jsonl (and session.stderr for the cutoff). False when a recorder is writing it."""
+    fd = _lock(state_dir, False)
+    if fd is None:
+        return False
+    try:
+        _build(state_dir)
+    finally:
+        os.close(fd)
+    return True
 
 
 def _read_events(ev):
@@ -215,8 +277,13 @@ def events(state_dir):
             covered = int(f.read().strip())
     except (OSError, ValueError):
         covered = -1
-    if not os.path.exists(ev) or covered < rsize:
-        rebuild(state_dir)
+    # behind the raw log, or a raw log that a new start truncated (covered > size): rebuild, unless a recorder is
+    # writing the file (then it is being kept up to date, and the lines read so far are the truth)
+    if not os.path.exists(ev) or covered != rsize:
+        try:
+            rebuild(state_dir)
+        except OSError:
+            pass
     return _read_events(ev)
 
 
@@ -256,33 +323,56 @@ def _out_base():
         return None
 
 
-def _record_stream(src, state_dir, base, out):
-    """Pass the raw lines of src to out and append their events to events.jsonl, live."""
+def _open_events(state_dir, fresh, base):
+    """Before the agent's first line: take the lock and make events.jsonl and events.pos exist and agree with the raw
+    log (a fresh start on an empty log: both empty; never deleted, so no reader sees them missing and rebuilds under
+    the recorder). Returns (lock fd, events.jsonl open for append)."""
     _, ev, pos, _ = _paths(state_dir)
+    fd = _lock(state_dir, True)
+    if fresh and not base:
+        _replace(ev, "")
+        _write_pos(pos, 0)
+    elif base is not None:   # appending to a log that has a history: events.jsonl must cover exactly that
+        try:
+            with open(pos) as f:
+                covered = int(f.read().strip())
+        except (OSError, ValueError):
+            covered = -1
+        if covered != base or not os.path.exists(ev):
+            _build(state_dir, base)
     evf = open(ev, "a", encoding="utf-8")
-    done = base
-    try:
-        for line in src:
+    return fd, evf
+
+
+def _record_stream(src, evf, pos, base, out):
+    """Pass the raw lines of src to out and append their events to evf, live. The raw line goes first (the log is the
+    truth), then its events, then the position of the raw log that events.jsonl covers. A failure in the events leaves
+    the position behind, so that a rebuild makes them whole, and does not stop the stream."""
+    done, ok, raw_ok = base, True, True
+    for line in src:
+        if raw_ok:
+            try:
+                out.write(line)
+                out.flush()
+            except (OSError, ValueError):
+                raw_ok = False   # the log cannot be written: keep reading, so that the agent is not sent EPIPE
+        if done is not None:
+            done += len(line)
+        if not (ok and raw_ok):
+            continue
+        try:
             for e in translate(line.decode("utf-8", "replace")):
                 evf.write(_dump(e))
             evf.flush()
             if done is not None:
-                done += len(line)
                 _write_pos(pos, done)
-            out.write(line)
-            out.flush()
-    finally:
+        except Exception as e:
+            ok = False
+            sys.stderr.write("harness: events.jsonl not written: %r\n" % (e,))
+    try:
         evf.close()
-
-
-def _fresh(state_dir, base):
-    _, ev, pos, _ = _paths(state_dir)
-    if not base:
-        for p in (ev, pos):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
+    except OSError:
+        pass
 
 
 def _alive(pid):
@@ -297,14 +387,14 @@ def record(state_dir, fresh, pidfile=None):
     """The recorder of run-session.sh's pipeline: stdin is the agent's raw stream, stdout the raw log. It ignores
     SIGTERM (stop_idle signals every child of run-session.sh; the agent stops, this finishes at EOF, so events.jsonl is
     complete). A background task that kept the pipe open must not hold the session: once the agent (pid in pidfile) is
-    gone and the stream is quiet for 5 s, it ends."""
+    gone and nothing has come on the stream for 5 s, it ends."""
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     base = _out_base()
-    if fresh:
-        _fresh(state_dir, base)
+    fd, evf = _open_events(state_dir, fresh, base)
     out = sys.stdout.buffer
     r, w = os.pipe()
     src = os.fdopen(r, "rb")
+    last = [time.monotonic()]
 
     def copy():
         try:
@@ -313,15 +403,15 @@ def record(state_dir, fresh, pidfile=None):
                     chunk = os.read(0, 65536)
                     if not chunk:
                         break
+                    last[0] = time.monotonic()
                     dst.write(chunk)
                     dst.flush()
         except OSError:
             pass
     th = threading.Thread(target=copy, daemon=True)
     th.start()
-    finish = threading.Thread(target=_record_stream, args=(src, state_dir, base, out), daemon=True)
+    finish = threading.Thread(target=_record_stream, args=(src, evf, _paths(state_dir)[2], base, out), daemon=True)
     finish.start()
-    quiet = 0
     while finish.is_alive():
         finish.join(0.5)
         pid = None
@@ -331,10 +421,11 @@ def record(state_dir, fresh, pidfile=None):
                     pid = int(f.read().strip())
             except (OSError, ValueError):
                 pid = None
-        quiet = quiet + 1 if pid is not None and not _alive(pid) and th.is_alive() else 0
-        if quiet >= 10:
+        if pid is not None and not _alive(pid) and th.is_alive() and time.monotonic() - last[0] >= 5:
+            finish.join(1)   # what the copy already passed on
             break
     _finish(state_dir)
+    os.close(fd)
     return 0
 
 
@@ -373,8 +464,7 @@ def _run(worktree, state_dir, argv, fresh):
     if not env.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"):
         env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
     base = _out_base()
-    if fresh:
-        _fresh(state_dir, base)
+    fd, evf = _open_events(state_dir, fresh, base)
     proc = subprocess.Popen(argv, cwd=worktree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
 
     def fwd(signum, frame):
@@ -383,12 +473,14 @@ def _run(worktree, state_dir, argv, fresh):
         except OSError:
             pass
     old = signal.signal(signal.SIGTERM, fwd)
-    th = threading.Thread(target=_record_stream, args=(proc.stdout, state_dir, base, sys.stdout.buffer), daemon=True)
+    th = threading.Thread(target=_record_stream, args=(proc.stdout, evf, _paths(state_dir)[2], base, sys.stdout.buffer),
+                          daemon=True)
     th.start()
     rc = proc.wait()
     th.join(5)   # a background task that kept the pipe open must not hold the session
     signal.signal(signal.SIGTERM, old)
     _finish(state_dir)
+    os.close(fd)
     return 128 - rc if rc < 0 else rc
 
 
