@@ -19,8 +19,18 @@
 # nothing; every stdout line is one status event.
 # --rollback resets to deploy/previous and, once the reset succeeded, records the commit it left as
 # rejected, so the rollback sticks, and prints "rolled back <cur>..<prev> (version <v>)".
-# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed} (default ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock (waited for up to 5 minutes, so a
-# concurrent run finds nothing left to do; git commands that may leave a background process run with it closed).
+# A normal run first consumes, under the lock, the one-shot markers the API writes (both removed
+# first, in every case, even when the rollback fails, which prints one line "rollback failed" and
+# exits 2 without deploying): deploy/rollback-request rolls back as --rollback does, its one status
+# line saying "(rollback requested)", or one line "nothing to roll back" without a rollback point or
+# when already at it; deploy/retry names a commit that is removed from rejected, with its counts in
+# tries and passed, and prints one line "retry requested: <sha> ...", or "nothing to retry" if it is
+# not rejected (if rejected cannot be updated the line says the retry could not be applied); the run
+# then goes on, so a retried origin/main head is tested again.
+# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed,retry,rollback-request} (default
+# ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock
+# (waited for up to 5 minutes, so a concurrent run finds nothing left to do; git commands that may
+# leave a background process run with it closed).
 # Nothing is written inside the live checkout. Exit:
 # 0 nothing to do, deployed, or rolled back;
 # 1 not deployed and recorded as rejected (fails make test, $max_tries failed fast-forwards, or timed
@@ -41,7 +51,7 @@ version() {
 	v=$(git -C "$live" describe --tags --always "$1" 2>/dev/null 9>&-) && [ -n "$v" ] && echo "$v" || echo unknown
 }
 
-rejected() { grep -qx "$1" "$sd/rejected" 2>/dev/null; }
+rejected() { grep -Fqx -e "$1" "$sd/rejected" 2>/dev/null; }
 
 # reject <sha> <reason>: record the sha so it is not tried again, and print the one status line.
 reject() {
@@ -161,7 +171,47 @@ do_rollback() {
 	[ "$cur" = "$prev" ] && return 0
 	git -C "$live" reset -q --hard "$prev" >/dev/null 2>&1 9>&- || die "cannot reset $live to $prev"
 	echo "$cur" >>"$sd/rejected"
-	echo "rolled back $cur..$prev (version $(version "$prev"))"
+	echo "rolled back $cur..$prev (version $(version "$prev"))${1:+ ($1)}"
+}
+
+# consume_requests: the markers written by the API (see the header); both are read and removed first, so they are gone
+# whatever happens. Returns 2 (nothing is deployed) if a requested rollback failed, else 0.
+consume_requests() {
+	want_rb=; had_retry=; rsha=; rc_rb=0
+	[ -e "$sd/rollback-request" ] && want_rb=1
+	if [ -e "$sd/retry" ]; then had_retry=1; rsha=$(head -n 1 "$sd/retry" 2>/dev/null | tr -d '[:space:]'); fi
+	rm -f "$sd/rollback-request" "$sd/retry"
+	if [ -n "$want_rb" ]; then
+		if [ ! -f "$sd/previous" ]; then
+			echo "nothing to roll back: rollback requested but there is no rollback point"
+		else
+			rprev=$(cat "$sd/previous" 2>/dev/null)
+			rprev=$(git -C "$live" rev-parse --verify -q "$rprev^{commit}" 2>/dev/null)
+			rcur=$(git -C "$live" rev-parse --verify -q HEAD 2>/dev/null)
+			if [ -n "$rprev" ] && [ "$rcur" = "$rprev" ]; then
+				echo "nothing to roll back: rollback requested but $live is already at the rollback point $rprev (version $(version "$rprev"))"
+			elif ! ( do_rollback "rollback requested" ); then
+				rc_rb=2
+				echo "rollback failed: rollback requested but $live could not be rolled back"
+			fi
+		fi
+	fi
+	if [ -n "$rsha" ] && rejected "$rsha"; then
+		if grep -Fvx -e "$rsha" "$sd/rejected" >"$sd/rejected.tmp" 2>/dev/null; then rc=0; else rc=$?; fi
+		if [ "$rc" -le 1 ] && mv -f "$sd/rejected.tmp" "$sd/rejected" 2>/dev/null; then
+			for f in tries passed; do
+				[ -f "$sd/$f" ] || continue
+				if read -r fsha _ <"$sd/$f" && [ "$fsha" = "$rsha" ]; then rm -f "$sd/$f"; fi
+			done
+			echo "retry requested: $rsha (version $(version "$rsha")) will be tested again"
+		else
+			rm -f "$sd/rejected.tmp"
+			echo "retry requested: $rsha (version $(version "$rsha")) could not be applied: $sd/rejected was not updated"
+		fi
+	elif [ -n "$had_retry" ]; then
+		echo "nothing to retry: retry requested for ${rsha:-an empty commit}, which is not rejected"
+	fi
+	return "$rc_rb"
 }
 
 main() {
@@ -177,7 +227,7 @@ main() {
 	exec 9>"$sd/lock" || die "cannot open the lock"
 	command -v flock >/dev/null 2>&1 || die "flock not found"
 	flock -w 300 9 || die "cannot take the lock"
-	if [ "$mode" = rollback ]; then do_rollback; else do_deploy; fi
+	if [ "$mode" = rollback ]; then do_rollback; else consume_requests || exit $?; do_deploy; fi
 }
 
 main "$@"; exit $?
