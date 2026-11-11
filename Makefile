@@ -7,7 +7,10 @@ TESTS = \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
-	scheduler/turn.test.sh \
+	scheduler/turn-order.test.sh \
+	scheduler/turn-gap.test.sh \
+	scheduler/turn-record.test.sh \
+	scheduler/turn-lock.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	scheduler/deploy.test.sh \
 	plugin/hooks/guard.test.sh \
