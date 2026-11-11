@@ -513,6 +513,8 @@ free_branch() {
 			[ "$p" = "$keep" ] || [ "$(dirname "$p")" != "$wtroot" ] && continue
 			base=$(basename "$p"); case $base in $4) ;; *) continue ;; esac; k=$base d=$state/node/$base
 			case $base in pr-*) k=${base#pr-} d=$state/pr/$k ;; issue-*) k=${base#issue-} d=$state/issue/$k ;; esac
+			# a name that maps to no state folder (e.g. <ID>-spec) is not an idle worktree of ours: never detached
+			[ -d "$d" ] || continue
 			if [ -e "$d/session.pid" ] && alive "$(cat "$d/session.pid" 2>/dev/null)" "$k"; then
 				note "$saw; $br is checked out in $p, where a session runs"; return 1
 			fi
@@ -523,6 +525,30 @@ free_branch() {
 	return 0
 }
 freed_branch=0
+
+# branch_behind_origin <branch>: refs/heads/<branch> and the HEAD of every worktree holding it are all ancestors of
+# origin/<branch> (nothing local would be lost by resetting the branch to origin). Fails with no output otherwise.
+branch_behind_origin() {
+	local br=$1 line p='' h
+	if git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
+		! git -C "$clone" merge-base --is-ancestor "refs/heads/$br" "origin/$br"; then return 1; fi
+	while read -r line; do
+		case $line in
+		"worktree "*) p=${line#worktree } ;;
+		"branch refs/heads/$br")
+			h=$(git -C "$p" rev-parse -q --verify HEAD 2>/dev/null) || continue
+			git -C "$clone" merge-base --is-ancestor "$h" "origin/$br" || return 1 ;;
+		esac
+	done < <(git -C "$clone" worktree list --porcelain 2>/dev/null)
+	return 0
+}
+
+# on_branch <worktree> <branch>: the worktree is on <branch>, or detached at an ancestor of it (an update took the branch).
+on_branch() {
+	[ "$(git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$2" ] && return 0
+	git -C "$1" symbolic-ref -q HEAD >/dev/null && return 1
+	git -C "$1" merge-base --is-ancestor HEAD "refs/heads/$2" 2>/dev/null
+}
 
 # start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N)
 # in a worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
@@ -537,12 +563,9 @@ start_update() {
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing PR #$n's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; PR #$n: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; PR #$n needs an update but has used 2 starts; nothing started"; return 1; }
+	branch_behind_origin "$br" || { note "$saw; PR #$n: $br holds commits origin/$br lacks; not started"; return 1; }
 	freed_branch=0
 	free_branch "$br" "$wt" "$saw; PR #$n" '*' || return 1
-	if [ "$freed_branch" = 1 ] && git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
-		! git -C "$clone" merge-base --is-ancestor "refs/heads/$br" "origin/$br"; then
-		note "$saw; PR #$n: $br holds commits origin/$br lacks; not started"; return 1
-	fi
 	if [ -d "$wt" ]; then
 		# left by an earlier end without rc 0: bring it to the PR's current head, not mid-merge
 		{ git -C "$wt" merge --abort; git -C "$wt" checkout -q -f -B "$br" "origin/$br" &&
@@ -800,7 +823,7 @@ start_node() {
 	if [ "$kind" = followup ]; then
 		prompt=unattended-followup.md
 		if br=$(fu_branch "$d"); then
-			if [ -d "$wt" ] && [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$br" ]; then
+			if [ -d "$wt" ] && ! on_branch "$wt" "$br"; then
 				note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
 			fi
 		else
@@ -818,6 +841,8 @@ start_node() {
 	save_leftover "$id" "$wt" "$d" "$saw" || return 1
 	# detached (its branch was taken by an update): back onto the branch, now at the update's result; the tree is clean
 	if ! git -C "$wt" symbolic-ref -q HEAD >/dev/null && git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null; then
+		git -C "$wt" merge-base --is-ancestor HEAD "refs/heads/$br" ||
+			{ note "$saw; $id: its worktree is detached at commits $br lacks; not started"; return 1; }
 		git -C "$wt" checkout -q "$br" || { note "$saw; $id: checking out $br failed; not started"; return 1; }
 	fi
 	ncommits=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)

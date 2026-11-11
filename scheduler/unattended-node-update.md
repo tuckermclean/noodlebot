@@ -7,8 +7,8 @@ node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is
   then push to the PR's branch and comment on the PR, as the skill says. The scheduler removes @WT@
   after you end.
 - Never change a frozen test or fixture line (a line in the repository's frozen test and fixture paths already on
-  either side) and never change a spec file (SPEC.md, docs/graph.yaml, nodes/, AGENTS.md, CLAUDE.md,
-  .claude/). When the resolution would, or when you cannot settle a conflict from the code and tests,
+  either side) and never change a spec file (the repository's main spec, its node specs, its graph and the other
+  files its AGENTS.md or the node skill's step 7 name). When the resolution would, or when you cannot settle a conflict from the code and tests,
   do not guess and push nothing: leave the branch as it was, write your question to @DIR@/QUESTION.md
   (what conflicts, the choices, what you recommend), and end the run. The scheduler starts you again
   once the owner's answer is in @DIR@/ANSWER.md.
