@@ -38,6 +38,8 @@ TESTS = \
 	scheduler/loop-s07-starve.test.sh \
 	scheduler/loop-s07-same.test.sh \
 	scheduler/loop-s07-caps.test.sh \
+	scheduler/loop-s08.test.sh \
+	scheduler/loop-s08-caps.test.sh \
 	scheduler/loop-s03.test.sh \
 	scheduler/loop-s01.test.sh \
 	scheduler/loop-s01-closed.test.sh \
@@ -76,6 +78,7 @@ TESTS = \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
+	scheduler/loops-s08.test.sh \
 	scheduler/loops-api.test.sh \
 	scheduler/api.test.sh \
 	scheduler/api-sessions.test.sh \
