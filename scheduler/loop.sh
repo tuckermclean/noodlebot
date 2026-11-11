@@ -39,7 +39,8 @@
 #                            answered/ keeps released questions and spec PRs;
 #                            node/<ID>/detached names the branch the loop detached its idle worktree from for an update (start_node puts it back);
 #                            issue/<N>/ (a triage) and pr/<N>/ (an update of a spec PR or a node PR: also from, done, and node, the
-#                            node ID, for a node PR) hold the same files
+#                            node ID, for a node PR) hold the same files; a node PR's question moves into its answered/
+#                            once the PR is no longer open (pr_gone)
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
@@ -692,6 +693,28 @@ followup_done() {
 	done
 }
 
+# pr_gone <saw>: a node-PR update's question (pr/<N>/ with a node file) whose PR is no longer open (the owner
+# merged, closed or fixed it by hand) holds nothing more: QUESTION.md and ANSWER.md, whichever exist, move into
+# pr/<N>/answered/<UTC timestamp>-*, one status-log event each PR. Only from the whole open-PR list (every author,
+# every state of mergeable): a list as long as its --limit may be cut short, and then nothing moves. A pr/<N>/
+# with a session running keeps its files until the session's end is handled.
+pr_gone() {
+	local d n ts f moved
+	[ "$(wc -l <"$state/open-prs.tsv")" -lt "$open_limit" ] || return 0
+	for d in "$state"/pr/*/; do
+		d=${d%/} n=$(basename "$d")
+		[ -e "$d/node" ] && [ ! -e "$d/session.pid" ] || continue
+		[ -e "$d/QUESTION.md" ] || [ -e "$d/ANSWER.md" ] || continue
+		cut -d' ' -f1 "$state/open-prs.tsv" | grep -qxF "$n" && continue
+		ts=$(date -u +%Y%m%dT%H%M%SZ) moved=''
+		mkdir -p "$d/answered" || continue
+		for f in QUESTION.md ANSWER.md; do
+			[ -e "$d/$f" ] && mv "$d/$f" "$d/answered/$ts-$f" && moved="$moved${moved:+ and }$f"
+		done
+		[ -z "$moved" ] || say "$1; PR #$n is no longer open: released its $moved into answered/ ($ts)"
+	done
+}
+
 # cleanup_merged: a merged node's worktree is not needed again. Keep its evidence (out/node/<ID>)
 # under $NOODLEBOT_DATA/state/archive/<ID>-out (a follow-up's, when that exists, under <ID>-out-<UTC time>) and remove the worktree;
 # files a container made belong to podman's subordinate ids, so plain rm may need podman unshare.
@@ -1027,7 +1050,7 @@ deploy() {
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 listed=0
+open='' merged='' tick_tok='' live=() throttled=0 listed=0 open_limit=500
 # tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
@@ -1051,7 +1074,7 @@ tick_run() {
 	# pipefail: a failed gh must stop the tick, never read as "no PRs".
 	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
 			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
-		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit 500 --json number,headRefName,headRefOid,author,mergeable \
+		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit "$open_limit" --json number,headRefName,headRefOid,author,mergeable \
 			-q '.[] | "\(.number) \(.headRefName) \(.headRefOid) \(.author.is_bot) \(.mergeable)"' >"$state/open-prs.tsv" ||
 		! cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" ||
 		! open=$(ids <"$state/open-prs.txt") ||
@@ -1076,6 +1099,7 @@ tick_run() {
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	followup_done "$saw"
+	pr_gone "$saw"
 	cleanup_merged
 	local cap=${SCHED_MAX:-0} usage
 	# The throttle: usage.py reads the plan's windows from every repository's sessions (one account,
