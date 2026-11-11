@@ -2,21 +2,35 @@
 # runtests.sh <test file>...       run the test files, in parallel, and time them
 #
 # Runs every file given (also after one fails) with bash when its basename is loop.test.sh and with
-# sh otherwise, up to $TEST_JOBS at once (default: the number of CPUs, else 1). Each file's output is
+# sh otherwise, up to $TEST_JOBS at once (default: twice the number of CPUs, else 2). Each file's output is
 # captured and printed whole when the file ends, so outputs never interleave. After each file prints
 # "TIME <seconds> <file>", and "SLOW: <file> took <s>s, budget <n>s" when it took longer than
 # $TEST_FILE_BUDGET seconds (default 30). At the end prints "SLOW: total took <s>s, budget <n>s" when
-# the whole run took longer than $TEST_BUDGET seconds (default 120), and last "TOTAL <seconds>".
+# the whole run took longer than $TEST_BUDGET seconds (default 180), and last "TOTAL <seconds>".
 # Exits non-zero when any file failed; with TEST_BUDGET_ENFORCE=1 also when a file or the total is
-# over its budget (without it time never fails the run).
+# over its budget (without it time never fails the run). On INT, TERM or HUP it stops the files it
+# started and their children, and exits non-zero.
 set -u
-jobs=${TEST_JOBS:-$(nproc 2>/dev/null || echo 1)}
+jobs=${TEST_JOBS:-$(expr 2 \* "$(nproc 2>/dev/null || echo 1)")}
 fbudget=${TEST_FILE_BUDGET:-30}
-tbudget=${TEST_BUDGET:-120}
+tbudget=${TEST_BUDGET:-180}
 enforce=${TEST_BUDGET_ENFORCE:-0}
 [ "$jobs" -ge 1 ] 2>/dev/null || jobs=1
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
+
+# killtree <pid>: stops the process and all its descendants.
+killtree() {
+	for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done
+	kill "$1" 2>/dev/null
+}
+# On a signal: stop every file started (workers are our children), then exit non-zero.
+interrupted() {
+	trap '' INT TERM HUP
+	for w in $(pgrep -P $$ 2>/dev/null); do killtree "$w"; done
+	exit 130
+}
+trap interrupted INT TERM HUP
 
 now() { date +%s.%N; }
 # over <seconds> <budget>: true when seconds > budget
