@@ -162,4 +162,32 @@ for w in 'merge' 'renumber' 'checker\|check-regime' 'push' 'comment'; do
 done
 
 
+# ---------- G02-AC-5: the update procedure (section 4) has a resolution review before its push ----------
+g02_d="$tmp/G02"; mkdir -p "$g02_d"
+awk '/^## 4\./ { on = 1; next } /^## / && on { exit } on { print }' "$sk" >"$g02_d/sec4.txt"
+g02_line() { awk -v re="$1" 'tolower($0) ~ re { print NR; exit }' "$g02_d/sec4.txt"; }
+g02_win() { # g02_win <n> <ere>...: a window of n lines matches every ERE
+	n=$1; shift; pats=$(printf '%s\n' "$@")
+	awk -v n="$n" -v pats="$pats" '
+		BEGIN { k = split(pats, P, "\n") }
+		{ L[NR] = tolower($0) }
+		END { for (i = 1; i <= NR; i++) { w = ""; for (j = i; j < i + n && j <= NR; j++) w = w " " L[j]
+			good = 1; for (p = 1; p <= k; p++) if (w !~ P[p]) { good = 0; break }
+			if (good) exit 0 }
+			exit 1 }' "$g02_d/sec4.txt"
+}
+g02_push=$(awk 'tolower($0) ~ /^[0-9]+\. *push/ { print NR; exit }' "$g02_d/sec4.txt")
+g02_rv=$(g02_line 'new reviewer|fresh reviewer')
+g02_hd=$(g02_line 'resolution review \(')
+if [ -n "$g02_push" ]; then ok "G02-AC-5: section 4 has a push step"; else bad "G02-AC-5: section 4 has no numbered push step"; fi
+if [ -n "$g02_rv" ] && [ -n "$g02_push" ] && [ "$g02_rv" -lt "$g02_push" ]; then ok "G02-AC-5: a new reviewer is named before the push step"; else bad "G02-AC-5: no new reviewer named before the push step (${g02_rv:-none})"; fi
+if g02_win 4 'merge commit' 'both parents'; then ok "G02-AC-5: the reviewer gets the merge commit and its diffs against both parents"; else bad "G02-AC-5: no merge commit with diffs against both parents"; fi
+if [ -n "$g02_hd" ] && [ -n "$g02_push" ] && [ "$g02_hd" -lt "$g02_push" ]; then ok "G02-AC-5: the 'Resolution review (' heading is defined before the push step"; else bad "G02-AC-5: no 'Resolution review (' heading before the push step (${g02_hd:-none})"; fi
+if g02_win 4 'resolution review \(' 'comment' 'never an approval|not an approval|never approv|not approv'; then ok "G02-AC-5: the verdict is a comment, never an approval"; else bad "G02-AC-5: the verdict is not a comment, never an approval"; fi
+if g02_win 5 'intent' 'both sides'; then ok "G02-AC-5: checks both sides' intent"; else bad "G02-AC-5: does not check both sides' intent"; fi
+if g02_win 6 'test block' 'different nodes|other nodes|another node' 'names|state'; then ok "G02-AC-5: checks that test blocks of different nodes share no names or state"; else bad "G02-AC-5: no check on test blocks sharing names or state"; fi
+if g02_win 6 'frozen' 'no .*(changed|removed|renamed)|not (been )?(changed|removed|renamed)|unchanged'; then ok "G02-AC-5: checks that no frozen test line changed"; else bad "G02-AC-5: no check that no frozen test line changed"; fi
+if g02_win 5 'second' 'reject|request_changes' 'push(es)? nothing|nothing (is )?pushed' 'comment'; then ok "G02-AC-5: a second rejection pushes nothing and comments on the PR"; else bad "G02-AC-5: no rule that a second rejection pushes nothing and comments on the PR"; fi
+if g02_win 4 'push' 'only after|until|before|approv' 'review'; then ok "G02-AC-5: nothing is pushed before the review approves"; else bad "G02-AC-5: no rule that nothing is pushed before the review approves"; fi
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
