@@ -37,6 +37,7 @@
 #                            visibility (public, private or unknown: the repository's, asked at start and again while unknown),
 #                            site.log (stderr of the status-site publish step);
 #                            answered/ keeps released questions and spec PRs;
+#                            node/<ID>/detached names the branch the loop detached its idle worktree from for an update (start_node puts it back);
 #                            issue/<N>/ (a triage) and pr/<N>/ (an update of a spec PR or a node PR: also from, done, and node, the
 #                            node ID, for a node PR) hold the same files
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
@@ -321,10 +322,12 @@ triage_ended() {
 
 # update_ended <dir> <saw> <rc>: an update session (of a spec PR, or of a bot's node PR: pr/<N>/node) is
 # gone. rc 0: its worktree goes and the main and PR-head commits it started from are kept (done); the PR
-# is not started again until one moves. A node-PR update that left QUESTION.md is one event and waits for
-# ANSWER.md (next_update); its worktree stays.
+# is not started again until one moves (a commit it did not push is dropped: the branch goes back to origin). A
+# node-PR update that left QUESTION.md is one event and waits for ANSWER.md (next_update); its worktree stays.
+# On every end without rc 0 the worktree keeps its branch: the next start resets it to origin/<branch>
+# (start_update), and a node's session takes the branch without the update's unpushed commits (free_branch).
 update_ended() {
-	local d=$1 saw=$2 rc=$3 n
+	local d=$1 saw=$2 rc=$3 n ub dropped=0 why=''
 	n=$(basename "$d")
 	if [ -e "$d/node" ] && [ -e "$d/QUESTION.md" ]; then
 		say "$saw; update of PR #$n ended (rc $rc) with QUESTION.md"
@@ -333,9 +336,19 @@ update_ended() {
 		say "$saw; update of PR #$n ended (rc $rc) with its background work cut off; start not counted"
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
-		git -C "$clone" worktree remove --force "$wtroot/pr-$n" 2>/dev/null
+		# a commit it made and did not push is its own: its worktree lets go of the branch, which goes back to
+		# origin (drop_update_commits), else it would hold the next update and be handed to the node's session.
+		# If that fails the worktree keeps the branch: the next update, or the node's session, drops them.
+		ub=$([ -d "$wtroot/pr-$n" ] && git -C "$wtroot/pr-$n" symbolic-ref -q --short HEAD 2>/dev/null)
+		if [ -n "$ub" ] && git -C "$wtroot/pr-$n" checkout -q --detach 2>/dev/null && ! drop_update_commits "$ub"; then
+			git -C "$wtroot/pr-$n" checkout -q "$ub" 2>/dev/null
+			why="; dropping its unpushed commits on $ub failed (fetch or reset), its worktree keeps them"
+		else
+			[ "$dropped" = 0 ] || why="; its unpushed commits on $ub are dropped"
+			git -C "$clone" worktree remove --force "$wtroot/pr-$n" 2>/dev/null
+		fi
 		[ -e "$d/from" ] && mv "$d/from" "$d/done"
-		say "$saw; update of PR #$n ended (rc 0); not started again until main or the PR's head moves"
+		say "$saw; update of PR #$n ended (rc 0)$why; not started again until main or the PR's head moves"
 	elif limit_exit "$d"; then
 		not_counted "$d"
 		say "$saw; update of PR #$n stopped by the usage limit (rc $rc); start not counted"
@@ -504,8 +517,11 @@ start_triage() {
 # <branch> checked out, so <worktree> can take it (git allows a branch in one worktree only). An idle one holding
 # it is detached where it is (its files and uncommitted work stay); one with a running session makes this fail
 # with a note. A worktree elsewhere or of another name is left alone: the checkout then fails as before.
+# A node worktree it detaches gets the marker node/<ID>/detached (the branch), so start_node puts it back on the
+# branch; an update's worktree (pr-<N>) it detaches gives the branch back without that update's own unpushed
+# commits (drop_update_commits).
 free_branch() {
-	local br=$1 keep=$2 saw=$3 line p='' b base k d
+	local br=$1 keep=$2 saw=$3 line p='' base k d dropped
 	while read -r line; do
 		case $line in
 		"worktree "*) p=${line#worktree } ;;
@@ -518,36 +534,67 @@ free_branch() {
 			if [ -e "$d/session.pid" ] && alive "$(cat "$d/session.pid" 2>/dev/null)" "$k"; then
 				note "$saw; $br is checked out in $p, where a session runs"; return 1
 			fi
+			case $base in pr-*|issue-*) ;; *) echo "$br" >"$d/detached" || { note "$saw; cannot write $d/detached; $p keeps $br"; return 1; } ;; esac
 			git -C "$p" checkout -q --detach || { note "$saw; detaching $p from $br failed"; return 1; }
-			freed_branch=1 ;;
+			case $base in pr-*)
+				# on failure the update's worktree takes the branch again, so a later tick finds it there and retries
+				if ! drop_update_commits "$br"; then
+					git -C "$p" checkout -q "$br" 2>/dev/null; note "$saw; dropping the unpushed commits the update in $p left on $br failed (fetch or reset); not taken"; return 1
+				fi
+				[ "$dropped" = 0 ] || say "$saw; dropped the unpushed commits the update in $p left on $br: it is back at origin/$br" ;;
+			esac ;;
 		esac
 	done < <(git -C "$clone" worktree list --porcelain 2>/dev/null)
 	return 0
 }
-freed_branch=0
 
-# branch_behind_origin <branch>: refs/heads/<branch> and the HEAD of every worktree holding it are all ancestors of
-# origin/<branch> (nothing local would be lost by resetting the branch to origin). Fails with no output otherwise.
+# drop_update_commits <branch>: refs/heads/<branch>, checked out nowhere, was last held by an update's worktree
+# (pr-<N>), which took it at origin/<branch>: any commits of it origin/<branch> lacks are that update's own
+# unpushed work (a merge committed before its tests, then a limit exit, a crash, a question or a rejection), never
+# a node's. They are dropped: the branch goes back to origin/<branch>, so no node session continues on an
+# unreviewed merge and the next update starts from the PR's head. origin/<branch> is fetched again first (the
+# update may have pushed after this tick's fetch). Sets dropped=1 when it moved the branch; fails, moving
+# nothing, when that fetch or the reset fails.
+drop_update_commits() {
+	dropped=0
+	git -C "$clone" rev-parse -q --verify "refs/heads/$1" >/dev/null &&
+		git -C "$clone" rev-parse -q --verify "refs/remotes/origin/$1" >/dev/null || return 0
+	git -C "$clone" merge-base --is-ancestor "refs/heads/$1" "origin/$1" && return 0
+	git -C "$clone" fetch -q origin "+refs/heads/$1:refs/remotes/origin/$1" 2>/dev/null || return 1
+	git -C "$clone" merge-base --is-ancestor "refs/heads/$1" "origin/$1" && return 0
+	git -C "$clone" branch -q -f "$1" "origin/$1" 2>/dev/null || return 1
+	dropped=1
+}
+
+# branch_behind_origin <branch>: nothing local of <branch> would be lost by resetting it to origin/<branch>:
+# refs/heads/<branch> and the HEAD of the worktree holding it are ancestors of origin/<branch>, or the worktree
+# holding it is an update's (pr-<N> under $wtroot), which took it at origin/<branch> after this same check: its
+# commits origin lacks are that update's own (G01's reset of pr-<N> drops them). A node's unpushed commits (its
+# worktree holds the branch, or nothing does) make it fail, with no output.
 branch_behind_origin() {
-	local br=$1 line p='' h
-	if git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
-		! git -C "$clone" merge-base --is-ancestor "refs/heads/$br" "origin/$br"; then return 1; fi
+	local br=$1 line p='' holder='' h
 	while read -r line; do
 		case $line in
 		"worktree "*) p=${line#worktree } ;;
-		"branch refs/heads/$br")
-			h=$(git -C "$p" rev-parse -q --verify HEAD 2>/dev/null) || continue
-			git -C "$clone" merge-base --is-ancestor "$h" "origin/$br" || return 1 ;;
+		"branch refs/heads/$br") holder=$p ;;
 		esac
 	done < <(git -C "$clone" worktree list --porcelain 2>/dev/null)
+	if [ -n "$holder" ] && [ "$(dirname "$holder")" = "$wtroot" ] && [[ $(basename "$holder") == pr-* ]]; then return 0; fi
+	if git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
+		! git -C "$clone" merge-base --is-ancestor "refs/heads/$br" "origin/$br"; then return 1; fi
+	if [ -n "$holder" ]; then
+		h=$(git -C "$holder" rev-parse -q --verify HEAD 2>/dev/null) || return 0
+		git -C "$clone" merge-base --is-ancestor "$h" "origin/$br" || return 1
+	fi
 	return 0
 }
 
-# on_branch <worktree> <branch>: the worktree is on <branch>, or detached at an ancestor of it (an update took the branch).
+# on_branch <worktree> <branch> <dir>: the worktree is on <branch>, or free_branch detached it from <branch>
+# (<dir>/detached names it) at an ancestor of it (an update took the branch).
 on_branch() {
 	[ "$(git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$2" ] && return 0
 	git -C "$1" symbolic-ref -q HEAD >/dev/null && return 1
-	git -C "$1" merge-base --is-ancestor HEAD "refs/heads/$2" 2>/dev/null
+	[ "$(cat "$3/detached" 2>/dev/null)" = "$2" ] && git -C "$1" merge-base --is-ancestor HEAD "refs/heads/$2" 2>/dev/null
 }
 
 # start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N)
@@ -564,7 +611,6 @@ start_update() {
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; PR #$n: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; PR #$n needs an update but has used 2 starts; nothing started"; return 1; }
 	branch_behind_origin "$br" || { note "$saw; PR #$n: $br holds commits origin/$br lacks; not started"; return 1; }
-	freed_branch=0
 	free_branch "$br" "$wt" "$saw; PR #$n" '*' || return 1
 	if [ -d "$wt" ]; then
 		# left by an earlier end without rc 0: bring it to the PR's current head, not mid-merge
@@ -823,14 +869,15 @@ start_node() {
 	if [ "$kind" = followup ]; then
 		prompt=unattended-followup.md
 		if br=$(fu_branch "$d"); then
-			if [ -d "$wt" ] && ! on_branch "$wt" "$br"; then
+			if [ -d "$wt" ] && ! on_branch "$wt" "$br" "$d"; then
 				note "$saw; $id: a worktree not on its follow-up branch is in the way; not started"; return 1
 			fi
 		else
 			br=$(followup_branch "$id"); echo "$br" >"$d/FOLLOWUP"
 		fi
 	fi
-	# a leftover update worktree (pr-<N>) may still have the branch: the node's session takes it back
+	# a leftover update worktree (pr-<N>) may still have the branch: the node's session takes it back, without
+	# the update's unpushed commits
 	free_branch "$br" "$wt" "$saw; $id" 'pr-*' || return 1
 	if [ ! -d "$wt" ]; then
 		git -C "$clone" worktree add -q -b "$br" "$wt" origin/main 2>/dev/null ||
@@ -839,12 +886,15 @@ start_node() {
 	local ncommits reason='' resume=0 rsed=() plist='' pn pb
 	[ -r "$here/$prompt" ] || { note "$saw; $id: no $prompt; not started"; return 1; }
 	save_leftover "$id" "$wt" "$d" "$saw" || return 1
-	# detached (its branch was taken by an update): back onto the branch, now at the update's result; the tree is clean
-	if ! git -C "$wt" symbolic-ref -q HEAD >/dev/null && git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null; then
+	# detached by free_branch (an update took its branch; node/<ID>/detached names it): back onto the branch, now at
+	# the update's pushed result; the tree is clean. A worktree detached otherwise is left as it is.
+	if [ "$(cat "$d/detached" 2>/dev/null)" = "$br" ] && ! git -C "$wt" symbolic-ref -q HEAD >/dev/null &&
+		git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null; then
 		git -C "$wt" merge-base --is-ancestor HEAD "refs/heads/$br" ||
 			{ note "$saw; $id: its worktree is detached at commits $br lacks; not started"; return 1; }
 		git -C "$wt" checkout -q "$br" || { note "$saw; $id: checking out $br failed; not started"; return 1; }
 	fi
+	rm -f "$d/detached"
 	ncommits=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 	if [ "${ncommits:-0}" -gt 0 ] || [ -d "$wt/out/node/$id" ]; then
 		resume=1
@@ -1050,7 +1100,8 @@ tick_run() {
 		local un ub um uh ui
 		while read -r un ub um uh ui; do
 			[ -n "$un" ] || continue
-			if [ -z "$ui" ]; then [ -z "$triaging" ] || continue; else full && continue; fi
+			[ -n "$ui" ] || [ -z "$triaging" ] || continue
+			full && continue   # each start counts toward SCHED_MAX, whatever the kind
 			# a failed start does not keep the later PRs from their turn
 			if [ "$ramp" = 1 ]; then want "PR#$un" update - "$state/pr/$un" "update|$un|$ub|$um|$uh|$ui"; continue; fi
 			start_update "$un" "$ub" "$um" "$uh" "$saw" "$ui" && { live+=("$pid $un"); [ -n "$ui" ] || triaging=$un; }
