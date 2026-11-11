@@ -23,21 +23,8 @@
 #    mtime, epoch), "alive" a bool, "pid" an int, "kind" is "node", "triage" or "update".
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-fix=$src/testdata/api
-schemas=$src/api-schema/v1
 tmp=$(mktemp -d)
-fails=0
-pass() { echo "PASS: $1"; }
-fail() { echo "FAIL: $1"; fails=$((fails + 1)); }
-pids=''
-cleanup() {
-	for p in $pids $srv_pid; do kill -9 "$p" 2>/dev/null; done
-	for p in $pids $srv_pid; do wait "$p" 2>/dev/null; done
-	rm -rf "$tmp"
-}
-srv_pid=''
-trap cleanup EXIT
-trap 'exit 1' INT TERM
+. "$src/testdata/lib/api-common.sh"
 
 data=$tmp/data home=$tmp/home co=$tmp/co sock=$data/api.sock
 mkdir -p "$data" "$home" "$co" "$tmp/bin" "$tmp/procs"
@@ -55,18 +42,6 @@ git -C "$co" init -q 2>/dev/null
 git -C "$co" add -A >/dev/null 2>&1
 git -C "$co" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m fixture >/dev/null 2>&1
 
-# Live things are processes started now: sessions whose command line is what loop.sh's alive() matches,
-# and a process holding alpha's loop.lock. Ended sessions get the pid of a process that exited.
-cat >"$tmp/procs/run-session.sh" <<'EOS'
-#!/bin/sh
-while :; do sleep 1; done
-EOS
-live() { # live <state dir> <worktree> <prompt words...>: session.pid of a running session
-	d=$1 wt=$2; shift 2
-	sh "$tmp/procs/run-session.sh" "$wt" "$d" "$@" </dev/null >/dev/null 2>&1 &
-	pids="$pids $!"; echo $! >"$d/session.pid"
-}
-ended() { sh -c 'exit 0' & p=$!; wait "$p"; echo "$p" >"$1/session.pid"; }
 a=$data/state/alpha
 live "$a/node/N03" /w/alpha/N03 /noodlebot:node N03
 live "$a/node/N04" /w/alpha/N04 /noodlebot:node N04
@@ -92,8 +67,12 @@ PATH=$tmp/bin:$PATH; export PATH
 # snapshot: every file and directory under the runtime root and HOME with size, mtime and checksum,
 # except the socket and the locks. Taken after the fixture is set up; compared at the end (P01-AC-2).
 snap() {
-	find "$data" "$home" ! -type s ! -name api.sock ! -name api.lock ! -name loop.lock \
-		-exec sh -c 'for f; do if [ -d "$f" ]; then echo "d $f"; else echo "f $f $(stat -c "%s %Y" "$f") $(cksum <"$f")"; fi; done' sh {} + | sort
+	# one find lists the directories and the size and mtime of the other things, one more checksums the files: the same facts as
+	# a stat and a cksum per file, without a process for each (-L: through symlinks, as stat and cksum went).
+	{
+		find -L "$data" "$home" ! -type s ! -name api.sock ! -name api.lock ! -name loop.lock \( -type d -printf 'd %p\n' -o -printf 'f %p %s %T@\n' \)
+		find -L "$data" "$home" -type f ! -name api.sock ! -name api.lock ! -name loop.lock -exec cksum {} +
+	} | sort
 }
 snap >"$tmp/snap.before"
 # set_usage open|holding: swap usage.json (the test, not the server, changes it) and re-take the baseline.
@@ -117,51 +96,6 @@ EOP
 	req() { code=$(python3 -I "$tmp/client.py" "$sock" "$1" "$2" "$tmp/resp" 2>/dev/null); : >"$tmp/hdr"; }
 fi
 
-# validate.py <schema> <instance>: a small JSON-schema validator (type, properties, required, items, enum,
-# additionalProperties, const). Prints the first error and exits 1; "version" must be 1.
-cat >"$tmp/validate.py" <<'EOP'
-import json, sys
-def check(s, v, p):
-    if s is True or s is None: return
-    if s is False: raise ValueError("%s: nothing is allowed" % p)
-    if "type" in s:
-        ts = s["type"] if isinstance(s["type"], list) else [s["type"]]
-        def ok(t):
-            if t == "null": return v is None
-            if t == "boolean": return isinstance(v, bool)
-            if t == "integer": return isinstance(v, int) and not isinstance(v, bool)
-            if t == "number": return isinstance(v, (int, float)) and not isinstance(v, bool)
-            if t == "string": return isinstance(v, str)
-            if t == "array": return isinstance(v, list)
-            if t == "object": return isinstance(v, dict)
-            raise ValueError("unknown type %r" % t)
-        if not any(ok(t) for t in ts): raise ValueError("%s: %r is not of type %s" % (p, v, "/".join(ts)))
-    if "enum" in s and v not in s["enum"]: raise ValueError("%s: %r not in enum" % (p, v))
-    if "const" in s and v != s["const"]: raise ValueError("%s: %r is not %r" % (p, v, s["const"]))
-    if isinstance(v, dict):
-        for k in s.get("required", []):
-            if k not in v: raise ValueError("%s: missing %s" % (p, k))
-        props = s.get("properties", {})
-        for k, x in v.items():
-            if k in props: check(props[k], x, p + "." + k)
-            elif s.get("additionalProperties") is False: raise ValueError("%s: unexpected %s" % (p, k))
-            elif isinstance(s.get("additionalProperties"), dict): check(s["additionalProperties"], x, p + "." + k)
-    if isinstance(v, list) and "items" in s:
-        for i, x in enumerate(v): check(s["items"], x, "%s[%d]" % (p, i))
-schema = json.load(open(sys.argv[1])); inst = json.load(open(sys.argv[2]))
-try:
-    if not isinstance(inst, dict) or inst.get("version") != 1 or isinstance(inst.get("version"), bool): raise ValueError('"version": 1 is missing')
-    check(schema, inst, "$")
-except ValueError as e:
-    print(e); sys.exit(1)
-EOP
-
-# jx <expr>: evaluate a Python expression over the last body as d; prints the result, "ERR" if not JSON.
-jx() { python3 -I -c 'import json,sys
-try: d = json.load(open(sys.argv[1]))
-except Exception: print("ERR"); sys.exit(0)
-try: print(eval(sys.argv[2]))
-except Exception as e: print("ERR", e)' "$tmp/resp" "$1"; }
 
 # get <id> <path> <resource>: GET path; passes when 200, JSON, "version": 1 and valid against
 # scheduler/api-schema/v1/<resource>.json. The body stays in $tmp/resp for further checks.
@@ -293,9 +227,6 @@ get P01-AC-4 /v1/repos/acme/alpha/nodes nodes
 cp "$tmp/resp" "$tmp/nodes.json"
 if [ "$(jx "[n['id'] for n in d['nodes']]")" = "['N01', 'N02', 'N03', 'N04', 'N05', 'N06', 'N07', 'N08', 'N09', 'N10', 'N11']" ]; then pass "P01-AC-4: /nodes gives each node of the graph once, in graph order"; else fail "P01-AC-4: /nodes ids: $(jx "[n.get('id') for n in d['nodes']]")"; fi
 if [ "$(jx "[(n['name'], n['deps'], n['track']) for n in d['nodes'] if n['id'] in ('N10', 'N02')]")" = "[('pr-open-one', ['N01'], 'now'), ('waiting-one', ['N09', 'N03'], 'later')]" ]; then pass "P01-AC-4: nodes give name, deps and track"; else fail "P01-AC-4: name, deps, track: $(jx "[(n.get('name'), n.get('deps'), n.get('track')) for n in d['nodes']]")"; fi
-nodefield() { # nodefield <ID> <python expr over n, the node>: true when the node's entry in the list satisfies it
-	jx "(lambda n: $2)([n for n in d['nodes'] if n['id'] == '$1'][0])"
-}
 node_is() { # node_is <ID> <python expr over n> <what>: checks the list entry and GET .../nodes/<ID>
 	cp "$tmp/nodes.json" "$tmp/resp"
 	if [ "$(nodefield "$1" "$2")" = True ]; then pass "P01-AC-4: /nodes: $1 $3"; else fail "P01-AC-4: /nodes: $1 $3; got $(jx "[n for n in d['nodes'] if n.get('id') == '$1']")"; fi
@@ -762,12 +693,24 @@ for id in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11; do req GET /v1/repos/acme
 for id in B01 B02; do req GET /v1/repos/acme/beta/nodes/$id; done
 req GET /v1/nothing; req POST /v1/repos
 # the event stream stays open: read it for 2 seconds from the first line of each status log (a later slice's resource)
+# (the three reads, the two ?since=0 reads of the next block and the one-second look at the FIFOs run at the same time: each keeps its own window)
+curl_pids=''
 if command -v curl >/dev/null 2>&1; then
+	cq=0
 	for q in 'since=0' 'repo=acme/alpha&since=0' 'repo=acme/beta&since=0'; do
-		curl -s --max-time 2 --unix-socket "$sock" "http://localhost/v1/events?$q" >>"$tmp/allresp" 2>/dev/null
+		cq=$((cq + 1)); rm -f "$tmp/curl.$cq"
+		curl -s --max-time 2 --unix-socket "$sock" "http://localhost/v1/events?$q" >"$tmp/curl.$cq" 2>/dev/null &
+		curl_pids="$curl_pids $!"
 	done
 fi
+rm -f "$tmp/since0" "$tmp/since0.hdr" "$tmp/since0b" "$tmp/since0b.hdr"
+python3 -I "$tmp/stream.py" "$sock" "/v1/events?since=0" "$tmp/since0" 2 </dev/null >/dev/null 2>&1 &
+curl_pids="$curl_pids $!"
+python3 -I "$tmp/stream.py" "$sock" "/v1/events?repo=acme/beta&since=0" "$tmp/since0b" 2 </dev/null >/dev/null 2>&1 &
+curl_pids="$curl_pids $!"
 sleep 1
+for p in $curl_pids; do wait "$p" 2>/dev/null; done
+cat "$tmp"/curl.[1-3] 2>/dev/null >>"$tmp/allresp"
 for f in credentials github-token; do
 	if [ ! -e "$tmp/fifo-read-$f" ]; then pass "P01-AC-9: the server never opened ~/.config/noodlebot/$f"; else fail "P01-AC-9: the server opened ~/.config/noodlebot/$f"; fi
 done
@@ -783,9 +726,6 @@ done <"$fix/tokens.txt"
 req GET /v1/repos/acme/alpha/sessions
 if [ "$(jx "any('[redacted]' in (e.get('text') or '') for x in d['sessions'] for e in x['events'])")" = True ]; then pass "P01-AC-9: [redacted] replaces the token where a session log held one"; else fail "P01-AC-9: no [redacted] in the sessions response"; fi
 # ---- P01-AC-9/7: ?since=0 streams from the first line of every status log, redacted ----
-rm -f "$tmp/since0" "$tmp/since0.hdr" "$tmp/since0b" "$tmp/since0b.hdr"
-python3 -I "$tmp/stream.py" "$sock" "/v1/events?since=0" "$tmp/since0" 2 </dev/null >/dev/null 2>&1
-python3 -I "$tmp/stream.py" "$sock" "/v1/events?repo=acme/beta&since=0" "$tmp/since0b" 2 </dev/null >/dev/null 2>&1
 cat "$tmp/since0" "$tmp/since0b" >>"$tmp/allresp"
 if [ "$(evx "$tmp/since0" "any(x['repo'] == 'acme/alpha' and x['line'] == '$(sed -n 1p "$fix/data/state/alpha/status.log")' for x in e)")" = True ]; then pass "P01-AC-7: ?since=0 streams from the first line of a status log (alpha's loop-started line arrives)"; else fail "P01-AC-7: ?since=0 did not stream alpha's first status line (head $(sed -n 1p "$tmp/since0.hdr" 2>/dev/null), $(evn "$tmp/since0") events)"; fi
 if [ "$(evx "$tmp/since0b" "len(e) > 0 and all(x['repo'] == 'acme/beta' for x in e) and any(x['line'] == '$(sed -n 1p "$fix/data/state/beta/status.log")' for x in e)")" = True ]; then pass "P01-AC-7: ?repo=acme/beta&since=0 streams beta's lines from the first, and only beta's"; else fail "P01-AC-7: ?repo=&since=0 events: $(evn "$tmp/since0b") (head $(sed -n 1p "$tmp/since0b.hdr" 2>/dev/null))"; fi
@@ -797,122 +737,7 @@ done <"$fix/tokens.txt"
 # ---- P01-AC-2: the read-only resources of S4 are requested after the last baseline re-take, so "changes nothing" covers them ----
 req GET /v1/throttle; req GET /v1/deploy; req GET /v1/repos/acme/alpha/prs; req GET /v1/repos/acme/alpha/issues
 if [ "$code" = 200 ]; then pass "P01-AC-2: throttle, deploy, prs and issues were requested after the last baseline (the snapshot below covers them)"; else fail "P01-AC-2: GET /v1/repos/acme/alpha/issues answered $code"; fi
-# ================= P01 fresh review 1: a second root (its own data, HOME and checkout) =================
-# Cases for the review findings; a separate root so the fixture, its node list and the AC-2 snapshot stay as they are.
-#  A  P01-AC-1: api.py started on a checkout that is no git repository (HEAD unreadable); later the checkout becomes a
-#     repository with a commit: the server serves from it within the check interval and its watcher does not crash.
-#  B  P01-AC-4: idle-limit as S06's idle_tail reads it (scheduler/loop.sh).
-#  C  P01-AC-9 / AC-8: a token in a tool_use name or a result subtype never shows; a tool_use without a name and a
-#     string or float resetsAt still give a /sessions response valid against its schema.
-#  D  P01-AC-4: a question without node/<ID>/issue links to the status issue of report.json.
-r2=$tmp/r2; r2data=$r2/data; r2home=$r2/home; r2co=$r2/co; r2sock=$r2data/api.sock; r2pid=''
-mkdir -p "$r2data" "$r2home" "$r2co/scheduler"
-cp -R "$fix/data/." "$r2data/"; cp -R "$fix/home/." "$r2home/"
-for f in "$src"/*; do case $f in "$src/testdata") ;; *) cp -R "$f" "$r2co/scheduler/" ;; esac; done
-cat >"$tmp/c2.py" <<'EOP'
-import http.client, socket, sys
-class C(http.client.HTTPConnection):
-    def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX); self.sock.settimeout(10); self.sock.connect(sys.argv[1])
-try:
-    c = C("localhost"); c.request("GET", sys.argv[2]); r = c.getresponse(); b = r.read()
-    open(sys.argv[3], "wb").write(b); print(r.status)
-except Exception:
-    open(sys.argv[3], "wb").write(b""); print("000")
-EOP
-req2() { code=$(python3 -I "$tmp/c2.py" "$r2sock" "$1" "$tmp/resp" 2>/dev/null); [ -n "$code" ] || code=000; }
-r2a=$r2data/state/alpha
-rm -rf "$r2a/node" "$r2a/issue" "$r2a/pr"; mkdir -p "$r2a/node" "$r2a/issue" "$r2a/pr"
-{
-	echo "template: {headings: [Purpose, Tests, Changes, Gate, Risks]}"; echo "nodes:"
-	for id in L01 L02 L03 L05 L06 L07 L08 Q01; do echo "  - {id: $id, track: now, name: fr1-$id, deps: [], summary: \"fr1\"}"; done
-} >"$r2a/graph.yaml"
-sinit='{"type":"system","subtype":"init","timestamp":"2026-11-09T09:01:05Z","session_id":"sess-fr1"}'
-tooluse='{"type":"assistant","timestamp":"2026-11-09T09:30:00Z","message":{"content":[{"type":"tool_use","id":"u01","name":"Bash","input":{"command":"make test","description":"Run the tests"}}]}}'
-rl() { # rl <status> <resetsAt json or ->: a rate_limit_event line
-	if [ "$2" = - ]; then printf '{"type":"rate_limit_event","timestamp":"2026-11-09T10:40:00Z","rate_limit_info":{"status":"%s","rateLimitType":"five_hour"}}\n' "$1"
-	else printf '{"type":"rate_limit_event","timestamp":"2026-11-09T10:40:00Z","rate_limit_info":{"status":"%s","rateLimitType":"five_hour","resetsAt":%s}}\n' "$1" "$2"; fi
-}
-mk() { mkdir -p "$r2a/node/$1"; echo 1 >"$r2a/node/$1/starts"; }
-# B: live sessions
-for id in L01 L02 L03; do mk $id; done
-{ echo "$sinit"; echo "$tooluse"; rl allowed_warning 1794236400; } >"$r2a/node/L01/session.jsonl"
-{ echo "$sinit"; rl allowed 1794236400; echo "$tooluse"; rl rejected -; } >"$r2a/node/L02/session.jsonl"
-{ echo "$sinit"; rl rejected 1794236400; echo "$tooluse"
-  echo '{"type":"result","subtype":"success","timestamp":"2026-11-09T10:45:00Z","result":"You have hit your usage limit; it resets at 5pm","is_error":true}'; } >"$r2a/node/L03/session.jsonl"
-for id in L01 L02 L03; do live "$r2a/node/$id" /w/r2/$id /noodlebot:node $id; done
-# C: ended sessions with odd logs
-tok1=$(sed -n 2p "$fix/tokens.txt"); tok2=$(sed -n 6p "$fix/tokens.txt")
-for id in L05 L06 L07 L08; do mk $id; done
-{ echo "$sinit"
-  printf '{"type":"assistant","timestamp":"2026-11-09T09:30:00Z","message":{"content":[{"type":"tool_use","id":"u01","name":"%s","input":{"command":"x"}}]}}\n' "$tok1"
-  printf '{"type":"result","subtype":"%s","timestamp":"2026-11-09T09:40:00Z","result":"done"}\n' "$tok2"; } >"$r2a/node/L05/session.jsonl"
-{ echo "$sinit"
-  echo '{"type":"assistant","timestamp":"2026-11-09T09:30:00Z","message":{"content":[{"type":"tool_use","id":"u01","input":{"command":"x"}}]}}'; } >"$r2a/node/L06/session.jsonl"
-{ echo "$sinit"; echo '{"type":"assistant","timestamp":"2026-11-09T09:30:00Z","message":{"content":[{"type":"tool_use","id":"u01","input":{"command":"x"}}]}}'
-  rl rejected '"1794236400"'; } >"$r2a/node/L07/session.jsonl"
-{ echo "$sinit"; rl rejected 1794236400.5; } >"$r2a/node/L08/session.jsonl"
-for id in L05 L06 L07 L08; do ended "$r2a/node/$id"; done
-# D: a question with no node/<ID>/issue
-mk Q01; echo 'Which cache?' >"$r2a/node/Q01/QUESTION.md"
-
-# A: start on a checkout that is no git repository
-GIT_CEILING_DIRECTORIES=$r2; export GIT_CEILING_DIRECTORIES
-NOODLEBOT_DATA=$r2data HOME=$r2home python3 "$r2co/scheduler/api.py" >"$tmp/r2.out" 2>&1 &
-r2pid=$!; pids="$pids $r2pid"
-i=0; r2up=0
-while [ $i -lt 60 ] && kill -0 "$r2pid" 2>/dev/null; do
-	[ -S "$r2sock" ] && { req2 /v1/repos; [ "$code" = 200 ] && { r2up=1; break; }; }
-	sleep 0.1; i=$((i + 1))
-done
-if [ $r2up = 1 ]; then pass "P01-AC-1: api.py serves on a checkout that is no git repository (HEAD unreadable)"; else fail "P01-AC-1: api.py did not serve on a checkout without a git repository: $(head -c 200 "$tmp/r2.out")"; fi
-sleep 3   # more than one check interval with HEAD still unreadable
-mkdir -p "$r2co/scheduler/api-schema/v1"
-python3 -I -c 'import json,os,sys
-p = sys.argv[1]
-s = json.load(open(p)) if os.path.exists(p) else {"type": "object"}
-s["description"] = "moved from unreadable"
-json.dump(s, open(p, "w"), indent=1)' "$r2co/scheduler/api-schema/v1/repos.json"
-# a schema file is read per request: api.py's own 404 text gets a marker that only a re-exec can show
-sed -i 's/"not found: "/"not found [unreadable-head-marker]: "/' "$r2co/scheduler/api.py"
-git -C "$r2co" init -q 2>/dev/null
-git -C "$r2co" add -A >/dev/null 2>&1
-git -C "$r2co" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m first >/dev/null 2>&1
-moved3=0; i=0
-while [ $i -lt 100 ] && [ $r2up = 1 ]; do
-	req2 /v1/head-moved-probe
-	if [ "$code" = 404 ] && [ "$(jx "'unreadable-head-marker' in d.get('error', '')")" = True ]; then moved3=1; break; fi
-	sleep 0.2; i=$((i + 1))
-done
-if [ $moved3 = 1 ]; then pass "P01-AC-1: a server started with HEAD unreadable serves from the commit once HEAD is readable"; else fail "P01-AC-1: a server started with HEAD unreadable did not serve from the first commit of the checkout"; fi
-sleep 3   # past another check interval: a crashed watcher has printed its traceback by now
-if [ $r2up = 1 ] && ! grep -q 'Traceback' "$tmp/r2.out"; then pass "P01-AC-1: the HEAD watcher did not crash when HEAD was unreadable at start"; else fail "P01-AC-1: the server's output holds a Traceback: $(grep -m1 -A0 -E 'Error|Traceback' "$tmp/r2.out" | head -c 200)"; fi
-
-# B: idle-limit as S06 reads it
-req2 /v1/repos/acme/alpha/nodes; cp "$tmp/resp" "$tmp/r2nodes.json"
-r2node() { # r2node <ID> <expr over n>
-	cp "$tmp/r2nodes.json" "$tmp/resp"; nodefield "$1" "$2"
-}
-st() { r2node "$1" "n['state']"; }
-if [ "$(st L01)" = idle-limit ]; then pass "P01-AC-4: a live session whose log ends at an allowed_warning event with a numeric resetsAt is idle-limit (as S06 reads it)"; else fail "P01-AC-4: allowed_warning with resetsAt as the last line: state is $(st L01), not idle-limit"; fi
-if [ "$(st L02)" = running ]; then pass "P01-AC-4: a live session whose log ends at a rejected event without resetsAt is running, not idle-limit"; else fail "P01-AC-4: rejected without resetsAt as the last line: state is $(st L02), not running"; fi
-if [ "$(st L03)" = idle-limit ]; then pass "P01-AC-4: a live session whose log ends at a result naming the usage limit, after a rejected event with resetsAt, is idle-limit"; else fail "P01-AC-4: result naming the usage limit as the last line: state is $(st L03), not idle-limit"; fi
-# D
-if [ "$(r2node Q01 "n['state'] == 'question' and n['issue_url'] == 'https://github.com/acme/alpha/issues/41'")" = True ]; then pass "P01-AC-4: a question without node/<ID>/issue links to the status issue of report.json"; else fail "P01-AC-4: question without its own issue: $(jx "[n for n in d['nodes'] if n.get('id') == 'Q01']")"; fi
-
-# C: sessions
-req2 /v1/repos/acme/alpha/sessions; cp "$tmp/resp" "$tmp/r2sessions.json"
-if [ "$code" = 200 ] && [ -s "$tmp/r2sessions.json" ]; then
-	if ! grep -F -q -e "$tok1" -e "$tok2" "$tmp/r2sessions.json"; then pass "P01-AC-9: a token in a tool_use name or a result subtype is in no /sessions response"; else fail "P01-AC-9: a token from a tool_use name or a result subtype appears in /sessions"; fi
-	if python3 -I "$tmp/validate.py" "$schemas/sessions.json" "$tmp/r2sessions.json" >"$tmp/r2val" 2>&1; then pass "P01-AC-8: /sessions is valid against its schema with a nameless tool_use and a string or float resetsAt"; else fail "P01-AC-8: /sessions with a nameless tool_use or a string/float resetsAt is not valid against its schema: $(cat "$tmp/r2val")"; fi
-	cp "$tmp/r2sessions.json" "$tmp/resp"
-	if [ "$(jx "all('tool' not in e or isinstance(e['tool'], str) for x in d['sessions'] if x['subject'] == 'L06' for e in x['events'])")" = True ]; then pass "P01-AC-8: a tool_use without a name has no null tool"; else fail "P01-AC-8: a tool_use without a name gives a tool that is not a string"; fi
-	if [ "$(jx "all(x['limit'] is None or (isinstance(x['limit']['resets_at'], int) and not isinstance(x['limit']['resets_at'], bool)) or x['limit']['resets_at'] is None for x in d['sessions'] if x['subject'] in ('L07', 'L08'))")" = True ]; then pass "P01-AC-8: limit.resets_at is an integer or null whatever the log's resetsAt was"; else fail "P01-AC-8: limit.resets_at is neither integer nor null: $(jx "[x['limit'] for x in d['sessions'] if x['subject'] in ('L07', 'L08')]")"; fi
-else
-	fail "P01-AC-9: GET /sessions of the second root answered $code"; fail "P01-AC-8: GET /sessions of the second root answered $code"
-fi
-kill -9 "$r2pid" 2>/dev/null; wait "$r2pid" 2>/dev/null
-unset GIT_CEILING_DIRECTORIES
+# (the second root of the fresh review: api-root2.test.sh, run at the same time)
 
 # --- end of cases; the final checks follow ---
 snap >"$tmp/snap.after"

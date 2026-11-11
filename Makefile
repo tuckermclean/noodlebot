@@ -17,6 +17,7 @@ TESTS = \
 	scheduler/loop.test.sh \
 	scheduler/loops.test.sh \
 	scheduler/api.test.sh \
+	scheduler/api-root2.test.sh \
 	scheduler/move-runtime.test.sh \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
