@@ -9,7 +9,8 @@
 # the whole run took longer than $TEST_BUDGET seconds (default 180), and last "TOTAL <seconds>".
 # Exits non-zero when any file failed; with TEST_BUDGET_ENFORCE=1 also when a file or the total is
 # over its budget (without it time never fails the run). On INT, TERM or HUP it stops the files it
-# started and their children, and exits non-zero.
+# started and their children, and exits non-zero; a test file stopped that way may not run its EXIT trap,
+# so its scratch folder can stay behind.
 set -u
 jobs=${TEST_JOBS:-$(expr 2 \* "$(nproc 2>/dev/null || echo 1)")}
 fbudget=${TEST_FILE_BUDGET:-30}

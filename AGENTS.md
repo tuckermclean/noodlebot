@@ -36,7 +36,7 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
 - **Tests:** `make test` is both the quick gate and the whole suite. Tests are the `*.test.sh` files
   and `scheduler/testdata/` (the frozen paths). A red target has the form
   `sh scheduler/<name>.test.sh` (or `bash` for `loop.test.sh`). A new script gets its own
-  `*.test.sh`, added to the `Makefile`'s `test` target. A new case waits for the condition it checks (no
+  `*.test.sh`. A new case waits for the condition it checks (no
   fixed sleep where a condition can be observed), uses the shared helpers in `scheduler/testdata/lib/`, and
   keeps its file under `TEST_FILE_BUDGET` (30 s); a new test file is added to the Makefile's `TESTS` list.
 - **Porting rules:** none; noodlebot ports nothing.
