@@ -500,6 +500,30 @@ start_triage() {
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
+# free_branch <branch> <worktree> <saw> <glob>: no other worktree of the loop (under $wtroot, named like <glob>) has
+# <branch> checked out, so <worktree> can take it (git allows a branch in one worktree only). An idle one holding
+# it is detached where it is (its files and uncommitted work stay); one with a running session makes this fail
+# with a note. A worktree elsewhere or of another name is left alone: the checkout then fails as before.
+free_branch() {
+	local br=$1 keep=$2 saw=$3 line p='' b base k d
+	while read -r line; do
+		case $line in
+		"worktree "*) p=${line#worktree } ;;
+		"branch refs/heads/$br")
+			[ "$p" = "$keep" ] || [ "$(dirname "$p")" != "$wtroot" ] && continue
+			base=$(basename "$p"); case $base in $4) ;; *) continue ;; esac; k=$base d=$state/node/$base
+			case $base in pr-*) k=${base#pr-} d=$state/pr/$k ;; issue-*) k=${base#issue-} d=$state/issue/$k ;; esac
+			if [ -e "$d/session.pid" ] && alive "$(cat "$d/session.pid" 2>/dev/null)" "$k"; then
+				note "$saw; $br is checked out in $p, where a session runs"; return 1
+			fi
+			git -C "$p" checkout -q --detach || { note "$saw; detaching $p from $br failed"; return 1; }
+			freed_branch=1 ;;
+		esac
+	done < <(git -C "$clone" worktree list --porcelain 2>/dev/null)
+	return 0
+}
+freed_branch=0
+
 # start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N)
 # in a worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
 # commits it starts from. With a node ID, N is the bot's node PR of that node (/noodlebot:node --update N,
@@ -513,6 +537,12 @@ start_update() {
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing PR #$n's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; PR #$n: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; PR #$n needs an update but has used 2 starts; nothing started"; return 1; }
+	freed_branch=0
+	free_branch "$br" "$wt" "$saw; PR #$n" '*' || return 1
+	if [ "$freed_branch" = 1 ] && git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
+		! git -C "$clone" merge-base --is-ancestor "refs/heads/$br" "origin/$br"; then
+		note "$saw; PR #$n: $br holds commits origin/$br lacks; not started"; return 1
+	fi
 	if [ -d "$wt" ]; then
 		# left by an earlier end without rc 0: bring it to the PR's current head, not mid-merge
 		{ git -C "$wt" merge --abort; git -C "$wt" checkout -q -f -B "$br" "origin/$br" &&
@@ -777,6 +807,8 @@ start_node() {
 			br=$(followup_branch "$id"); echo "$br" >"$d/FOLLOWUP"
 		fi
 	fi
+	# a leftover update worktree (pr-<N>) may still have the branch: the node's session takes it back
+	free_branch "$br" "$wt" "$saw; $id" 'pr-*' || return 1
 	if [ ! -d "$wt" ]; then
 		git -C "$clone" worktree add -q -b "$br" "$wt" origin/main 2>/dev/null ||
 			git -C "$clone" worktree add -q "$wt" "$br" || { note "$saw; worktree for $id failed"; return 1; }
@@ -784,6 +816,10 @@ start_node() {
 	local ncommits reason='' resume=0 rsed=() plist='' pn pb
 	[ -r "$here/$prompt" ] || { note "$saw; $id: no $prompt; not started"; return 1; }
 	save_leftover "$id" "$wt" "$d" "$saw" || return 1
+	# detached (its branch was taken by an update): back onto the branch, now at the update's result; the tree is clean
+	if ! git -C "$wt" symbolic-ref -q HEAD >/dev/null && git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null; then
+		git -C "$wt" checkout -q "$br" || { note "$saw; $id: checking out $br failed; not started"; return 1; }
+	fi
 	ncommits=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 	if [ "${ncommits:-0}" -gt 0 ] || [ -d "$wt/out/node/$id" ]; then
 		resume=1
