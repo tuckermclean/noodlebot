@@ -86,8 +86,11 @@ def unit_dir(state, n, branch):
 
 
 def answer_urls(udir):
-    """The set of URLs written in the unit's ANSWER.md files."""
-    return {u.rstrip(".,;:!?*_") for u in re.findall(r"https?://[^\s<>()\[\]\"'`]+", answer_text(udir))}
+    """The URLs of the comments recorded as answers in the unit's ANSWER.md files: only the line report.py writes
+    ("The owner's answer, posted by <login> on GitHub at <time>: <URL>", or "answer: <URL>"), never a URL in the
+    answer's own text."""
+    return {m.group(1) for m in re.finditer(
+        r"^(?:The owner's answer, posted by .* at [^\n]*?|answer): (https?://\S+)[ \t]*$", answer_text(udir), re.M)}
 
 
 def answer_text(udir):
@@ -157,7 +160,8 @@ def feedback_md(n, branch, items):
                 "author: " + (c.get("user") or {}).get("login", ""), "time: " + it["time"]]
         if it["kind"] == "line":
             out += ["file: %s" % it["file"], "line: %s" % it["line"], "thread: %d" % it["thread"]]
-        out += ["body: " + (c.get("body") or "").strip(), ""]
+        # continuation lines are indented, so no line of a body looks like an item's field
+        out += ["body: " + "\n  ".join((c.get("body") or "").strip().splitlines()), ""]
     return "\n".join(out)
 
 
@@ -240,7 +244,7 @@ def main():
                         os.remove(os.path.join(fdir, "%d%s" % (n, ext)))
                     except OSError:
                         pass
-        except (RuntimeError, ValueError, KeyError, TypeError, OSError) as e:
+        except Exception as e:   # one malformed item only skips that PR
             log("PR %d: %s" % (n, e))
             rc = 1
     if first:
