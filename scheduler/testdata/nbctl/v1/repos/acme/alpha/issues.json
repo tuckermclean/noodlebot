@@ -1,0 +1,42 @@
+{
+ "version": 1,
+ "issues": [
+  {
+   "number": 101,
+   "title": "triage-title-101",
+   "labelled": true,
+   "state": "failed",
+   "reason": "reason-token-failed-triage",
+   "question": null,
+   "issue_url": null
+  },
+  {
+   "number": 102,
+   "title": "triage-title-102",
+   "labelled": true,
+   "state": "question",
+   "reason": null,
+   "question": "question-first-line-triage",
+   "issue_url": "https://github.com/acme/alpha/issues/102"
+  },
+  {
+   "number": 103,
+   "title": "triage-title-103",
+   "labelled": true,
+   "state": "answered",
+   "reason": null,
+   "question": null,
+   "issue_url": null
+  },
+  {
+   "number": 104,
+   "title": "triage-title-104",
+   "labelled": true,
+   "state": "running",
+   "reason": null,
+   "question": null,
+   "issue_url": null
+  }
+ ],
+ "modified": "@now-5"
+}

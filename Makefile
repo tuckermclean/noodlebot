@@ -18,6 +18,7 @@ test:
 	sh plugin/skills/adopt/adopt.test.sh
 	sh plugin/skills/triage/nodes.test.sh
 	sh scheduler/site.test.sh
+	sh scheduler/nbctl.test.sh
 	sh site/site.test.sh
 
 .PHONY: test
