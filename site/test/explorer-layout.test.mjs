@@ -39,7 +39,7 @@ const big = () => {
   }
   return out;
 };
-const fixtureNodes = () => loadFixture().files['repo.alpha.json'].nodes;
+const fixtureNodes = () => loadFixture().files['repo.acme.alpha.json'].nodes;
 
 // the longest dependency path (in edges) of each node, computed here independently
 function depths(nodes) {
