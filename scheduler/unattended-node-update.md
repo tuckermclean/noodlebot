@@ -4,8 +4,8 @@ node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is
 - Follow /noodlebot:node --update @N@ (not a dry run). You start in @WT@, a worktree already on the
   PR's branch; work there. Merge origin/main as a merge commit (no rebase, no force push), keep both
   sides, rerun the repository's test entry point and the PR's red targets, get the fresh resolution review of the merge, and only
-  then push to the PR's branch and comment on the PR, as the skill says. The scheduler removes @WT@
-  after you end.
+  then push to the PR's branch and comment on the PR, as the skill says. After an end with rc 0
+  the scheduler removes @WT@; after any other end it keeps it and resets it at the next start.
 - Never change a frozen test or fixture line (a line in the repository's frozen test and fixture paths already on
   either side) and never change a spec file (the repository's main spec, its node specs, its graph and the other
   files its AGENTS.md or the node skill's step 7 name). When the resolution would, or when you cannot settle a conflict from the code and tests,
