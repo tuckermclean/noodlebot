@@ -10,6 +10,7 @@ import math
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -246,37 +247,22 @@ def _credential():
         return ""
 
 
-def _run(worktree, state_dir, argv, fresh):
-    raw, ev, pos, _ = _paths(state_dir)
-    env = dict(os.environ)
-    env["CLAUDE_CODE_OAUTH_TOKEN"] = _credential()
-    if not env.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"):
-        env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
-    out = sys.stdout.buffer
+def _out_base():
+    """The size of stdout when it is a regular file (the raw log, appended to), else None."""
     try:
-        st = os.fstat(out.fileno())
-        base = st.st_size if os.path.stat.S_ISREG(st.st_mode) else None
-    except (OSError, ValueError, AttributeError):
-        base = None
-    if fresh and not base:
-        for p in (ev, pos):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
-    proc = subprocess.Popen(argv, cwd=worktree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+        st = os.fstat(sys.stdout.fileno())
+        return st.st_size if stat.S_ISREG(st.st_mode) else None
+    except (OSError, ValueError):
+        return None
 
-    def fwd(signum, frame):
-        try:
-            proc.send_signal(signum)
-        except OSError:
-            pass
-    old = signal.signal(signal.SIGTERM, fwd)
+
+def _record_stream(src, state_dir, base, out):
+    """Pass the raw lines of src to out and append their events to events.jsonl, live."""
+    _, ev, pos, _ = _paths(state_dir)
     evf = open(ev, "a", encoding="utf-8")
-
-    def pump():
-        done = base
-        for line in proc.stdout:
+    done = base
+    try:
+        for line in src:
             for e in translate(line.decode("utf-8", "replace")):
                 evf.write(_dump(e))
             evf.flush()
@@ -285,12 +271,123 @@ def _run(worktree, state_dir, argv, fresh):
                 _write_pos(pos, done)
             out.write(line)
             out.flush()
-    th = threading.Thread(target=pump, daemon=True)
+    finally:
+        evf.close()
+
+
+def _fresh(state_dir, base):
+    _, ev, pos, _ = _paths(state_dir)
+    if not base:
+        for p in (ev, pos):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+
+def _alive(pid):
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(")", 1)[1].split()[0] not in ("Z", "X")
+    except (OSError, IndexError):
+        return False
+
+
+def record(state_dir, fresh, pidfile=None):
+    """The recorder of run-session.sh's pipeline: stdin is the agent's raw stream, stdout the raw log. It ignores
+    SIGTERM (stop_idle signals every child of run-session.sh; the agent stops, this finishes at EOF, so events.jsonl is
+    complete). A background task that kept the pipe open must not hold the session: once the agent (pid in pidfile) is
+    gone and the stream is quiet for 5 s, it ends."""
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    base = _out_base()
+    if fresh:
+        _fresh(state_dir, base)
+    out = sys.stdout.buffer
+    r, w = os.pipe()
+    src = os.fdopen(r, "rb")
+
+    def copy():
+        try:
+            with os.fdopen(w, "wb") as dst:
+                while True:
+                    chunk = os.read(0, 65536)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    dst.flush()
+        except OSError:
+            pass
+    th = threading.Thread(target=copy, daemon=True)
+    th.start()
+    finish = threading.Thread(target=_record_stream, args=(src, state_dir, base, out), daemon=True)
+    finish.start()
+    quiet = 0
+    while finish.is_alive():
+        finish.join(0.5)
+        pid = None
+        if pidfile:
+            try:
+                with open(pidfile) as f:
+                    pid = int(f.read().strip())
+            except (OSError, ValueError):
+                pid = None
+        quiet = quiet + 1 if pid is not None and not _alive(pid) and th.is_alive() else 0
+        if quiet >= 10:
+            break
+    _finish(state_dir)
+    return 0
+
+
+def command(op, worktree, state_dir, *args):
+    """What to run for start (prompt, system prompt file, plugin) or resume (session id, prompt): (argv, env, cwd).
+    The credential is read here once and goes in the environment only."""
+    env = dict(os.environ)
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = _credential()
+    if not env.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"):
+        env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
+    if op == "start":
+        prompt, sp_file, plugin = args
+        try:
+            with open(sp_file) as f:
+                sp = f.read().rstrip("\n")
+        except OSError:
+            sp = ""
+        return _command(prompt, sp, plugin), env, worktree
+    sid, prompt = args
+    return _command(prompt, *_resume_context(state_dir), resume=sid), env, worktree
+
+
+def _resume_context(state_dir):
+    plugin = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugin"))
+    try:
+        with open(os.path.join(state_dir, "unattended.md")) as f:
+            sp = f.read().rstrip("\n")
+    except OSError:
+        sp = ""
+    return sp, plugin
+
+
+def _run(worktree, state_dir, argv, fresh):
+    env = dict(os.environ)
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = _credential()
+    if not env.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"):
+        env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
+    base = _out_base()
+    if fresh:
+        _fresh(state_dir, base)
+    proc = subprocess.Popen(argv, cwd=worktree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+
+    def fwd(signum, frame):
+        try:
+            proc.send_signal(signum)
+        except OSError:
+            pass
+    old = signal.signal(signal.SIGTERM, fwd)
+    th = threading.Thread(target=_record_stream, args=(proc.stdout, state_dir, base, sys.stdout.buffer), daemon=True)
     th.start()
     rc = proc.wait()
     th.join(5)   # a background task that kept the pipe open must not hold the session
     signal.signal(signal.SIGTERM, old)
-    evf.close()
     _finish(state_dir)
     return 128 - rc if rc < 0 else rc
 
@@ -306,10 +403,5 @@ def start(worktree, state_dir, prompt, system_prompt, plugin):
 
 
 def resume(worktree, state_dir, session_id, prompt):
-    plugin = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugin"))
-    try:
-        with open(os.path.join(state_dir, "unattended.md")) as f:
-            system_prompt = f.read().rstrip("\n")
-    except OSError:
-        system_prompt = ""
-    return _run(worktree, state_dir, _command(prompt, system_prompt, plugin, session_id), False)
+    sp, plugin = _resume_context(state_dir)
+    return _run(worktree, state_dir, _command(prompt, sp, plugin, session_id), False)

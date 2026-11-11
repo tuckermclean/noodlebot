@@ -13,12 +13,19 @@ cd "$wt" || { echo 2 >"$dir/session.rc"; exit 2; }
 unset ANTHROPIC_API_KEY GH_TOKEN GITHUB_TOKEN
 [ -z "${NOODLEBOT_VERSION:-}" ] || export NOODLEBOT_VERSION
 here=$(cd "$(dirname "$0")" && pwd -P)
-# the harness backend (harness.py, SCHED_HARNESS) runs the session, keeps its credential and writes events.jsonl
+# the harness backend (harness.py, SCHED_HARNESS) runs the session, keeps its credential and writes events.jsonl: its
+# first stage becomes the agent CLI (a direct child of this script, the process the loop signals), the second one
+# passes the raw stream on and records the events. The exit code is the first stage's.
+pf="$dir/agent.pid"; rm -f "$pf"
 if [ -n "$sid" ]; then
-	python3 -I "$here/harness.py" resume "$wt" "$dir" "$sid" "$(cat "$dir/resume-prompt.md")"
+	python3 -I "$here/harness.py" exec-resume "$pf" "$wt" "$dir" "$sid" "$(cat "$dir/resume-prompt.md")" \
+		| python3 -I "$here/harness.py" record "$dir" append "$pf"
+	rc=${PIPESTATUS[0]}
 else
-	python3 -I "$here/harness.py" start "$wt" "$dir" "$prompt" "$dir/unattended.md" "$plugin"
+	python3 -I "$here/harness.py" exec-start "$pf" "$wt" "$dir" "$prompt" "$dir/unattended.md" "$plugin" \
+		| python3 -I "$here/harness.py" record "$dir" fresh "$pf"
+	rc=${PIPESTATUS[0]}
 fi
-rc=$?
+rm -f "$pf"
 echo "$rc" >"$dir/session.rc.tmp" && mv "$dir/session.rc.tmp" "$dir/session.rc"
 exit "$rc"

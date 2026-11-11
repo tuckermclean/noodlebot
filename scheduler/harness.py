@@ -7,6 +7,8 @@ the operations are described in harnesses/README.md.
 
   harness.py start <worktree> <state-dir> <prompt> <system-prompt-file> <plugin>
   harness.py resume <worktree> <state-dir> <session-id> <prompt>
+  harness.py exec-start|exec-resume <pidfile> <the arguments of start|resume>   (run-session.sh's pipeline, stage 1)
+  harness.py record <state-dir> fresh|append [<pidfile>]                             (run-session.sh's pipeline, stage 2)
   harness.py skill-command <skill> <args> [shipped]
   harness.py matches <unit> <cmdline>
   harness.py preflight
@@ -16,6 +18,8 @@ the operations are described in harnesses/README.md.
 import importlib.util
 import os
 import sys
+
+sys.dont_write_bytecode = True   # a deployed checkout must stay clean (no __pycache__ beside the scripts)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKENDS = {"claude-code": os.path.join(HERE, "harnesses", "claude_code.py"),
@@ -82,6 +86,31 @@ def main(argv):
         except OSError:
             system_prompt = ""   # as $(cat missing-file) was: an empty system prompt
         return int(start(a[0], a[1], a[2], system_prompt, a[4]))
+    if op in ("exec-start", "exec-resume") and len(a) >= 2:
+        # run-session.sh runs the session as `exec-X ... | record ...`, so that the agent CLI is a direct child of the
+        # script: a backend with command() gets exec'd (this process becomes the agent), another one runs in-process
+        pidfile, a = a[0], a[1:]
+        be, real = backend(), op[5:]
+        if not hasattr(be, "command"):
+            return main([real] + a)
+        argv, env, cwd = be.command(real, *a)
+        try:
+            with open(pidfile, "w") as f:
+                f.write("%d\n" % os.getpid())
+            os.chdir(cwd)
+            fd = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(fd, 0)
+            os.execvpe(argv[0], argv, env)
+        except OSError as e:
+            sys.stderr.write("harness.py: cannot run %s: %s\n" % (argv[0], e))
+            return 127
+    if op == "record" and len(a) in (2, 3):
+        be = backend()
+        if not hasattr(be, "record"):
+            for chunk in iter(lambda: os.read(0, 65536), b""):
+                os.write(1, chunk)   # the backend writes its own events
+            return 0
+        return be.record(a[0], a[1] == "fresh", a[2] if len(a) == 3 else None)
     if op == "resume" and len(a) == 4:
         return int(resume(*a))
     if op == "skill-command" and len(a) in (2, 3):
