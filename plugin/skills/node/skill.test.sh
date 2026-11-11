@@ -176,4 +176,23 @@ if printf '%s\n' "$g02d_pv" | grep -Eq 'posted on the pr|gh pr comment'; then ok
 if grep -Eqi 'fresh review' "$d/usteps.txt" && grep -E 'fresh review' "$d/usteps.txt" | grep -Eq 'only when[^.]*changed[^.]*beyond keeping both sides'; then ok "G02-AC-4: the fresh-review step runs only when the resolution changed the node's code beyond keeping both sides"; else bad "G02-AC-4: the fresh-review step must say 'only when ... changed ... beyond keeping both sides'"; fi
 # finding 5 (AC-4): the frozen/spec rule ends the run there and does not go on resolving
 if printf '%s\n' "$ft" | grep -Eq '(^|[^a-z])end\.?[[:space:]]*$|and end' && ! printf '%s\n' "$ft" | grep -Eq 'as you see fit|continue with step|then resolve'; then ok "G02-AC-4: the frozen/spec rule step ends the run there and does not continue resolving"; else bad "G02-AC-4: the frozen/spec rule step (${fn:-none}) must end the run, not continue resolving"; fi
+
+# ---------- G02 slice 3e (review-fresh findings 3 and 4) ----------
+# g02e_sent <file> <ere>...: some sentence (file flattened, lowercase, no asterisks, split after ". ") matches every ERE
+g02e_sent() {
+	g02e_f=$1; shift
+	tr -d '*' <"$g02e_f" | tr '\n' ' ' | tr -s ' ' | tr 'A-Z' 'a-z' | sed 's/[.] /.\n/g' |
+		awk -v pats="$(printf '%s\n' "$@")" 'BEGIN { k = split(pats, P, "\n") }
+			{ good = 1; for (p = 1; p <= k; p++) if ($0 !~ P[p]) { good = 0; break } if (good) found = 1 }
+			END { exit !found }'
+}
+g02e_t="$src/../../../scheduler/unattended-node-update.md"
+if [ -s "$g02e_t" ]; then ok "G02-AC-4 (review-fresh #3): scheduler/unattended-node-update.md found"; else bad "G02-AC-4 (review-fresh #3): scheduler/unattended-node-update.md not found"; fi
+# finding 3: only the newest QUESTION/ANSWER pair in answered/ is the owner's decision for this run
+if g02e_sent "$u" 'answered/|answer' 'newest|latest|most recent' 'pair' 'decision|approv|count'; then ok "G02-AC-4 (review-fresh #3): the node skill says only the newest answered pair is the owner's decision for this run"; else bad "G02-AC-4 (review-fresh #3): the node skill does not say only the newest answered pair counts as the owner's decision"; fi
+if g02e_sent "$u" 'older|earlier|previous' 'pair' 'context' 'not (an )?approv|no approv|never approv|not .*decision|not .*permit'; then ok "G02-AC-4 (review-fresh #3): the node skill says older pairs are context, not approval"; else bad "G02-AC-4 (review-fresh #3): the node skill does not say older pairs are context, not approval"; fi
+if g02e_sent "$g02e_t" 'answered/|answer' 'newest|latest|most recent' 'pair' 'decision|approv|count'; then ok "G02-AC-2 (review-fresh #3): the unattended update template says only the newest answered pair is the owner's decision for this run"; else bad "G02-AC-2 (review-fresh #3): the unattended update template does not say only the newest answered pair counts as the owner's decision"; fi
+if g02e_sent "$g02e_t" 'older|earlier|previous' 'pair' 'context' 'not (an )?approv|no approv|never approv|not .*decision|not .*permit'; then ok "G02-AC-2 (review-fresh #3): the unattended update template says older pairs are context, not approval"; else bad "G02-AC-2 (review-fresh #3): the unattended update template does not say older pairs are context, not approval"; fi
+# finding 4: with --dry-run the whole-node fresh review posts nothing on the PR; its verdict goes into result.md
+if g02e_sent "$u" 'fresh review' '--dry-run' 'result\.md' 'verdict' 'not (be )?posted|not post|never posted|posts? nothing|nothing (is )?posted|instead of post|no comment'; then ok "G02-AC-4 (review-fresh #4): with --dry-run the fresh review's verdict goes into result.md and is not posted on the PR"; else bad "G02-AC-4 (review-fresh #4): no sentence says that with --dry-run the fresh review's verdict goes into result.md and is not posted on the PR"; fi
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
