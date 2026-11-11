@@ -61,3 +61,5 @@ wait_ticks() {
 polls() { local n; n=$(wc -l <"$1" 2>/dev/null) && echo "${n:-0}" || echo 0; }
 _polls_ge() { [ "$(polls "$1")" -ge "$2" ]; }
 wait_polls() { wait_until $(($3 * 10 + 10)) _polls_ge "$1" $(($2 + $3)); }
+# rl_event <file> <five-hour utilization> <its resetsAt>: appends an allowed rate_limit_event line (seven-day window at 0, 3 days out) to <file>.
+rl_event() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":%s,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":0.0,"resetsAt":%s,"status":"allowed"}}}}\n' "$2" "$3" $(($(date +%s) + 3 * 86400)) >>"$1"; }

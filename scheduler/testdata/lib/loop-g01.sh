@@ -259,7 +259,7 @@ runsis() { [ "$(s6runs "$1")" = "$2" ]; }
 # pr_ev <N> <pattern>: status-log events that name PR #N and match the pattern.
 pr_ev() { grep -E "PR #$1([^0-9]|\$)" "$state/status.log" 2>/dev/null | grep -cE "$2"; }
 pr_evis() { [ "$(pr_ev "$1" "$2")" = "$3" ]; }
-rl6() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":%s,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":0.0,"resetsAt":%s,"status":"allowed"}}}}\n' "$1" "$2" $(($(date +%s) + 3 * 86400)) >>"$state/node/X01/session.jsonl"; }
+rl6() { rl_event "$state/node/X01/session.jsonl" "$@"; }
 loop6() {
 	NOODLEBOT_DATA=$data6 PATH=$tmp/bin6:$PATH SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 \
 		bash "$tmp/nb6/scheduler/loop.sh" o/up >>"$tmp/g01-loop.out" 2>&1 &

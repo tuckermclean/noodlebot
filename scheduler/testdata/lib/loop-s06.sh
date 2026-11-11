@@ -1,5 +1,6 @@
 # Shared by loop-s06*.test.sh (source after loop-prelude.sh): the helpers of the S06 runs. They read $S06 (the fake claude's record
 # folder), $st06 (the loop's state folder) and $nb06 (its scheduler checkout): a file points those at its own run.
+S06_LIB=$src/testdata/lib; export S06_LIB   # the fake claude of an S06 run sources loop-s06-rej.sh from here
 x6ok() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 x6wait() { local t=$(($1 * 3)); shift; wait_until "$t" "$@"; }   # a positive wait: three times the time asked, for a loaded machine (no S06 label states a bound)
 x6nm() { case $1 in issue-*) echo "#${1#issue-}" ;; pr-*) echo "PR #${1#pr-}" ;; *) echo "$1" ;; esac; }

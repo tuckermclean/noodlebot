@@ -53,7 +53,7 @@ printf '%s\n' "$@" >"$S06/args.$r"; printf '%s' "$prompt" >"$S06/prompt.$r"; pri
 printf '%s' "$sid" >"$S06/sid.$r"; pwd -P >"$S06/pwd.$r"
 case $key in issue-*) sd=$S06_STATE/issue/${key#issue-} ;; pr-*) sd=$S06_STATE/pr/${key#pr-} ;; *) sd=$S06_STATE/node/$key ;; esac
 out() { printf '%s\n' "$1"; printf '%s\n' "$1" >>"$S06/log0.$key"; }
-rej() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%s,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":%s,"status":"rejected"}}},"session_id":"sid-%s"}\n' "$1" "$1" "$key"; }
+. "$S06_LIB/loop-s06-rej.sh"
 if [ -n "$sid" ]; then   # resumed
 	echo $PPID >"$S06/pg2.$key"; touch "$S06/resumed-up.$key"
 	[ $key = F02 ] && exit 0

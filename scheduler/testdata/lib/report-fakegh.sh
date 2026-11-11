@@ -49,15 +49,15 @@ fakegh_client_tail() {
 	cat <<'CLIENT'
 mkfifo "$d/resp.$id" 2>/dev/null
 exec 3<>"$d/resp.$id"
-echo $id >"$d/req"
-# a watchdog: when the server dies (or answers nothing for 300 s) the client fails visibly, it does not wait forever
+# a watchdog, started before the request is written (the open of the fifo blocks when the server is gone): when the server dies (or answers nothing for 300 s) the client fails visibly, it does not wait forever
 (
 	n=0
 	while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 300 ]; do sleep 1; n=$((n + 1)); done
-	sleep 1
+	sleep 1 <>"$d/req"   # the grace second, with the fifo open as a reader: lets a client still blocked in the open of the request fifo write and go on
 	printf 'e%s\nr1\n' "fake gh server gone or silent (pid $pid, $n s)" >&3
 ) >/dev/null 2>&1 &
 trap 'kill $! 2>/dev/null' EXIT
+echo $id >"$d/req"
 while IFS= read -r l <&3; do
 	case $l in
 	o*) printf '%s\n' "${l#o}" ;;

@@ -90,7 +90,7 @@ ok "the resumed session ends with its new question" within 5 "session A02 ended 
 ok "each A02 session saw the archived answer, and later the spec PR" grep -qxF "A02 run 2: ANSWER.md QUESTION.md SPEC-PR " "$tmp/claude.log"
 grep -qxF "A02 run 1: ANSWER.md QUESTION.md " "$tmp/claude.log" || fail "A02 run 1 saw: $(cat "$tmp/claude.log")"
 # The throttle: a 5-hour window at 99% holds new sessions; a fresh window releases them.
-rl() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":%s,"resetsAt":%s,"status":"allowed"},"seven_day":{"utilization":0.0,"resetsAt":%s,"status":"allowed"}}}}\n' "$1" "$2" $(($(date +%s) + 3 * 86400)) >>"$state/node/A03/session.jsonl"; }
+rl() { rl_event "$state/node/A03/session.jsonl" "$@"; }
 rl 0.99 $(($(date +%s) + 3600))
 ok "a 5-hour window near its limit engages the throttle" within 5 "throttle engaged, no new sessions: 5-hour window projected"
 rm "$state/node/A04/FAILED" "$state/node/A05/FAILED"
