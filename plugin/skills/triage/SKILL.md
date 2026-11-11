@@ -105,10 +105,17 @@ nothing else.
    Change no criterion beyond the renumbering. Commit the renumbering as one commit on top of the merge
    commit; never amend.
 3. Rerun the spec checker until it reports PROBLEMS 0.
-4. With `--dry-run`, stop here (no push, no PR edit, no comment) and write `out/triage/pr-<N>/result.md`:
-   the merge, each renumbering (old -> new) and the checker's output.
+4. If the merge had conflicts, run the resolution review before anything is pushed. Dispatch a **new**
+   reviewer (`noodlebot:reviewer`) with the merge commit and its diffs against both parents. It checks
+   that the resolution keeps the intent of both sides, that the test blocks of different nodes share no
+   names or state, and that no frozen test line was changed, removed or renamed. Its verdict is posted on
+   the PR as `Resolution review (<verdict>)`: a comment, never an approval. Nothing is pushed until the
+   review approves. On `request_changes`, fix the findings and run one more new reviewer. A second
+   rejection pushes nothing: comment on the PR with the findings and end.
+5. With `--dry-run`, stop here (no push, no PR edit, no comment) and write `out/triage/pr-<N>/result.md`:
+   the merge, each renumbering (old -> new), the checker's output and the review's verdict.
    A conflict that needs a judgment (step 1) is written to the same `result.md` and gets no comment.
-5. Push the branch. Update the PR's title and body to the new IDs. Comment on the PR with what was
+6. Push the branch. Update the PR's title and body to the new IDs. Comment on the PR with what was
    merged, each renumbering (old -> new) and the checker's result.
 
 ## 5. Report
