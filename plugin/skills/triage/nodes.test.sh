@@ -207,4 +207,11 @@ if printf '%s\n' "$g02b_rt" | grep -Eqi 'nothing is pushed until[^.]*approv|push
 if [ "$(printf '%s\n' "$g02b_rt" | grep -oi 'new reviewer' | wc -l)" -ge 2 ] && ! printf '%s\n' "$g02b_rt" | grep -Eqi 'earlier reviewer|same reviewer|previous reviewer|first reviewer|resume'; then ok "G02-AC-5: both rounds of the review use a new reviewer"; else bad "G02-AC-5: the second round must use a new reviewer too (not the earlier one)"; fi
 if printf '%s\n' "$g02b_rt" | grep -Eqi -e '--dry-run' && printf '%s\n' "$g02b_rt" | grep -Eqi 'verdict' && printf '%s\n' "$g02b_rt" | grep -Eqi 'result\.md' && printf '%s\n' "$g02b_rt" | grep -Eqi 'not (be )?posted|not post|never posted|instead of post'; then ok "G02-AC-5: with --dry-run the review's verdict goes into result.md and is not posted on the PR"; else bad "G02-AC-5: the review step does not say that with --dry-run the verdict goes into result.md and is not posted"; fi
 
+
+# ---------- G02 slice 3c (review3b findings 3, 4) ----------
+g02c_rt=$(awk -F'\t' -v n="${g02b_rn:-0}" '$1 == n { print $2 }' "$g02b_steps")
+g02c_sent=$(printf '%s\n' "$g02c_rt" | awk '{ i = index($0, "second rejection"); if (i) { t = substr($0, i); j = match(t, /\. /); if (j) t = substr(t, 1, j); print t } }')
+if printf '%s\n' "$g02c_sent" | grep -Eqi 'push(es)? nothing|nothing is pushed' && printf '%s\n' "$g02c_sent" | grep -Eqi 'comment[^.]* pr'; then ok "G02-AC-5: the second-rejection sentence says nothing is pushed and comments on the PR"; else bad "G02-AC-5: the second-rejection sentence ('${g02c_sent:-none}') must say nothing is pushed and comment on the PR"; fi
+g02c_pre=$(awk -F'\t' -v n="${g02b_rn:-0}" '$1 < n { print $2 } $1 == n { t = $2; i = index(t, "resolution review"); if (i) t = substr(t, 1, i - 1); print t }' "$g02b_steps" | sed -E -e 's/(never|no|not|without)[^.;]*push[a-z]*//g' -e 's/push(es)? nothing//g' -e 's/nothing is pushed//g')
+if [ -n "$g02b_rn" ] && ! printf '%s\n' "$g02c_pre" | grep -Eqi 'push'; then ok "G02-AC-5: no step before the resolution review pushes"; else bad "G02-AC-5: a step before (or the start of) the review step ${g02b_rn:-none} pushes"; fi
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

@@ -140,4 +140,25 @@ g02b_has "G02-AC-5: a second rejection leaves the branch as it was (reset --hard
 # finding 4: --dry-run and the review's verdict
 g02b_has "G02-AC-5: with --dry-run the review's verdict goes into result.md and is not posted on the PR" "$rv" '--dry-run' 'verdict' 'result\.md' 'not (be )?posted|not post|never posted|instead of post'
 
+
+# ---------- G02 slice 3c (review3b findings 2, 4, 5) ----------
+# the text before the review step is run (steps before it, and the review step up to its first "resolution review") pushes nothing
+g02c_strip() { sed -E -e 's/(never|no|not|without)[^.;]*push[a-z]*//g' -e 's/push(es)? nothing//g' -e 's/nothing is pushed//g'; }
+g02c_pre=$(awk -F'\t' -v n="${rn:-0}" '$1 < n { print $2 } $1 == n { t = $2; i = index(t, "resolution review"); if (i) t = substr(t, 1, i - 1); print t }' "$d/usteps.txt" | g02c_strip)
+if [ -n "$rn" ] && ! printf '%s\n' "$g02c_pre" | grep -Eqi 'push'; then ok "G02-AC-4: no step before the review step pushes"; else bad "G02-AC-4: a step before (or the start of) the review step ${rn:-none} pushes"; fi
+# finding 4: no force push anywhere in the update section but in a prohibition
+g02c_flat=$(tr -d '*\n' <"$u" | tr 'A-Z' 'a-z' | sed -E 's/(never|no|not|without)[^.;]*//g')
+if printf '%s\n' "$g02c_flat" | grep -Eq -e '--force|--force-with-lease|push[^.]* -f( |$)|git push -f'; then bad "G02-AC-4: the update section force-pushes outside a prohibition"; else ok "G02-AC-4: the update section does not force-push outside a prohibition"; fi
+g02b_has "G02-AC-4: the --dry-run step stops before the push and pushes nothing" "$d/usteps.txt" '--dry-run' 'result\.md' 'stop(s)? before the push' 'no push|not push|pushes nothing|nothing is pushed|without push'
+g02b_has "G02-AC-4: the --dry-run step does not push" "$d/usteps.txt" '--dry-run' 'result\.md' 'no push|not push|pushes nothing|nothing is pushed|without push'
+if printf '%s\n' "$ft" | grep -Eqi 'frozen test or fixture'; then ok "G02-AC-4: the frozen rule names 'test or fixture'"; else bad "G02-AC-4: the frozen rule (step ${fn:-none}) does not name 'frozen test or fixture'"; fi
+# finding 5: the frozen/spec rule speaks of what resolving a conflict would change
+if printf '%s\n' "$ft" | grep -Eqi 'resolv' && printf '%s\n' "$ft" | grep -Eqi 'would change'; then ok "G02-AC-4: the frozen/spec rule speaks of what resolving a conflict would change"; else bad "G02-AC-4: the frozen/spec rule (step ${fn:-none}) must speak of what resolving a conflict would change, not of everything the merge brings in"; fi
+# finding 4: no repository named through -R / --repo / a slug after gh options
+if grep -Eqi -e '(^|[[:space:]])(-R|--repo)[ =]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$d/skill.stripped"; then bad "G02-AC-4: SKILL.md names a repository after -R / --repo"; else ok "G02-AC-4: SKILL.md names no repository after -R / --repo"; fi
+if grep -o 'gh [^`]*' "$d/skill.stripped" | tr -s ' ' '\n' | grep -Eq '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(#[0-9]+)?$'; then bad "G02-AC-4: a gh command in SKILL.md carries an owner/name slug"; else ok "G02-AC-4: no gh command in SKILL.md carries an owner/name slug"; fi
+# finding 2: the resolution review scopes the second-rejection reset
+rvj=$(tr -d '*\n' <"$rv" | tr 'A-Z' 'a-z')
+if printf '%s\n' "$rvj" | grep -Fq 'reset --hard origin/<branch>'; then ok "G02-AC-5: the review section keeps 'reset --hard origin/<branch>'"; else bad "G02-AC-5: the review section lacks 'reset --hard origin/<branch>'"; fi
+if printf '%s\n' "$rvj" | grep -Eq 'first parent|orig_head' && printf '%s\n' "$rvj" | grep -Eq 'node build|node.s own (merge|build)|in a (node )?build|own merge'; then ok "G02-AC-5: the second-rejection reset is scoped: --update resets to origin/<branch>, a node build's own merge to its first parent"; else bad "G02-AC-5: the review section does not distinguish --update (reset to origin/<branch>) from a node build's own merge (undo the merge at its first parent / ORIG_HEAD)"; fi
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
