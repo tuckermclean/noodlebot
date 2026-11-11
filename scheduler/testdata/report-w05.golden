@@ -1,0 +1,176 @@
+=== issue 41 Seeded 41
+
+--- comment 6
+**Stage:** session started (start 1 of 2)
+--- comment 9
+**Stage:** FAILED, held until you delete its FAILED file
+
+Reason: 2026-05-10T09:19:00Z 2 starts with no PR
+=== issue 42 Seeded 42
+
+--- comment 3
+**Stage:** K03 asks a question, waiting for your answer
+
+## K03 asks
+
+Q1: merge K01 before K02?
+See [K02](https://example.com/q) and `K01`; K03 agrees.
+Recommendation: yes.
+
+---
+To answer, reply to this issue in plain words. Only owner's replies count.
+
+=== issue 43 Seeded 43
+
+=== issue 44 Seeded 44
+
+=== issue 45 Seeded 45
+
+--- comment 7
+**Stage:** triage started (start 1 of 2)
+=== issue 46 Seeded 46
+
+=== issue 47 Seeded 47
+
+=== issue 48 Seeded 48
+
+=== issue 49 Seeded 49
+
+=== issue 50 Seeded 50
+
+=== issue 200 noodlebot log 2026-05-10
+# noodlebot log 2026-05-10: owner/repo
+
+_Updated 2026-05-10 09:20 UTC by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, the loop is not running._
+
+**Deployed:** X
+
+## Usage
+
+- **5-hour** `████████████░░░░░░░░` 62%, resets 2027-01-15 08:00 UTC (projected 50% at the reset)
+- **7-day** `████████░░░░░░░░░░░░` 40%, resets 2027-01-21 02:53 UTC (50% of the week gone)
+- **Throttle:** open (new sessions start)
+
+## Waiting on you
+- **K03 asks a question** (read and answer it on the unit's issue: https://x/42/3). Unit issue: #42.
+- **K05 FAILED**: 2026-05-09T20:00:00Z 2 starts with no PR. To retry, delete `TMP/state/node/K05/FAILED`.
+- **K07 FAILED**: 2026-05-10T09:19:00Z 2 starts with no PR. To retry, delete `TMP/state/node/K07/FAILED`. Unit issue: #41.
+- **K98 FAILED**: 2026-05-09T20:30:00Z unknown node, held. To retry, delete `TMP/state/node/K98/FAILED`.
+
+## Sessions (1 running)
+
+_Costs are the CLI's list-price estimate, not the bill._
+
+### K04, running for 1h20m (start ? of 2, pid N), $0.50, 1 turns
+
+> Working on K01 and K02 now.
+
+---
+Answer a question on the unit's issue (the link is in its item above) in plain words (e.g. "Q1 approve, Q2 as recommended"). Only owner's replies count; if more than one unit on that issue is waiting, start with its ID or issue number. A reply here still works if it starts with the ID prefix, e.g. `B03: ...` or `#46: ...`. Hand an issue to the bot by adding the `noodlebot` label (only labels you add count). Closing this issue is fine: the loop opens a new one.
+
+--- comment 1
+## Morning overview, 2026-05-10
+
+**Yesterday (2026-05-09):** 2 sessions ended (K05, K99), $0.00 total cost (list-price estimate).
+
+- PRs merged: none
+- PRs opened: none
+- Units that wrote FAILED: K05, K99
+
+**Waiting on you:**
+
+- **K03 asks a question** (its comment on the unit's issue is not posted yet).
+- **K05 FAILED**: 2026-05-09T20:00:00Z 2 starts with no PR. To retry, delete `TMP/state/node/K05/FAILED`.
+- **K98 FAILED**: 2026-05-09T20:30:00Z unknown node, held. To retry, delete `TMP/state/node/K98/FAILED`.
+
+**Ready to start next:**
+
+- K01 one-name
+- K04 four-name
+- K06 six-name
+- K07 seven-name
+
+--- comment 2
+## K03 asks
+
+The question is on #42, the unit's issue; answer it there, or here starting the reply with `K03:`.
+
+--- comment 4
+- `2026-05-10T09:05:00Z` started K06 (six-name) in /wt, pid 5, start 1 of 2
+- `2026-05-10T09:05:01Z` started K07 (seven-name) in /wt, pid 6, start 1 of 2
+- `2026-05-10T09:05:02Z` started triage of #45 in /wt, pid 7, start 1 of 2
+- `2026-05-10T09:05:03Z` released K01 (answered) see `K02` and [K03](https://example.com/x) and https://example.com/K01 and K99
+--- comment 8
+- `2026-05-10T09:19:00Z` session K07 ended (rc 0), no PR, no QUESTION.md, 2 starts used: wrote FAILED
+- `2026-05-10T09:19:30Z` session K99 ended (rc 1), no PR, no QUESTION.md, 2 starts used: wrote FAILED
+--- comment 10
+## End-of-day summary, 2026-05-10
+
+**The day (2026-05-10):** 2 sessions ended (K07, K99), $0.00 total cost (list-price estimate).
+
+- PRs merged: none
+- PRs opened: none
+- Units that wrote FAILED: K07, K99
+
+--- comment 11
+Next log issue: #202
+=== issue 201 Build K06 six-name
+Home of node K06: the scheduler loop posts its milestones here (start, questions, PR, CI, result). Its spec is `nodes/K06-six-name.md` on the main branch. The loop closes this issue once the node is merged.
+--- comment 5
+**Stage:** session started (start 1 of 2)
+=== issue 202 noodlebot log 2026-05-11
+# noodlebot log 2026-05-11: owner/repo
+
+_Updated 2026-05-11 00:10 UTC by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, the loop is not running._
+
+**Deployed:** X
+
+Previous day's log: #200
+
+## Usage
+
+- **5-hour** `████████████░░░░░░░░` 62%, resets 2027-01-15 08:00 UTC (projected 50% at the reset)
+- **7-day** `████████░░░░░░░░░░░░` 40%, resets 2027-01-21 02:53 UTC (50% of the week gone)
+- **Throttle:** open (new sessions start)
+
+## Waiting on you
+- **K03 asks a question** (read and answer it on the unit's issue: https://x/42/3). Unit issue: #42.
+- **K05 FAILED**: 2026-05-09T20:00:00Z 2 starts with no PR. To retry, delete `TMP/state/node/K05/FAILED`.
+- **K07 FAILED**: 2026-05-10T09:19:00Z 2 starts with no PR. To retry, delete `TMP/state/node/K07/FAILED`. Unit issue: #41.
+- **K98 FAILED**: 2026-05-09T20:30:00Z unknown node, held. To retry, delete `TMP/state/node/K98/FAILED`.
+
+## Sessions (1 running)
+
+_Costs are the CLI's list-price estimate, not the bill._
+
+### K04, running for 16h10m (start ? of 2, pid N), $0.50, 1 turns
+
+> Working on K01 and K02 now.
+
+---
+Answer a question on the unit's issue (the link is in its item above) in plain words (e.g. "Q1 approve, Q2 as recommended"). Only owner's replies count; if more than one unit on that issue is waiting, start with its ID or issue number. A reply here still works if it starts with the ID prefix, e.g. `B03: ...` or `#46: ...`. Hand an issue to the bot by adding the `noodlebot` label (only labels you add count). Closing this issue is fine: the loop opens a new one.
+
+--- comment 12
+## Morning overview, 2026-05-11
+
+**Yesterday (2026-05-10):** 2 sessions ended (K07, K99), $0.00 total cost (list-price estimate).
+
+- PRs merged: none
+- PRs opened: none
+- Units that wrote FAILED: K07, K99
+
+Previous day's log: #200
+
+**Waiting on you:**
+
+- **K03 asks a question** (read and answer it on the unit's issue: https://x/42/3). Unit issue: #42.
+- **K05 FAILED**: 2026-05-09T20:00:00Z 2 starts with no PR. To retry, delete `TMP/state/node/K05/FAILED`.
+- **K07 FAILED**: 2026-05-10T09:19:00Z 2 starts with no PR. To retry, delete `TMP/state/node/K07/FAILED`. Unit issue: #41.
+- **K98 FAILED**: 2026-05-09T20:30:00Z unknown node, held. To retry, delete `TMP/state/node/K98/FAILED`.
+
+**Ready to start next:**
+
+- K01 one-name
+- K04 four-name
+- K06 six-name
+

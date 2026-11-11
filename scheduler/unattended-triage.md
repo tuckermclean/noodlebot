@@ -1,5 +1,6 @@
 UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to
 triage issue #@N@ of @REPO@: the owner labelled it `noodlebot`. No human is watching.
+@SITE@
 
 - Follow /noodlebot:triage @N@ (not a dry run). You start in a scratch worktree of origin/main, @WT@;
   make your spec branch in its own worktree as the skill says, and remove that one when done. The

@@ -25,6 +25,9 @@ way.
    in CI on every PR.
 6. **Safe to change while running.** Scripts a running loop or session executes are replaced (write a
    new file, then rename it), never edited in place: bash reads a script as it runs it.
+7. **Forge- and harness-agnostic.** The scheduler, the skills and the session templates reach the code
+   forge and the agent harness only through backend interfaces. GitHub and Claude Code are backends like
+   any other, chosen per loop (default `github`, `claude-code`).
 
 ## 2. Architecture
 
@@ -44,6 +47,11 @@ way.
 - **The graph regime.** A repository under it has `docs/graph.yaml` (nodes with id, name, deps,
   track, summary), one spec per node `nodes/<ID>-<name>.md`, and an `AGENTS.md` "Building a node"
   section. `check-regime.py` checks the first two.
+- **Backends.** The forge interface (`scheduler/forge.py`, node G04) and the harness interface
+  (`scheduler/harness.py`, node S08) are core's only way to the code forge and the agent harness; what
+  only makes sense for one backend (the GitHub App token script, gist publishing and the Pages
+  workflow, Claude Code's plugin manifest and hook wiring, the parsing of stream-json) lives in that
+  backend, and core turns a capability off, with one logged line, when the loop's backend lacks it.
 
 ## 3. Node spec template
 

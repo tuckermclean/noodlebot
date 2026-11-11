@@ -1,5 +1,6 @@
 UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build node @ID@
 (@NAME@) of @REPO@. Nobody can answer until morning.
+@SITE@
 
 - At a step 7 stop of the node skill, write the question, your proposed amendment and what is blocked to
   @STATE@/node/@ID@/QUESTION.md, then end the run. Never continue on a guess. A SPEC §10 default

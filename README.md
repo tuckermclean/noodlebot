@@ -70,6 +70,11 @@ turns the publishing off. The token goes only to the publish command, never to a
 line (`site: publish failed (<status>)`), the details are in `state/<name>/site.log`, and `site: publishing again` follows
 the next success.
 
+Links to the site: put its address on one line in `~/.config/noodlebot/site`, e.g. `https://<owner>.github.io/noodlebot/`.
+While that is a valid `https://` address (no spaces, quotes, parentheses or angle brackets), the loop publishes the site and the
+repository is public, the bot's status issue and its GitHub comments link each node's ID to the site. Otherwise the texts have
+no links; an invalid address is one status line (`status site links off: <reason>`).
+
 The front end in `site/` is a static page that reads the gist from the browser; `.github/workflows/pages.yml` deploys it to
 GitHub Pages when `site/**` changes on `main` (or by hand, with `workflow_dispatch`). To enable it:
 
@@ -81,10 +86,10 @@ The page also takes `?gist=<id>`, which wins over `config.json`.
 
 ## API
 
-A read-only HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
+An HTTP API over the runtime files, for dashboards and scripts (reads, and the controls below): `scheduler/api.py`, on the Unix socket
 `$NOODLEBOT_DATA/api.sock` (default `~/.local/share/noodlebot/api.sock`, mode 0600, so only you can use it).
 `scheduler/loops.sh start` and `stop` start and stop it with the loops (tmux session `sched-api`); `status` shows it.
-Every request is a GET; every answer is JSON with `"version": 1`.
+Every request is a GET or one of the controls below (any other write is a 405); every answer is JSON with `"version": 1`.
 
 - `/v1/repos`, `/v1/repos/<owner>/<name>`: the listed repositories and one in full.
 - `/v1/repos/<owner>/<name>/nodes`, `.../nodes/<ID>`, `.../sessions`, `.../prs`, `.../issues`.
@@ -95,6 +100,41 @@ Every request is a GET; every answer is JSON with `"version": 1`.
   resumes after the event with that id, with a cursor per repository.
 
     curl --unix-socket ~/.local/share/noodlebot/api.sock http://localhost/v1/repos
+
+### Controls
+
+A control writes only a marker the loop or `deploy.sh` already reads, and, for the loop controls, a request record in
+`state/<name>/requests/`; the loop logs each record as one status-log event and removes it. A deploy request (retry,
+rollback) writes no record: the marker in `deploy/` is the request. The API starts no loop and signals no process. A
+valid request is answered 202 (schema `control`: what was written and when it is carried out), an unknown repository,
+node, issue or commit 404, a request with nothing to do 409; neither changes any file. Anyone who can use the socket can
+use the controls.
+
+- Delete a node's or an issue's `FAILED` (the loop starts a ready node at its next tick):
+
+      curl --unix-socket ~/.local/share/noodlebot/api.sock -X DELETE http://localhost/v1/repos/<owner>/<name>/nodes/<ID>/failed
+      curl --unix-socket ~/.local/share/noodlebot/api.sock -X DELETE http://localhost/v1/repos/<owner>/<name>/issues/<N>/failed
+
+- Stop a repository's loop (creates `~/STOP-<name>`; a running loop exits) and allow it again (removes it):
+
+      curl --unix-socket ~/.local/share/noodlebot/api.sock -X PUT http://localhost/v1/repos/<owner>/<name>/stop
+      curl --unix-socket ~/.local/share/noodlebot/api.sock -X DELETE http://localhost/v1/repos/<owner>/<name>/stop
+
+  Removing the STOP file does not start the loop: `scheduler/loops.sh start` does.
+- Let one node the throttle holds start once (writes `RELEASE`; the loop consumes it at its next tick and logs what it did):
+
+      curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST http://localhost/v1/repos/<owner>/<name>/nodes/<ID>/release
+
+- Retry a commit `deploy.sh` rejected (writes `deploy/retry`; a 409 if it is not rejected):
+
+      curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST -d '{"sha": "<commit>"}' http://localhost/v1/deploy/retry
+
+- Request a rollback to `deploy/previous` (writes `deploy/rollback-request`; a 409 if there is no rollback point):
+
+      curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST http://localhost/v1/deploy/rollback
+
+The loop carries out the first three at its next iteration or tick; `deploy.sh` carries out the retry and the rollback at
+its next run, which a loop makes, and logs a line for each.
 
 From another machine, forward the socket over SSH and use it there:
 

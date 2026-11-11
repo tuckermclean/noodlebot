@@ -5,6 +5,7 @@ TESTS = \
 	scheduler/release-markers.test.sh \
 	scheduler/report.test.sh \
 	scheduler/report-units.test.sh \
+	scheduler/report-w05.test.sh \
 	scheduler/report-answers.test.sh \
 	scheduler/report-prs.test.sh \
 	scheduler/report-resolves.test.sh \
@@ -25,6 +26,7 @@ TESTS = \
 	scheduler/turn-race.test.sh \
 	scheduler/turn-record.test.sh \
 	scheduler/turn-lock.test.sh \
+	scheduler/turn-took.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	scheduler/deploy.test.sh \
 	plugin/hooks/guard.test.sh \
@@ -53,6 +55,8 @@ TESTS = \
 	scheduler/loop-s07-turnpy.test.sh \
 	scheduler/loop-w02-fail.test.sh \
 	scheduler/loop-w02-off.test.sh \
+	scheduler/loop-w05.test.sh \
+	scheduler/loop-w05b.test.sh \
 	scheduler/loop-g01-lim.test.sh \
 	scheduler/loop-g01-throttle.test.sh \
 	scheduler/loop-g03.test.sh \
@@ -82,6 +86,8 @@ TESTS = \
 	scheduler/loop-s02.test.sh \
 	scheduler/loop-v01.test.sh \
 	scheduler/loop-s04-ignored.test.sh \
+	scheduler/loop-p03.test.sh \
+	scheduler/loop-p03-ramp.test.sh \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
@@ -91,6 +97,7 @@ TESTS = \
 	scheduler/api-events.test.sh \
 	scheduler/api-fifo.test.sh \
 	scheduler/api-root2.test.sh \
+	scheduler/api-p03.test.sh \
 	scheduler/move-runtime.test.sh \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
