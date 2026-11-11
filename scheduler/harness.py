@@ -148,7 +148,7 @@ def main(argv):
         return 0
     if op == "events" and len(a) == 2 and a[0] == "--no-write":
         for e in events(a[1], write=False):
-            sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\n")
+            sys.stdout.write(json.dumps(e) + "\n")   # ASCII-escaped, as events.jsonl: a lone surrogate prints too
         return 0
     if op == "events" and len(a) == 1:
         events(a[0])

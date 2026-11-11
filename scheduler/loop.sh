@@ -523,7 +523,7 @@ launch() {
 
 # start_triage <N> <saw>: triage issue N (/noodlebot:triage) in a worktree of origin/main.
 start_triage() {
-	local n=$1 saw=$2 d=$state/issue/$1 wt=$wtroot/issue-$1 released
+	local n=$1 saw=$2 d=$state/issue/$1 wt=$wtroot/issue-$1 released skill
 	mkdir -p "$d"
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing #$n's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; #$n: $(echo "$released" | paste -sd';')"; fi
@@ -532,7 +532,8 @@ start_triage() {
 	site_sed
 	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
-	launch "$wt" "$d" "/noodlebot:triage $n"
+	skill=$(python3 -I -B "$here/harness.py" skill-command triage "$n") || skill="/noodlebot:triage $n"
+	launch "$wt" "$d" "$skill"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
@@ -540,7 +541,7 @@ start_triage() {
 # worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
 # commits it starts from.
 start_update() {
-	local n=$1 br=$2 mainc=$3 head=$4 saw=$5 d=$state/pr/$1 wt=$wtroot/pr-$1 released
+	local n=$1 br=$2 mainc=$3 head=$4 saw=$5 d=$state/pr/$1 wt=$wtroot/pr-$1 released skill
 	mkdir -p "$d"
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing PR #$n's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; PR #$n: $(echo "$released" | paste -sd';')"; fi
@@ -557,7 +558,8 @@ start_update() {
 	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-update.md" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
-	launch "$wt" "$d" "/noodlebot:triage --update $n"
+	skill=$(python3 -I -B "$here/harness.py" skill-command triage "--update $n") || skill="/noodlebot:triage --update $n"
+	launch "$wt" "$d" "$skill"
 	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 

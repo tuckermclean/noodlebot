@@ -172,12 +172,26 @@ def _translate(line):
 # --- the event log -------------------------------------------------------------------------------------------------
 
 def _dump(e):
-    out = json.dumps(e, ensure_ascii=False) + "\n"
+    """One event line, ASCII-escaped: a lone surrogate (a string cut in the middle of a pair) can always be written."""
+    return json.dumps(e) + "\n"
+
+
+def _line_text(line):
+    """The events.jsonl text of one raw line (bytes): the same live and rebuilt; a line whose events cannot be made for
+    any reason is one "garbled" event, and the lines after it carry on."""
     try:
-        out.encode("utf-8")
-    except UnicodeEncodeError:   # a lone surrogate (a string cut in the middle of a pair): written escaped
-        out = json.dumps(e) + "\n"
-    return out
+        return "".join(_dump(e) for e in translate(line.decode("utf-8", "replace")))
+    except Exception:
+        return _dump({"t": None, "type": "garbled"}) if line.strip() else ""
+
+
+def _say(what, e):
+    """A failure on stderr: only the exception's type, never the text of an event (session.stderr is read back)."""
+    try:
+        sys.stderr.write("harness: %s: %s\n" % (what, type(e).__name__))
+        sys.stderr.flush()
+    except Exception:
+        pass
 
 
 def _paths(state_dir):
@@ -237,8 +251,7 @@ def _build(state_dir, limit=None):
             if limit is not None and size >= limit:
                 break
             size += len(line)
-            for e in translate(line.decode("utf-8", "replace")):
-                parts.append(_dump(e))
+            parts.append(_line_text(line))
     if _cut_off(err):
         parts.append(_dump({"t": None, "type": "cutoff"}))
     _replace(ev, "".join(parts))
@@ -307,8 +320,8 @@ def events(state_dir, write=True):
     if not os.path.exists(ev) or covered != rsize:
         try:
             rebuild(state_dir)
-        except OSError:
-            pass
+        except Exception as e:   # never a traceback for the readers: they get the events file as it is
+            _say("events.jsonl not rebuilt", e)
     return _read_events(ev)
 
 
@@ -346,6 +359,28 @@ def _out_base():
         return st.st_size if stat.S_ISREG(st.st_mode) else None
     except (OSError, ValueError):
         return None
+
+
+def _end_cut_line(state_dir, base):
+    """Before appending to a raw log whose last line was cut (no newline at its end): write the newline first, so that
+    the first line appended is a line of its own, live and rebuilt alike. Returns the raw log's size after it."""
+    if not base:
+        return base
+    raw = _paths(state_dir)[0]
+    try:
+        out, st = sys.stdout.fileno(), os.fstat(sys.stdout.fileno())
+        with open(raw, "rb") as f:
+            if (os.fstat(f.fileno()).st_dev, os.fstat(f.fileno()).st_ino) != (st.st_dev, st.st_ino):
+                return base   # stdout is not this state dir's raw log
+            f.seek(base - 1)
+            if f.read(1) in (b"\n", b""):
+                return base
+        sys.stdout.flush()
+        os.write(out, b"\n")
+        return base + 1
+    except (OSError, ValueError) as e:
+        _say("raw log not checked for a cut last line", e)
+        return base
 
 
 def _open_events(state_dir, fresh, base):
@@ -386,14 +421,13 @@ def _record_stream(src, evf, pos, base, out):
         if not (ok and raw_ok):
             continue
         try:
-            for e in translate(line.decode("utf-8", "replace")):
-                evf.write(_dump(e))
+            evf.write(_line_text(line))
             evf.flush()
             if done is not None:
                 _write_pos(pos, done)
         except Exception as e:
             ok = False
-            sys.stderr.write("harness: events.jsonl not written: %r\n" % (e,))
+            _say("events.jsonl not written", e)
     try:
         evf.close()
     except OSError:
@@ -414,7 +448,7 @@ def record(state_dir, fresh, pidfile=None):
     complete). A background task that kept the pipe open must not hold the session: once the agent (pid in pidfile) is
     gone and nothing has come on the stream for 5 s, it ends."""
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    base = _out_base()
+    base = _end_cut_line(state_dir, _out_base())
     fd, evf = _open_events(state_dir, fresh, base)
     out = sys.stdout.buffer
     r, w = os.pipe()
@@ -488,7 +522,7 @@ def _run(worktree, state_dir, argv, fresh):
     env["CLAUDE_CODE_OAUTH_TOKEN"] = _credential()
     if not env.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"):
         env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
-    base = _out_base()
+    base = _end_cut_line(state_dir, _out_base())
     fd, evf = _open_events(state_dir, fresh, base)
     proc = subprocess.Popen(argv, cwd=worktree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
 

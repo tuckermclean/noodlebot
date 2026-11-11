@@ -10,7 +10,9 @@ raw log `session.jsonl` is the harness's own stream (stdout of `run-session.sh`,
 reads it, and writes the normalised log `events.jsonl` next to it as the session runs. `events()` rebuilds
 `events.jsonl` from the raw log (and `session.stderr` for `cutoff`) when it is missing or behind the raw log (the
 Claude Code backend records the raw size it has covered in `events.pos`; its recorder holds `events.lock` while the
-session runs, so a rebuild never replaces `events.jsonl` under it).
+session runs, so a rebuild never replaces `events.jsonl` under it). `events(state_dir, write=False)` (CLI `events --no-write`)
+translates the raw log in memory and creates no file, lock included: the readers that must write nothing into a
+state directory use it (`api.py`, `report.py`, `usage.py`, `status.sh`); the loop's own reads (`loop.sh` `hev`) use `events`.
 
 ## Inventory
 
@@ -19,15 +21,17 @@ and the interface operation that serves it. Capabilities (`usage`, `resume`, `bg
 
 | Call site | What it does | What it reads | Operation |
 |---|---|---|---|
-| `loop.sh` `launch` (~l.524) | starts a session with `run-session.sh` under setsid | the prompt and `unattended.md` it renders; writes `session.jsonl`, `session.stderr`, `session.rc` | `start` |
-| `loop.sh` `resume_idle` (~l.455-472) | resumes a limit-idle conversation in the same worktree, appending to the same log | the session id of the last init line, the prompt in `resume-prompt.md`, the raw log size (`resume.size`) | `resume` |
-| `loop.sh` skill choice (~l.835) | names the node skill in the start prompt (`/noodlebot:node` or the repository's own `/node`) | whether `origin/main` ships `.claude/skills/node` | `skill_command` |
+| `loop.sh` `launch` (~l.513-521) | starts a session with `run-session.sh` under setsid | the prompt and `unattended.md` it renders; writes `session.jsonl`, `session.stderr`, `session.rc` | `start` |
+| `loop.sh` `resume_idle` (~l.455-472) | resumes a limit-idle conversation in the same worktree, appending to the same log | the session id of the last start event, the prompt in `resume-prompt.md`; writes the number of start events so far to `resume.size` (~l.462) | `resume` |
+| `loop.sh` skill choice (~l.828-831) | names the node skill in the start prompt (`/noodlebot:node` or the repository's own `/node`) | whether `origin/main` ships `.claude/skills/node` | `skill_command` |
+| `loop.sh` `start_triage` (~l.535) | names the triage skill in the start prompt (`/noodlebot:triage <n>`) | the issue number | `skill_command` |
+| `loop.sh` `start_update` (~l.561) | names the triage skill in its update form in the start prompt (`/noodlebot:triage --update <n>`) | the pull request number | `skill_command` |
 | `loop.sh` oauth check (~l.96) | refuses to start the loop without the session credential | the credential file `~/.config/noodlebot/oauth-token` (exists, readable) | `preflight` |
 | `loop.sh` `alive` (~l.201-205) | is this pid that unit's session (guards pid reuse) | `/proc/<pid>/cmdline` | `matches` |
 | `loop.sh` `limit_exit` (~l.209-222) | the session ended by the plan's usage limit (no start used up) | last 400 KB of the log: the last usage reading's status, the last result's text and subtype | `events` |
 | `loop.sh` `idle_by_limit`, `idle_tail` (~l.225-262) | the log ends with the usage limit and has a reset time; the session id to resume | last 400 KB of the log: the last line (unknown when unparseable), usage status and reset time; the last init session id anywhere in the log | `events` |
 | `loop.sh` `bg_cut_off` (~l.264-269) | the CLI stopped background tasks still running after the last turn (no start used up) | the last 100 KB of `session.stderr` | `events` |
-| `loop.sh` `ended`, resume check (~l.307-312) | the resumed session wrote an init line after `resume.size` | the raw log after the offset: a session start | `events` |
+| `loop.sh` `ended`, resume check (~l.295-306) | the resumed session wrote a start of its own | the number of start events, against the count in `resume.size` taken before the resume (a count of events, no longer a byte offset of the raw log) | `events` |
 | `loop.sh` background-wait cut-off check and throttle (~l.264, ~l.1004-1007) | features that exist only if the harness has them: usage readings, resume, the background-wait setting | which capabilities are on | `capabilities` |
 | `loops.sh` (~l.221) | a loop's live sessions listed for `loops.sh` status and stop | `/proc/<pid>/cmdline` of each `session.pid` | `matches` |
 | `status.sh` (~l.40) | which node sessions of a loop are live | `/proc/<pid>/cmdline` | `matches` |
@@ -53,7 +57,13 @@ and the interface operation that serves it. Capabilities (`usage`, `resume`, `bg
 
 `events.jsonl`: one JSON object per line, always with `t` (the raw line's `timestamp` string verbatim, else null; never
 the wall clock, so that a rebuild equals the live file) and `type`. A line with several blocks gives several events, in
-order. Readers must not rely on more fields than listed.
+order. Readers must not rely on more fields than listed. The Claude Code backend writes each line as ASCII-escaped JSON (`\uXXXX`), so a lone
+surrogate of a cut string is written too; a raw line whose events cannot be made for any reason is one `garbled` event
+and the lines after it are translated as usual (live and rebuilt alike; on stderr only the exception's type, never
+event text). Events carry no offset into the raw log: a reader that needs "after this point" counts events (the loop's
+`resume.size` holds the number of `start` events before a resume). When a resume appends to a raw log whose last line
+was cut (no newline at its end), the backend writes the newline first, so the resumed stream's first line is a line of
+its own and its `start` is kept by a rebuild too.
 
 | Type | Fields | One per |
 |---|---|---|
@@ -62,7 +72,7 @@ order. Readers must not rely on more fields than listed.
 | `tool` | `id`, `name`, `text`, `text_full`, `label`, `subagent`, `background`, `delay`, `desc` | tool use; `text` the first line of its short input (cut to 200), `text_full` the same line uncut (api.py redacts, then cuts), `label` for the status script (cut to 100), `background` for a background `Bash` or `Agent`, `delay` of a `ScheduleWakeup` (a bool counts as 0 or 1), `desc` of an `Agent` or `Task` |
 | `tool_result` | `id`, `subagent`, `bg_id` | tool result; `bg_id` the background task id it names |
 | `text` | `text`, `subagent` | text block, whitespace collapsed, cut to 400 |
-| `result` | `subtype`, `text`, `cost`, `turns`, `limit` | end of a turn: closing text, cost and turns when well formed (`turns`: a non-negative int that fits a float; `cost`: a finite number that fits a float; else null), whether it names a usage limit |
+| `result` | `subtype`, `text`, `cost`, `turns`, `limit` | end of a turn: closing text, cost and turns when well formed (`turns`: a non-negative int that fits a float; `cost`: a finite number that fits a float; else null), whether it names a usage limit; no `subagent` field (a result line is the session's own, never a subagent's) |
 | `task_done` | `ids` | background task completion |
 | `cutoff` | none | session end with background tasks stopped by the CLI (last, once) |
 | `other` | none | well-formed line that gave no other event (so the last event is the last line) |
@@ -76,7 +86,7 @@ loop turns the feature off (`harness <name> lacks <capability>: <feature> off`).
 
 | Row | Claude Code | Codex | Pi | OpenCode |
 |---|---|---|---|---|
-| `op:start` | `claude -p <prompt> --output-format stream-json --verbose --plugin-dir <dir> --append-system-prompt <text>` ([headless](https://code.claude.com/docs/en/headless)) | `codex exec --json <prompt>`, JSONL on stdout ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | `pi -p <prompt>` (final text only) or `pi --mode json <prompt>` (JSON lines) ([cli](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)) | `opencode run "<prompt>"`; machine-readable output: not documented ([cli](https://opencode.ai/docs/cli/)) |
+| `op:start` | `claude -p <prompt> --output-format stream-json --verbose --plugin-dir <dir> --append-system-prompt <text>` ([headless](https://code.claude.com/docs/en/headless)) | `codex exec --json <prompt>`, JSONL on stdout ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)); system prompt: its instructions file `AGENTS.md` (global `~/.codex/AGENTS.md`, then project root down to the cwd) ([agents-md](https://learn.chatgpt.com/codex/agent-configuration/agents-md)); plugin: skill folders in `.agents/skills` (cwd up to the repository root), `$HOME/.agents/skills` ([build-skills](https://learn.chatgpt.com/codex/build-skills)) | `pi -p <prompt>` (final text only) or `pi --mode json <prompt>` (JSON lines) ([cli](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)); system prompt: its instructions file `AGENTS.md` or `CLAUDE.md` (`-nc` turns it off); plugin: skill folders with a SKILL.md in `.agents/skills/`, `~/.agents/skills/`, or `--skill <path>` ([skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md)) | `opencode run "<prompt>"`; machine-readable output: not documented ([cli](https://opencode.ai/docs/cli/)); system prompt: not documented for `run` ([cli](https://opencode.ai/docs/cli/)); plugin: skill folders `.opencode/skills/<id>/SKILL.md` (also `~/.config/opencode/skills`, `.claude/skills`, `.agents/skills`) ([skills](https://opencode.ai/docs/skills/)) |
 | `op:resume` | `claude -p <prompt> --resume <id>` ([cli-reference](https://code.claude.com/docs/en/cli-reference)) | `codex exec resume <session id> <prompt>`, or `--last` ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | `--session <path or id>` (non-interactive) or `-c`/`--continue` (latest for the directory) ([cli](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)) | resume for `run`: not documented: capability off ([cli](https://opencode.ai/docs/cli/)) |
 | `op:skill_command` | `/noodlebot:node B03`, or `/node B03` for a shipped skill ([skills](https://code.claude.com/docs/en/skills)) | `$skill-name` in the prompt; skills are folders in `.agents/skills` ([build-skills](https://learn.chatgpt.com/codex/build-skills)) | `/skill:name args` in the prompt; folders with a SKILL.md ([skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md)) | `@skill-id` names a skill; the model loads it with its `skill` tool ([skills](https://opencode.ai/docs/skills/)) |
 | `op:matches` | `run-session.sh ... <unit>` or `claude -p /node <unit>` in `/proc/<pid>/cmdline` ([cli-reference](https://code.claude.com/docs/en/cli-reference)) | `run-session.sh ... <unit>` (the scheduler's own wrapper; the harness's command line is not matched) ([non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode)) | `run-session.sh ... <unit>` (the scheduler's own wrapper) ([cli](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md)) | `run-session.sh ... <unit>` (the scheduler's own wrapper) ([cli](https://opencode.ai/docs/cli/)) |
