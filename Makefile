@@ -15,7 +15,10 @@ TESTS = \
 	scheduler/deploy.test.sh \
 	plugin/hooks/guard.test.sh \
 	scheduler/loop.test.sh \
-	scheduler/loops.test.sh \
+	scheduler/loops-basic.test.sh \
+	scheduler/loops-root.test.sh \
+	scheduler/loops-status.test.sh \
+	scheduler/loops-api.test.sh \
 	scheduler/api.test.sh \
 	scheduler/api-root2.test.sh \
 	scheduler/move-runtime.test.sh \

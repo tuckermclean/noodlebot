@@ -31,6 +31,9 @@ exit 1
 EOT
 chmod +x "$tmp/bin/tmux"
 PATH=$tmp/bin:$PATH
+oldpath=$PATH
+# want <part>...: this run includes a part (the test files set $parts; each runs some of the cases).
+want() { for w; do case " $parts " in *" $w "*) return 0 ;; esac; done; return 1; }
 
 # setup <scenario> [list]: a noodlebot root with the copied loops.sh (if any), a fake loop.sh
 # and a fake run-session.sh, HOME with the list (two repositories unless "nolist").
@@ -80,6 +83,7 @@ alive() { kill -0 "$1" 2>/dev/null; }
 loop_pid() { cat "$nb/state/$1/loop.pid" 2>/dev/null || echo 0; }
 sessions_started() { grep -c "sched-$1" "$TMUXLOG" 2>/dev/null; true; }
 
+if want A; then
 echo "# M01-AC-1: start"
 setup ac1
 start_loop alpha
@@ -197,8 +201,11 @@ printf '# a comment\no/alpha\n\no/beta\n' >"$HOME/.config/noodlebot/repos"
 run status
 ok Purpose:comment-and-blank-lines-ignored-two-lines sh -c "[ \$(grep -c . '$sc/out') = 2 ] && [ \$(wc -l <'$sc/out') = 2 ]"
 
+fi
+if want B; then
 echo "# runtime root: state lives under \${NOODLEBOT_DATA:-\$HOME/.local/share/noodlebot}/state (D02), not in the checkout"
 export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+fi
 # rt_lock <name>: the loop's lock under the runtime root $rt is held.
 rt_lock() { [ -e "$rt/state/$1/loop.lock" ] && ! flock -n "$rt/state/$1/loop.lock" true 2>/dev/null; }
 # rt_wait <name>: waits (at most 6 s) for that lock.
@@ -256,6 +263,7 @@ rt_cases() {
 	kill "$sp" 2>/dev/null
 }
 
+if want B; then
 rt_setup rta unset
 rt_cases unset
 ok M01-AC-1:unset:no-state-folder-in-checkout sh -c "[ ! -e '$nb/state' ]"
@@ -281,9 +289,12 @@ touch "$HOME/STOP"
 PATH=$oldpath
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
+fi
+if want B2 C; then
 echo "# M01 run 3: a probe must not take a loop's lock; issue/ sessions; list hygiene; old lock; dead pids"
 export LOOPS_START_WAIT=2 LOOPS_STOP_WAIT=15
 REALFLOCK=$(command -v flock); export REALFLOCK
+fi
 # nl_setup <scenario> [list]: setup, plus a fake loop.sh that follows ${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot},
 # waits $LOOP_DELAY s between opening and locking its lock file (a slow start), and records
 # state/<name>/exits when it finds the lock taken; and a wbin/flock that, when given a loop.lock path
@@ -329,6 +340,7 @@ nl_held() { [ -e "$1" ] && ! flock -n "$1" true 2>/dev/null; }
 # nl_wait_free <lockfile>: waits (at most 5 s) until nobody holds the lock.
 nl_wait_free() { i=0; while nl_held "$1" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
 
+if want B2; then
 nl_setup race
 LOOP_DELAY=0.6; export LOOP_DELAY
 r_rc=0 r_up=0
@@ -364,6 +376,8 @@ no M01-AC-2:probe-race:stop-did-not-make-the-loop-exit test -e "$nb/state/alpha/
 touch "$HOME/STOP"
 unset LOOP_DELAY
 
+fi
+if want C; then
 echo "# M01-AC-3: status with issue/ sessions and the answered state"
 nl_setup iss
 st=$nb/state/alpha
@@ -460,6 +474,8 @@ ok M01-AC-1:old-lock-free:locks-under-runtime-root sh -c "sleep 0.3; [ -e '$rt/s
 touch "$HOME/STOP"
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA REALFLOCK
 
+fi
+if want D; then
 echo "# V01-AC-8: status names the version of a running loop"
 setup v01
 start_loop alpha
@@ -474,8 +490,11 @@ no V01-AC-8:stopped-loop-line-names-no-version sh -c "echo '$bline' | grep -qF '
 ok V01-AC-8:still-one-line-per-repository sh -c "[ \$(grep -c . '$sc/out') = 2 ]"
 touch "$HOME/STOP"
 
+fi
+if want E; then
 echo "# P01-AC-10: the API server with the loops (only when the checkout has scheduler/api.py)"
 export LOOPS_START_WAIT=5 LOOPS_STOP_WAIT=20
+fi
 # api_setup <scenario> [noapi]: setup, a runtime root of its own, loops that record their exit in the
 # sequence log, a fake tmux that remembers each session's process and can kill it, and (unless noapi)
 # a fake api.py that takes $NOODLEBOT_DATA/api.lock, logs its start and data root, and records its stop.
@@ -550,6 +569,7 @@ api_wait() { i=0; while ! nl_held "$data/api.lock" && [ $i -lt 50 ]; do sleep 0.
 api_gone() { i=0; while pgrep -f "$nb/scheduler/api.py" >/dev/null && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done; ! pgrep -f "$nb/scheduler/api.py" >/dev/null; }
 api_end() { touch "$HOME/STOP"; pkill -f "$nb/scheduler/api.py" 2>/dev/null; sleep 0.3; rm -f "$HOME/STOP"; PATH=$oldpath; }
 
+if want E; then
 oldpath=$PATH
 api_setup ac10a
 run start
@@ -611,6 +631,8 @@ no P01-AC-10:no-api-py-status-no-api-line sh -c "grep -qi 'api' '$sc/out'"
 api_end
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
+fi
+if want F; then
 echo "# T03-AC-4: start passes its USAGE_* and SCHED_* variables to each loop, though the tmux server's environment lacks them"
 export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
 unset USAGE_7D_PACE USAGE_7D_MARGIN USAGE_5H_LIMIT SCHED_TICK SCHED_NOTE SCHED_OTHER USAGE_OTHER
@@ -662,5 +684,6 @@ sleep 0.5
 PATH=$oldpath
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
+fi
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
