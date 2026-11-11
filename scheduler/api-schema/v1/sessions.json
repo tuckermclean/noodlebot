@@ -183,6 +183,26 @@
         ]
        }
       }
+     },
+     "commits": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+       "type": "object",
+       "required": [
+        "sha",
+        "subject"
+       ],
+       "properties": {
+        "sha": {
+         "type": "string"
+        },
+        "subject": {
+         "type": "string",
+         "maxLength": 200
+        }
+       }
+      }
      }
     }
    }

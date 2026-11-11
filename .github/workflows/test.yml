@@ -18,6 +18,7 @@ jobs:
       - name: make test
         run: make test
         env:
+          SITE_TESTS: required
           TEST_BUDGET_ENFORCE: 1
           TEST_FILE_BUDGET: 60
           TEST_BUDGET: 240

@@ -80,6 +80,8 @@ TESTS = \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
 	scheduler/site.test.sh \
+	scheduler/nbctl.test.sh \
+	site/site.test.sh \
 	scheduler/runtests.test.sh
 
 test:

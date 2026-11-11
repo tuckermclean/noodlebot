@@ -41,6 +41,24 @@
        "string",
        "null"
       ]
+     },
+     "reason": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "question": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "issue_url": {
+      "type": [
+       "string",
+       "null"
+      ]
      }
     }
    }

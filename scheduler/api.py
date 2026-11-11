@@ -502,6 +502,27 @@ def scan_log(path):
     return events, wake if wake_open else None, cmds, agents, limit
 
 
+def node_commits(wt):
+    """The newest 3 commits of a node's worktree ahead of origin/main, [{sha, subject}]; [] when there is no worktree or git fails.
+    git log only: nothing is fetched or written, and git does not look for a repository above the worktree."""
+    if not os.path.exists(os.path.join(wt, ".git")):
+        return []
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_CEILING_DIRECTORIES=os.path.dirname(wt), GIT_TERMINAL_PROMPT="0")
+    try:
+        r = subprocess.run(["git", "-C", wt, "log", "--format=%h%x00%s", "-n", "3", "origin/main..HEAD"], env=env,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    out = []
+    for line in r.stdout.decode("utf-8", "replace").splitlines():
+        sha, sep, subj = line.partition("\0")
+        if sep and re.fullmatch(r"[0-9a-f]{7,12}", sha):
+            out.append({"sha": sha, "subject": redact(subj)[:200]})
+    return out[:3]
+
+
 def session_of(sd, sub, kind, subject):
     d = os.path.join(sd, sub)
     pidf = os.path.join(d, "session.pid")
@@ -520,10 +541,14 @@ def session_of(sd, sub, kind, subject):
         started = int(os.stat(pidf).st_mtime)
     except OSError:
         started = None
-    return {"kind": kind, "subject": subject, "pid": int(w), "alive": session_alive(d, subject), "started": started,
+    commits = node_commits(os.path.join(root, "worktrees", os.path.basename(sd), subject)) if kind == "node" else None
+    s = {"kind": kind, "subject": subject, "pid": int(w), "alive": session_alive(d, subject), "started": started,
             "log_size": size, "log_modified": mod, "events": list(events),
             "rc": int(rc) if rc and rc.lstrip("-").isdigit() else None,
             "wakeup_at": wake, "bg_commands": cmds, "bg_agents": agents, "limit": limit}
+    if commits is not None:
+        s["commits"] = commits
+    return s
 
 
 @route(r"/v1/repos/([^/]+/[^/]+)/sessions")
@@ -678,14 +703,17 @@ def r_issues(m, req):
     out = []
     for n in sorted(folders | set(k for k, i in known.items() if i.get("labelled") is True)):
         i = known.get(n)
-        state = None
+        state = reason = question = issue_url = None
         if n in folders:
             d = os.path.join(sd, "issue", str(n))
             has = lambda f: os.path.exists(os.path.join(d, f))   # noqa: E731
             if has("FAILED"):
                 state = "failed"
+                reason = first_line(os.path.join(d, "FAILED"))
             elif has("QUESTION.md") and not has("ANSWER.md"):
                 state = "question"
+                question = first_line(os.path.join(d, "QUESTION.md"))
+                issue_url = "https://github.com/%s/issues/%d" % (m.group(1), n)
             elif session_alive(d, str(n)):
                 state = "running"
             elif has("QUESTION.md") and has("ANSWER.md"):
@@ -693,7 +721,8 @@ def r_issues(m, req):
             elif has("done") or first_word(os.path.join(d, "session.rc")) == "0":
                 state = "done"   # as triage_ended: no done marker for an issue, a finished session (rc 0) with no question is done
         out.append({"number": n, "title": i.get("title") if i and isinstance(i.get("title"), str) else None,
-                    "labelled": i.get("labelled") if i and isinstance(i.get("labelled"), bool) else None, "state": state})
+                    "labelled": i.get("labelled") if i and isinstance(i.get("labelled"), bool) else None, "state": state,
+                    "reason": reason, "question": question, "issue_url": issue_url})
     return 200, {"issues": out, "modified": mtime(p)}
 
 

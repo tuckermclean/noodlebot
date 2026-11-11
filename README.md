@@ -70,6 +70,15 @@ turns the publishing off. The token goes only to the publish command, never to a
 line (`site: publish failed (<status>)`), the details are in `state/<name>/site.log`, and `site: publishing again` follows
 the next success.
 
+The front end in `site/` is a static page that reads the gist from the browser; `.github/workflows/pages.yml` deploys it to
+GitHub Pages when `site/**` changes on `main` (or by hand, with `workflow_dispatch`). To enable it:
+
+1. In the repository's Settings, Pages, set the source to GitHub Actions.
+2. In Settings, Secrets and variables, Actions, Variables, add the repository variable `NOODLEBOT_GIST_ID` with the gist's ID.
+   The workflow writes it to `site/config.json` and fails with a message while it is unset.
+
+The page also takes `?gist=<id>`, which wins over `config.json`.
+
 ## API
 
 A read-only HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
@@ -93,6 +102,24 @@ From another machine, forward the socket over SSH and use it there:
     curl --unix-socket /tmp/nb.sock http://localhost/v1/repos
 
 If `/tmp/nb.sock` is left over from an earlier forward, set `StreamLocalBindUnlink yes` (in `ssh_config`, or `-o`).
+
+### The command line: `scheduler/nbctl.py`
+
+`scheduler/nbctl.py` is a client of the socket (Python standard library only). It reads no state file, calls no `gh` and
+needs no token, so it works over the forwarded socket too. It uses `$NOODLEBOT_DATA/api.sock`, or the path given with
+`--socket` (before the command). When nothing listens there, it says so in one line and exits 2: start the API with
+`scheduler/loops.sh start`.
+
+    scheduler/nbctl.py status                  # the throttle and the deploy, then one line per repository
+    scheduler/nbctl.py status <owner/name>     # one repository in detail
+    scheduler/nbctl.py events [--repo <owner/name>] [--since <cursor>]   # follow the events, one line each
+    scheduler/nbctl.py get repos/<owner>/<name>/prs   # the JSON of /v1/<path>; exit 0 for 200, 1 for 404, 2 otherwise
+
+`nbctl.py status <owner/name>` replaces `scheduler/status.sh`: it shows the loop and STOP files, the last GitHub check, the
+status issue and the throttle, each running session (pid, age, log size, last write, last 4 actions, a node's commits,
+pending wakeup, background work, limit rejection), what waits on you (FAILED with its reason, QUESTION with its first line and
+the issue to answer on, answered, spec PRs), each node's state and the open PRs with their mergeable state. Keep it open next
+to htop with `watch -n 10 scheduler/nbctl.py status <owner/name>`. `status.sh` stays for now.
 
 ## Answering a node's question
 

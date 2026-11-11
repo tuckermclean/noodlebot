@@ -173,6 +173,71 @@ for res in throttle deploy prs issues; do
 	if [ "$code" = 200 ] && [ -f "$schemas/$res.json" ] && python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])) else 1)' "$tmp/resp" "$schemas/$res.json" 2>/dev/null; then pass "P01-AC-8: /v1/schema/$res serves scheduler/api-schema/v1/$res.json"; else fail "P01-AC-8: /v1/schema/$res answered $code or differs from the committed schema"; fi
 done
 
+# ================= P02-AC-6: commits of node sessions, reason, question and issue_url of triage issues =================
+# Contract (change 7 of nodes/P02-api-cli.md), fields named once here:
+#  A node session in /sessions has "commits": a list of at most 3 objects {"sha": <short SHA, 7 to 12 hex characters>,
+#    "subject": <string>}, newest first, from `git log origin/main..HEAD` in $NOODLEBOT_DATA/worktrees/<name>/<ID>; the subject is
+#    redacted ([redacted] for a token) and cut to 200 characters. No worktree, or a failing git log: [].
+#  An issue in /issues has "reason" (first line of FAILED, redacted), "question" (first line of QUESTION.md, redacted) and
+#    "issue_url" (https://github.com/<owner>/<name>/issues/<N>) for a questioned one, as /nodes names them.
+# The worktrees are built here at run time (a git repository cannot be a fixture) and removed again below.
+wt=$data/worktrees/alpha
+tokc=$(sed -n 3p "$fix/tokens.txt")
+longsub=$(python3 -I -c 'print("L" * 250)')
+mkdir -p "$wt/N03" "$wt/N04"
+(
+	cd "$wt/N03" || exit 1
+	export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid \
+		GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+	git init -q . && git config commit.gpgsign false || exit 1
+	n=0
+	mk() { n=$((n + 1)); export GIT_AUTHOR_DATE="2026-11-09T10:0$n:00Z" GIT_COMMITTER_DATE="2026-11-09T10:0$n:00Z"; echo "$n" >"f$n"; git add "f$n"; git commit -q -m "$1"; }
+	mk "base commit"
+	git update-ref refs/remotes/origin/main HEAD
+	mk "first ahead"; mk "second ahead"; mk "third has $tokc inside"; mk "$longsub"; mk "fifth and newest"
+) >"$tmp/wt-build.log" 2>&1
+# N04: a worktree directory that is not a git repository (git log fails); N01, N11: no worktree at all.
+echo "not a repository" >"$wt/N04/README"
+wt_snap() { (cd "$wt/N03" && find . -type f -exec cksum {} + | sort; find . -name FETCH_HEAD; git status --porcelain 2>&1; git for-each-ref 2>&1); }
+wt_snap >"$tmp/wt.before"
+full=$(git -C "$wt/N03" rev-list --max-count=5 HEAD 2>/dev/null | tr '\n' ' ')
+get P02-AC-6 /v1/repos/acme/alpha/sessions sessions; cp "$tmp/resp" "$tmp/sessions.json"
+sessc() { # sessc <ID> <python expr over s> : checks the node session's entry
+	cp "$tmp/sessions.json" "$tmp/resp"
+	jx "(lambda s: $2)(next(x for x in d['sessions'] if x['kind'] == 'node' and x['subject'] == '$1'))"
+}
+shas="'$(echo "$full" | cut -d' ' -f1)', '$(echo "$full" | cut -d' ' -f2)', '$(echo "$full" | cut -d' ' -f3)'"
+if [ -n "$full" ] && [ "$(sessc N03 "[c['sha'] for c in s['commits']] == [f[:len(c['sha'])] for c, f in zip(s['commits'], [$shas])] and len(s['commits']) == 3 and all(7 <= len(c['sha']) <= 12 for c in s['commits'])")" = True ]; then pass "P02-AC-6: node N03 (5 commits ahead of origin/main) gets 3 commits, newest first, each with a short SHA"; else fail "P02-AC-6: N03's commits are not the 3 newest with short SHAs ($shas): $(sessc N03 "s.get('commits')")"; fi
+if [ "$(sessc N03 "[c['subject'] for c in s['commits']][0] == 'fifth and newest'")" = True ]; then pass "P02-AC-6: N03's newest commit comes first, with its subject"; else fail "P02-AC-6: N03's first commit subject: $(sessc N03 "s.get('commits')")"; fi
+if [ "$(sessc N03 "all(set(c) >= {'sha', 'subject'} and isinstance(c['subject'], str) for c in s['commits']) and 'first ahead' not in [c['subject'] for c in s['commits']]")" = True ]; then pass "P02-AC-6: N03's commits have sha and subject strings and omit the older commits beyond 3"; else fail "P02-AC-6: N03's commit objects: $(sessc N03 "s.get('commits')")"; fi
+if [ "$(sessc N03 "s['commits'][1]['subject'] == 'L' * 200")" = True ]; then pass "P02-AC-6: a commit subject of 250 characters is cut to 200"; else fail "P02-AC-6: the long subject is not cut to 200: $(sessc N03 "[len(c['subject']) for c in s.get('commits', [])]")"; fi
+if [ "$(sessc N03 "s['commits'][2]['subject'] == 'third has [redacted] inside'")" = True ] && ! grep -F -q "$tokc" "$tmp/sessions.json"; then pass "P02-AC-6: a token in a commit subject is replaced by [redacted] and appears nowhere in the response"; else fail "P02-AC-6: the token in a commit subject is not redacted: $(sessc N03 "[c['subject'] for c in s.get('commits', [])]")"; fi
+if [ "$(sessc N04 "s['commits'] == []")" = True ]; then pass "P02-AC-6: a node session whose worktree is not a git repository (git log fails) gets []"; else fail "P02-AC-6: N04's commits: $(sessc N04 "s.get('commits')")"; fi
+if [ "$(sessc N01 "s['commits'] == []")" = True ] && [ "$(sessc N11 "s['commits'] == []")" = True ]; then pass "P02-AC-6: node sessions without a worktree get []"; else fail "P02-AC-6: N01's commits: $(sessc N01 "s.get('commits')"), N11's: $(sessc N11 "s.get('commits')")"; fi
+if [ "$(jx "all('commits' not in x or x['kind'] == 'node' for x in d['sessions'])")" = True ] || [ "$(cp "$tmp/sessions.json" "$tmp/resp"; jx "all(x.get('commits', []) == [] for x in d['sessions'] if x['kind'] != 'node')")" = True ]; then pass "P02-AC-6: sessions of other kinds carry no commits"; else fail "P02-AC-6: a triage or update session carries commits"; fi
+wt_snap >"$tmp/wt.after"
+if cmp -s "$tmp/wt.before" "$tmp/wt.after" && [ -n "$(cat "$tmp/wt.before")" ]; then pass "P02-AC-6: the server wrote nothing in the worktree (files, refs, status unchanged, no FETCH_HEAD)"; else fail "P02-AC-6: the worktree changed: $(diff "$tmp/wt.before" "$tmp/wt.after" | head -n 4 | tr '\n' ' ')"; fi
+rm -rf "$data/worktrees"
+get P02-AC-6 /v1/repos/acme/alpha/sessions sessions; cp "$tmp/resp" "$tmp/sessions.json"
+if [ "$(sessc N03 "s['commits'] == []")" = True ]; then pass "P02-AC-6: once the worktree is gone, N03's commits are []"; else fail "P02-AC-6: N03's commits without a worktree: $(sessc N03 "s.get('commits')")"; fi
+
+# triage issues: 50 failed, 51 waits for an answer, 52 failed with a token on its first line, 53 a question with a token
+mkdir -p "$a/issue/50" "$a/issue/51" "$a/issue/52" "$a/issue/53"
+printf 'tests do not pass after 2 starts\nsecond line of the reason\n' >"$a/issue/50/FAILED"
+printf 'Which format should the export use?\n\nOptions: csv or json.\n' >"$a/issue/51/QUESTION.md"
+printf 'push failed with %s\nmore\n' "$tokc" >"$a/issue/52/FAILED"
+printf 'Is %s the right key?\nmore\n' "$tokc" >"$a/issue/53/QUESTION.md"
+get P02-AC-6 /v1/repos/acme/alpha/issues issues
+cp "$tmp/resp" "$tmp/issues.json"
+chk P02-AC-6 "a failed triage issue has reason = the first line of its FAILED" "{i['number']: i['reason'] for i in d['issues'] if i['number'] == 50} == {50: 'tests do not pass after 2 starts'}"
+chk P02-AC-6 "a questioned triage issue has question = the first line of its QUESTION.md" "{i['number']: i['question'] for i in d['issues'] if i['number'] == 51} == {51: 'Which format should the export use?'}"
+chk P02-AC-6 "a questioned triage issue has issue_url https://github.com/acme/alpha/issues/<N>" "{i['number']: i['issue_url'] for i in d['issues'] if i['number'] == 51} == {51: 'https://github.com/acme/alpha/issues/51'}"
+chk P02-AC-6 "a token on the first line of FAILED is redacted in reason" "{i['number']: i['reason'] for i in d['issues'] if i['number'] == 52} == {52: 'push failed with [redacted]'}"
+chk P02-AC-6 "a token on the first line of QUESTION.md is redacted in question" "{i['number']: i['question'] for i in d['issues'] if i['number'] == 53} == {53: 'Is [redacted] the right key?'}"
+if ! grep -F -q "$tokc" "$tmp/issues.json"; then pass "P02-AC-6: the token appears nowhere in the /issues response"; else fail "P02-AC-6: the /issues response holds the token"; fi
+chk P02-AC-6 "the state of the new issue entries stays failed / question, the old fields unchanged" "{i['number']: i['state'] for i in d['issues'] if i['number'] >= 50} == {50: 'failed', 51: 'question', 52: 'failed', 53: 'question'} and all(i['version'] == 1 if 'version' in i else True for i in d['issues']) and d['version'] == 1"
+rm -rf "$a/issue/50" "$a/issue/51" "$a/issue/52" "$a/issue/53"
+
 quiet_final
 
 [ $fails = 0 ] || { echo "$fails failed"; exit 1; }

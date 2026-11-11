@@ -1,0 +1,18 @@
+{
+ "version": 1,
+ "updated": "@now-30",
+ "modified": "@now-30",
+ "five_hour": {
+  "utilization": 0.63,
+  "resets_at": "@now+3600",
+  "status": "allowed"
+ },
+ "seven_day": {
+  "utilization": 0.28,
+  "resets_at": "@now+86400",
+  "status": "allowed"
+ },
+ "projected_5h": 0.91,
+ "hold": true,
+ "reason": "projected-five-hour-over-cap"
+}
