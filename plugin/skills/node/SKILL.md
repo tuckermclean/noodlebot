@@ -102,22 +102,23 @@ Propose the amendment. Do not continue on a guess. A spec change is the owner's,
 
 ## Update a node PR: `/noodlebot:node --update <PR> [--dry-run]`
 Bring an open node PR up to date with `main` when it conflicts. Work in a worktree checked out on the PR's named branch, not a detached HEAD. Change nothing else.
+A restarted update first reads the owner's answer: every file in `answered/` of the state directory the run's prompt names, oldest first. An owner's approval there permits exactly the change it approves, quoted in the PR comment; anything else the rules below forbid still ends in `QUESTION.md`.
 1. Read the PR with `gh pr view <PR> --json headRefName,body`: its branch, and the body with the criterion → evidence table. `git fetch origin`, bring the branch to `origin/<branch>` (a fast-forward), then merge `origin/main`: a merge commit, never a rebase, never a force push.
 2. If the merge would change a frozen test or fixture line, or a spec file, run `git merge --abort`, push nothing, and write `QUESTION.md` (in the state directory the run names, else `out/node/pr-<N>/QUESTION.md`) with the conflicting files and lines and your recommendation. End.
-3. Otherwise resolve by keeping both sides. Add test lines only to keep appended test blocks apart (distinct names, a scratch folder named after each node); change no existing line. Leave no conflict markers.
-4. Run the repository's test entry point (`make test`) and each red target the PR's table names. A failing test the resolution cannot fix: `git merge --abort` if the merge is uncommitted, push nothing, write `QUESTION.md` with the failure and end.
-5. Run the resolution review (above) with a new reviewer. Push only after it approves.
+3. Otherwise resolve by keeping both sides. Add test lines only to keep appended test blocks apart: lines between the blocks, e.g. clearing the first block's scratch paths; never rename or change an existing line. Leave no conflict markers. Commit the merge with its resolution now, before the tests and the review.
+4. Run the repository's test entry point (`make test`) and each red target: from the PR body's criterion → evidence table, else the `TDD-Red-Target:` trailers in `git log origin/main..HEAD`. A failing test the resolution cannot fix: push nothing, write `QUESTION.md` with the failure, run `git reset --hard origin/<branch>` (no merge commit left) and end.
+5. Run the resolution review (below) with a new reviewer. Push only after it approves.
 6. Rerun the whole-node fresh review (step 6) only when the resolution changed the node's own code beyond keeping both sides.
 7. With `--dry-run`, stop before the push and write `out/node/pr-<N>/result.md`: the merge result, each resolved file and how, each added test line, the test results and the review's verdict; or that it wrote `QUESTION.md` and left no merge commit. No push, no comment.
 8. Push the branch. Comment on the PR with each resolved file and how, each added test line, the test results and the review's verdict.
 
 ### Resolution review
-Run after any merge of `origin/main` that had conflicts, before anything is pushed. Dispatch a **new** reviewer (a resolution review) with the merge commit and its diffs against both parents. It checks that:
+Run after any merge of `origin/main` that had conflicts, before anything is pushed. Dispatch a **new** reviewer (a resolution review) with the merge commit and its diffs against both parents; these inputs and this checklist replace the reviewer's usual brief, criteria and SHA inputs. It checks that:
 - the resolution keeps the intent of both sides;
 - the test blocks of different nodes share no names or state;
 - no frozen test line was changed, removed or renamed.
 
-Its verdict is posted on the PR as `Resolution review (<verdict>)` with `gh pr comment <N> --body-file <file>`: a comment, never an approval. Nothing is pushed until it approves. On `request_changes`, fix the findings and run one more new reviewer. A second rejection pushes nothing: write `QUESTION.md` with the findings and end.
+Its verdict is posted on the PR as `Resolution review (<verdict>)` with `gh pr comment <N> --body-file <file>`: a comment, never an approval; with `--dry-run` the verdict goes into `result.md` and is not posted. Nothing is pushed until it approves. On `request_changes`, fix the findings as new commits and run one more new reviewer on the result. A second rejection pushes nothing: write `QUESTION.md` with the findings, run `git reset --hard origin/<branch>` (no merge commit left) and end.
 
 ## Cost discipline
 - Hand agents file paths and section pointers, not pasted documents.

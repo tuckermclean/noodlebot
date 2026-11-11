@@ -11,7 +11,10 @@ node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is
   files its AGENTS.md or the node skill's step 7 name). When the resolution would, or when you cannot settle a conflict from the code and tests,
   do not guess and push nothing: leave the branch as it was, write your question to @DIR@/QUESTION.md
   (what conflicts, the choices, what you recommend), and end the run. The scheduler starts you again
-  once the owner's answer is in @DIR@/ANSWER.md.
+  once the owner has answered.
+- RESUMING. If @DIR@/answered/ exists, an earlier run stopped with a question. Read every file in it,
+  oldest first (<ts>-QUESTION.md is what it asked, <ts>-ANSWER.md is the owner's answer, which is the
+  owner's decision), and carry on; an owner's approval permits exactly the change it approves.
 - If the resolution review rejects the merge twice, or a test fails that you cannot fix by resolving the
   merge, push nothing: write what it found to @DIR@/QUESTION.md and end the run.
 - GitHub: authenticate every gh call with the GitHub App, one fresh token per command:
