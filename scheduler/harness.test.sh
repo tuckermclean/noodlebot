@@ -199,6 +199,64 @@ mkdir -p "$tmp/part"; cp "$d/session.jsonl" "$tmp/part/"; head -n 3 "$d/events.j
 hcli events "$tmp/part" >/dev/null 2>&1
 ck "S08-AC-3: a half-written events.jsonl is rebuilt to the whole" cmp "$d/events.jsonl" "$tmp/part/events.jsonl"
 
+echo "== S08-AC-3: lines that make a naive translator raise, and a reader looking while the session runs"
+# The choice (contract: fake.py header, events): a line nested so deeply that it cannot be parsed is a "garbled" event
+# (a non-blank line that is no JSON object we can read); a result whose total_cost_usd or num_turns is an integer
+# too large for a float is a result event with cost null / turns null (as report.py's num() and whole() reject them).
+# The raw log passes through byte-equal, the later lines are still translated, and the rebuild equals the live file.
+rec=$tmp/rec-o; runlog overflow overflow.jsonl 0; check_log overflow "$fx/overflow.events"
+ck "S08-AC-3: overflow: the session ran to its end (session.rc 0)" sh -c "[ \"\$(cat '$tmp/live-overflow/session.rc' 2>/dev/null)\" = 0 ]"
+ck "S08-AC-3: overflow: a later line is still translated (the last event is the 2.5 result)" sh -c "tail -n 1 '$tmp/live-overflow/events.jsonl' | grep -q '\"cost\": *2.5'"
+python3 -I - "$tmp" <<'PYEOF'
+import json, sys
+tmp = sys.argv[1]
+n = 100000
+raw = ['{"type":"system","subtype":"init","session_id":"sess-deep-1","timestamp":"2026-11-09T11:00:00Z"}',
+       "[" * n + "]" * n,
+       '{"a":' * n + '"x"' + "}" * n,
+       '{"type":"assistant","timestamp":"2026-11-09T11:00:03Z","message":{"content":[{"type":"text","text":"after deep"}]}}',
+       '{"type":"result","subtype":"success","timestamp":"2026-11-09T11:00:04Z","total_cost_usd":3.5,"num_turns":4}']
+exp = [{"t": "2026-11-09T11:00:00Z", "type": "start", "session": "sess-deep-1"},
+       {"t": None, "type": "garbled"}, {"t": None, "type": "garbled"},
+       {"t": "2026-11-09T11:00:03Z", "type": "text", "text": "after deep", "subagent": False},
+       {"t": "2026-11-09T11:00:04Z", "type": "result", "subtype": "success", "text": None, "cost": 3.5, "turns": 4, "limit": False}]
+open(tmp + "/deep.jsonl", "w").write("".join(l + "\n" for l in raw))
+open(tmp + "/deep.events", "w").write("".join(json.dumps(e) + "\n" for e in exp))
+PYEOF
+cp "$tmp/deep.jsonl" "$tmp/raw-deep"; rec=$tmp/rec-dp; errf=; sess "" "$tmp/live-deep" "$tmp/deep.jsonl" 0; check_log deep "$tmp/deep.events"
+ck "S08-AC-3: deep: the session ran to its end (session.rc 0)" sh -c "[ \"\$(cat '$tmp/live-deep/session.rc' 2>/dev/null)\" = 0 ]"
+
+# A reader calling events() before the agent has printed anything must not lose the events that follow, nor
+# those after later calls: a slow fake claude prints the 12-line normal log in three parts when the test says so.
+ln -s "$src/testdata/lib/fake-claude-slow.sh" "$tmp/slowbin-claude"; mkdir -p "$tmp/slowbin"; mv "$tmp/slowbin-claude" "$tmp/slowbin/claude"
+sd=$tmp/slow; hs=$tmp/slow-hs; sdir=$tmp/slow-state
+mkdir -p "$sd" "$sdir"
+head -n 4 "$fx/normal.jsonl" >"$sd/p1"; sed -n 5,8p "$fx/normal.jsonl" >"$sd/p2"; tail -n +9 "$fx/normal.jsonl" >"$sd/p3"
+echo "the system prompt" >"$sdir/unattended.md"
+# waitfor <timeout in 0.1 s> <command...>: poll for a condition
+waitfor() { w=$1; shift; while ! "$@" 2>/dev/null; do w=$((w - 1)); [ "$w" -gt 0 ] || return 1; sleep 0.1; done; }
+rawsize() { [ "$(wc -c <"$sdir/session.jsonl")" -ge "$(cat "$sd/p$1.size")" ]; }
+sz=0; for i in 1 2 3; do sz=$((sz + $(wc -c <"$sd/p$i"))); echo $sz >"$sd/p$i.size"; done
+env HOME="$home" PATH="$tmp/slowbin:$PATH" FAKE_SLOW_DIR="$hs" FAKE_SLOW_PARTS="$sd/p1 $sd/p2 $sd/p3" \
+	timeout -k 1 25 bash "$src/run-session.sh" "$tmp/wt" "$sdir" "/node B03" >>"$sdir/session.jsonl" 2>>"$sdir/session.stderr" &
+slowpid=$!
+ck "S08-AC-3: slow: the agent started and the recorder is up (events.jsonl exists) before anything is printed" waitfor 100 sh -c "[ -e '$hs/started' ] && [ -e '$sdir/events.jsonl' ]"
+hcli events "$sdir" >"$tmp/slow-r0.out" 2>"$tmp/slow-r0.err"
+: >"$hs/go-1"; waitfor 100 test -e "$hs/done-1"; waitfor 100 rawsize 1
+hcli events "$sdir" >"$tmp/slow-r1.out" 2>"$tmp/slow-r1.err"
+: >"$hs/go-2"; waitfor 100 test -e "$hs/done-2"; waitfor 100 rawsize 2
+hcli events "$sdir" >"$tmp/slow-r2.out" 2>"$tmp/slow-r2.err"
+: >"$hs/go-3"
+waitfor 200 test -e "$sdir/session.rc"; wait $slowpid
+hcli events "$sdir" >"$tmp/slow-r3.out" 2>"$tmp/slow-r3.err"
+ck "S08-AC-3: slow: the session finished (session.rc 0)" sh -c "[ \"\$(cat '$sdir/session.rc' 2>/dev/null)\" = 0 ]"
+ck "S08-AC-3: slow: the raw log is the claude stream, untouched" cmp "$sdir/session.jsonl" "$fx/normal.jsonl"
+ck "S08-AC-3: slow: no event is lost (events.jsonl holds the script's events)" sub "$fx/normal.events" "$sdir/events.jsonl"
+ck "S08-AC-3: slow: the last events() call printed all of them" sub "$fx/normal.events" "$tmp/slow-r3.out"
+mkdir -p "$tmp/slow-rb"; cp "$sdir/session.jsonl" "$tmp/slow-rb/"; mv "$sdir/events.jsonl" "$tmp/slow-live.events"; rm -f "$sdir/events.pos"
+hcli events "$sdir" >/dev/null 2>&1
+ck "S08-AC-3: slow: events.jsonl equals the rebuild from the raw log (whole file)" cmp "$tmp/slow-live.events" "$sdir/events.jsonl"
+
 echo
 [ "$fails" = 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1
