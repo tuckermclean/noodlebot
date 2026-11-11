@@ -56,6 +56,21 @@ ok "W05-AC-3: a node mention in the loop's own text of a milestone is linked (th
 ok "W05-AC-3: the QUESTION.md naming nodes is posted byte for byte as written" test "$(cat "$o/qcopied")" = 1
 ok "W05-AC-3: the QUESTION.md's own mentions and links are not linked" sh -c "grep -qxF -- 'Q1: merge K01 before K02?' '$o/c42' && grep -qxF -- 'See [K02](https://example.com/q) and \`K01\`; K03 agrees.' '$o/c42'"
 
+# An event line as loop.sh writes it for a follow-up start: the leading ID is a mention, the ID in the worktree path and in the
+# branch name is not. One more run on the site scenario's state (wd, wsite and the helpers still name the run with --site).
+{
+	echo "2026-05-10T09:21:00Z open=[] merged-prs=[]; started K06 (six-name) as a follow-up on node/K06-six-name in $tmp/worktrees/repo/K06, pid 8, start 1 of 2"
+	echo "2026-05-10T09:21:01Z open=[] merged-prs=[]; started K07 (seven-name) in $tmp/worktrees/repo/K07, pid 9, start 1 of 2"
+} >>"$wstate/status.log"
+wrun 2026-05-10T09:25:00 6
+W="$wd" pyc "
+import json, os
+d = os.environ['W']; db = json.load(open(d + '/gh.json'))
+open(d + '/out/events2', 'w').write('\\n'.join(c['body'] for c in db['comments'] if c['body'].startswith('- \`')))"
+ok "W05-AC-2: (harness) the extra run with --site succeeds" test "$(tail -n 1 "$o/rc")" = 0
+ok "W05-AC-2: an event comment links the leading node of a follow-up start line, not the ID in its branch name or worktree path" sh -c "grep -qF -- 'started [K06]($(L K06)) (six-name) as a follow-up on node/K06-six-name in $tmp/worktrees/repo/K06, pid' '$o/events2'"
+ok "W05-AC-2: an event comment leaves an ID that ends the worktree path (/<ID>) unlinked" sh -c "grep -qF -- 'in $tmp/worktrees/repo/K07, pid' '$o/events2' && grep -qF -- 'started [K07]($(L K07)) (seven-name) in' '$o/events2'"
+
 # Without --site: the same scenario posts what report.py posted before W05 (the golden).
 w05_scenario plain
 w05_norm "$tmp/plain" >"$tmp/plain.norm"
