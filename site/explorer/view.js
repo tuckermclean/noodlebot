@@ -76,7 +76,7 @@ function filters(repo, nodes, view) {
   return `<p class="filters">${toggles('track', tracks, 'tracks', view.tracks)} ${toggles('state', states, 'states', view.states)}</p>`;
 }
 
-function panel(repo, r, n, view) {
+function panel(repo, r, n, view, tags = []) {
   const sel = (id) => `<a href="${e(buildHash(repo, { ...view, node: id }))}">${e(id)}</a>`;
   const det = [];
   if (n.text) det.push(e(n.text));
@@ -94,6 +94,7 @@ function panel(repo, r, n, view) {
     ((n.state === 'question' || n.state === 'answered') && n.text ? field('question', e(n.text)) : '') +
     (issue ? field('issue', `<a href="${e(ghUrl(repo, 'issues', issue))}">#${e(issue)}</a>`) : '') +
     field('spec', `<a href="${e(`https://github.com/${repo}/blob/main/nodes/${n.id}-${n.name}.md`)}">${e(`${n.id}-${n.name}.md`)}</a>`) +
+    tags.map((t) => `<p data-ghost-note="${e(t.kind)}">PR <a href="${e(ghUrl(repo, 'pull', num(t.pr)))}">#${num(t.pr)}</a> ${t.kind === 'changed' ? `changes it: ${Object.keys(t.fields || {}).map(e).join(', ')}` : e(t.kind)}</p>`).join('') +
     '</aside>';
 }
 
@@ -137,7 +138,10 @@ export function renderExplorer(r, view = {}) {
   const W = Math.max(1, ncol) * COL_W;
   const H = bottom + (added.length ? PAD + added.length * ROW_H : 0);
 
-  const prTag = (repoName, g, y) => `<a href="${e(ghUrl(repoName, 'pull', num(g.pr)))}"><text x="${BOX_W - 6}" y="${y}" text-anchor="end" font-size="10">#${num(g.pr)}</text></a>`;
+  const prTag = (repoName, g, i) => {
+    const what = g.kind === 'changed' ? `: ${Object.keys(g.fields || {}).map(e).join(', ')}` : '';
+    return `<a href="${e(ghUrl(repoName, 'pull', num(g.pr)))}"><text x="6" y="${30 + i * 10}" font-size="10">#${num(g.pr)}${what}</text></a>`;
+  };
 
   const edges = [];
   for (const n of visible) {
@@ -169,24 +173,25 @@ export function renderExplorer(r, view = {}) {
     const struck = tags.some((t) => t.kind === 'removed');
     const heavy = chainSet.has(n.id);
     const href = buildHash(repo, { ...view, node: n.id });
-    const label = `<a data-select="${e(n.id)}" href="${e(href)}"><text x="6" y="18" font-size="12"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text></a>`;
-    const tagText = tags.map((t) => prTag(repo, t, 36)).join('');
-    const mark = ready.has(n.id) ? `<circle data-mark="ready-next" cx="${BOX_W - 10}" cy="10" r="5" fill="#fff" stroke="#000" stroke-width="2"/>` : '';
     const dash = tags.some((t) => t.kind === 'changed') ? ' stroke-dasharray="3 3"' : '';
+    const rect = `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="${colour(n.state)}" stroke="#000" stroke-width="${heavy ? 4 : 1}"${dash}/>` +
+      (n.id === sel ? `<rect data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="4" fill="none" stroke="#06c" stroke-width="2" pointer-events="none"/>` : '');
+    const label = `<a data-select="${e(n.id)}" href="${e(href)}">${rect}<text x="6" y="18" font-size="12"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text></a>`;
+    const tagText = tags.map((t, i) => prTag(repo, t, i)).join('');
+    const mark = ready.has(n.id) ? `<circle data-mark="ready-next" cx="${BOX_W - 10}" cy="10" r="5" fill="#fff" stroke="#000" stroke-width="2"/>` : '';
     return `<g data-node="${e(n.id)}" data-state="${e(n.state)}" data-x="${p.x}" data-y="${p.y}" data-selected="${n.id === sel}"` +
       `${heavy ? ' data-chain="true"' : ''}${attrs}${hl(inLit(n.id))} transform="translate(${p.x},${p.y})">` +
-      `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="${colour(n.state)}" stroke="#000" stroke-width="${heavy ? 4 : 1}"${dash}/>` +
       `${label}${mark}${tagText}</g>`;
   });
   for (const g of added) {
     const p = ghostPos.get(g);
     boxes.push(`<g data-node="${e(g.id)}" data-ghost="added" data-pr="${num(g.pr)}" data-x="${p.x}" data-y="${p.y}"${hl(false)} transform="translate(${p.x},${p.y})">` +
       `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="#fff" stroke="#000" stroke-width="1" stroke-dasharray="6 4"/>` +
-      `<text x="6" y="18" font-size="12">${e(g.id)} ${e(g.name)}</text>${prTag(repo, g, 36)}</g>`);
+      `<text x="6" y="18" font-size="12">${e(g.id)} ${e(g.name)}</text>${prTag(repo, g, 0)}</g>`);
   }
 
   const bands = L.bands.map((b) => `<text x="2" y="${b.y + 10}" font-size="10" fill="#777">${e(b.track)}</text>`).join('');
-  const svg = `<svg viewBox="0 0 ${W} ${Math.max(H, 1)}" width="${W}" height="${Math.max(H, 1)}" role="img" aria-label="node graph">${bands}${edges.join('')}${boxes.join('')}</svg>`;
-  const det = sel ? panel(repo, r, by.get(sel), view) : '';
+  const svg = `<div class="explorer-scroll"><svg viewBox="0 0 ${W} ${Math.max(H, 1)}" width="${W}" height="${Math.max(H, 1)}" role="img" aria-label="node graph">${bands}${edges.join('')}${boxes.join('')}</svg></div>`;
+  const det = sel ? panel(repo, r, by.get(sel), view, tagsOf.get(sel) || []) : '';
   return root(`${filters(repo, nodes, view)}${legend(nodes)}${svg}${det}`);
 }
