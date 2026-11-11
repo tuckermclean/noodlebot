@@ -37,30 +37,30 @@ n_live=0
 for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 	[ -e "$f" ] || continue
 	p=$(cat "$f") id=$(basename "$(dirname "$f")") sdir=$(dirname "$f")
-	tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $id( |\$)|claude -p /node $id( |\$)" || continue
+	python3 -I -B "$nb/scheduler/harness.py" matches "$id" "$(tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null)" || continue
 	n_live=$((n_live + 1)) label=$id
 	[[ $sdir == */issue/* ]] && label="triage of #$id"
-	log=$sdir/session.jsonl
-	echo "== $label RUNNING (pid $p, for $(ps -o etime= -p "$p" | tr -d ' ')); log $(du -h "$log" | cut -f1), last written $(date -r "$log" '+%T')"
-	# The last actions; a subagent's are marked with ">".
-	tail -n 300 "$log" | python3 -I -c '
-import json, sys
+	# the log's size and last write (harness.py log-stat), then the last actions; a subagent's are marked with ">"
+	sess=$(python3 -I -B -c '
+import sys, time
+sys.path.insert(0, sys.argv[1] + "/scheduler")
+import harness
+st = harness.log_stat(sys.argv[2])
+if st.get("size") is None: print("LOG - -")
+else:
+    size = st["size"]
+    h = "%d" % size if size < 1024 else ("%.1fK" % (size / 1024.0) if size < 1048576 else "%.1fM" % (size / 1048576.0))
+    print("LOG %s %s" % (h, time.strftime("%T", time.localtime(st["mtime"]))))
 acts = []
-for line in sys.stdin:
-    try: d = json.loads(line)
-    except Exception: continue
-    if not isinstance(d, dict): continue
-    msg = d.get("message")
-    if d.get("type") == "assistant" and isinstance(msg, dict):
-        for c in msg.get("content") or []:
-            if isinstance(c, dict) and c.get("type") == "tool_use":
-                i = c.get("input") or {}
-                what = str(i.get("description") or i.get("command") or i.get("file_path") or i.get("skill") or "")
-                first = what.splitlines()[0][:100] if what else ""
-                acts.append("   %s%s: %s" % ("> " if d.get("parent_tool_use_id") else "", c.get("name"), first))
-    if d.get("type") == "result":
-        acts.append("   [turn ended: %s, %s turns]" % (d.get("subtype"), d.get("num_turns")))
-print("\n".join(acts[-4:]) or "   (none yet)")'
+for e in harness.events(sys.argv[2], write=False):
+    if e.get("type") == "tool":
+        acts.append("   %s%s: %s" % ("> " if e.get("subagent") else "", e.get("name"), e.get("label") or ""))
+    elif e.get("type") == "result":
+        acts.append("   [turn ended: %s, %s turns]" % (e.get("subtype"), e.get("turns")))
+print("\n".join(acts[-4:]) or "   (none yet)")' "$nb" "$sdir" 2>/dev/null)
+	logline=$(printf '%s\n' "$sess" | sed -n 's/^LOG //p')
+	echo "== $label RUNNING (pid $p, for $(ps -o etime= -p "$p" | tr -d ' ')); log ${logline% *}, last written ${logline##* }"
+	printf '%s\n' "$sess" | grep -v '^LOG '
 	[[ $sdir == */issue/* ]] || git -C "$wtroot/$id" log --oneline -3 origin/main..HEAD 2>/dev/null | sed 's/^/   commit /'
 done
 if [ "$n_live" = 0 ]; then

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The plan's usage, read from the sessions' own rate_limit_event lines, and whether to hold new sessions.
+"""The plan's usage, read from the sessions' own usage readings, and whether to hold new sessions.
 
   usage.py --state-root DIR [--now EPOCH]
 
 All repositories' sessions run on one account, so they share one budget: this reads every
-DIR/<repo>/{node,issue,pr}/*/session.jsonl changed in the last 7 days and merges what it finds into
+DIR/<repo>/{node,issue,pr}/* sessions whose log changed in the last 7 days and merges what it finds into
 DIR/usage.json. Within a window usage only grows, so the current reading of a window is the highest
 utilization among the readings with the latest reset time; no timestamps are needed.
 
@@ -22,30 +22,33 @@ import os
 import sys
 import time
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import harness   # the one interface to the agent harness (S08)
+
 FIVE_H, WEEK = 5 * 3600, 7 * 86400
 
 
 def readings(root, now):
-    """{window: {"resetsAt", "utilization", "status"}} from the session logs."""
+    """{window: {"resetsAt", "utilization", "status"}} from the sessions' usage events."""
     out = {}
-    pats = [os.path.join(root, "*", k, "*", "session.jsonl") for k in ("node", "issue", "pr")]
-    for f in [f for p in pats for f in glob.glob(p)]:
+    pats = [os.path.join(root, "*", k, "*") for k in ("node", "issue", "pr")]
+    for d in [d for p in pats for d in glob.glob(p)]:
         try:
-            if os.path.getmtime(f) < time.time() - WEEK:   # file age: the real clock
+            m = harness.log_stat(d).get("mtime")   # the raw log's age, not the events file's: the real clock
+            if m is None or m < time.time() - WEEK:
                 continue
-            fh = open(f, errors="replace")
-        except OSError:
+            evs = harness.events(d, write=False)
+        except Exception:
             continue
-        with fh:
-            for line in fh:
-                if '"rate_limit_event"' not in line:
-                    continue
-                try:
-                    info = json.loads(line).get("rate_limit_info") or {}
-                except (ValueError, AttributeError):
-                    continue
-                for name, w in (info.get("unifiedWindows") or {}).items():
-                    merge(out, name, w)
+        for e in evs:
+            if e.get("type") != "usage" or e.get("info_bad"):
+                continue
+            for name, w in (e.get("windows") or {}).items():
+                r = {"resetsAt": w.get("reset"), "utilization": w.get("utilization")}
+                if w.get("has_status"):
+                    r["status"] = w.get("status")
+                merge(out, name, r)
     return out
 
 

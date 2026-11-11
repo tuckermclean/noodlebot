@@ -32,6 +32,7 @@ import collections
 import datetime
 import fcntl
 import http.server
+import importlib.util
 import json
 import os
 import re
@@ -46,6 +47,20 @@ import time
 import urllib.parse
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+sys.dont_write_bytecode = True   # a deployed checkout gets no __pycache__ from the modules loaded here
+
+
+def _load_harness():
+    """scheduler/harness.py, the one interface to the agent harness (S08), loaded from the folder of this script."""
+    spec = importlib.util.spec_from_file_location("harness", os.path.join(HERE, "harness.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+harness = _load_harness()
 CHECKOUT = os.path.dirname(HERE)
 SCHEMAS = os.path.join(HERE, "api-schema", "v1")
 VERSION = 1
@@ -207,7 +222,6 @@ with open(sys.argv[1], encoding="utf-8") as f:
 print(json.dumps([{"id": str(n["id"]), "name": str(n["name"]), "deps": [str(d) for d in n.get("deps") or []],
                    "track": str(n.get("track") or "")} for n in nodes]))
 """
-LIMIT_TEXT = re.compile(r"usage limit|rate limit|limit reached|hit your limit", re.I)
 
 
 def run_py(args, what):
@@ -252,48 +266,30 @@ def session_alive(d, key):
     except OSError:
         return False
     cmd = (read_text("/proc/%s/cmdline" % w) or "").replace("\0", " ")
-    return re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (key, key), cmd) is not None
+    return harness.matches(cmd, key)
 
 
 def at_limit(d):
-    """The session is idle at the usage limit as S06's idle_tail (loop.sh) reads the last 400 KB of its log: the last
-    parseable line is a rate_limit_event whose status is not allowed, or a result naming a usage limit; and the last
-    rate_limit_event that is not allowed has a numeric resetsAt (the reset time), else the session is not idle by the
-    limit. A line that is no JSON object makes the last line unknown, as there."""
-    try:
-        with open(os.path.join(d, "session.jsonl"), "rb") as f:
-            f.seek(0, 2)
-            f.seek(max(0, f.tell() - 400000))
-            data = f.read()
-    except OSError:
-        return False
+    """The session is idle at the usage limit as idle_by_limit (loop.sh) reads its events: the last line is a usage
+    reading that is not allowed, or a result naming a usage limit; and the last such reading has a numeric reset time,
+    else the session is not idle by the limit. A line that is no JSON object makes the last line unknown, as there."""
     last = reset = None
-    try:
-        for raw in data.split(b"\n"):
-            line = raw.decode("utf-8", "replace")
-            if not line.strip():
-                continue
-            try:
-                e = json.loads(line)
-            except ValueError:
-                last = None
-                continue
-            if not isinstance(e, dict):
-                last = None
-                continue
-            last = e
-            if e.get("type") == "rate_limit_event":
-                i = e.get("rate_limit_info") or {}
-                if i.get("status", "allowed") != "allowed":
-                    reset = i.get("resetsAt")
-        if last is None or not isinstance(reset, (int, float)):
-            return False
-        if last.get("type") == "rate_limit_event":
-            return (last.get("rate_limit_info") or {}).get("status", "allowed") != "allowed"
-        return last.get("type") == "result" and LIMIT_TEXT.search(
-            str(last.get("result") or "") + " " + str(last.get("subtype") or "")) is not None
-    except AttributeError:   # a rate_limit_info that is no object: idle_tail fails on it, so not idle
+    for e in harness.events(d, write=False):
+        t = e.get("type")
+        if t == "garbled":
+            last = None
+            continue
+        last = e
+        if t == "usage":
+            if e.get("info_bad"):   # a reading that is no object: the loop fails on it, so not idle
+                return False
+            if e.get("has_status") and e.get("status") != "allowed":
+                reset = e.get("reset")
+    if last is None or not isinstance(reset, (int, float)):
         return False
+    if last.get("type") == "usage":
+        return bool(last.get("has_status") and last.get("status") != "allowed")
+    return last.get("type") == "result" and bool(last.get("limit"))
 
 
 def node_ids(path, col):
@@ -441,72 +437,40 @@ def int_or_none(v):
         return None
 
 
-def scan_log(path):
-    """One pass over a session log, a line at a time (memory stays bounded however large the log): its last 10 events,
-    the pending wakeup, the unfinished background tasks and the last rate-limit rejection."""
+def scan_log(d):
+    """One pass over a session's events: its last 10 events, the pending wakeup, the unfinished background tasks and the
+    last rate-limit rejection."""
     events = collections.deque(maxlen=10)
     wake = None            # (epoch, delaySeconds) of the last ScheduleWakeup
     wake_open = False      # no assistant tool use or result since
     bg = collections.OrderedDict()   # tool use id -> [kind, text, background id or None]
     done = set()
     limit = None
-    try:
-        f = open(path, "rb")
-    except OSError:
-        return events, None, [], [], None
-    with f:
-        for raw in f:
-            if (b'"tool_use"' not in raw and b'"result"' not in raw and b"rate_limit_event" not in raw
-                    and b"task_notification" not in raw and b"tool_result" not in raw):
-                continue
-            try:
-                ev = json.loads(raw)
-            except ValueError:
-                continue
-            if not isinstance(ev, dict):
-                continue
-            t, kind = epoch(ev.get("timestamp")), ev.get("type")
-            msg = ev.get("message")
-            blocks = msg.get("content") if isinstance(msg, dict) else None
-            if not isinstance(blocks, list):
-                blocks = []
-            if kind == "assistant":
-                for b in blocks:
-                    if not (isinstance(b, dict) and b.get("type") == "tool_use"):
-                        continue
-                    inp = b.get("input") if isinstance(b.get("input"), dict) else {}
-                    e = {"type": "tool_use", "time": t, "text": tool_text(inp), "subagent": bool(ev.get("parent_tool_use_id"))}
-                    if isinstance(b.get("name"), str):
-                        e["tool"] = redact(b["name"])
-                    events.append(e)
-                    wake_open = False
-                    if b.get("name") == "ScheduleWakeup" and t is not None and isinstance(inp.get("delaySeconds"), (int, float)):
-                        wake, wake_open = t + int(inp["delaySeconds"]), True
-                    if inp.get("run_in_background") is True and b.get("name") in ("Bash", "Agent"):
-                        bg[b.get("id")] = [b.get("name"), e["text"], None]
-            elif kind == "user":
-                for b in blocks:
-                    if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in bg:
-                        c = b.get("content")
-                        if isinstance(c, list):
-                            c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
-                        c = c if isinstance(c, str) else ""
-                        m = re.search(r"\bID: ([\w.-]*[\w-])", c) or re.search(r"agentId: ([\w.-]*[\w-])", c)
-                        if m:
-                            bg[b["tool_use_id"]][2] = m.group(1)
-            elif kind == "result":
-                sub = ev.get("subtype")
-                events.append({"type": "result", "time": t, "subtype": redact(sub) if isinstance(sub, str) else None})
-                wake_open = False
-            elif kind == "system" and ev.get("subtype") == "task_notification" and (ev.get("task_id") or ev.get("tool_use_id")):
-                if ev.get("task_id"):
-                    done.add(ev["task_id"])
-                if ev.get("tool_use_id"):
-                    done.add(ev["tool_use_id"])
-            elif kind == "rate_limit_event":
-                info = ev.get("rate_limit_info")
-                if isinstance(info, dict) and not str(info.get("status", "allowed")).startswith("allowed"):
-                    limit = {"at": t, "resets_at": int_or_none(info.get("resetsAt"))}
+    for ev in harness.events(d, write=False):
+        kind, t = ev.get("type"), epoch(ev.get("t"))
+        if kind == "tool":
+            e = {"type": "tool_use", "time": t, "text": None if ev.get("text_full") is None else redact(ev["text_full"])[:200],
+                 "subagent": bool(ev.get("subagent"))}
+            if isinstance(ev.get("name"), str):
+                e["tool"] = redact(ev["name"])
+            events.append(e)
+            wake_open = False
+            if ev.get("name") == "ScheduleWakeup" and t is not None and ev.get("delay") is not None:
+                wake, wake_open = t + int(ev["delay"]), True
+            if ev.get("background"):
+                bg[ev.get("id")] = [ev.get("name"), e["text"], None]
+        elif kind == "tool_result":
+            if ev.get("id") in bg and ev.get("bg_id"):
+                bg[ev["id"]][2] = ev["bg_id"]
+        elif kind == "result":
+            sub = ev.get("subtype")
+            events.append({"type": "result", "time": t, "subtype": redact(sub) if isinstance(sub, str) else None})
+            wake_open = False
+        elif kind == "task_done":
+            done.update(ev.get("ids") or [])
+        elif kind == "usage":
+            if not ev.get("info_bad") and ev.get("has_status") and not str(ev.get("status")).startswith("allowed"):
+                limit = {"at": t, "resets_at": int_or_none(ev.get("reset"))}
     pend = [(k, v) for k, v in bg.items() if v[2] and v[2] not in done and k not in done]
     cmds = [{"id": redact(v[2]), "text": redact(v[1])} for k, v in pend if v[0] == "Bash"]
     agents = [{"id": redact(v[2]), "text": redact(v[1])} for k, v in pend if v[0] == "Agent"]
@@ -540,13 +504,10 @@ def session_of(sd, sub, kind, subject):
     w = first_word(pidf)
     if not (w and w.isdigit()):
         return None
-    log_path = os.path.join(d, "session.jsonl")
-    events, wake, cmds, agents, limit = scan_log(log_path)
-    try:
-        st = os.stat(log_path)
-        size, mod = st.st_size, int(st.st_mtime)
-    except OSError:
-        size = mod = None
+    events, wake, cmds, agents, limit = scan_log(d)
+    st = harness.log_stat(d)
+    size = st.get("size")
+    mod = None if st.get("mtime") is None else int(st["mtime"])
     rc = first_word(os.path.join(d, "session.rc"))
     try:
         started = int(os.stat(pidf).st_mtime)

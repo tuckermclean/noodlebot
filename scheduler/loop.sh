@@ -93,7 +93,7 @@ ids() { sed -n 's#^node/\([A-Z][0-9][0-9]\)-.*#\1#p' | sort -u | tr '\n' ' '; }
 # starts_of <dir> / set_starts <dir> <n>: a task's session starts (node/<ID>, issue/<N> or pr/<N>).
 starts_of() { cat "$1/starts" 2>/dev/null || echo 0; }
 set_starts() { echo "$2" >"$1/starts"; }
-[ -r "$oauth" ] || { echo "loop.sh: $oauth is missing (claude setup-token)" >&2; exit 2; }
+pf=$(python3 -I -B "$nb/scheduler/harness.py" preflight 2>&1) || { echo "loop.sh: $pf" >&2; exit 2; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
 [ -d "$clone/.git" ] || git clone -q "https://github.com/$repo" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
@@ -201,72 +201,66 @@ ensure_labels
 # (a node ID or an issue number); guards against pid reuse.
 alive() {
 	kill -0 "$1" 2>/dev/null || return 1
-	tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -qE "run-session\.sh .* $2( |\$)|claude -p /node $2( |\$)"
+	python3 -I -B "$here/harness.py" matches "$2" "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)"
 }
 
-# limit_exit <dir>: the session ended because of the plan's usage limit: its last rate_limit_event is
+# hev <mode> <dir> [<n>]: the session's normalised events (harness.py events) read by one python run:
+#   limit   exit 0 if the last usage reading is not "allowed" or the last result names a usage or rate limit
+#   idle    print "<reset epoch> <session id of the last start, or ->" if the log's last line is a usage reading that
+#           is not "allowed" or a result naming the limit, and a reset time is known; else exit 1
+#           (an unparseable last line makes the last line unknown)
+#   starts  print the number of session starts in the log
+#   cutoff  exit 0 if the harness stopped background tasks still running after the last turn
+hev() {
+	python3 -I -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import harness
+mode, evs = sys.argv[2], harness.events(sys.argv[3])
+def limited(e):   # a usage reading that is not "allowed" (absent counts as allowed)
+    return e.get("has_status") and e.get("status") != "allowed"
+if mode == "starts":
+    print(sum(1 for e in evs if e.get("type") == "start")); sys.exit(0)
+if mode == "cutoff":
+    sys.exit(0 if any(e.get("type") == "cutoff" for e in evs) else 1)
+if mode == "limit":
+    u = r = None
+    for e in evs:
+        if e.get("type") == "usage": u = e
+        elif e.get("type") == "result": r = e
+    if u and u.get("info_bad"): sys.exit(1)
+    sys.exit(0 if (u and limited(u)) or (r and r.get("limit")) else 1)
+last = reset = sid = None
+for e in evs:
+    t = e.get("type")
+    if t == "garbled": last = None; continue
+    last = e
+    if t == "usage":
+        if e.get("info_bad"): sys.exit(1)
+        if limited(e): reset = e.get("reset")
+    elif t == "start": sid = e.get("session")
+if last is None or not isinstance(reset, (int, float)): sys.exit(1)
+if last.get("type") == "usage": ok = limited(last)
+else: ok = last.get("type") == "result" and last.get("limit")
+if not ok: sys.exit(1)
+print(int(reset), sid or "-")' "$here" "$@"
+}
+
+# limit_exit <dir>: the session ended because of the plan's usage limit: its last usage reading is
 # not "allowed", or its last result names a usage or rate limit. Such an end uses up no start.
 limit_exit() {
 	[ -e "$1/force-limit" ] && return 0   # the loop itself stopped it, or the resume failed (see ended)
-	tail -c 400000 "$1/session.jsonl" 2>/dev/null | python3 -I -c '
-import json, re, sys
-ev = res = None
-for line in sys.stdin:
-    if "\"rate_limit_event\"" in line or "\"type\":\"result\"" in line.replace(" ", ""):
-        try: d = json.loads(line)
-        except ValueError: continue
-        if d.get("type") == "rate_limit_event": ev = d
-        elif d.get("type") == "result": res = d
-st = ((ev or {}).get("rate_limit_info") or {}).get("status", "allowed")
-txt = str((res or {}).get("result") or "") + " " + str((res or {}).get("subtype") or "")
-sys.exit(0 if st != "allowed" or re.search(r"usage limit|rate limit|limit reached|hit your limit", txt, re.I) else 1)'
+	hev limit "$1"
 }
 
-# idle_by_limit <dir>: the session's log ends with the usage limit (its last line is a rate_limit_event
-# whose status is not "allowed", or a result naming the limit) and has a reset time. Prints
-# "<reset epoch> <session id of the last system/init line, or ->". A log that moved on is not idle.
-idle_by_limit() {
-	local out sid
-	out=$(idle_tail "$1") || return 1
-	sid=${out#* }
-	if [ "$sid" = - ]; then   # the init line may lie before the tail window: look in the whole log
-		sid=$(grep -a '"subtype": *"init"' "$1/session.jsonl" 2>/dev/null | tail -n 1 | python3 -I -c '
-import json, sys
-try: print(json.loads(sys.stdin.read()).get("session_id") or "-")
-except ValueError: print("-")') || sid=-
-		[ -n "$sid" ] || sid=-
-	fi
-	echo "${out%% *} $sid"
-}
+# idle_by_limit <dir>: the session's log ends with the usage limit (its last line is a usage reading
+# that is not "allowed", or a result naming the limit) and has a reset time. Prints
+# "<reset epoch> <session id of the last start, or ->". A log that moved on is not idle.
+idle_by_limit() { hev idle "$1"; }
 
-# idle_tail <dir>: the check of idle_by_limit on the last 400 KB of the log.
-idle_tail() {
-	tail -c 400000 "$1/session.jsonl" 2>/dev/null | python3 -I -c '
-import json, re, sys
-last = reset = sid = None
-for line in sys.stdin:
-    if not line.strip(): continue
-    try: d = json.loads(line)
-    except ValueError: last = None; continue
-    if not isinstance(d, dict): last = None; continue
-    last = d
-    if d.get("type") == "rate_limit_event":
-        i = d.get("rate_limit_info") or {}
-        if i.get("status", "allowed") != "allowed": reset = i.get("resetsAt")
-    elif d.get("type") == "system" and d.get("subtype") == "init" and d.get("session_id"): sid = d["session_id"]
-if last is None or not isinstance(reset, (int, float)): sys.exit(1)
-if last.get("type") == "rate_limit_event": ok = (last.get("rate_limit_info") or {}).get("status", "allowed") != "allowed"
-else: ok = last.get("type") == "result" and re.search(r"usage limit|rate limit|limit reached|hit your limit", str(last.get("result") or "") + " " + str(last.get("subtype") or ""), re.I)
-if not ok: sys.exit(1)
-print(int(reset), sid or "-")'
-}
-
-# bg_cut_off <dir>: the CLI said on session.stderr that it stopped background tasks still running
-# after the last turn (whatever the exit code). Such an end uses up no start.
-bg_cut_off() {
-	tail -c 100000 "$1/session.stderr" 2>/dev/null | tr '\n' ' ' |
-		grep -qiE 'background tasks? still running.*after the last turn.*stopping them'
-}
+# bg_cut_off <dir>: the harness stopped background tasks still running after the last turn (whatever
+# the exit code). Such an end uses up no start. Skipped when the harness has no such setting.
+bg_cut_off() { hev cutoff "$1"; }
 
 # not_counted <dir>: give back the start a limit exit used.
 not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" $((n - 1)); }
@@ -305,7 +299,7 @@ ended() {
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
 	if [ -e "$d/resume.size" ]; then
-		tail -c +$(($(cat "$d/resume.size") + 1)) "$d/session.jsonl" 2>/dev/null | grep -q '"subtype": *"init"' || {
+		[ "$(hev starts "$d" 2>/dev/null || echo 0)" -gt "$(cat "$d/resume.size")" ] || {
 			say "$saw; session $(task_name "$d") could not be resumed: the resumed claude wrote no init line (rc $rc)"
 			: >"$d/force-limit"
 		}
@@ -465,7 +459,7 @@ resume_idle() {
 		fi
 		echo "$reset" >"$d/resumed"
 		{ cat "$here/limit-resume.md"; printf '\nThe limit window reset at %s UTC (epoch %s).\n' "$(date -u -d "@$reset" +%H:%M:%S)" "$reset"; } >"$d/resume-prompt.md"
-		stat -c %s "$d/session.jsonl" >"$d/resume.size"
+		hev starts "$d" >"$d/resume.size"
 		rm -f "$d/session.rc"
 		NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$wt" "${a[3]}" "${a[4]}" "$sid" </dev/null 9>&- >>"$d/session.jsonl" 2>>"$d/session.stderr" &
 		pr=$!
@@ -783,7 +777,7 @@ save_leftover() {
 # A merged node's answer ("followup") starts on a branch of its own, node/<ID>-followup-<n>, which the
 # FOLLOWUP marker keeps until its PR is merged.
 start_node() {
-	local id=$1 name=$2 saw=$3 kind=${4:-} d=$state/node/$1 wt=$wtroot/$1 released skill=/noodlebot:node br=node/$1-$2 prompt=unattended.md
+	local id=$1 name=$2 saw=$3 kind=${4:-} d=$state/node/$1 wt=$wtroot/$1 released shipped skill=/noodlebot:node br=node/$1-$2 prompt=unattended.md
 	mkdir -p "$d"
 	# A follow-up with no marker yet and a worktree here: the merged node's leftover. Hold it before the
 	# answer is released (markers untouched), so cleanup_merged retries and a later tick starts it.
@@ -832,8 +826,10 @@ start_node() {
 		-e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
 		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" >"$d/unattended.md" || { note "$saw; $id: rendering $prompt failed; not started"; return 1; }
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
-	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && skill=/node
-	launch "$wt" "$d" "$skill $id"
+	shipped=0
+	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && shipped=1
+	skill=$(python3 -I -B "$here/harness.py" skill-command node "$id" "$shipped") || skill="/noodlebot:node $id"
+	launch "$wt" "$d" "$skill"
 	[ "$resume" = 1 ] && rm -f "$d/leftover.pending"
 	live+=("$pid $id")
 	say "$saw; started $id ($name)${kind:+ as a follow-up on $br} in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"

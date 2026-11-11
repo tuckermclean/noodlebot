@@ -12,11 +12,12 @@ the operations are described in harnesses/README.md.
   harness.py skill-command <skill> <args> [shipped]
   harness.py matches <unit> <cmdline>
   harness.py preflight
-  harness.py events <state-dir>
+  harness.py events [--no-write] <state-dir>           (--no-write: translate in memory, create no file)
   harness.py capabilities
   harness.py log-stat <state-dir>                      (the raw log: one JSON object with path, size, mtime)
 """
 import importlib.util
+import inspect
 import json
 import os
 import sys
@@ -68,8 +69,13 @@ def resume(worktree, state_dir, session_id, prompt):
     return backend().resume(worktree, state_dir, session_id, prompt)
 
 
-def events(state_dir):
-    return backend().events(state_dir)
+def events(state_dir, write=True):
+    """The normalised events of the session. write=False: for the readers that must not write into the state
+    directory (a backend without the argument writes its events file as it always does)."""
+    be = backend()
+    if not write and "write" in inspect.signature(be.events).parameters:
+        return be.events(state_dir, write=False)
+    return be.events(state_dir)
 
 
 def log_stat(state_dir):
@@ -139,6 +145,10 @@ def main(argv):
         if msg:
             sys.stderr.write(msg + "\n")
             return 1
+        return 0
+    if op == "events" and len(a) == 2 and a[0] == "--no-write":
+        for e in events(a[1], write=False):
+            sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\n")
         return 0
     if op == "events" and len(a) == 1:
         events(a[0])

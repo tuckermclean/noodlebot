@@ -172,7 +172,12 @@ def _translate(line):
 # --- the event log -------------------------------------------------------------------------------------------------
 
 def _dump(e):
-    return json.dumps(e, ensure_ascii=False) + "\n"
+    out = json.dumps(e, ensure_ascii=False) + "\n"
+    try:
+        out.encode("utf-8")
+    except UnicodeEncodeError:   # a lone surrogate (a string cut in the middle of a pair): written escaped
+        out = json.dumps(e) + "\n"
+    return out
 
 
 def _paths(state_dir):
@@ -266,8 +271,28 @@ def _read_events(ev):
         return []
 
 
-def events(state_dir):
+def _translate_file(state_dir):
+    """The events of the raw log, translated in memory (no file is written, no lock taken); None without a raw log."""
+    raw, _, _, err = _paths(state_dir)
+    out = []
+    try:
+        with open(raw, "rb") as f:
+            for line in f:
+                out.extend(translate(line.decode("utf-8", "replace")))
+    except OSError:
+        return None
+    if _cut_off(err):
+        out.append({"t": None, "type": "cutoff"})
+    return out
+
+
+def events(state_dir, write=True):
+    """The events of the session. write=False (the readers that must not write: the API, the report) translates the
+    raw log in memory and creates no file; a state dir without a raw log gives the events file as it is."""
     raw, ev, pos, _ = _paths(state_dir)
+    if not write:
+        out = _translate_file(state_dir)
+        return _read_events(ev) if out is None else json.loads(json.dumps(out))
     try:
         rsize = os.path.getsize(raw)
     except OSError:
