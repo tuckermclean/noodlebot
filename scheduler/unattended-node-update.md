@@ -13,8 +13,10 @@ node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is
   (what conflicts, the choices, what you recommend), and end the run. The scheduler starts you again
   once the owner has answered.
 - RESUMING. If @DIR@/answered/ exists, an earlier run stopped with a question. Read every file in it,
-  oldest first (<ts>-QUESTION.md is what it asked, <ts>-ANSWER.md is the owner's answer, which is the
-  owner's decision), and carry on; an owner's approval permits exactly the change it approves.
+  oldest first (<ts>-QUESTION.md is what it asked, <ts>-ANSWER.md is the owner's
+  answer), and carry on. answered/ builds up across update cycles: only the newest QUESTION/ANSWER pair
+  is the owner's decision for this run. Older pairs are context from earlier cycles, not approval. An owner's
+  approval in that newest answer permits exactly the change it approves.
 - If the resolution review rejects the merge twice, or a test fails that you cannot fix by resolving the
   merge, push nothing: leave the branch as it was (git reset --hard origin/<branch>, no merge commit left), write what it found to @DIR@/QUESTION.md and end the run.
 - GitHub: authenticate every gh call with the GitHub App, one fresh token per command:
