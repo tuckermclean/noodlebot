@@ -21,6 +21,7 @@ DATA/state/starts.lock, and files are replaced atomically, so two loops asking a
 
   took      KEY was started without a turn (a released node): record its start like a granted ask, whatever the
             gap and the order, so a giveback of KEY restores the previous record. No KEY is an error.
+            A previous record more than the gap in the future is dropped, as ask does.
 
 Order: units that waited more than the starvation limit (--starve, SCHED_STARVE, 21600 s) first, the
 longest waiting first; then triage/update/followup/resumed; then fresh S, M, L (no Size counts as L);
@@ -139,15 +140,20 @@ def hm(secs):
     return "%dh%02dm" % (m // 60, m % 60)
 
 
-def ask(state, repo, now, args):
-    lists = live_lists(state, now)
-    if repo not in lists:
-        return None
+def start_gap(lists, args):
     gap = args.gap
     if gap is None:
         gap = env_num("SCHED_START_GAP", None)
     if gap is None or not math.isfinite(gap):
-        gap = max(d["tick"] for d in lists.values())
+        gap = max(d["tick"] for d in lists.values()) if lists else 0.0
+    return gap
+
+
+def ask(state, repo, now, args):
+    lists = live_lists(state, now)
+    if repo not in lists:
+        return None
+    gap = start_gap(lists, args)
     starve = args.starve
     if starve is None:
         starve = env_num("SCHED_STARVE", 21600.0)
@@ -179,9 +185,12 @@ def ask(state, repo, now, args):
     return "%s\t%s" % (u["key"], text)
 
 
-def took(state, repo, now, key):
+def took(state, repo, now, key, args):
     spath = os.path.join(state, "starts.json")
     last = read_json(spath)
+    # as ask: a start far in the future (more than the gap) is a bad record, not a previous start
+    if valid_start(last) and last["time"] > now + start_gap(live_lists(state, now), args):
+        last = None
     prev = {k: v for k, v in last.items() if k != "prev"} if valid_start(last) else None
     write_json(spath, {"time": now, "repo": repo, "unit": key, "prev": prev})
     # a later giveback of KEY must restore this record, not be taken for an undone grant
@@ -248,7 +257,7 @@ def main():
         elif args.command == "took":
             if not args.key:
                 p.error("took needs a KEY")
-            took(state, args.repo, now, args.key)
+            took(state, args.repo, now, args.key, args)
         else:
             if not args.key:
                 p.error("giveback needs a KEY")

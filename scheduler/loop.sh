@@ -835,7 +835,7 @@ start_turn() {
 	case $t in
 	triage) start_triage "$a" "$2" && live+=("$pid $a") && triaging=$a ;;
 	update) start_update "$a" "$b" "$c" "$d" "$2" && live+=("$pid $a") && triaging=$a ;;
-	node) start_node "$a" "$b" "$2" "$c" ;;
+	node) start_node "$a" "$b" "$2" "$c" && started[$a]=1 ;;   # started: tick's, for the RELEASE lines
 	resume) resume_idle "$2" "$a" ;;
 	*) return 1 ;;
 	esac
@@ -1038,7 +1038,7 @@ tick_run() {
 			elif start_node "$id" "$name" "$saw" "$kind"; then
 				say "$saw; $id: released past the throttle"; rm -f "$state/node/$id/waiting"
 			else
-				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "${repo#*/}" >/dev/null 2>&1 || note "$saw; turn.py giveback failed"
+				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "${repo#*/}" >/dev/null 2>&1 || { took_failed=1; note "$saw; turn.py giveback failed; nothing more started"; }
 				want_node "$id" "$name" "$kind"
 				say "$saw; $id: RELEASE found, but it did not start (see above)"
 			fi
@@ -1047,7 +1047,8 @@ tick_run() {
 	[ "$ramp" = 1 ] && queue_round "$saw"
 	for id in "${rels[@]}"; do
 		[ -z "${handled[$id]:-}" ] || continue
-		if [ -n "${started[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it started as the loop would anyway"
+		if [ -n "${started[$id]:-}" ] && [ "$ramp" = 1 ]; then say "$saw; $id: RELEASE found, the throttle is open; it started on its turn"
+		elif [ -n "${started[$id]:-}" ]; then say "$saw; $id: RELEASE found, the throttle is open; it started as the loop would anyway"
 		elif [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
 		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
 		elif [ -n "${isready[$id]:-}" ]; then
