@@ -15,6 +15,8 @@ TESTS = \
 	scheduler/report-first-deploy.test.sh \
 	scheduler/report-review.test.sh \
 	scheduler/report-regress.test.sh \
+	scheduler/report-g03.test.sh \
+	scheduler/loop-g03-skills.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
