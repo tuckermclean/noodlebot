@@ -104,11 +104,11 @@ Propose the amendment. Do not continue on a guess. A spec change is the owner's,
 Bring an open node PR up to date with `main` when it conflicts. Work in a worktree checked out on the PR's named branch, not a detached HEAD. Change nothing else.
 A restarted update first reads the owner's answer: every file in `answered/` of the state directory the run's prompt names, oldest first. An owner's approval there permits exactly the change it approves, quoted in the PR comment; anything else the rules below forbid still ends in `QUESTION.md`.
 1. Read the PR with `gh pr view <PR> --json headRefName,body`: its branch, and the body with the criterion → evidence table. `git fetch origin`, bring the branch to `origin/<branch>` (a fast-forward), then merge `origin/main`: a merge commit, never a rebase, never a force push.
-2. If the merge would change a frozen test or fixture line, or a spec file, run `git merge --abort`, push nothing, and write `QUESTION.md` (in the state directory the run names, else `out/node/pr-<N>/QUESTION.md`) with the conflicting files and lines and your recommendation. End.
+2. If resolving a conflict would change a frozen test or fixture line, or a spec file, run `git merge --abort`, push nothing, and write `QUESTION.md` (in the state directory the run names, else `out/node/pr-<N>/QUESTION.md`) with the conflicting files and lines and your recommendation. End.
 3. Otherwise resolve by keeping both sides. Add test lines only to keep appended test blocks apart: lines between the blocks, e.g. clearing the first block's scratch paths; never rename or change an existing line. Leave no conflict markers. Commit the merge with its resolution now, before the tests and the review.
 4. Run the repository's test entry point (`make test`) and each red target: from the PR body's criterion → evidence table, else the `TDD-Red-Target:` trailers in `git log origin/main..HEAD`. A failing test the resolution cannot fix: push nothing, write `QUESTION.md` with the failure, run `git reset --hard origin/<branch>` (no merge commit left) and end.
 5. Run the resolution review (below) with a new reviewer. Push only after it approves.
-6. Rerun the whole-node fresh review (step 6) only when the resolution changed the node's own code beyond keeping both sides.
+6. Rerun the whole-node fresh review (build step 6, Fresh review on the PR) only when the resolution changed the node's own code beyond keeping both sides.
 7. With `--dry-run`, stop before the push and write `out/node/pr-<N>/result.md`: the merge result, each resolved file and how, each added test line, the test results and the review's verdict; or that it wrote `QUESTION.md` and left no merge commit. No push, no comment.
 8. Push the branch. Comment on the PR with each resolved file and how, each added test line, the test results and the review's verdict.
 
@@ -118,7 +118,7 @@ Run after any merge of `origin/main` that had conflicts, before anything is push
 - the test blocks of different nodes share no names or state;
 - no frozen test line was changed, removed or renamed.
 
-Its verdict is posted on the PR as `Resolution review (<verdict>)` with `gh pr comment <N> --body-file <file>`: a comment, never an approval; with `--dry-run` the verdict goes into `result.md` and is not posted. Nothing is pushed until it approves. On `request_changes`, fix the findings as new commits and run one more new reviewer on the result. A second rejection pushes nothing: write `QUESTION.md` with the findings, run `git reset --hard origin/<branch>` (no merge commit left) and end.
+Its verdict is posted on the PR as `Resolution review (<verdict>)` with `gh pr comment <N> --body-file <file>`: a comment, never an approval; with `--dry-run` the verdict goes into `result.md` and is not posted. In a node build with no PR yet, it goes into the PR body's deviations and is posted as that comment once the PR is open. Nothing is pushed until it approves. On `request_changes`, fix the findings as new commits and run one more new reviewer on the result. A second rejection pushes nothing: write `QUESTION.md` with the findings and leave the branch as it was. With `--update`, run `git reset --hard origin/<branch>` (no merge commit left). In a node build's own merge of `origin/main` (build step 6), undo only the merge (`git reset --hard` to the merge's first parent, or `ORIG_HEAD`), never losing the node's commits. Then end.
 
 ## Cost discipline
 - Hand agents file paths and section pointers, not pasted documents.

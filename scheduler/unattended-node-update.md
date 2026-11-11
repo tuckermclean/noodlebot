@@ -16,7 +16,7 @@ node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is
   oldest first (<ts>-QUESTION.md is what it asked, <ts>-ANSWER.md is the owner's answer, which is the
   owner's decision), and carry on; an owner's approval permits exactly the change it approves.
 - If the resolution review rejects the merge twice, or a test fails that you cannot fix by resolving the
-  merge, push nothing: write what it found to @DIR@/QUESTION.md and end the run.
+  merge, push nothing: leave the branch as it was (git reset --hard origin/<branch>, no merge commit left), write what it found to @DIR@/QUESTION.md and end the run.
 - GitHub: authenticate every gh call with the GitHub App, one fresh token per command:
   GH_TOKEN=$(~/.config/noodlebot/token @REPO@) GH_REPO=@REPO@ <command>
   Push with: GIT_TOKEN=$(~/.config/noodlebot/token @REPO@) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push origin HEAD
