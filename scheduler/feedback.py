@@ -19,6 +19,7 @@ nothing; a PR seen later starts from an empty record. The record and file of a P
 A failing gh call is logged to stderr, prints nothing for that PR, leaves its record alone and makes the exit code 1.
 """
 import argparse
+import concurrent.futures
 import glob
 import json
 import os
@@ -113,11 +114,16 @@ def only_thumbs(body):
     return (body or "").strip().replace("️", "") in THUMBS
 
 
-def read_pr(repo, n):
-    """(items, newest ids): items are all candidate feedback dicts, newest the max id of each kind."""
-    conv = gh_list("repos/%s/issues/%d/comments" % (repo, n))
-    line = gh_list("repos/%s/pulls/%d/comments" % (repo, n))
-    rev = gh_list("repos/%s/pulls/%d/reviews" % (repo, n))
+def fetch_pr(pool, repo, n):
+    """Start the three reads of PR n on the pool: the futures of its conversation comments, line comments, reviews."""
+    return [pool.submit(gh_list, "repos/%s/%s/%d/%s" % (repo, base, n, what))
+            for base, what in (("issues", "comments"), ("pulls", "comments"), ("pulls", "reviews"))]
+
+
+def read_pr(futures):
+    """(items, newest ids) from the futures of fetch_pr (a failed read raises here): items are all candidate
+    feedback dicts, newest the max id of each kind."""
+    conv, line, rev = [f.result() for f in futures]
     newest = {
         "conversation": max([c["id"] for c in conv] or [0]),
         "line": max([c["id"] for c in line] or [0]),
@@ -218,14 +224,17 @@ def main():
                 except OSError:
                     pass
     rc = 0
+    todo = []
     for n, branch, is_bot in prs:
-        if not is_bot:
-            continue
-        udir = unit_dir(a.state, n, branch)
-        if udir is None:
-            continue
+        udir = unit_dir(a.state, n, branch) if is_bot else None
+        if udir is not None:
+            todo.append((n, branch, udir))
+    # the reads of all PRs run at once (a small pool); the results are used in file order
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=8) if todo else None
+    fetched = {n: fetch_pr(pool, a.repo, n) for n, _, _ in todo}
+    for n, branch, udir in todo:
         try:
-            items, newest = read_pr(a.repo, n)
+            items, newest = read_pr(fetched[n])
             if first:
                 write_atomic(os.path.join(fdir, str(n)), record_text(newest))
                 continue
@@ -247,6 +256,8 @@ def main():
         except Exception as e:   # one malformed item only skips that PR
             log("PR %d: %s" % (n, e))
             rc = 1
+    if pool:
+        pool.shutdown()
     if first:
         if rc:
             shutil.rmtree(fdir, ignore_errors=True)

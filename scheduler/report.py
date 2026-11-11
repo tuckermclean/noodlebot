@@ -25,7 +25,10 @@ Each run:
      ended session's line with its total cost; no closing summary);
   4. posts each new unanswered QUESTION.md once: a short `## <ID> asks` pointer on the status issue (its
      Waiting on you item links the question's comment on the unit's issue), and
-     the whole QUESTION.md as a milestone on the unit's home issue;
+     the whole QUESTION.md as a milestone on the unit's home issue; a spec-PR feedback session's QUESTION.md (pr/<N>/ with
+     a FEEDBACK.md) the same, its home being issue N for a PR on `spec/triage-<N>-*` and the PR itself otherwise (the
+     branch from open-prs.tsv, or FEEDBACK.md's `Branch:` line), and the owner's comment there after it becomes
+     pr/<N>/ANSWER.md; an update session's QUESTION.md (no FEEDBACK.md) is not posted;
   5. posts milestones on each unit's home issue, each once, each starting with a `**Stage:**` line: a start
      or resume (with its start count, read from new status.log lines), the question, answer received, FAILED.
      The home issue of a triage of N is N; of a node, the first issue on the **Resolves:** line of its spec
@@ -124,6 +127,27 @@ def nodes(state):
         if os.path.isdir(d):
             out += [fmt % n for n in sorted(os.listdir(d)) if pat.match(n) and os.path.isdir(os.path.join(d, n))]
     return out
+
+
+def pr_feedback(state, task):
+    """A spec-PR feedback unit: "PR #N" whose state folder holds a FEEDBACK.md (an update's has none)."""
+    return task.startswith("PR #") and has(state, task, "FEEDBACK.md")
+
+
+def pr_home(state, task):
+    """The home issue number of a spec-PR feedback unit: issue N for a PR on spec/triage-<N>-*, else the PR itself."""
+    num = task[4:]
+    branch = ""
+    for f in (l.split() for l in read_lines(os.path.join(state, "open-prs.tsv"))):
+        if len(f) > 1 and f[0] == num:
+            branch = f[1]
+    if not branch:
+        for l in read_lines(os.path.join(tdir(state, task), "FEEDBACK.md")):
+            if l.startswith("Branch:"):
+                branch = l.split(":", 1)[1].strip()
+                break
+    m = re.match(r"spec/triage-(\d+)-", branch)
+    return int(m.group(1) if m else num)
 
 
 def tdir(state, task):
@@ -242,7 +266,9 @@ def sessions(state):
         except OSError:
             continue
         k = n.rsplit("#", 1)[-1]
-        if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (k, k), cmd):
+        # a node's feedback prompt ends in the PR number: its state folder tells the node
+        if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)|run-session\.sh [^ ]+ [^ ]*/node/%s "
+                     r"/noodlebot:node --feedback [0-9]+( |$)" % (k, k, k), cmd):
             out.append((n, pid, os.path.getmtime(f)))
     return out
 
@@ -856,6 +882,8 @@ def spec_info(a, node):
 
 def home_issue(a, rs, task):
     """The unit's home issue number: the recorded one, else decided (and for a Build issue created) and recorded."""
+    if task.startswith("PR #"):  # a spec-PR feedback unit: decided from its branch, never recorded
+        return pr_home(a.state, task)
     f = os.path.join(tdir(a.state, task), "issue")
     try:
         return int(open(f).read().split()[0])
@@ -897,7 +925,7 @@ def home_issue(a, rs, task):
 
 def milestone(a, rs, task, key, stage, body=""):
     """Post one milestone comment on the unit's home issue, once per key (recorded in report.json after the post)."""
-    if task.startswith("PR #"):  # a spec-PR update is not a unit: no issue
+    if task.startswith("PR #") and not pr_feedback(a.state, task):  # a spec-PR update is not a unit: no issue
         return
     u = rs.setdefault("units", {}).setdefault(task, {})
     done = u.setdefault("done", [])
@@ -1048,7 +1076,7 @@ def record_answer(a, rs, node, c, text):
                 (node, a.owner, c["created_at"], c["html_url"], text))
     os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
     a.answered = True
-    what = None if node.startswith("#") else answered_text(a.state, node)
+    what = None if node.startswith(("#", "PR #")) else answered_text(a.state, node)
     queue(a, rs, node, "answer:%s" % c["id"], "answer received" + (", " + what if what else ""),
           "The owner's answer was recorded: %s" % c["html_url"])
     flush(a, rs)
@@ -1059,6 +1087,9 @@ def home_units(a):
     """{issue number: [tasks]} for the units whose home issue is recorded."""
     out = {}
     for n in nodes(a.state):
+        if pr_feedback(a.state, n):
+            out.setdefault(pr_home(a.state, n), []).append(n)
+            continue
         if n.startswith("PR #"):
             continue
         try:
@@ -1215,7 +1246,7 @@ def post_events(a, rs, issue):
 def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
-        if n.startswith("PR #"):
+        if n.startswith("PR #") and not pr_feedback(a.state, n):  # an update's question is not posted
             continue
         q = os.path.join(tdir(a.state, n), "QUESTION.md")
         key = mtime_key(q)
