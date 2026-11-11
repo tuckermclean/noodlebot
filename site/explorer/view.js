@@ -110,7 +110,9 @@ export function renderExplorer(r, view = {}) {
   const visible = nodes.filter((n) => shown(n.track, n.state));
   const vis = new Set(visible.map((n) => n.id));
 
+  const ghostSel = view.node && !by.has(view.node) ? (ghosts(r.spec_prs || []).find((g) => g.kind === 'added' && g.id === view.node) || null) : null;
   const sel = view.node && by.has(view.node) ? view.node : null;
+  const note = view.node && !sel && !ghostSel ? `<p data-note="no-node">No node ${e(view.node)} in ${e(repo)}'s published graph yet</p>` : '';
   let lit = null;
   if (sel) lit = new Set([sel, ...upstream(nodes, sel), ...downstream(nodes, sel)]);
   const inLit = (id) => (lit ? lit.has(id) : false);
@@ -185,13 +187,16 @@ export function renderExplorer(r, view = {}) {
   });
   for (const g of added) {
     const p = ghostPos.get(g);
-    boxes.push(`<g data-node="${e(g.id)}" data-ghost="added" data-pr="${num(g.pr)}" data-x="${p.x}" data-y="${p.y}"${hl(false)} transform="translate(${p.x},${p.y})">` +
+    boxes.push(`<g data-node="${e(g.id)}" data-ghost="added" data-pr="${num(g.pr)}" data-x="${p.x}" data-y="${p.y}"${hl(false)} data-selected="${!!ghostSel && g.id === ghostSel.id}" transform="translate(${p.x},${p.y})">` +
       `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="#fff" stroke="#000" stroke-width="1" stroke-dasharray="6 4"/>` +
       `<text x="6" y="18" font-size="12">${e(g.id)} ${e(g.name)}</text>${prTag(repo, g, 0)}</g>`);
   }
 
   const bands = L.bands.map((b) => `<text x="2" y="${b.y + 10}" font-size="10" fill="#777">${e(b.track)}</text>`).join('');
   const svg = `<div class="explorer-scroll"><svg viewBox="0 0 ${W} ${Math.max(H, 1)}" width="${W}" height="${Math.max(H, 1)}" role="img" aria-label="node graph">${bands}${edges.join('')}${boxes.join('')}</svg></div>`;
-  const det = sel ? panel(repo, r, by.get(sel), view, tagsOf.get(sel) || []) : '';
-  return root(`${filters(repo, nodes, view)}${legend(nodes)}${svg}${det}`);
+  const ghostPanel = (g) => `<aside data-panel="${e(g.id)}"><h2>${e(g.id)} ${e(g.name)}</h2>` +
+    `<p data-field="summary">${e(g.summary)}</p><p data-field="track">${e(g.track)}</p>` +
+    `<p data-ghost-note="added">PR <a href="${e(ghUrl(repo, 'pull', num(g.pr)))}">#${num(g.pr)}</a> ${e('adds it')}</p></aside>`;
+  const det = sel ? panel(repo, r, by.get(sel), view, tagsOf.get(sel) || []) : (ghostSel ? ghostPanel(ghostSel) : '');
+  return note + root(`${filters(repo, nodes, view)}${legend(nodes)}${svg}${det}`);
 }
