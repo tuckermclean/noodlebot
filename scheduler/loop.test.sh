@@ -1260,6 +1260,7 @@ ok "G02-AC-1 setup: the throttle is released" within 6 "throttle released"
 
 ok "G02-AC-1: the update prompt is rendered from scheduler/unattended-node-update.md (the file exists and has @N@)" sh -c "[ -s '$src/unattended-node-update.md' ] && grep -q '@N@' '$src/unattended-node-update.md'"
 ok "G02-AC-1: a bot's CONFLICTING node PR gets an update session" waitf 8 g02_runsis 201 1
+ok "G02-AC-1 setup: the update's prompt is logged (review3 #10: the next check must not race the log)" waitf 5 grep -qF "nupd 201 run 1 /noodlebot:node --update 201 |" "$G02_GD/claude.log"
 ok "G02-AC-1: its prompt is /noodlebot:node --update 201" grep -qF "nupd 201 run 1 /noodlebot:node --update 201 |" "$G02_GD/claude.log"
 ok "G02-AC-1: it runs in worktrees/<name>/pr-201, on the PR's branch" grep -qF "| $g02_wt/pr-201 | node/N01-alpha" "$G02_GD/claude.log"
 ok "G02-AC-1: pr/201/node holds the PR's node ID (N01)" test "$(cat "$state/pr/201/node" 2>/dev/null)" = N01
@@ -1507,6 +1508,126 @@ ok "G02-AC-1: the spec-PR update (234) starts when the node-PR update has ended"
 rm -f "$G02_GD/hold.234"
 g02_prs 233 MERGEABLE; g02_prs 234 MERGEABLE
 g02_stop
+
+# ---- G02 (fourth review, slice 1f): review1d findings 1-5 ----
+# Nodes N30..N36 (PRs 250..256); N30's branch and main both change the file f, so a merge of origin/main
+# into it conflicts. The wrapper g02_bin3/claude merges origin/main in its cwd when $G02_GD/conflict.<key>
+# exists, and commits there on run n when commit.<key>.<n> exists, then runs the fake claude above.
+sed -i 's/ [A-Z]*$/ MERGEABLE/' "$G02_GD/prs.tsv"
+g02g fetch -q "$G02/remote.git" main && g02g reset -q --hard FETCH_HEAD
+printf '  - {id: N30, name: aa, deps: []}\n  - {id: N31, name: bb, deps: []}\n  - {id: N32, name: cc, deps: []}\n  - {id: N33, name: dd, deps: []}\n' >>"$G02/work/docs/graph.yaml"
+printf '  - {id: N34, name: ee, deps: []}\n  - {id: N35, name: ff, deps: []}\n  - {id: N36, name: gg, deps: []}\n' >>"$G02/work/docs/graph.yaml"
+g02g commit -q -a -m "graph: N30..N36" && g02g push -q "$G02/remote.git" main
+for g02_i in 30:aa 31:bb 32:cc 33:dd 34:ee 35:ff 36:gg; do
+	g02g checkout -q -b "node/N${g02_i%%:*}-${g02_i#*:}" main
+	[ "${g02_i%%:*}" = 30 ] && { echo branch >"$G02/work/f"; g02g add f; }
+	g02g commit -q --allow-empty -m "node ${g02_i%%:*}" && g02g push -q "$G02/remote.git" "node/N${g02_i%%:*}-${g02_i#*:}"; g02g checkout -q main
+done
+echo main >"$G02/work/f"; g02g add f; g02g commit -q -m "main changes f" && g02g push -q "$G02/remote.git" main
+# every node of this part has an open PR from the start (so no node session of its own starts); each case turns its PR CONFLICTING
+printf '250 node/N30-aa app/noodlebot true MERGEABLE\n251 node/N31-bb app/noodlebot true MERGEABLE\n252 node/N32-cc app/noodlebot true MERGEABLE\n253 node/N33-dd app/noodlebot true MERGEABLE\n254 node/N34-ee app/noodlebot true MERGEABLE\n255 node/N35-ff app/noodlebot true MERGEABLE\n256 node/N36-gg app/noodlebot true MERGEABLE\n' >>"$G02_GD/prs.tsv"
+mkdir -p "$G02/bin3"
+cat >"$G02/bin3/claude" <<'EOT'
+#!/bin/sh
+k=${2##* }; n=$(( $(cat "$G02_GD/runs.$k" 2>/dev/null || echo 0) + 1 ))
+if [ -e "$G02_GD/commit.$k.$n" ]; then
+	echo m >"local-$k-$n.txt"; git add "local-$k-$n.txt"; git -c user.name=t -c user.email=t@t commit -q -m "local commit of run $n"
+fi
+[ -e "$G02_GD/conflict.$k" ] && git -c user.name=t -c user.email=t@t merge origin/main >/dev/null 2>&1
+exec "$G02_GD/../bin/claude" "$@"
+EOT
+chmod +x "$G02/bin3/claude"
+g02b_loop() {   # g02b_loop <SCHED_MAX> <data root> <SCHED_RAMP>: the wrapper first on PATH
+	rm -f "$HOME/STOP-g02"
+	NOODLEBOT_DATA=$2 PATH=$G02/bin3:$G02/bin:$PATH SCHED_RAMP=$3 SCHED_START_GAP=0 SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 SCHED_MAX=$1 \
+		bash "$G02/nb/scheduler/loop.sh" o/g02 >>"$G02/loop.out" 2>&1 &
+	pids+=("$!"); g02_lp=$!
+}
+g02_fetchrepo() { git -C "$g02_data/repos/g02" fetch -q origin; }
+
+# review1d #1: an update cut off mid-merge (pr-250 left with unmerged paths) must not strand its node. N30 is
+# idle with an open question; PR 250 is CONFLICTING; the update merges origin/main (conflict) and exits 1 twice
+# (FAILED). The owner then merges main into the PR by hand (MERGEABLE) and answers N30: its session must start.
+mkdir -p "$state/node/N30"; echo "Q: wait" >"$state/node/N30/QUESTION.md"
+g02_prs 250 CONFLICTING
+touch "$G02_GD/conflict.250"; echo 1 >"$G02_GD/rc.250.1"; echo 1 >"$G02_GD/rc.250.2"
+g02b_loop 0 "$g02_data" 0
+ok "G02-AC-2 (review1d #1): the update of 250 starts" waitf 10 g02_runsis 250 1
+ok "G02-AC-2 (review1d #1): its second end without rc 0 writes FAILED" waitf 12 test -e "$state/pr/250/FAILED"
+ok "G02-AC-2 (review1d #1 setup): the cut-off update left unmerged paths in worktrees/<name>/pr-250" sh -c "git -C '$g02_wt/pr-250' ls-files -u | grep -q ."
+g02g checkout -q node/N30-aa && g02g merge -q -X ours main -m "owner merges main" >/dev/null && g02g push -q "$G02/remote.git" node/N30-aa; g02g checkout -q main
+g02_prs 250 MERGEABLE
+sleep 2
+echo "A: go" >"$state/node/N30/ANSWER.md"
+ok "G02-AC-1 (review1d #1): the answered node N30 starts its session in worktrees/<name>/N30 on its branch, though pr-250 was cut off mid-merge" waitf 12 grep -qF "node N30 run 1 /noodlebot:node N30 | $g02_wt/N30 | node/N30-aa" "$G02_GD/claude.log"
+ok "G02-AC-1 (review1d #1): N30's ANSWER.md is consumed (moved into answered/) only with its session started" sh -c "[ -e '$state/node/N30/ANSWER.md' ] || [ \"\$(cat '$G02_GD/runs.N30' 2>/dev/null || echo 0)\" -ge 1 ]"
+ok "G02-AC-1 (review1d #1): the loop does not give up on N30 ('detaching ... failed' is not logged)" sh -c "! grep -q 'detaching .*pr-250.* failed' '$state/status.log'"
+g02_stop
+rm -f "$G02_GD/conflict.250"
+
+# review1d #3: an ANSWER.md with no QUESTION.md does not skip the hold after an rc 0 end.
+g02_prs 253 CONFLICTING
+g02_loop 0
+ok "G02-AC-2 (review1d #3): the update of 253 starts and ends with rc 0" waitf 10 g02_evis 253 'rc 0' 1
+sleep 3
+ok "G02-AC-2 (review1d #3 setup): held after rc 0 while main and its head stay" g02_runsis 253 1
+mkdir -p "$state/pr/253"; echo "A: stray" >"$state/pr/253/ANSWER.md"
+sleep 4
+ok "G02-AC-2 (review1d #3): an ANSWER.md with no QUESTION.md does not skip the hold: 253 is not started again" g02_runsis 253 1
+g02_prs 253 MERGEABLE
+g02_stop
+
+# review1d #2: the runtime root reached through a symlink. 251 (node N31): its idle worktree holds the branch;
+# 252 (node N32): the update commits locally, ends rc 1, and is started again (its own pr-252 is recognised).
+ln -s "$g02_data" "$G02/link"
+mkdir -p "$state/node/N31" "$state/node/N32"; echo "Q: wait" >"$state/node/N31/QUESTION.md"
+g02_fetchrepo
+git -C "$g02_data/repos/g02" worktree add -q -b node/N31-bb "$g02_wt/N31" origin/node/N31-bb
+g02_prs 251 CONFLICTING; g02_prs 252 CONFLICTING
+touch "$G02_GD/commit.252.1"; echo 1 >"$G02_GD/rc.252.1"; echo 1 >"$G02_GD/rc.252.2"
+g02b_loop 0 "$G02/link" 0
+ok "G02-AC-1 (review1d #2): under a symlinked runtime root, PR 251's update starts though the node's idle worktree holds the branch" waitf 10 grep -qF "nupd 251 run 1 /noodlebot:node --update 251 | $g02_wt/pr-251 | node/N31-bb" "$G02_GD/claude.log"
+ok "G02-AC-2 (review1d #2): under a symlinked root, an update that committed locally and ended rc 1 is started again (252, start 2 of 2)" waitf 12 g02_runsis 252 2
+ok "G02-AC-2 (review1d #2): and its second end without rc 0 writes FAILED" waitf 8 test -e "$state/pr/252/FAILED"
+g02_stop
+g02_prs 251 MERGEABLE; g02_prs 252 MERGEABLE
+
+# review1d #5: the production default, SCHED_RAMP=1 (the queue, turn.py). 254: the throttle holds it, then it
+# starts through a turn; 255 and 256 with SCHED_MAX=1: one at a time.
+g02_rl 0.99 $(($(date +%s) + 10800))
+touch "$G02_GD/hold.254"
+g02_prs 254 CONFLICTING
+g02_lines=$(wc -l <"$state/status.log")
+g02b_loop 0 "$g02_data" 1
+ok "G02-AC-1 (review1d #5, ramp=1): the throttle engages" waitf 8 sh -c "tail -n +$((g02_lines + 1)) '$state/status.log' | grep -q 'throttle engaged'"
+sleep 3
+ok "G02-AC-1 (review1d #5, ramp=1): while the throttle holds, the CONFLICTING bot node PR (254) gets no update" g02_runsis 254 0
+g02_rl 0.01 $(($(date +%s) + 14400))
+ok "G02-AC-1 (review1d #5, ramp=1): when the throttle is released, 254 gets its update session" waitf 10 g02_runsis 254 1
+ok "G02-AC-1 (review1d #5, ramp=1): in worktrees/<name>/pr-254 on its branch, prompt /noodlebot:node --update 254" waitf 3 grep -qF "nupd 254 run 1 /noodlebot:node --update 254 | $g02_wt/pr-254 | node/N34-ee" "$G02_GD/claude.log"
+ok "G02-AC-1 (review1d #5, ramp=1): its start is one event, start 1 of 2, granted by a turn (turn.py)" waitf 3 sh -c "grep -E 'PR #254([^0-9]|\$)' '$state/status.log' | grep -E 'start 1 of 2' | grep -qE 'turn: '"
+ok "G02-AC-1 (review1d #5, ramp=1): and it is one start event" g02_evis 254 'start 1 of 2' 1
+rm -f "$G02_GD/hold.254"
+waitf 6 g02_evis 254 'rc 0' 1
+g02_prs 254 MERGEABLE
+g02_stop
+g02_prs 255 CONFLICTING; g02_prs 256 CONFLICTING
+touch "$G02_GD/hold.255" "$G02_GD/hold.256"
+g02b_loop 1 "$g02_data" 1
+ok "G02-AC-1 (review1d #5, ramp=1): with SCHED_MAX=1 an update starts" waitf 10 sh -c "[ \$(( \$(cat '$G02_GD/runs.255' 2>/dev/null || echo 0) + \$(cat '$G02_GD/runs.256' 2>/dev/null || echo 0) )) -ge 1 ]"
+sleep 3
+ok "G02-AC-1 (review1d #5, ramp=1): updates count toward SCHED_MAX: the other one does not start while it runs" sh -c "[ \$(( \$(cat '$G02_GD/runs.255' 2>/dev/null || echo 0) + \$(cat '$G02_GD/runs.256' 2>/dev/null || echo 0) )) = 1 ]"
+if [ -s "$G02_GD/runs.255" ]; then g02_first=255 g02_second=256; else g02_first=256 g02_second=255; fi
+rm -f "$G02_GD/hold.$g02_first"
+ok "G02-AC-1 (review1d #5, ramp=1): the other one starts when the first has ended" waitf 10 g02_runsis $g02_second 1
+rm -f "$G02_GD/hold.$g02_second"
+waitf 6 g02_evis $g02_second 'rc 0' 1
+g02_prs 255 MERGEABLE; g02_prs 256 MERGEABLE
+g02_stop
+
+# review1d #4: the template says the scheduler removes the worktree only after rc 0 (the old sentence, "The
+# scheduler removes @WT@ after you end.", said it always does).
+ok "G02-AC-2 (review1d #4): unattended-node-update.md does not say the scheduler removes the worktree after every end" sh -c "! tr '\\n' ' ' <'$src/unattended-node-update.md' | tr -s ' ' | grep -qE 'scheduler removes @WT@ after you end[.,;]'"
 state=$g02_oldstate
 
 # ---- S03: a merged node's answer starts a follow-up on node/<ID>-followup-<n> ----
