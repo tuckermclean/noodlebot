@@ -69,4 +69,3 @@ After this node new sessions ease into the plan's usage instead of starting in a
 - A loop wakes early on local events (a marker, an exit), so turns are spaced by time, not by ticks. The next unit may wait up to one of its own ticks past the gap.
 - Sizes come from the specs' header rows and are only as honest as the specs. The "small" kinds (triage, update, follow-up, resume) are assumed short, which a long follow-up can defeat.
 - Every loop must see the same `$NOODLEBOT_DATA` (SPEC §2). Loops on different roots each keep their own queue and can still start together.
-- P03's one-shot release of a throttle-held node is unbuilt. When it is built, it must decide whether a released node also takes a turn.
