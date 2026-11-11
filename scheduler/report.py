@@ -407,7 +407,7 @@ def question_link(a, rs, task):
 def unit_ref(a, n):
     """' Unit issue: #N.' for a unit whose home issue is recorded, else ''."""
     try:
-        return " Unit issue: #%d." % int(open(os.path.join(tdir(a.state, n), "issue")).read().split()[0])
+        return " Unit issue: #%d." % int(open(os.path.join(tdir(a.state, pr_node(a.state, n) or n), "issue")).read().split()[0])
     except (OSError, ValueError, IndexError):
         return ""
 
@@ -423,7 +423,7 @@ def waiting_items(a, sts, prs, rs):
                 why = fh.readline().strip() or "no reason given"
             items.append("- **%s FAILED**: %s. To retry, delete `%s`.%s" % (n, why, path, unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
-            items.append("- %s: %s.%s" % (n, answered_text(state, n) if n in nodes(state) and not n.startswith("#") else "answered",
+            items.append("- %s: %s.%s" % (n, answered_text(state, n) if n in nodes(state) and not n.startswith(("#", "PR #")) else "answered",
                                          unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and not n.startswith("#") and is_merged(state, n):
             items.append("- **%s's PR is merged; its question is still open, and an answer starts a follow-up** "
@@ -905,6 +905,7 @@ def home_issue(a, rs, task):
                     "body": signed(a, "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
                                       "result). Its spec is %s on the main branch. The loop closes this issue once "
                                       "the node is merged." % (task, spec))})["number"]
+    os.makedirs(os.path.dirname(f), exist_ok=True)
     with open(f + ".tmp", "w") as fh:
         fh.write("%d\n" % n)
     os.replace(f + ".tmp", f)
