@@ -40,4 +40,4 @@ After this node an owner's answer to a node whose PR is already merged is acted 
 - "Resumes within seconds" is still said while the throttle holds new sessions or `SCHED_MAX` is reached: `ready.py` knows neither, and issue #31 asks only for its verdict.
 - `scheduler/status.sh` and `scheduler/loops.sh` keep their own wording; an answered merged node is listed as answered only until the next tick starts its follow-up.
 - A follow-up PR's squash subject also starts with `<ID> <name>:`; the node is merged already, so nothing changes in `ready.py`'s view, but a follow-up's own merge is recognised only through its PR on `node/<ID>-followup-<n>` (500-PR list limit, as for the other PR lists).
-- `scheduler/loop.sh`'s `ended` and stop paths are also changed by S02 and S05; whichever merges later resolves the conflict.
+- `scheduler/loop.sh`'s `ended` and stop paths are also changed by S02; whichever merges later resolves the conflict.
