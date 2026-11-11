@@ -41,6 +41,10 @@
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
 # After each tick's report it publishes the status site (site.py publish) when ~/.config/noodlebot/gist and
 # ~/.config/noodlebot/gist-token exist and SCHED_SITE is not 0; the gist token goes only to that one command.
+# Links to the status site: each tick reads the first line of ~/.config/noodlebot/site. The links are on exactly when it is an
+# https:// address with no whitespace, ( ) < > or ", the loop publishes the site (the condition above) and state/<name>/visibility
+# is public. Then report.py gets --site <address without the trailing /> and the session prompts render their @SITE@ line;
+# otherwise report.py gets no --site and the line is removed. An invalid address is one status line, `status site links off: <reason>`.
 # Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
 set -u -o pipefail
@@ -98,6 +102,42 @@ say "loop started for $repo, version $version"
 # sedesc <text>: text for a sed replacement (delimiter |) with & | \ escaped.
 sedesc() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
 vsub=$(sedesc "$version") ssub=$(sedesc "$signature")
+# site_links: sets site_addr (no trailing /) when the links to the status site are on, else ''. An invalid address in
+# ~/.config/noodlebot/site is said once (again when it changes).
+site_addr='' site_said=''
+site_links() {
+	local cfg=$HOME/.config/noodlebot a why=''
+	site_addr=''
+	[ -s "$cfg/site" ] || { site_said=''; return 0; }
+	a=$(head -n1 "$cfg/site" 2>/dev/null)
+	case $a in
+	https://?*) ;;
+	*) why="not an https:// address" ;;
+	esac
+	if [ -z "$why" ]; then
+		case $a in
+		*[[:space:]]*) why="the address has whitespace" ;;
+		*[\(\)\<\>\"]*) why="the address has ( ) < > or \"" ;;
+		esac
+	fi
+	if [ -n "$why" ]; then
+		[ "$site_said" = "$a" ] || say "status site links off: $why"
+		site_said=$a; return 0
+	fi
+	site_said=''
+	[ "${SCHED_SITE:-1}" != 0 ] && [ -s "$cfg/gist" ] && [ -s "$cfg/gist-token" ] || return 0
+	[ "$(cat "$state/visibility" 2>/dev/null)" = public ] || return 0
+	while [ "${a%/}" != "$a" ]; do a=${a%/}; done
+	site_addr=$a
+}
+# site_sed: sets ssed, the sed arguments that render a template's @SITE@ line (removed while the links are off).
+ssed=()
+site_sed() {
+	site_links
+	if [ -n "$site_addr" ]; then
+		ssed=(-e "s|^@SITE@\$|The status site is at $(sedesc "$site_addr"): a node of this repository named in a PR body or a GitHub comment links its ID to $(sedesc "$site_addr")/#/repo/$(sedesc "$repo")?node=<ID>.|")
+	else ssed=(-e '/^@SITE@$/d'); fi
+}
 
 # The commit-msg hook: adds "Noodlebot-Version: $NOODLEBOT_VERSION" (replacing the message's own) to
 # every commit made in a session, in the clone and all its worktrees; does nothing outside one.
@@ -487,7 +527,8 @@ start_triage() {
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; #$n: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return 1; }
 	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return 1; }
-	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+	site_sed
+	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "/noodlebot:triage $n"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
@@ -510,7 +551,8 @@ start_update() {
 	else
 		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
 	fi
-	sed -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+	site_sed
+	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-update.md" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
 	launch "$wt" "$d" "/noodlebot:triage --update $n"
@@ -588,8 +630,9 @@ cleanup_merged() {
 report() {
 	[ "${SCHED_REPORT:-1}" = 1 ] || return 0
 	[ -n "$tick_tok" ] || return 0   # the tick had no token or did not reach GitHub
+	site_links
 	GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
-		--version "$version" --signature "$signature" \
+		--version "$version" --signature "$signature" ${site_addr:+--site "$site_addr"} \
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
 
@@ -773,10 +816,11 @@ start_node() {
 	fi
 	# the resume section sits between @RESUME-BEGIN@/@RESUME-END@, the patch lines between @PATCH-BEGIN@/@PATCH-END@,
 	# the reason between @REASON-BEGIN@/@REASON-END@; the pending patches are shown (and their list cleared) only with it
+	site_sed
 	{ if [ "$resume" = 1 ]; then cat; else sed '/^@RESUME-BEGIN@$/,/^@RESUME-END@$/d'; fi; } <"$here/$prompt" 2>/dev/null |
 	{ if [ -n "$plist" ]; then cat; else sed '/^@PATCH-BEGIN@$/,/^@PATCH-END@$/d'; fi; } |
 	{ if [ -n "$reason" ]; then cat; else sed '/^@REASON-BEGIN@$/,/^@REASON-END@$/d'; fi; } |
-	sed -e '/^@\(RESUME\|PATCH\|REASON\)-\(BEGIN\|END\)@$/d' "${rsed[@]}" \
+	sed -e '/^@\(RESUME\|PATCH\|REASON\)-\(BEGIN\|END\)@$/d' "${rsed[@]}" "${ssed[@]}" \
 		-e "s|@ID@|$id|g" -e "s|@NAME@|$name|g" -e "s|@STATE@|$state|g" -e "s|@WT@|$wt|g" -e "s|@REPO@|$repo|g" \
 		-e "s|@BR@|$br|g" -e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" >"$d/unattended.md" || { note "$saw; $id: rendering $prompt failed; not started"; return 1; }
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.

@@ -70,6 +70,11 @@ turns the publishing off. The token goes only to the publish command, never to a
 line (`site: publish failed (<status>)`), the details are in `state/<name>/site.log`, and `site: publishing again` follows
 the next success.
 
+Links to the site: put its address on one line in `~/.config/noodlebot/site`, e.g. `https://<owner>.github.io/noodlebot/`.
+While that is a valid `https://` address (no spaces, quotes, parentheses or angle brackets), the loop publishes the site and the
+repository is public, the bot's status issue and its GitHub comments link each node's ID to the site. Otherwise the texts have
+no links; an invalid address is one status line (`status site links off: <reason>`).
+
 The front end in `site/` is a static page that reads the gist from the browser; `.github/workflows/pages.yml` deploys it to
 GitHub Pages when `site/**` changes on `main` (or by hand, with `workflow_dispatch`). To enable it:
 

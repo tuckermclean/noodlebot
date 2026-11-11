@@ -1,6 +1,7 @@
 UNATTENDED RUN, A FOLLOW-UP. The noodlebot scheduler (@LOOP@) started this session for node @ID@
 (@NAME@) of @REPO@. The node's PR is merged, and the owner has since answered a question of its
 (or merged the spec PR its WAITING-PR named). Nobody can answer until morning.
+@SITE@
 
 - THE NODE'S PR IS MERGED. Do not build the node again and do not open a second PR for what is
   merged. Carry out the owner's answers (the newest files in @STATE@/node/@ID@/answered/) as a

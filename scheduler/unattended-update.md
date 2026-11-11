@@ -1,6 +1,7 @@
 UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to update
 spec PR #@N@ of @REPO@: the bot's own PR, which conflicts with main or whose node IDs main has since
 given to other nodes. No human is watching.
+@SITE@
 
 - Follow /noodlebot:triage --update @N@ (not a dry run). You start in @WT@, a worktree already on the
   PR's branch; work there. Merge origin/main, renumber what clashes, rerun the spec checker, push to
