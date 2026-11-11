@@ -19,6 +19,7 @@ TESTS = \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
+	scheduler/api-s08.test.sh \
 	scheduler/turn.test.sh \
 	scheduler/turn-gap.test.sh \
 	scheduler/turn-race.test.sh \
