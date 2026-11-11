@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The machine-wide queue of session starts: one start per gap, in a fixed order (S07).
 
-  turn.py list|ask|giveback --root DATA --repo NAME [--tick S] [--gap S] [--starve S] [--now EPOCH] [KEY]
+  turn.py list|ask|giveback|took --root DATA --repo NAME [--tick S] [--gap S] [--starve S] [--now EPOCH] [KEY]
 
 Every loop of the machine keeps its waiting units in DATA/state/NAME/waiting.json and shares the start
 record DATA/state/starts.json. All reads and writes happen under an exclusive flock on
@@ -18,6 +18,9 @@ DATA/state/starts.lock, and files are replaced atomically, so two loops asking a
             otherwise it prints nothing. Exit 0 either way.
   giveback  the start of KEY failed: restore the previous start record and leave KEY out of this loop's
             order until its next list.
+
+  took      KEY was started without a turn (a released node): record its start like a granted ask, whatever the
+            gap and the order, so a giveback of KEY restores the previous record. No KEY is an error.
 
 Order: units that waited more than the starvation limit (--starve, SCHED_STARVE, 21600 s) first, the
 longest waiting first; then triage/update/followup/resumed; then fresh S, M, L (no Size counts as L);
@@ -176,6 +179,13 @@ def ask(state, repo, now, args):
     return "%s\t%s" % (u["key"], text)
 
 
+def took(state, repo, now, key):
+    spath = os.path.join(state, "starts.json")
+    last = read_json(spath)
+    prev = {k: v for k, v in last.items() if k != "prev"} if valid_start(last) else None
+    write_json(spath, {"time": now, "repo": repo, "unit": key, "prev": prev})
+
+
 def giveback(state, repo, key):
     spath = os.path.join(state, "starts.json")
     last = read_json(spath)
@@ -195,7 +205,7 @@ def giveback(state, repo, key):
 
 def main():
     p = argparse.ArgumentParser(prog="turn.py")
-    p.add_argument("command", choices=("list", "ask", "giveback"))
+    p.add_argument("command", choices=("list", "ask", "giveback", "took"))
     p.add_argument("key", nargs="?")
     p.add_argument("--root", required=True)
     p.add_argument("--repo", required=True)
@@ -229,6 +239,10 @@ def main():
             line = ask(state, args.repo, now, args)
             if line:
                 print(line)
+        elif args.command == "took":
+            if not args.key:
+                p.error("took needs a KEY")
+            took(state, args.repo, now, args.key)
         else:
             if not args.key:
                 p.error("giveback needs a KEY")

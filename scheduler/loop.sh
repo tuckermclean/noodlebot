@@ -42,8 +42,9 @@
 # state/<name>/requests/*.json (one event naming the control and its target, in name order) and removes it;
 # a broken record is logged as such and removed. The tick does the same again after ready.py and before it starts
 # any node, so a request's event always comes before its effect (each record is logged once). A node/<ID>/RELEASE marker (the API's release control) is
-# consumed at the next tick: a ready node the throttle holds starts despite the hold (SCHED_MAX still applies),
-# otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
+# consumed at the next tick: a ready node the throttle holds starts despite the hold (SCHED_MAX still applies; with the
+# start queue on, SCHED_RAMP=1, it takes no turn but its start is recorded, turn.py took, and a failed start is given back;
+# with the throttle open it waits for its turn like any node), otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
 # After each tick's report it publishes the status site (site.py publish) when ~/.config/noodlebot/gist and
 # ~/.config/noodlebot/gist-token exist and SCHED_SITE is not 0; the gist token goes only to that one command.
@@ -1024,7 +1025,18 @@ tick_run() {
 			[ "$throttled" = 1 ] && continue
 			break
 		fi
-		if [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind" && started[$id]=1; fi
+		if [ "$ramp" = 1 ] && [ "$throttled" = 1 ] && [ -n "${isrel[$id]:-}" ]; then
+			# a released node skips the start queue: its start is recorded (turn.py took), then it starts
+			handled[$id]=1
+			if ! out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "${repo#*/}" 2>&1); then
+				say "$saw; $id: RELEASE found, but turn.py took failed ($(echo "$out" | tr '\n' ' ')); not started"
+			elif start_node "$id" "$name" "$saw" "$kind"; then
+				say "$saw; $id: released past the throttle"; rm -f "$state/node/$id/waiting"
+			else
+				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "${repo#*/}" >/dev/null 2>&1 || note "$saw; turn.py giveback failed"
+				say "$saw; $id: RELEASE found, but it did not start (see above)"
+			fi
+		elif [ "$ramp" = 1 ]; then want_node "$id" "$name" "$kind"; else start_node "$id" "$name" "$saw" "$kind" && started[$id]=1; fi
 	done <<<"$ready"
 	[ "$ramp" = 1 ] && queue_round "$saw"
 	for id in "${rels[@]}"; do
@@ -1034,6 +1046,7 @@ tick_run() {
 		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
 		elif [ -n "${isready[$id]:-}" ]; then
 			if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then say "$saw; $id: RELEASE found, the throttle is open; not started, SCHED_MAX ($cap) sessions are running"
+			elif [ "$ramp" = 1 ]; then say "$saw; $id: RELEASE found, the throttle is open; it takes no turn out of order and waits for its turn"
 			else say "$saw; $id: RELEASE found, the throttle is open; it did not start (see above)"; fi
 		elif grep -q "id: *$id[,} ]" "$state/graph.yaml" 2>/dev/null; then say "$saw; $id: RELEASE found, nothing started: it is not ready"
 		else say "$saw; $id: RELEASE found, nothing started: unknown node"
