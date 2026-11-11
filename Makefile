@@ -83,6 +83,7 @@ TESTS = \
 	scheduler/api-fifo.test.sh \
 	scheduler/api-root2.test.sh \
 	scheduler/api-p03.test.sh \
+	scheduler/harness.test.sh \
 	scheduler/move-runtime.test.sh \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \

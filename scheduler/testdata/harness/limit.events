@@ -1,0 +1,5 @@
+{"t":"2026-11-09T10:00:00Z","type":"start","session":"sess-lim-1"}
+{"t":"2026-11-09T10:00:01Z","type":"usage","status":"allowed","reset":1795003600,"windows":{"five_hour":{"utilization":0.97,"reset":1795003600,"status":"allowed"}}}
+{"t":"2026-11-09T10:00:02Z","type":"text","text":"Working on it."}
+{"t":"2026-11-09T10:00:03Z","type":"usage","status":"rejected","reset":1795003600,"window":"five_hour","windows":{"five_hour":{"utilization":1.0,"reset":1795003600,"status":"rejected"}}}
+{"t":"2026-11-09T10:00:04Z","type":"result","subtype":"success","text":"You've hit your limit · resets 3pm","cost":0.5,"turns":3,"limit":true}

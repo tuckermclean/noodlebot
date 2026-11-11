@@ -1,0 +1,12 @@
+{"t":"2026-11-09T09:00:00Z","type":"start","session":"sess-norm-1"}
+{"t":"2026-11-09T09:00:00Z","type":"other"}
+{"t":"2026-11-09T09:00:01Z","type":"usage","status":"allowed","reset":1795000000,"window":"five_hour","windows":{"five_hour":{"status":"allowed","utilization":0.25,"reset":1795000000},"seven_day":{"status":"allowed","utilization":0.4,"reset":1795400000}}}
+{"t":"2026-11-09T09:00:02Z","type":"text","text":"Reading the spec first.","subagent":false}
+{"t":"2026-11-09T09:00:03Z","type":"tool","id":"toolu_a1","name":"Bash","text":"Check the tree","label":"Check the tree","subagent":false,"background":false,"delay":null}
+{"t":"2026-11-09T09:00:04Z","type":"tool_result","id":"toolu_a1","subagent":false,"bg_id":null}
+{"t":"2026-11-09T09:00:05Z","type":"tool","id":"toolu_a2","name":"Agent","text":"Review the slice","desc":"Review the slice","subagent":false,"background":false}
+{"t":"2026-11-09T09:00:06Z","type":"tool","id":"toolu_s1","name":"Read","text":"/x/y.md","label":"/x/y.md","subagent":true}
+{"t":"2026-11-09T09:00:07Z","type":"tool_result","id":"toolu_a2","subagent":false,"bg_id":null}
+{"t":null,"type":"tool","id":"toolu_a3","name":"Skill","text":null,"label":"noodlebot:node","subagent":false}
+{"t":"2026-11-09T09:00:09Z","type":"tool","id":"toolu_a4","name":"ScheduleWakeup","text":null,"delay":600}
+{"t":"2026-11-09T09:00:10Z","type":"result","subtype":"success","text":"All done.","cost":1.25,"turns":12,"limit":false}

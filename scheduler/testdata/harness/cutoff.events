@@ -1,0 +1,8 @@
+{"t":"2026-11-09T15:00:00Z","type":"start","session":"sess-cut-1"}
+{"t":"2026-11-09T15:00:01Z","type":"tool","id":"toolu_bg1","name":"Bash","text":"Watch the build","subagent":false,"background":true}
+{"t":"2026-11-09T15:00:02Z","type":"tool_result","id":"toolu_bg1","bg_id":"bqx7run01"}
+{"t":"2026-11-09T15:00:03Z","type":"tool","id":"toolu_bg2","name":"Agent","text":"Review in the background","desc":"Review in the background","subagent":false,"background":true}
+{"t":"2026-11-09T15:00:04Z","type":"tool_result","id":"toolu_bg2","bg_id":"ag-77"}
+{"t":"2026-11-09T15:00:05Z","type":"task_done","ids":["bqx7fin02","toolu_other"]}
+{"t":"2026-11-09T15:00:06Z","type":"result","subtype":"success","text":"Waiting on background work.","cost":0.3,"turns":5,"limit":false}
+{"t":null,"type":"cutoff"}

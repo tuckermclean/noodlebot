@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"sess-cut-1","timestamp":"2026-11-09T15:00:00Z"}
+{"type":"assistant","timestamp":"2026-11-09T15:00:01Z","message":{"content":[{"type":"tool_use","id":"toolu_bg1","name":"Bash","input":{"command":"sleep 900","description":"Watch the build","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-11-09T15:00:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_bg1","content":"Command running in background with ID: bqx7run01. Output is being written to: /tmp/x"}]}}
+{"type":"assistant","timestamp":"2026-11-09T15:00:03Z","message":{"content":[{"type":"tool_use","id":"toolu_bg2","name":"Agent","input":{"description":"Review in the background","prompt":"look","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-11-09T15:00:04Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_bg2","content":[{"type":"text","text":"Async agent launched. agentId: ag-77"}]}]}}
+{"type":"system","subtype":"task_notification","timestamp":"2026-11-09T15:00:05Z","task_id":"bqx7fin02","tool_use_id":"toolu_other","status":"completed"}
+{"type":"result","subtype":"success","timestamp":"2026-11-09T15:00:06Z","result":"Waiting on background work.","total_cost_usd":0.3,"num_turns":5}
