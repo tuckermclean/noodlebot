@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| later | P01 | none | M |
+| later | P01 | S08 | M |
 
 **Owns:** the control requests in `scheduler/api.py` and their schemas in `scheduler/api-schema/v1/`, their cases in `scheduler/api-p03.test.sh` (a part of the API test, D03); the request records and the one-shot release (`node/<ID>/RELEASE`) in `scheduler/loop.sh`, their cases in `scheduler/loop-p03.test.sh` and `scheduler/loop-p03-ramp.test.sh` (parts of the loop test, D03); the `took` command in `scheduler/turn.py`, its cases in `scheduler/turn-took.test.sh` (a part of the turn test, D03); the requested retry and rollback (`deploy/retry`, `deploy/rollback-request`) in `scheduler/deploy.sh`, their cases in `scheduler/deploy.test.sh`; the controls part of the README's API section.
 **Resolves:** #46
