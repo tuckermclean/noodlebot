@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mirror one repository's scheduler state to a GitHub status issue, and take the owner's answers from it.
 
-  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN]
+  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN] [--site URL]
 
 Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all GitHub access through `gh api`.
 Each run:
@@ -46,6 +46,10 @@ Each run:
      every running session and its latest narration, the deployed commit (HEAD of the live checkout, or of
      $NOODLEBOT_LIVE). Body edits do not notify; comments do. ($NOODLEBOT_NOW, an ISO local datetime, replaces
      the clock; for tests.)
+With --site (the status site's https address) the texts it writes itself link to the site: a node mention (the ID of a
+node of the repository's graph, a whole word outside a code span, a link or a URL) becomes a link to the node's view, the
+log issue's body has a status-site line, and the units' home issues link their node's (or the triage's) view. Text copied
+from a session (a QUESTION.md, its narration) is posted as it is. Without --site every text is as it was.
 On the first run it does not replay old comments or events. Any failure (a failed milestone post included,
 after the other work is done) exits non-zero; the loop logs it and carries on, and the next run picks up
 where this one stopped.
@@ -106,6 +110,39 @@ def tail_lines(path, nbytes):
         return []
     lines = data.splitlines()
     return lines[1:] if size > nbytes else lines
+
+
+def site_base(a):
+    return (getattr(a, "site", "") or "").rstrip("/")
+
+
+def node_link(a, node):
+    return "%s/#/repo/%s?node=%s" % (site_base(a), a.repo, node)
+
+
+def activity_link(a):
+    return "%s/#/activity?repo=%s" % (site_base(a), a.repo)
+
+
+def link_nodes(a, text):
+    """text with each node mention linked to the node's view (with --site; else text as it is). A mention is the ID of a node
+    of the graph as a whole word, not inside a code span, a Markdown link or a URL."""
+    if not site_base(a):
+        return text
+    ids = sorted({n["id"] for n in graph_nodes(a.state)}, key=lambda i: (-len(i), i))
+    if not ids:
+        return text
+    pat = re.compile(r"`[^`\n]*`|\[[^\]]*\]\([^)]*\)|https?://\S+|(?<![A-Za-z0-9_])(%s)(?![A-Za-z0-9_])" %
+                     "|".join(re.escape(i) for i in ids))
+    return pat.sub(lambda m: "[%s](%s)" % (m.group(1), node_link(a, m.group(1))) if m.group(1) else m.group(0), text)
+
+
+def site_line(a, node):
+    """'On the status site: [ID name](link)' for a node unit; the activity view for a triage."""
+    if node.startswith("#"):
+        return "On the status site: [triage issues of %s](%s)" % (a.repo, activity_link(a))
+    name = spec_info(a, node)[0]
+    return "On the status site: [%s](%s)" % (node + (" " + name if name else ""), node_link(a, node))
 
 
 def event_text(line):
@@ -422,7 +459,7 @@ def waiting_items(a, sts, prs, rs):
     for n, pr in sorted(prs.items()):
         if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in [t[0] for t in sts]:
             items.append("- %s's PR #%s: open, no session running on it (review or merge it).%s" % (n, pr, unit_ref(a, n)))
-    return items
+    return [link_nodes(a, i) for i in items]
 
 
 def live_checkout():
@@ -444,6 +481,9 @@ def body_for(a, sts, prs, rs=None):
            "_Updated %s by the scheduler loop (within a minute of a change; when nothing changes, every 15 minutes). If this is more than ~20 minutes old, "
            "the loop is not running._" % local(), "",
            "**Deployed:** `%s`" % deployed_commit()]
+    if site_base(a):
+        out[1:1] = ["", "**Status site:** [%s](%s/#/repo/%s) · [throttle](%s/#/throttle) · [activity](%s)" %
+                    (a.repo, site_base(a), a.repo, site_base(a), activity_link(a))]
     if log.get("prev"):
         out.append("")
         out.append("Previous day's log: #%s" % log["prev"])
@@ -455,7 +495,7 @@ def body_for(a, sts, prs, rs=None):
             "", "_Costs are the CLI's list-price estimate, not the bill._"]
     many = len(sts) > 1
     for n, pid, started in sts:
-        label = "triage of %s" % n if n.startswith("#") else n
+        label = "triage of %s" % n if n.startswith("#") else link_nodes(a, n)
         mins = max(0, int((now().timestamp() - started) // 60))
         starts = (open(os.path.join(tdir(state, n), "starts")).read().strip()
                   if has(state, n, "starts") else "?")
@@ -774,11 +814,11 @@ def summary_lines(a, rs, date, label):
     opened = sorted(int(n) for n, d in (rs.get("pr_opened") or {}).items() if d == date)
     failed = failed_on(a, date)
     nums = lambda ns: ", ".join("#%d" % n for n in ns) or "none"
-    return ["**%s (%s):** " % (label, date) +
+    return [link_nodes(a, l) for l in ["**%s (%s):** " % (label, date) +
             ("%d session%s ended (%s), $%.2f total cost (list-price estimate)." %
              (len(tasks), "" if len(tasks) == 1 else "s", ", ".join(tasks), cost) if tasks else "no session ended."),
             "", "- PRs merged: " + nums(merged), "- PRs opened: " + nums(opened),
-            "- Units that wrote FAILED: " + (", ".join(failed) or "none")]
+            "- Units that wrote FAILED: " + (", ".join(failed) or "none")]]
 
 
 def ready_next(a, prs):
@@ -819,7 +859,7 @@ def post_overview(a, rs, issue, prs):
         items = ["- (cannot be listed: %s)" % str(e)[:200]]
     out += ["", "**Waiting on you:**", ""] + items
     ready = ready_next(a, prs)
-    out += ["", "**Ready to start next:**", ""] + (["- " + r for r in ready] or ["- nothing"])
+    out += ["", "**Ready to start next:**", ""] + (["- " + link_nodes(a, r) for r in ready] or ["- nothing"])
     comment(a, issue, "\n".join(out) + "\n")
     log["overview"] = True
     a.save()
@@ -888,7 +928,8 @@ def home_issue(a, rs, task):
                     "title": title, "labels": [UNIT_LABEL],
                     "body": signed(a, "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
                                       "result). Its spec is %s on the main branch. The loop closes this issue once "
-                                      "the node is merged." % (task, spec))})["number"]
+                                      "the node is merged." % (task, spec) +
+                                 ("\n\n" + site_line(a, task) if site_base(a) else ""))})["number"]
     with open(f + ".tmp", "w") as fh:
         fh.write("%d\n" % n)
     os.replace(f + ".tmp", f)
@@ -904,13 +945,18 @@ def milestone(a, rs, task, key, stage, body=""):
     if key in done:
         return
     issue = home_issue(a, rs, task)
-    text = "**Stage:** " + stage
+    text = "**Stage:** " + link_nodes(a, stage)
+    if not u.get("intro") and site_base(a) and task.startswith("#"):
+        text += "\n\n" + site_line(a, task)
     if not u.get("intro") and not task.startswith("#"):
-        others = [i for i in spec_info(a, task)[1] if i != issue]
+        resolves = spec_info(a, task)[1]
+        if resolves and site_base(a):
+            text += "\n\n" + site_line(a, task)
+        others = [i for i in resolves if i != issue]
         if others:
             text += "\n\nAlso on this node's Resolves line: " + ", ".join("#%d" % i for i in others) + "."
-    if body:
-        text += "\n\n" + body
+    if body:  # a question's body is copied from the session's QUESTION.md: its caller links its own lines
+        text += "\n\n" + (body if key.startswith("question:") else link_nodes(a, body))
     c = comment(a, issue, text)
     u["intro"] = True
     if c.get("created_at") and not u.get("first_at"):
@@ -1206,7 +1252,7 @@ def post_events(a, rs, issue):
             m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", what)
             task = m and (m.group(1) or m.group(2) or m.group(3))
             ct = task and cost_turns(os.path.join(tdir(a.state, task), "session.jsonl"))
-            out.append("- `%s` %s" % (stamp, what) + (" (total $%.2f, %d turns)" % ct if ct else ""))
+            out.append("- `%s` %s" % (stamp, link_nodes(a, what)) + (" (total $%.2f, %d turns)" % ct if ct else ""))
         text = "\n".join(out)
         comment(a, issue, text)
     rs["log_offset"] = off + end
@@ -1226,13 +1272,13 @@ def post_questions(a, rs, issue):
             if ("question:" + key) not in rs.get("units", {}).get(n, {}).get("done", []):
                 reopen(a, rs, home)
             if posted.get(n) != key:
-                comment(a, issue, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
-                        "starting the reply with `%s:`.\n" % (n, home, n))
+                comment(a, issue, link_nodes(a, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
+                        "starting the reply with `%s:`.\n" % (n, home, n)))
                 posted[n] = key
                 rs.setdefault("qissue", {})[n] = issue  # where it was posted: an answer on a closed old issue counts only there
             milestone(a, rs, n, "question:" + key, "%s asks a question, waiting for your answer" % n,
-                      "## %s asks\n\n%s\n\n---\nTo answer, reply to this issue in plain words. Only %s's replies count.\n" %
-                      (n, open(q).read().strip(), a.owner))
+                      "%s\n\n%s\n\n---\nTo answer, reply to this issue in plain words. Only %s's replies count.\n" %
+                      (link_nodes(a, "## %s asks" % n), open(q).read().strip(), a.owner))
         except Exception as e:
             a.errors.append(str(e))
 
@@ -1540,6 +1586,7 @@ def main():
     p.add_argument("--clone", default="")
     p.add_argument("--version", default="")
     p.add_argument("--signature", default="")
+    p.add_argument("--site", default="")
     a = p.parse_args()
     a.answered = False
     a.owner = a.owner or a.repo.split("/")[0]
