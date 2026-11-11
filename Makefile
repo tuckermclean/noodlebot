@@ -9,6 +9,7 @@ TESTS = \
 	scheduler/usage.test.sh \
 	scheduler/turn-order.test.sh \
 	scheduler/turn-gap.test.sh \
+	scheduler/turn-race.test.sh \
 	scheduler/turn-record.test.sh \
 	scheduler/turn-lock.test.sh \
 	plugin/skills/node/check-regime.test.sh \
