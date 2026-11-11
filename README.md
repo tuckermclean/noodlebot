@@ -7,7 +7,7 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
   `#` comments allowed): `start` starts the loops not running, `stop` stops them via `~/STOP-<name>`
   (sessions keep going), `status` prints a line per repository. It reads each loop's lock, sessions and
   markers under the runtime root `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`), and `start`
-  passes that root to each loop, since a tmux server keeps its own environment. `start` refuses while
+  passes that root, and every `USAGE_*` and `SCHED_*` variable set in its environment (for example `USAGE_7D_PACE=1 scheduler/loops.sh start`, which turns on the 7-day pace hold), to each loop, since a tmux server keeps its own environment. `start` refuses while
   `~/STOP` exists and removes a stale `~/STOP-<name>`; it also refuses while a loop from before the
   runtime move still holds `<checkout>/state/<name>/loop.lock`: stop it and run the move first
   (`scheduler/move-runtime.sh`, below). The mechanism underneath, per repository:

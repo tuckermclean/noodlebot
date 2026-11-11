@@ -287,5 +287,13 @@ ok "V01-AC-4 a conflicting local tag: the new commit is still deployed (live che
 ok "V01-AC-4 a conflicting local tag: exit status 0 as for a normal deploy" '[ "$trc" = 0 ]'
 ok "V01-AC-4 a conflicting local tag: exactly one line 'deployed <old>..<new> (version <v>)'" 'printf "%s\n" "$tout" | grep -Eq "^deployed $t0\.\.$t1 \(version [^)]+\)\$" && [ "$(printf "%s\n" "$tout" | grep -c .)" = 1 ]'
 
+# T03-AC-6: make test runs without the loop's USAGE_* variables.
+commitm t03 "@echo t03 >>$log; [ -z \"\$\$USAGE_7D_PACE\" ] && [ -z \"\$\$USAGE_5H_LIMIT\" ] && ! env | grep -q '^USAGE_'"
+t03=$(full "$tmp/work" HEAD)
+out=$(USAGE_7D_PACE=1 USAGE_5H_LIMIT=0.5 sh "$deploy" "$live" 2>&1)
+ok "T03-AC-6 make test ran for a commit that fails when a USAGE_* variable is set" '[ "$(runs t03)" = 1 ]'
+ok "T03-AC-6 a commit whose make test needs no USAGE_* variable is deployed by a run that has USAGE_7D_PACE=1 and USAGE_5H_LIMIT=0.5" '[ "$(runs t03)" = 1 ] && [ "$(head_of)" = "$t03" ]'
+ok "T03-AC-6 and it is not reported as failing make test" '[ "$(runs t03)" = 1 ] && ! printf "%s\n" "$out" | grep -q "not deployed"'
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all deploy tests passed"; else echo "$fails deploy test(s) FAILED"; exit 1; fi
