@@ -127,6 +127,26 @@ qticks 2
 pafter() { awk '/^took/ && !f { f = 1; next } f { print; exit }' "$q/turn.calls"; }
 qok "P03-AC-4: (SCHED_RAMP=1) a failing turn.py took is followed by no other took in that tick (a second released node does not start)" sh -c "$(declare -f pafter); q='$q'; n=\$(pafter); [ -n \"\$n\" ] && case \"\$n\" in took*) false ;; esac"
 qstop
+# -- Phase F: SCHED_RAMP=1, throttle open, no start inside the gap, a RELEASE for a ready node that is first in the order: the queue starts
+# it on its turn in that tick. Deterministic: the RELEASE is written before the loop's first tick, so the release and the turn fall in
+# the same tick (a RELEASE written after a running tick would let the node start on its turn before the release is seen).
+qsetup PF "R1:S" "B01:S"; pwrap
+release R1
+qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+qwait 8 qhave R1; wait_until 5 qev_ge 1
+wait_until 8 prel_logged R1
+qticks 2
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) a released node first in the order starts once, on its turn" sh -c "[ '$(qseq)' = R1 ] && [ \"\$(cat '$qd/state/qa/node/R1/starts')\" = 1 ]"
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) its start event carries '; turn: '" qev_has 'R1 ' '; turn: '
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) no 'took' for it" sh -c "! grep -q '^took' '$q/turn.calls'"
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) its RELEASE is removed" no_release R1
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) its release line is logged" prel_logged R1
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) its release line does not say 'nothing started'" sh -c "$(declare -f prel qlog); qd='$qd'; ! prel R1 | grep -qi 'nothing started'"
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) its release line does not say 'running session'" sh -c "$(declare -f prel qlog); qd='$qd'; ! prel R1 | grep -qi 'running session'"
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) its release line does not say 'past the throttle'" sh -c "$(declare -f prel qlog); qd='$qd'; ! prel R1 | grep -qi 'past the throttle'"
+qok "P03-AC-4: (SCHED_RAMP=1, throttle open) its release line says the throttle is open" sh -c "$(declare -f prel qlog); qd='$qd'; prel R1 | grep -qiE 'throttle (is |was )?open'"
+qstop
+
 
 
 loop_end
