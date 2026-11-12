@@ -162,4 +162,59 @@ for w in 'merge' 'renumber' 'checker\|check-regime' 'push' 'comment'; do
 done
 
 
+# ---------- G02-AC-5: the update procedure (section 4) has a resolution review before its push ----------
+g02_d="$tmp/G02"; mkdir -p "$g02_d"
+awk '/^## 4\./ { on = 1; next } /^## / && on { exit } on { print }' "$sk" >"$g02_d/sec4.txt"
+g02_line() { awk -v re="$1" 'tolower($0) ~ re { print NR; exit }' "$g02_d/sec4.txt"; }
+g02_win() { # g02_win <n> <ere>...: a window of n lines matches every ERE
+	n=$1; shift; pats=$(printf '%s\n' "$@")
+	awk -v n="$n" -v pats="$pats" '
+		BEGIN { k = split(pats, P, "\n") }
+		{ L[NR] = tolower($0) }
+		END { for (i = 1; i <= NR; i++) { w = ""; for (j = i; j < i + n && j <= NR; j++) w = w " " L[j]
+			good = 1; for (p = 1; p <= k; p++) if (w !~ P[p]) { good = 0; break }
+			if (good) exit 0 }
+			exit 1 }' "$g02_d/sec4.txt"
+}
+g02_push=$(awk 'tolower($0) ~ /^[0-9]+\. *push/ { print NR; exit }' "$g02_d/sec4.txt")
+g02_rv=$(g02_line 'new reviewer|fresh reviewer')
+g02_hd=$(g02_line 'resolution review [(]')
+if [ -n "$g02_push" ]; then ok "G02-AC-5: section 4 has a push step"; else bad "G02-AC-5: section 4 has no numbered push step"; fi
+if [ -n "$g02_rv" ] && [ -n "$g02_push" ] && [ "$g02_rv" -lt "$g02_push" ]; then ok "G02-AC-5: a new reviewer is named before the push step"; else bad "G02-AC-5: no new reviewer named before the push step (${g02_rv:-none})"; fi
+if g02_win 4 'merge commit' 'both parents'; then ok "G02-AC-5: the reviewer gets the merge commit and its diffs against both parents"; else bad "G02-AC-5: no merge commit with diffs against both parents"; fi
+if [ -n "$g02_hd" ] && [ -n "$g02_push" ] && [ "$g02_hd" -lt "$g02_push" ]; then ok "G02-AC-5: the 'Resolution review (' heading is defined before the push step"; else bad "G02-AC-5: no 'Resolution review (' heading before the push step (${g02_hd:-none})"; fi
+if g02_win 4 'resolution review [(]' 'comment' 'never an approval|not an approval|never approv|not approv'; then ok "G02-AC-5: the verdict is a comment, never an approval"; else bad "G02-AC-5: the verdict is not a comment, never an approval"; fi
+if g02_win 5 'intent' 'both sides'; then ok "G02-AC-5: checks both sides' intent"; else bad "G02-AC-5: does not check both sides' intent"; fi
+if g02_win 6 'test block' 'different nodes|other nodes|another node' 'names|state'; then ok "G02-AC-5: checks that test blocks of different nodes share no names or state"; else bad "G02-AC-5: no check on test blocks sharing names or state"; fi
+if g02_win 6 'frozen' 'no .*(changed|removed|renamed)|not (been )?(changed|removed|renamed)|unchanged'; then ok "G02-AC-5: checks that no frozen test line changed"; else bad "G02-AC-5: no check that no frozen test line changed"; fi
+if g02_win 5 'second' 'reject|request_changes' 'push(es)? nothing|nothing (is )?pushed' 'comment'; then ok "G02-AC-5: a second rejection pushes nothing and comments on the PR"; else bad "G02-AC-5: no rule that a second rejection pushes nothing and comments on the PR"; fi
+if g02_win 4 'push' 'only after|until|before|approv' 'review'; then ok "G02-AC-5: nothing is pushed before the review approves"; else bad "G02-AC-5: no rule that nothing is pushed before the review approves"; fi
+
+
+# ---------- G02 slice 3b (review3 findings 1, 4): checks tied to the numbered steps of section 4 ----------
+g02b_steps="$g02_d/steps.txt"
+tr -d '*' <"$g02_d/sec4.txt" | awk '
+	function flush() { if (cur != "") print tolower(cur); cur = "" }
+	/^[0-9]+\. / { flush(); n = $0; sub(/\..*/, "", n); t = $0; sub(/^[0-9]+\. */, "", t); cur = n "\t" t; next }
+	/^[ \t]*$/ || /^#/ { flush(); next }
+	cur != "" { sub(/^[ \t]+/, ""); cur = cur " " $0 }
+	END { flush() }' >"$g02b_steps"
+g02b_no() { awk -F'\t' -v re="$1" '$2 ~ re { print $1; exit }' "$g02b_steps"; }
+g02b_rn=$(g02b_no 'resolution review'); g02b_pn=$(g02b_no '^push')
+g02b_rt=$(awk -F'\t' -v n="${g02b_rn:-0}" '$1 == n { print $2 }' "$g02b_steps")
+if [ -n "$g02b_rn" ] && [ -n "$g02b_pn" ] && [ "$g02b_rn" -lt "$g02b_pn" ]; then ok "G02-AC-5: the review step ($g02b_rn) precedes the push step ($g02b_pn)"; else bad "G02-AC-5: the review step must precede the push step (review ${g02b_rn:-none}, push ${g02b_pn:-none})"; fi
+if printf '%s\n' "$g02b_rt" | grep -Eqi 'nothing is pushed until[^.]*approv|push(ed)? only after[^.]*approv'; then ok "G02-AC-5: the review step says nothing is pushed until it approves"; else bad "G02-AC-5: the review step lacks 'nothing is pushed until it approves'"; fi
+if [ "$(printf '%s\n' "$g02b_rt" | grep -oi 'new reviewer' | wc -l)" -ge 2 ] && ! printf '%s\n' "$g02b_rt" | grep -Eqi 'earlier reviewer|same reviewer|previous reviewer|first reviewer|resume'; then ok "G02-AC-5: both rounds of the review use a new reviewer"; else bad "G02-AC-5: the second round must use a new reviewer too (not the earlier one)"; fi
+if printf '%s\n' "$g02b_rt" | grep -Eqi -e '--dry-run' && printf '%s\n' "$g02b_rt" | grep -Eqi 'verdict' && printf '%s\n' "$g02b_rt" | grep -Eqi 'result\.md' && printf '%s\n' "$g02b_rt" | grep -Eqi 'not (be )?posted|not post|never posted|instead of post'; then ok "G02-AC-5: with --dry-run the review's verdict goes into result.md and is not posted on the PR"; else bad "G02-AC-5: the review step does not say that with --dry-run the verdict goes into result.md and is not posted"; fi
+
+
+# ---------- G02 slice 3c (review3b findings 3, 4) ----------
+g02c_rt=$(awk -F'\t' -v n="${g02b_rn:-0}" '$1 == n { print $2 }' "$g02b_steps")
+g02c_sent=$(printf '%s\n' "$g02c_rt" | awk '{ i = index($0, "second rejection"); if (i) { t = substr($0, i); j = match(t, /\. /); if (j) t = substr(t, 1, j); print t } }')
+if printf '%s\n' "$g02c_sent" | grep -Eqi 'push(es)? nothing|nothing is pushed' && printf '%s\n' "$g02c_sent" | grep -Eqi 'comment[^.]* pr'; then ok "G02-AC-5: the second-rejection sentence says nothing is pushed and comments on the PR"; else bad "G02-AC-5: the second-rejection sentence ('${g02c_sent:-none}') must say nothing is pushed and comment on the PR"; fi
+g02c_pre=$(awk -F'\t' -v n="${g02b_rn:-0}" '$1 < n { print $2 } $1 == n { t = $2; i = index(t, "resolution review"); if (i) t = substr(t, 1, i - 1); print t }' "$g02b_steps" | sed -E -e 's/(never|no|not|without)[^.;]*push[a-z]*//g' -e 's/push(es)? nothing//g' -e 's/nothing is pushed//g')
+if [ -n "$g02b_rn" ] && ! printf '%s\n' "$g02c_pre" | grep -Eqi 'push'; then ok "G02-AC-5: no step before the resolution review pushes"; else bad "G02-AC-5: a step before (or the start of) the review step ${g02b_rn:-none} pushes"; fi
+# ---------- G02 slice 3d (review3c finding 3): checks that only tighten the AC-5 check above ----------
+g02d_pv=$(printf '%s\n' "$g02b_rt" | sed 's/\. /.\n/g' | grep -F 'resolution review (')
+if printf '%s\n' "$g02d_pv" | grep -Eq 'posted on the pr|gh pr comment'; then ok "G02-AC-5: the sentence with 'Resolution review (' says the verdict is posted on the PR"; else bad "G02-AC-5: the sentence with 'Resolution review (' ('${g02d_pv:-none}') must say the verdict is posted on the PR"; fi
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
