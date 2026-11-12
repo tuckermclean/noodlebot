@@ -193,5 +193,18 @@ stop_bg
 [ "$(count stop)" = 1 ] && pass "D06-AC-5 SIGTERM: loops.sh stop ran exactly once" ||
 	fail "D06-AC-5 SIGTERM: loops.sh stop ran exactly once (got $(count stop))"
 
+# --- D06-AC-3: an existing ~/gitrepos/noodlebot is left as it is, even without a .git
+scn present $FULL
+co=$(checkout_dir); mkdir -p "$co"; printf 'owner data\n' >"$co/keep.txt"
+run_bg; wait_until 15 started; stop_bg
+[ "$(cat "$co/keep.txt" 2>/dev/null)" = "owner data" ] &&
+	pass "D06-AC-3 existing folder: keep.txt still holds its content" ||
+	fail "D06-AC-3 existing folder: keep.txt still holds its content"
+[ ! -e "$co/.git" ] && pass "D06-AC-3 existing folder: no .git, the image copy was not cloned in its place" ||
+	fail "D06-AC-3 existing folder: no .git, the image copy was not cloned in its place"
+grep -q "start $co/scheduler" "$LOOPS_LOG" 2>/dev/null &&
+	fail "D06-AC-3 existing folder: no loops.sh start from a fresh clone" ||
+	pass "D06-AC-3 existing folder: no loops.sh start from a fresh clone"
+
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"
