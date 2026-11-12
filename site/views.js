@@ -218,7 +218,7 @@ export function renderRepo(data, ctx) {
   const head = Object.keys(COLUMNS).map((c) => `<th data-sort="${c}">${c}</th>`).join('');
   const prs = (r.open_prs || []).map((p) => `<li>${prLink(r.repo, p.number)} ${e(p.branch)} ${mergeBadge(p.mergeable)}</li>`).join('');
   const loop = `<p class="loop" data-loop="${r.running ? 'running' : 'idle'}">loop: ${badge(r.running ? 'running' : 'idle')}</p>` +
-    `<p class="stop" data-stop="${r.stop ? 'true' : 'false'}">STOP: ${r.stop ? badge('STOP', 'requested') : 'not set'}</p>`;
+    `<p class="stop" data-stop="${r.stop ? 'true' : 'false'}">STOP: ${r.stop ? badge('STOP requested', 'requested') : badge('STOP not set', 'not set')}</p>`;
   const body = `${title}<div class="loop-state">${loop}</div><section class="panel" data-section="prs"><h2>Open PRs</h2><ul>${prs}</ul></section>` +
     `${renderExplorer(r, view, changed)}` +
     table(`<tr>${head}</tr>${rows}`, ' data-table="nodes"');
