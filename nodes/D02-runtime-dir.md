@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | none | M |
+| now | none | D06 | M |
 
 **Owns:** the runtime paths in `scheduler/loop.sh`, `scheduler/status.sh` and `scheduler/report.py` (`--worktrees` default), the loop path in `scheduler/unattended.md` and `scheduler/unattended-triage.md`, `scheduler/move-runtime.sh`, `scheduler/move-runtime.test.sh`, their cases in `scheduler/loop.test.sh` and `scheduler/report.test.sh`, the runtime-layout wording in `SPEC.md` §2, `AGENTS.md`, `README.md` and `.gitignore`.
 **Resolves:** #3
