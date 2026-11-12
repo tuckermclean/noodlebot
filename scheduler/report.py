@@ -60,6 +60,10 @@ where this one stopped.
 import argparse, hashlib, json, math, os, re, subprocess, sys, time
 from datetime import datetime, timedelta, timezone
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import harness   # the one interface to the agent harness (S08)
+
 LABEL = "noodlebot-status"
 EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
@@ -299,50 +303,36 @@ def sessions(state):
         except OSError:
             continue
         k = n.rsplit("#", 1)[-1]
-        if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (k, k), cmd):
+        if harness.matches(cmd, k):
             out.append((n, pid, os.path.getmtime(f)))
     return out
 
 
-def narration(log):
-    """The orchestrator's latest plain-text lines, and the subagent it is waiting on (if any)."""
+def narration(d, evs=None):
+    """The orchestrator's latest plain-text lines, and the subagent it is waiting on (if any), from the events of the
+    session in state directory d (evs: its events, when the caller has them)."""
     texts, agents, done = [], {}, set()
-    for line in tail_lines(log, 1 << 20):
-        try:
-            d = json.loads(line)
-        except ValueError:
+    for e in (harness.events(d, write=False) if evs is None else evs):
+        t = e.get("type")
+        if e.get("subagent"):
             continue
-        if not isinstance(d, dict) or d.get("parent_tool_use_id"):
-            continue
-        msg = d.get("message")
-        content = msg.get("content") if isinstance(msg, dict) else None
-        if not isinstance(content, list):
-            continue
-        for c in content:
-            if not isinstance(c, dict):
-                continue
-            if d.get("type") == "assistant" and c.get("type") == "text" and c.get("text", "").strip():
-                texts.append(" ".join(c["text"].split())[:400])
-            elif d.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("name") in ("Agent", "Task"):
-                agents[c.get("id")] = (c.get("input") or {}).get("description") or "a subagent"
-            elif d.get("type") == "user" and c.get("type") == "tool_result":
-                done.add(c.get("tool_use_id"))
-        if d.get("type") == "result":
-            texts.append("(session turn ended: %s)" % d.get("subtype"))
+        if t == "text":
+            texts.append(e.get("text") or "")
+        elif t == "tool" and e.get("name") in ("Agent", "Task"):
+            agents[e.get("id")] = e.get("desc") or "a subagent"
+        elif t == "tool_result":
+            done.add(e.get("id"))
     running = [desc for i, desc in agents.items() if i not in done]
     return texts[-8:], (running[-1] if running else None)
 
 
-def last_result(log):
+def last_result(d, evs=None):
     """The text of the session's last result (its closing message), or None."""
-    for line in reversed(tail_lines(log, 1 << 20)):
-        if '"type":"result"' in line.replace(" ", ""):
-            try:
-                r = json.loads(line).get("result")
-            except (ValueError, AttributeError):
-                return None
-            return r.strip() or None if isinstance(r, str) else None
-    return None
+    last = None
+    for e in (harness.events(d, write=False) if evs is None else evs):
+        if e.get("type") == "result":
+            last = e.get("text")
+    return last
 
 
 def num(v):
@@ -359,33 +349,18 @@ def whole(v):
     return isinstance(v, int) and num(v) and v >= 0
 
 
-def cost_turns(log):
-    """(latest total_cost_usd, turns summed over results) of the well-formed result events in the whole log, or None.
-
-    Streams the file line by line (memory is bounded by the longest line) and parses only lines that mention a
-    result. Any error while decoding, parsing or checking one line makes it a malformed line, which is skipped."""
+def cost_turns(d, evs=None):
+    """(latest cost, turns summed over results) of the well-formed results in the events of the session in state
+    directory d, or None."""
     cost, turns, found = 0.0, 0, False
-    try:
-        with open(log, "rb") as f:
-            for raw in f:
-                if b'"result"' not in raw:
-                    continue
-                try:
-                    d = json.loads(raw.decode("utf-8", "replace"))
-                    if not (isinstance(d, dict) and d.get("type") == "result" and num(d.get("total_cost_usd"))
-                            and whole(d.get("num_turns"))):
-                        continue
-                    c, t = d["total_cost_usd"], d["num_turns"]
-                except Exception:  # e.g. too deeply nested (RecursionError): a malformed line
-                    continue
-                cost, turns, found = c, turns + t, True
-    except OSError:
-        return None
+    for e in (harness.events(d, write=False) if evs is None else evs):
+        if e.get("type") == "result" and num(e.get("cost")) and whole(e.get("turns")):
+            cost, turns, found = e["cost"], turns + e["turns"], True
     return (cost, turns) if found else None
 
 
-def cost_text(log):
-    ct = cost_turns(log)
+def cost_text(d, evs=None):
+    ct = cost_turns(d, evs)
     return "no cost yet" if ct is None else "$%.2f, %d turns" % ct
 
 
@@ -522,9 +497,10 @@ def body_for(a, sts, prs, rs=None):
         line = "### %s, running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
         if n in prs:
             line += ", PR #%s" % prs[n]
-        line += ", " + cost_text(os.path.join(tdir(state, n), "session.jsonl"))
+        evs = harness.events(tdir(state, n), write=False)   # once for the cost and the narration
+        line += ", " + cost_text(tdir(state, n), evs)
         out += ["", line]
-        texts, agent = narration(os.path.join(tdir(state, n), "session.jsonl"))
+        texts, agent = narration(tdir(state, n), evs)
         if agent:
             out += ["", "Now running subagent: **%s**" % agent]
         out += [""] + (["> %s" % t for t in texts[-4 if many else -8:]] or ["> (nothing yet)"])
@@ -803,7 +779,7 @@ def day_summary(a, date):
             ended.add(m.group(1) or m.group(2) or m.group(3))
     cost = 0.0
     for t in ended:
-        ct = cost_turns(os.path.join(tdir(a.state, t), "session.jsonl"))
+        ct = cost_turns(tdir(a.state, t))
         cost += ct[0] if ct else 0.0
     return sorted(ended), cost
 
@@ -1277,7 +1253,7 @@ def post_events(a, rs, issue):
             stamp, what = event_text(l)
             m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", what)
             task = m and (m.group(1) or m.group(2) or m.group(3))
-            ct = task and cost_turns(os.path.join(tdir(a.state, task), "session.jsonl"))
+            ct = task and cost_turns(tdir(a.state, task))
             out.append("- `%s` %s" % (stamp, link_nodes(a, what)) + (" (total $%.2f, %d turns)" % ct if ct else ""))
         text = "\n".join(out)
         comment(a, issue, text)

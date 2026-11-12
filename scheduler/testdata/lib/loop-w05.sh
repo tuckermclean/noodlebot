@@ -10,6 +10,7 @@ W5=$tmp/w05; export W5
 nb5=$W5/nb
 mkdir -p "$nb5/scheduler" "$nb5/plugin" "$W5/rec" "$W5/h" "$W5/data/repos"
 cp_scheduler "$nb5/scheduler"
+[ -f "$src/harness.py" ] && { mkdir -p "$nb5/scheduler/harnesses"; cp "$src/harness.py" "$nb5/scheduler/"; cp "$src"/harnesses/*.py "$nb5/scheduler/harnesses/"; }
 cat >"$nb5/scheduler/report.py" <<'PYEOF'
 import os, sys
 a = sys.argv[1:]

@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-mal-1","timestamp":"2026-11-09T17:00:00Z"}
+{"type":"result","subtype":"error_max_turns","timestamp":"2026-11-09T17:00:01Z","total_cost_usd":0.7,"num_turns":"5"}
+
+[1,2]
+{"type":"result","subtype":"success","timestamp":"2026-11-09T17:00:02Z","result":null,"total_cost_usd":"x","num_turns":-1}

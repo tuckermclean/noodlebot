@@ -46,6 +46,7 @@ setup() {
 	NOODLEBOT_DATA=$nb; export NOODLEBOT_DATA
 	mkdir -p "$HOME/.config/noodlebot" "$nb/scheduler"
 	[ -e "$src/loops.sh" ] && cp "$src/loops.sh" "$nb/scheduler/"
+	[ -f "$src/harness.py" ] && { mkdir -p "$nb/scheduler/harnesses"; cp "$src/harness.py" "$nb/scheduler/"; cp "$src"/harnesses/*.py "$nb/scheduler/harnesses/"; }
 	[ "${2:-}" = nolist ] || printf 'o/alpha\no/beta\n' >"$HOME/.config/noodlebot/repos"
 	cat >"$nb/scheduler/loop.sh" <<'EOT'
 #!/bin/sh
@@ -678,6 +679,58 @@ for n in alpha beta; do
 	no "T03-AC-4:$n:USAGE_5H_LIMIT-not-set-not-added" sh -c "grep -q '^USAGE_5H_LIMIT=' '$HOME/seen/$n.env'"
 	no "T03-AC-4:$n:SCHED_OTHER-not-set-not-added" sh -c "grep -q '^SCHED_OTHER=' '$HOME/seen/$n.env'"
 	ok "T03-AC-4:$n:NOODLEBOT_DATA-still-passed" sh -c "grep -q '^NOODLEBOT_DATA=' '$HOME/seen/$n.env'"
+done
+touch "$HOME/STOP"
+sleep 0.5
+PATH=$oldpath
+unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
+
+fi
+if want H; then
+echo "# S08-AC-5: start passes SCHED_HARNESS to each loop it starts (and passes nothing when it is unset)"
+export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+unset SCHED_HARNESS
+setup s08env
+cat >"$nb/scheduler/loop.sh" <<'EOT'
+#!/bin/sh
+name=${1#*/}
+mkdir -p "$HOME/seen"
+nb=$(cd "$(dirname "$0")/.." && pwd -P)
+mkdir -p "$nb/state/$name"
+exec 9>"$nb/state/$name/loop.lock"
+flock -n 9 || exit 1
+env >"$HOME/seen/$name.env"
+while [ ! -e "$HOME/STOP" ] && [ ! -e "$HOME/STOP-$name" ]; do sleep 0.2; done
+EOT
+chmod +x "$nb/scheduler/loop.sh"
+mkdir -p "$sc/bin"
+cat >"$sc/bin/tmux" <<'EOT'
+#!/bin/sh
+echo "$*" >>"$TMUXLOG"
+case $1 in
+new | new-session)
+	shift
+	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
+	setsid env -u SCHED_HARNESS "$@" >/dev/null 2>&1 </dev/null &
+	exit 0 ;;
+esac
+exit 1
+EOT
+chmod +x "$sc/bin/tmux"
+oldpath=$PATH
+PATH=$sc/bin:$oldpath
+SCHED_HARNESS=fake run start
+for n in alpha beta; do for _ in $(seq 50); do [ -s "$HOME/seen/$n.env" ] && break; sleep 0.1; done; done
+for n in alpha beta; do
+	ok "S08-AC-5:$n:SCHED_HARNESS-reaches-the-loop" sh -c "grep -qx 'SCHED_HARNESS=fake' '$HOME/seen/$n.env'"
+done
+touch "$HOME/STOP"
+for n in alpha beta; do for _ in $(seq 50); do alive "$(loop_pid $n)" || break; sleep 0.1; done; done
+rm -f "$HOME/STOP" "$HOME/seen"/*
+run start
+for n in alpha beta; do for _ in $(seq 50); do [ -s "$HOME/seen/$n.env" ] && break; sleep 0.1; done; done
+for n in alpha beta; do
+	no "S08-AC-5:$n:SCHED_HARNESS-unset-not-passed" sh -c "grep -q '^SCHED_HARNESS=' '$HOME/seen/$n.env'"
 done
 touch "$HOME/STOP"
 sleep 0.5

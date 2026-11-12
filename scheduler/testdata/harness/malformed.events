@@ -1,0 +1,4 @@
+{"t":"2026-11-09T17:00:00Z","type":"start","session":"sess-mal-1"}
+{"t":"2026-11-09T17:00:01Z","type":"result","subtype":"error_max_turns","text":null,"cost":0.7,"turns":null,"limit":false}
+{"t":null,"type":"garbled"}
+{"t":"2026-11-09T17:00:02Z","type":"result","subtype":"success","text":null,"cost":null,"turns":null,"limit":false}

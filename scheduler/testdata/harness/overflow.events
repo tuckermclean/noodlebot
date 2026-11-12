@@ -1,0 +1,6 @@
+{"t": "2026-11-09T10:00:00Z", "type": "start", "session": "sess-over-1"}
+{"t": "2026-11-09T10:00:01Z", "type": "result", "subtype": "success", "text": null, "cost": null, "turns": 2, "limit": false}
+{"t": "2026-11-09T10:00:02Z", "type": "result", "subtype": "success", "text": null, "cost": 1.5, "turns": null, "limit": false}
+{"t": "2026-11-09T10:00:03Z", "type": "result", "subtype": "success", "text": null, "cost": null, "turns": 2, "limit": false}
+{"t": "2026-11-09T10:00:04Z", "type": "text", "text": "still here", "subagent": false}
+{"t": "2026-11-09T10:00:05Z", "type": "result", "subtype": "success", "text": null, "cost": 2.5, "turns": 3, "limit": false}

@@ -16,6 +16,7 @@ S02=$tmp/s02; export S02
 mkdir -p "$S02" "$tmp/bin5" "$tmp/nb5/scheduler" "$tmp/nb5/plugin"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$src"/usage.py "$tmp/nb5/scheduler/"
+[ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb5/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb5/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb5/scheduler/harnesses/"; }
 git init -q -b main "$tmp/work5"; mkdir -p "$tmp/work5/docs"
 { echo 'nodes:'; for i in 1 2 3 4 5; do echo "  - {id: C0$i, name: n$i, deps: []}"; done; } >"$tmp/work5/docs/graph.yaml"
 git -C "$tmp/work5" add -A && git -C "$tmp/work5" -c user.name=t -c user.email=t@t commit -q -m init

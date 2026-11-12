@@ -20,6 +20,7 @@ data9=$(cd "$tmp/data9" && pwd -P)
 st9=$data9/state/s4c wt9=$data9/worktrees/s4c
 S04C_STATE=$st9; export S04C_STATE
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/nb9/scheduler/" ;; esac; done
+[ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb9/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb9/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb9/scheduler/harnesses/"; }
 git init -q -b main "$tmp/work9"; mkdir -p "$tmp/work9/docs"
 { echo 'nodes:'; for i in 1 2 3 4 5; do echo "  - {id: H0$i, name: n$i, deps: []}"; done; } >"$tmp/work9/docs/graph.yaml"
 printf 'base\n' >"$tmp/work9/f.txt"; printf '*.ign\n' >"$tmp/work9/.gitignore"

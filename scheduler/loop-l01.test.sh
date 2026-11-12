@@ -12,6 +12,7 @@ nb3=$tmp/nb3
 mkdir -p "$nb3/scheduler" "$nb3/plugin" "$tmp/bin3"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$src"/usage.py "$nb3/scheduler/"
+[ -f "$src/harness.py" ] && { mkdir -p "$nb3/scheduler/harnesses"; cp "$src/harness.py" "$nb3/scheduler/"; cp "$src"/harnesses/*.py "$nb3/scheduler/harnesses/"; }
 [ -f "$src/labels.py" ] && cp "$src/labels.py" "$nb3/scheduler/"
 cat >"$tmp/bin3/gh" <<'EOF'
 #!/bin/sh

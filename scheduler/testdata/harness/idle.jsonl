@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-idle-1","timestamp":"2026-11-09T11:00:00Z"}
+{"type":"rate_limit_event","timestamp":"2026-11-09T11:00:01Z","rate_limit_info":{"status":"allowed","resetsAt":1795007200}}
+{"type":"assistant","timestamp":"2026-11-09T11:00:02Z","message":{"content":[{"type":"tool_use","id":"toolu_i1","name":"Bash","input":{"command":"make test"}}]}}
+{"type":"user","timestamp":"2026-11-09T11:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_i1","content":"ok"}]}}
+{"type":"rate_limit_event","timestamp":"2026-11-09T11:00:04Z","rate_limit_info":{"status":"rejected","resetsAt":1795007200,"rateLimitType":"five_hour"}}

@@ -20,6 +20,7 @@ g02_data=$(cd "$G02/data" && pwd -P)
 G02_STATE=$g02_data/state/g02; export G02_STATE
 g02_wt=$g02_data/worktrees/g02
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$G02/nb/scheduler/" ;; esac; done
+[ -d "$src/harnesses" ] && { mkdir -p "$G02/nb/scheduler/harnesses"; cp "$src"/harnesses/*.py "$G02/nb/scheduler/harnesses/"; }
 cp -R "$src/../plugin/." "$G02/nb/plugin/" 2>/dev/null
 # the loop renders its prompt from scheduler/unattended-node-update.md: its copy here is a template of our own
 printf 'G02-TEMPLATE for PR #@N@ in @WT@ state @DIR@\n' >"$G02/nb/scheduler/unattended-node-update.md"
