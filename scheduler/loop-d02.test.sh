@@ -18,6 +18,7 @@ git init -q "$nb2" && touch "$nb2/CLAUDE.md" "$nb2/AGENTS.md"
 nb2=$(cd "$nb2" && pwd -P)
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$nb2/scheduler/"
+[ -f "$src/harness.py" ] && { mkdir -p "$nb2/scheduler/harnesses"; cp "$src/harness.py" "$nb2/scheduler/"; cp "$src"/harnesses/*.py "$nb2/scheduler/harnesses/"; }
 cp "$src/usage.py" "$nb2/scheduler/"
 export GIT_CONFIG_COUNT=3
 export GIT_CONFIG_KEY_0="url.$tmp/remote.git.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/o/pu

@@ -20,6 +20,7 @@ TESTS = \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
+	scheduler/api-s08.test.sh \
 	scheduler/turn.test.sh \
 	scheduler/turn-gap.test.sh \
 	scheduler/turn-race.test.sh \
@@ -39,6 +40,9 @@ TESTS = \
 	scheduler/loop-s07-starve.test.sh \
 	scheduler/loop-s07-same.test.sh \
 	scheduler/loop-s07-caps.test.sh \
+	scheduler/loop-s08.test.sh \
+	scheduler/loop-s08-caps.test.sh \
+	scheduler/loop-s08-ramp.test.sh \
 	scheduler/loop-s03.test.sh \
 	scheduler/loop-s01.test.sh \
 	scheduler/loop-s01-closed.test.sh \
@@ -91,6 +95,7 @@ TESTS = \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
+	scheduler/loops-s08.test.sh \
 	scheduler/loops-api.test.sh \
 	scheduler/api.test.sh \
 	scheduler/api-sessions.test.sh \
@@ -98,6 +103,8 @@ TESTS = \
 	scheduler/api-fifo.test.sh \
 	scheduler/api-root2.test.sh \
 	scheduler/api-p03.test.sh \
+	scheduler/harness.test.sh \
+	scheduler/agnostic.test.sh \
 	scheduler/move-runtime.test.sh \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \

@@ -15,6 +15,7 @@ mkloop() { local l; while IFS= read -r l; do printf '%s\n' "$l"; [ "$l" = "set -
 git init -q -b main "$tmp/nbwork"
 mkdir -p "$tmp/nbwork/scheduler" "$tmp/nbwork/plugin"
 for f in "${nbsrc[@]}"; do cp "$src/$f" "$tmp/nbwork/scheduler/" 2>/dev/null; done
+[ -f "$src/harness.py" ] && { mkdir -p "$tmp/nbwork/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nbwork/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nbwork/scheduler/harnesses/"; }
 chmod +x "$tmp/nbwork"/scheduler/*.sh
 touch "$tmp/nbwork/plugin/.keep"
 cp "$src/version.sh" "$tmp/nbwork/scheduler/" 2>/dev/null; chmod +x "$tmp/nbwork"/scheduler/version.sh 2>/dev/null

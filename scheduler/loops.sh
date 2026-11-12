@@ -218,7 +218,7 @@ status)
 			[ -e "$f" ] || continue
 			p=$(cat "$f" 2>/dev/null) id=$(basename "$(dirname "$f")")
 			case $p in '' | *[!0-9]*) continue ;; esac
-			{ tr '\0' ' ' <"/proc/$p/cmdline"; } 2>/dev/null | grep -qE "run-session\.sh .* $id( |\$)|claude -p /node $id( |\$)" || continue
+			python3 -I -B "$nb/scheduler/harness.py" matches "$id" "$({ tr '\0' ' ' <"/proc/$p/cmdline"; } 2>/dev/null)" || continue
 			case $f in */issue/*) id="#$id" ;; esac
 			live+=("$id")
 		done
