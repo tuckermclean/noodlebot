@@ -184,4 +184,23 @@ place A1 a --gap 10 --now nan >/dev/null; [ $rc != 0 ] && [ -z "$out" ] && [ -s 
 out=$(T place --root "$d" --repo a --now "$base" 2>"$tmp/err"); rc=$?
 [ $rc != 0 ] && [ -z "$out" ] && [ -s "$tmp/err" ] && pass "U03-AC-1 place without a KEY is an error: non-zero, a message on stderr" || fail "U03-AC-1 place without KEY: rc=$rc out='$out' err='$(cat "$tmp/err")'"
 
+# a key its own loop has given back is not waiting until the loop's next list (ask skips it)
+reset; hb a "$base"
+echo "A1 triage - $(w 900)" | list a 1000
+T giveback A1 --root "$d" --repo a >/dev/null 2>&1
+place A1 a --gap 10; want "a given-back key (the only unit) is not waiting" "not waiting"
+reset; hb a "$base"; hb b "$base"
+{ echo "A1 triage - $(w 900)"; echo "A2 fresh S $(w 300)"; } | list a 1000
+echo "B1 triage - $(w 100)" | list b 1000
+T giveback A1 --root "$d" --repo a >/dev/null 2>&1
+place A1 a --gap 10; want "a given-back key with other units waiting is not waiting" "not waiting"
+place A2 a --gap 10; want "the unit behind a given-back key is first (the given-back one is not counted)" "1 ahead, waited 0h05m, gap passed"
+echo "A1 triage - $(w 900)" | list a 1000
+place A1 a --gap 10; want "after the loop's next list the given-back key is counted again" "0 ahead, waited 0h15m, gap passed"
+
+# no DATA/state folder at all: not waiting, exit 0, nothing created
+rm -rf "$d"; mkdir -p "$d"
+place A1 a --gap 10; want "no state folder: not waiting" "not waiting"
+[ -z "$(ls -A "$d")" ] && pass "U03-AC-1 no state folder: place creates nothing (data folder stays empty)" || fail "U03-AC-1 no state folder: place created $(ls -A "$d" | tr '\n' ' ')"
+
 [ $fails = 0 ] && echo "ok: turn-place" || { echo "$fails failure(s)"; exit 1; }
