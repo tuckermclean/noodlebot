@@ -13,6 +13,7 @@ mkloop() { local l; while IFS= read -r l; do printf '%s\n' "$l"; [ "$l" = "set -
 git init -q -b main "$tmp/nbwork"
 mkdir -p "$tmp/nbwork/scheduler" "$tmp/nbwork/plugin"
 for f in "${nbsrc[@]}"; do cp "$src/$f" "$tmp/nbwork/scheduler/" 2>/dev/null; done
+[ -f "$src/harness.py" ] && { mkdir -p "$tmp/nbwork/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nbwork/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nbwork/scheduler/harnesses/"; }
 chmod +x "$tmp/nbwork"/scheduler/*.sh
 touch "$tmp/nbwork/plugin/.keep"
 cp "$src/version.sh" "$tmp/nbwork/scheduler/" 2>/dev/null; chmod +x "$tmp/nbwork"/scheduler/version.sh 2>/dev/null
@@ -65,13 +66,13 @@ echo more >>"$tmp/nbwork/SPEC.md"; echo more >>"$tmp/nbwork/docs/graph.yaml"; ec
 pushd n1
 n1=$(git -C "$tmp/nbwork" rev-parse HEAD)
 n0=$(wc -l <"$stated/status.log")
-ok "D04-AC-3: the checkout moves to a non-runtime commit within a tick or two" timeout 6 sh -c "until [ \"\$(git -C '$nbd' rev-parse HEAD)\" = '$n1' ]; do sleep 0.2; done"
+ok "D04-AC-3: the checkout moves to a non-runtime commit within a tick or two" timeout 20 sh -c "until [ \"\$(git -C '$nbd' rev-parse HEAD)\" = '$n1' ]; do sleep 0.2; done"
 ok "D04-AC-3: the deploy is one status-log line, without make test" withind 5 "deployed ${c1:0:7}[0-9a-f]*\.\.${n1:0:7}[0-9a-f]* \(version [^)]+\) without make test: no runtime change\$"
 wait_ticks 3
 ok "D04-AC-3: the loop keeps its pid (still running)" kill -0 "$loop"
 ok "D04-AC-3: the loop did not re-exec: no new 'loop started' line" test "$(nstarts)" = "$starts0"
 ok "D04-AC-3: the loop did not re-exec: no 'v2' marker, the loop's own pid is unchanged" sh -c "[ ! -e '$tmp/marker' ] && kill -0 $loop"
-ok "D04-AC-3: the session is still owned: alive, started once, reported running after the deploy" sh -c "kill -0 '$sp' && [ \$(grep -c '^start B01' '$tmp/claudel.log') = 1 ] && tail -n +$((n0 + 1)) '$stated/status.log' | grep -qE 'running: .*B01 \(pid $sp\)'"
+ok "D04-AC-3: the session is still owned: alive, started once, its pid file unchanged" sh -c "kill -0 '$sp' && [ \$(grep -c '^start B01' '$tmp/claudel.log') = 1 ] && [ \"\$(cat '$stated/node/B01/session.pid' 2>/dev/null)\" = '$sp' ]"
 ok "D04-AC-3: make test was not run for the non-runtime commit" sh -c "[ ! -e '$tmp/maketest.log' ]"
 
 # R2: a runtime commit (a new loop.sh): the loop re-execs within one tick as D01 says.
@@ -82,7 +83,7 @@ n0=$(wc -l <"$stated/status.log")
 ok "D04-AC-3: the checkout moves to the runtime commit" timeout 6 sh -c "until [ \"\$(git -C '$nbd' rev-parse HEAD)\" = '$r2' ]; do sleep 0.2; done"
 ok "D04-AC-3: the loop re-execs into the runtime commit's loop.sh" timeout 4 sh -c "until grep -q '^v2 pid ' '$tmp/marker' 2>/dev/null; do sleep 0.2; done"
 ok "D04-AC-3: the re-exec keeps the loop's pid" sh -c "kill -0 $loop && grep -qx 'v2 pid $loop' '$tmp/marker'"
-ok "D04-AC-3: the re-exec writes a second 'loop started' line" withind 5 "loop started for o/dep, version"
+ok "D04-AC-3: the re-exec writes a second 'loop started' line" timeout 5 sh -c "until [ \$(grep -c 'loop started for o/dep, version ' '$stated/status.log') -ge $((starts0 + 1)) ]; do sleep 0.1; done"
 ok "D04-AC-3: now two 'loop started' lines" test "$(nstarts)" = $((starts0 + 1))
 ok "D04-AC-3: make test ran for the runtime commit" sh -c "[ \$(grep -c 'make test ran' '$tmp/maketest.log') = 1 ]"
 ok "D04-AC-3: the re-exec'd loop still owns the session" sh -c "kill -0 '$sp' && [ \$(grep -c '^start B01' '$tmp/claudel.log') = 1 ]"

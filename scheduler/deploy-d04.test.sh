@@ -150,8 +150,8 @@ for p in scheduler/loop.sh plugin/p.json site/s.js Makefile .claude/agents/a.md 
 	ok "D04-AC-3 --runtime-changed exits 0 for a change of $p" '[ "$st" = 0 ]'
 done
 rcmk docs/z.md; mid=$(git -C "$rc" rev-parse HEAD); rcmk scheduler/q.sh; rcmk docs/z2.md
-rcheck "$pre" HEAD
-first=$(git -C "$rc" rev-parse HEAD~2)
+first=$(git -C "$rc" rev-parse HEAD~3)
+rcheck "$first" HEAD
 ok "D04-AC-3 --runtime-changed exits 0 when a runtime path is anywhere in the range" '[ "$st" = 0 ]'
 rcheck "$first" "$mid"
 ok "D04-AC-3 --runtime-changed <from> <to> looks at that range only (exit 1 over a non-runtime range)" '[ "$st" = 1 ]'
