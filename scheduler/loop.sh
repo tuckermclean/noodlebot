@@ -1219,9 +1219,9 @@ tick_run() {
 	local n inext_failed=0
 	# While the throttle holds, the labelled issues are still listed (issues.json stays current for the report's queued
 	# milestone); nothing starts because of it.
-	if [ -z "$triaging" ] && { ! full || [ "$throttled" = 1 ]; }; then
+	if { [ -z "$triaging" ] && ! full; } || [ "$throttled" = 1 ]; then
 		if n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
-			if [ -z "$n" ] || full; then :
+			if [ -z "$n" ] || full || [ -n "$triaging" ]; then :
 			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
 			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
 		else inext_failed=1; fi

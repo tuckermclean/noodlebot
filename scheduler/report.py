@@ -305,6 +305,8 @@ def throttle(state):
 def place(a, key):
     """The number of units ahead of key in the start queue (turn.py place), or None for "not waiting"; raises
     ValueError when turn.py cannot tell (logged once per run, one line)."""
+    if getattr(a, "place_logged", False):  # it failed once in this run: not asked again
+        raise ValueError("turn.py place failed earlier in this run")
     root = os.path.dirname(os.path.dirname(os.path.abspath(a.state)))
     cmd = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "turn.py"), "place", key,
            "--root", root, "--repo", os.path.basename(os.path.abspath(a.state))]
@@ -320,9 +322,8 @@ def place(a, key):
             raise ValueError("unparseable output: %s" % out[:100])
         return int(m.group(1))
     except (OSError, subprocess.TimeoutExpired, ValueError) as e:
-        if not getattr(a, "place_logged", False):
-            a.place_logged = True
-            print("report.py: turn.py place %s failed, no timing is promised: %s" % (key, e), file=sys.stderr)
+        a.place_logged = True
+        print("report.py: turn.py place %s failed, no timing is promised: %s" % (key, e), file=sys.stderr)
         raise ValueError(str(e))
 
 
