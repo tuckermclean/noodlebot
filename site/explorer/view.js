@@ -12,12 +12,10 @@ const COL_W = 200;
 const ROW_H = 64;
 const PAD = 16;
 
-const COLOURS = {
-  merged: '#9ad29a', running: '#6fb1e8', failed: '#e57373', question: '#f2c14e', answered: '#f7e08a',
-  'waiting-pr': '#b39ddb', 'pr-open': '#80cbc4', ready: '#4caf50', held: '#ffb74d', waiting: '#e0e0e0',
-};
-const OTHER = '#bdbdbd';
-const colour = (state) => (Object.hasOwn(COLOURS, state) ? COLOURS[state] : OTHER);
+// A state's one colour is the custom property --state-<state> of style.css (any other state: --state-other).
+const STATES = ['merged', 'running', 'failed', 'question', 'answered', 'waiting-pr', 'pr-open', 'ready', 'held', 'waiting'];
+export const stateVar = (state) => `var(--state-${STATES.includes(state) ? state : 'other'})`;
+const colour = stateVar;
 
 const ghUrl = (repo, kind, n) => `https://github.com/${repo}/${kind}/${n}`;
 const num = (n) => Number(n) || 0;
@@ -153,7 +151,7 @@ export function renderExplorer(r, view = {}) {
       const x1 = a.x + BOX_W, y1 = a.y + BOX_H / 2, x2 = b.x, y2 = b.y + BOX_H / 2, mx = (x1 + x2) / 2;
       const id = `${d}>${n.id}`;
       const heavy = chainEdge.has(id);
-      edges.push(`<path data-edge="${e(id)}"${heavy ? ' data-chain="true"' : ''}${hl(inLit(d) && inLit(n.id))} fill="none" stroke="#555" stroke-width="${heavy ? 4 : 1.5}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`);
+      edges.push(`<path class="edge" data-edge="${e(id)}"${heavy ? ' data-chain="true"' : ''}${hl(inLit(d) && inLit(n.id))} fill="none" stroke-width="${heavy ? 4 : 1.5}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`);
     }
   }
   for (const g of added) {
@@ -162,7 +160,7 @@ export function renderExplorer(r, view = {}) {
       if (!vis.has(d)) continue;
       const a = pos[d];
       const x1 = a.x + BOX_W, y1 = a.y + BOX_H / 2, x2 = b.x, y2 = b.y + BOX_H / 2, mx = (x1 + x2) / 2;
-      edges.push(`<path data-edge="${e(`${d}>${g.id}`)}" data-ghost="added" data-pr="${num(g.pr)}"${hl(false)} fill="none" stroke="#555" stroke-width="1.5" stroke-dasharray="6 4" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`);
+      edges.push(`<path class="edge" data-edge="${e(`${d}>${g.id}`)}" data-ghost="added" data-pr="${num(g.pr)}"${hl(false)} fill="none" stroke-width="1.5" stroke-dasharray="6 4" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`);
     }
   }
 
@@ -176,9 +174,9 @@ export function renderExplorer(r, view = {}) {
     const heavy = chainSet.has(n.id);
     const href = buildHash(repo, { ...view, node: n.id });
     const dash = tags.some((t) => t.kind === 'changed') ? ' stroke-dasharray="3 3"' : '';
-    const rect = `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="${colour(n.state)}" stroke="#000" stroke-width="${heavy ? 4 : 1}"${dash}/>` +
-      (n.id === sel ? `<rect data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="4" fill="none" stroke="#06c" stroke-width="2" pointer-events="none"/>` : '');
-    const mark = ready.has(n.id) ? `<circle data-mark="ready-next" cx="${BOX_W - 10}" cy="10" r="5" fill="#fff" stroke="#000" stroke-width="2"/>` : '';
+    const rect = `<rect class="box" width="${BOX_W}" height="${BOX_H}" rx="6" fill="${colour(n.state)}" style="fill:${colour(n.state)}" stroke-width="${heavy ? 4 : 1}"${dash}/>` +
+      (n.id === sel ? `<rect class="outline" data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="6" fill="none" stroke-width="3" pointer-events="none"/>` : '');
+    const mark = ready.has(n.id) ? `<circle class="ready-dot" data-mark="ready-next" cx="${BOX_W - 10}" cy="10" r="5" stroke-width="2"/>` : '';
     const label = `<a data-select="${e(n.id)}" href="${e(href)}">${rect}<text x="6" y="18" font-size="12"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text>${mark}</a>`;
     const tagText = tags.map((t, i) => prTag(repo, t, i)).join('');
     return `<g data-node="${e(n.id)}" data-state="${e(n.state)}" data-x="${p.x}" data-y="${p.y}" data-selected="${n.id === sel}"` +
@@ -188,12 +186,12 @@ export function renderExplorer(r, view = {}) {
   for (const g of added) {
     const p = ghostPos.get(g);
     boxes.push(`<g data-node="${e(g.id)}" data-ghost="added" data-pr="${num(g.pr)}" data-x="${p.x}" data-y="${p.y}"${hl(false)} data-selected="${!!ghostSel && g.id === ghostSel.id}" transform="translate(${p.x},${p.y})">` +
-      `<rect width="${BOX_W}" height="${BOX_H}" rx="4" fill="#fff" stroke="#000" stroke-width="1" stroke-dasharray="6 4"/>` +
-      (ghostSel && g.id === ghostSel.id ? `<rect data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="4" fill="none" stroke="#06c" stroke-width="2" pointer-events="none"/>` : '') +
+      `<rect class="box ghost" width="${BOX_W}" height="${BOX_H}" rx="6" stroke-width="1" stroke-dasharray="6 4"/>` +
+      (ghostSel && g.id === ghostSel.id ? `<rect class="outline" data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="6" fill="none" stroke-width="3" pointer-events="none"/>` : '') +
       `<text x="6" y="18" font-size="12">${e(g.id)} ${e(g.name)}</text>${prTag(repo, g, 0)}</g>`);
   }
 
-  const bands = L.bands.map((b) => `<text x="2" y="${b.y + 10}" font-size="10" fill="#777">${e(b.track)}</text>`).join('');
+  const bands = L.bands.map((b) => `<text class="band-label" x="2" y="${b.y + 10}" font-size="10">${e(b.track)}</text>`).join('');
   const svg = `<div class="explorer-scroll"><svg viewBox="0 0 ${W} ${Math.max(H, 1)}" width="${W}" height="${Math.max(H, 1)}" role="img" aria-label="node graph">${bands}${edges.join('')}${boxes.join('')}</svg></div>`;
   const ghostPanel = (g) => `<aside data-panel="${e(g.id)}"><h2>${e(g.id)} ${e(g.name)}</h2>` +
     `<p data-field="summary">${e(g.summary)}</p><p data-field="track">${e(g.track)}</p>` +

@@ -2,7 +2,7 @@
 // Importable without a DOM: `document` is touched only in mount().
 import { createPoller } from './poll.js';
 import { parseViewState, buildHash } from './explorer/view.js';
-import { escapeHtml, renderRepos, renderThrottle, renderActivity, renderRepo, page } from './views.js';
+import { escapeHtml, renderRepos, renderThrottle, renderActivity, renderRepo, page, shell } from './views.js';
 
 export function resolveGist({ search, config }) {
   const q = new URLSearchParams(search || '').get('gist');
@@ -25,9 +25,9 @@ export function parseRoute(hash) {
   return { name: 'not-found' };
 }
 
-const HELP = '<div data-view="setup" data-stale="false"><h1>No status gist set</h1>' +
+const HELP = shell('setup', {}, '<h1>No status gist set</h1>' +
   '<p>Open this page with <code>?gist=&lt;gist id&gt;</code>, or set the gist ID in <code>config.json</code> ' +
-  '(<code>{"gist": "&lt;gist id&gt;"}</code>).</p></div>';
+  '(<code>{"gist": "&lt;gist id&gt;"}</code>).</p>');
 
 export function createApp({ location, fetch, now, hidden }) {
   const app = { gist: null, poller: null };
@@ -58,18 +58,17 @@ export function createApp({ location, fetch, now, hidden }) {
     const route = parseRoute(location.hash);
     const st = app.poller.state;
     const notice = app.poller.statusText();
-    const notes = notice ? `<p class="notice">${escapeHtml(notice)}</p>` : '';
     if (!st.data) {
       const msg = st.message ? ` (${escapeHtml(st.message)})` : '';
       const view = route.name === 'not-found' ? 'not-found' : route.name;
-      return `<div data-view="${view}" data-stale="true">${notes}<p>${st.status === 'schema' ? '' : `No data yet${msg}.`}</p></div>`;
+      return shell(view, { stale: true, notice }, `<p>${st.status === 'schema' ? '' : `No data yet${msg}.`}</p>`);
     }
-    const ctx = { now: now(), lastSuccess: st.lastSuccess, repo: route.repo, view: parseViewState(location.hash), ...(app.sort || {}) };
+    const ctx = { now: now(), lastSuccess: st.lastSuccess, repo: route.repo, view: parseViewState(location.hash), notice, ...(app.sort || {}) };
     if (route.name === 'not-found') {
-      return notes + page('not-found', st.data, ctx, `<p>No such page: ${escapeHtml(location.hash)}</p>`);
+      return page('not-found', st.data, ctx, `<p>No such page: ${escapeHtml(location.hash)}</p>`);
     }
     const view = { repos: renderRepos, throttle: renderThrottle, activity: renderActivity, repo: renderRepo }[route.name];
-    return notes + view(st.data, ctx);
+    return view(st.data, ctx);
   };
 
   app.setSort = (sort, dir) => { app.sort = { sort, dir }; };
