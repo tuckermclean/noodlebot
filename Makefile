@@ -27,6 +27,7 @@ TESTS = \
 	scheduler/turn-record.test.sh \
 	scheduler/turn-lock.test.sh \
 	scheduler/turn-took.test.sh \
+	scheduler/turn-place.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	scheduler/deploy.test.sh \
 	plugin/hooks/guard.test.sh \
