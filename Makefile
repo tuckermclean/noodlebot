@@ -53,6 +53,7 @@ TESTS = \
 	scheduler/loop-s07-slots.test.sh \
 	scheduler/loop-g01.test.sh \
 	scheduler/loop-u03.test.sh \
+	scheduler/loop-u03-busy.test.sh \
 	scheduler/loop-s07.test.sh \
 	scheduler/loop-s06.test.sh \
 	scheduler/loop-s06-later.test.sh \

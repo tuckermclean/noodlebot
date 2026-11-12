@@ -266,5 +266,69 @@ out=$(sstatus "$qd")
 ok "U03-AC-4: status.sh keeps today's line for an unmerged spec PR" has "$out" "B01 waits for you to merge spec PR #7; restarts at the tick after"
 ok "U03-AC-4: status.sh says nothing of a merge for an unmerged spec PR" hasnt "$out" "spec PR #7 merged"
 
+
+# ---- the first run that sees it (U03-AC-2, U03-AC-4): one run, not three
+qnew
+qissues "[$(qlab 501)]"; qwaiting "#501 triage 100"; qusage 1
+qr "$qs" >/dev/null
+ok "U03-AC-2 (first run): the throttle holding: exactly one queued milestone after the first run that sees the issue" test "$(ucount 501 'queued for triage')" = 1
+qnew
+qissues "[$(qlab 502)]"; qwaiting "#503 triage 3000" "#502 triage 100"
+qr "$qs" >/dev/null
+ok "U03-AC-2 (first run): the throttle open: exactly one queued milestone after the first run that sees the issue" test "$(ucount 502 'queued for triage')" = 1
+qnew
+qnode B01 7 504; : >"$qs/merged-prs.txt"
+qr "$qs" >/dev/null
+qmerged 7; qwaiting "B01 resumed 100"
+qr "$qs" >/dev/null
+ok "U03-AC-4 (first run): exactly one 'spec PR #7 merged' milestone after the first run that sees the merge" test "$(ucount 504 'spec PR #7 merged')" = 1
+ok "U03-AC-4 (first run): the node's 'Waiting on you' item is gone after the first run that sees the merge" hasnt "$(statusbody)" "$QITEM"
+
+# ---- U03-AC-5, garbage mode again on issue and node numbers the fail mode did not use
+QSRC=$tmp/sched-fail
+echo garbage >"$tmp/stubmode"
+qnew
+qissues "[$(qlab 311), $(qlab 312)]"; qwaiting "#313 triage 3000" "#311 triage 100"; qusage 0
+mkdir -p "$qs/issue/312"; qevent "started triage of #312 in /wt, pid 4, start 1 of 2"
+qr3
+body=$(qfind 311 'queued for triage')
+ok "U03-AC-5 (garbage, fresh issue): exactly one queued milestone" test "$(ucount 311 'queued for triage')" = 1
+ok "U03-AC-5 (garbage, fresh issue): it says the unit starts at its turn" has "$body" "starts at its turn"
+ok "U03-AC-5 (garbage, fresh issue): it has no 'within seconds'" hasnt "$body" "within seconds"
+ok "U03-AC-5 (garbage, fresh issue): it has no count of units ahead" hasnt "$body" "ahead"
+ok "U03-AC-5 (garbage, fresh issue): one line naming turn.py/place in the first run's stderr" test "$(sed -n 1p "$tmp/qlines")" = 1
+qnew
+qnode B01 7 314; qmerged 7; qwaiting "B01 resumed 100"
+qr3
+body=$(qfind 314 'spec PR #7 merged')
+ok "U03-AC-5 (garbage, fresh node): exactly one spec-PR milestone" test "$(ucount 314 'spec PR #7 merged')" = 1
+ok "U03-AC-5 (garbage, fresh node): it says the node starts at its turn" has "$body" "starts at its turn"
+ok "U03-AC-5 (garbage, fresh node): it has no 'within seconds' and no count" sh -c "[ -n \"\$1\" ] && ! printf '%s' \"\$1\" | grep -q 'within seconds' && ! printf '%s' \"\$1\" | grep -q 'ahead'" _ "$body"
+ok "U03-AC-5 (garbage, fresh node): one line naming turn.py/place in the first run's stderr" test "$(sed -n 1p "$tmp/qlines")" = 1
+QSRC=
+
+# ---- U03-AC-5: several units in one run, turn.py place failing: one line, and place is asked only once in the run
+mkdir -p "$tmp/sched-count/harnesses"
+cp "$tmp"/sched-fail/*.* "$tmp/sched-count/" 2>/dev/null
+cp "$tmp"/sched-fail/harnesses/*.py "$tmp/sched-count/harnesses/" 2>/dev/null
+cat >"$tmp/sched-count/turn.py" <<EOF2
+#!/usr/bin/env python3
+import sys
+open("$tmp/placecalls", "a").write("call\n")
+print("turn.py: place failed (test stub)", file=sys.stderr)
+sys.exit(1)
+EOF2
+QSRC=$tmp/sched-count
+qnew
+qissues "[$(qlab 511), $(qlab 512), $(qlab 513)]"; qwaiting "#511 triage 300" "#512 triage 200" "#513 triage 100" "B01 resumed 50"
+qnode B01 7 514; qmerged 7
+: >"$tmp/placecalls"
+qr "$qs" >/dev/null
+ok "U03-AC-5 (several units): exactly one stderr line about turn.py/place in the run" test "$(grep -ciE 'turn\.py|place' "$tmp/qerr")" = 1
+ok "U03-AC-5 (several units): turn.py place is invoked only once in the run (not once per unit)" test "$(wc -l <"$tmp/placecalls")" -le 1
+ok "U03-AC-5 (several units): the stub was invoked (the check above is not vacuous)" test "$(wc -l <"$tmp/placecalls")" -ge 1
+ok "U03-AC-5 (several units): every unit still gets its milestone" sh -c "[ \"\$1\" = 1 ] && [ \"\$2\" = 1 ] && [ \"\$3\" = 1 ] && [ \"\$4\" = 1 ]" _ "$(ucount 511 'queued for triage')" "$(ucount 512 'queued for triage')" "$(ucount 513 'queued for triage')" "$(ucount 514 'spec PR #7 merged')"
+QSRC=
+
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"
