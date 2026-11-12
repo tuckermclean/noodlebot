@@ -24,8 +24,9 @@
 # state/<name>/{node,issue,pr}/<key>/waiting) and, with the throttle open, asks for a turn. SCHED_START_GAP
 # and SCHED_STARVE are read by turn.py from the environment.
 # Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
-# a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
-# (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
+# a failing one is one status line); when the checkout's HEAD moved and deploy.sh --runtime-changed says
+# a runtime path changed (or the check failed), the loop execs the new loop.sh (same pid, same arguments) and takes over
+# its running sessions like a restart; a non-runtime move keeps the running loop. deploy.sh's stderr
 # goes to state/<name>/deploy.log; its state and lock are $NOODLEBOT_DATA/deploy/ (the loop passes its runtime root).
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
@@ -1332,8 +1333,11 @@ while :; do
 	publish
 	[ $rc = 3 ] && continue
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
-	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
+	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] &&
+		{ "$here/deploy.sh" --runtime-changed "$nb" "$start_head" 9>&-; [ $? != 1 ]; }; then
 		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
 	fi
+	# A deploy that did not re-exec: the next report names the running sessions again, as a start would.
+	[ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] && last_note=''
 	pause
 done

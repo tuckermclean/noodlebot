@@ -40,6 +40,15 @@
 #   $max_tries times), make could not run (status 125-127: timeout or make missing), a fast-forward
 #   that failed after make test passed (fewer than $max_tries times; the pass is remembered), a failed
 #   rollback (nothing recorded), or a TERM/INT (message on stderr).
+# Runtime paths: a range that changes only the non-runtime paths (see is_runtime_path) is fast-forwarded without
+# make test, with the line "deployed <old>..<new> (version <v>) without make test: no runtime change", and deploy/previous
+# stays as it is. Every other path is runtime, because a loop or session reads it from the live checkout or make test runs
+# it: scheduler/ (the loop, its helpers, the session templates and the test files make test runs), plugin/ (every session
+# loads the live checkout's plugin, --plugin-dir), site/ (the status site's front end and its tests in make test), the
+# Makefile (the deploy's own make test), .claude/ (the role agents of a session started in the live checkout) and any path
+# not named, so a new top-level path is runtime until it is listed. A range with any runtime path anywhere gets the full deploy.
+# deploy.sh --runtime-changed <live> <from> [<to>] (to: HEAD) uses the same list and takes no lock and writes no state: exit
+# 0 a runtime path changed (git diff --name-only <from> <to>), 1 none, 2 git failed.
 # The body is in functions called last, so the file is fully read before the checkout changes under it.
 
 die() { echo "deploy.sh: $*" >&2; exit 2; }
@@ -49,6 +58,33 @@ max_tries=3
 # version <sha>: the version of a commit, git describe --tags --always; "unknown" when that fails.
 version() {
 	v=$(git -C "$live" describe --tags --always "$1" 2>/dev/null 9>&-) && [ -n "$v" ] && echo "$v" || echo unknown
+}
+
+# is_runtime_path <path>: 0 unless the path is on the non-runtime list.
+is_runtime_path() {
+	case $1 in
+	# read by people, and by sessions from their own worktrees, never by a loop from the live checkout
+	SPEC.md|AGENTS.md|CLAUDE.md|README.md) return 1 ;;
+	# the loop reads docs/graph.yaml from origin/main of its clone (repos/<name>), not from the live checkout
+	docs/*) return 1 ;;
+	# the loop, report.py and site.py read node specs from origin/main of the clone; sessions read them in their worktrees
+	nodes/*) return 1 ;;
+	# the workflows run on GitHub's runners, never on the scheduler's machine
+	.github/*) return 1 ;;
+	esac
+	return 0
+}
+
+# runtime_changed <live> <from> <to>: 0 a runtime path changed, 1 none, 2 git failed.
+runtime_changed() {
+	rc_files=$(git -C "$1" diff --name-only --no-renames "$2" "$3" -- 2>/dev/null 9>&-) || return 2
+	while IFS= read -r rc_p; do
+		[ -n "$rc_p" ] || continue
+		is_runtime_path "$rc_p" && return 0
+	done <<LISTEND
+$rc_files
+LISTEND
+	return 1
 }
 
 rejected() { grep -Fqx -e "$1" "$sd/rejected" 2>/dev/null; }
@@ -86,6 +122,9 @@ do_deploy() {
 		echo "deploy.sh: $live has uncommitted tracked changes; not deploying $new" >&2
 		return 2
 	fi
+	# A range that changes no runtime path is fast-forwarded without make test (a git failure falls through to the full deploy).
+	runtime_changed "$live" "$old" "$new"
+	[ $? = 1 ] && { fast_forward_plain; return $?; }
 	# A sha whose make test already passed ("<sha> <failed fast-forwards>" in $sd/passed) only retries the fast-forward.
 	pn=
 	if [ -f "$sd/passed" ] && read -r psha pn <"$sd/passed" && [ "$psha" = "$new" ]; then
@@ -164,6 +203,16 @@ fast_forward() {
 	echo "deployed $old..$new (version $(version "$new"))"
 }
 
+# fast_forward_plain: move the live checkout to $new without make test; deploy/previous is left as it is.
+fast_forward_plain() {
+	if ! git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1 9>&-; then
+		echo "deploy.sh: cannot fast-forward $live to $new; will retry" >&2
+		return 2
+	fi
+	rm -f "$sd/tries" "$sd/passed"
+	echo "deployed $old..$new (version $(version "$new")) without make test: no runtime change"
+}
+
 do_rollback() {
 	prev=$(cat "$sd/previous" 2>/dev/null) || die "no recorded previous commit"
 	prev=$(git -C "$live" rev-parse --verify -q "$prev^{commit}") || die "recorded previous commit is not in $live"
@@ -215,6 +264,11 @@ consume_requests() {
 }
 
 main() {
+	if [ "${1:-}" = --runtime-changed ]; then
+		[ $# -eq 3 ] || [ $# -eq 4 ] || die "usage: deploy.sh --runtime-changed <live checkout> <from> [<to>]"
+		runtime_changed "$2" "$3" "${4:-HEAD}"
+		return $?
+	fi
 	mode=deploy
 	if [ "${1:-}" = --rollback ]; then mode=rollback; shift; fi
 	[ $# -eq 1 ] || die "usage: deploy.sh [--rollback] <live checkout>"
