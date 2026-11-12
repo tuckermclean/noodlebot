@@ -11,6 +11,7 @@ the operations are described in harnesses/README.md.
   harness.py record <state-dir> fresh|append [<pidfile>]                             (run-session.sh's pipeline, stage 2)
   harness.py skill-command <skill> <args> [shipped]
   harness.py matches <unit> <cmdline>
+  harness.py match-pattern <unit>                      (matches as a grep -E pattern; exit 1: the backend has none)
   harness.py preflight
   harness.py events [--no-write] <state-dir>           (--no-write: translate in memory, create no file)
   harness.py capabilities
@@ -29,16 +30,21 @@ BACKENDS = {"claude-code": os.path.join(HERE, "harnesses", "claude_code.py"),
             "fake": os.path.join(HERE, "testdata", "harness", "fake.py")}
 
 
+_LOADED = {}
+
+
 def backend():
     name = os.environ.get("SCHED_HARNESS") or "claude-code"
     path = BACKENDS.get(name)
     if path is None:
         sys.stderr.write("harness.py: unknown harness %r (SCHED_HARNESS: %s)\n" % (name, ", ".join(sorted(BACKENDS))))
         sys.exit(2)
-    spec = importlib.util.spec_from_file_location("harness_backend_" + name.replace("-", "_"), path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    if name not in _LOADED:   # loaded and compiled once per process, not once per call
+        spec = importlib.util.spec_from_file_location("harness_backend_" + name.replace("-", "_"), path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _LOADED[name] = mod
+    return _LOADED[name]
 
 
 def name():
@@ -57,6 +63,13 @@ def matches(cmdline, unit):
     return backend().matches(cmdline, unit)
 
 
+def match_pattern(unit):
+    """matches() as an extended regex (grep -E) with the unit in it, or None when the backend has none (the callers
+    then ask matches() each time)."""
+    be = backend()
+    return be.match_pattern(unit) if hasattr(be, "match_pattern") else None
+
+
 def preflight():
     return backend().preflight()
 
@@ -69,13 +82,22 @@ def resume(worktree, state_dir, session_id, prompt):
     return backend().resume(worktree, state_dir, session_id, prompt)
 
 
-def events(state_dir, write=True):
+def events(state_dir, write=True, types=None):
     """The normalised events of the session. write=False: for the readers that must not write into the state
-    directory (a backend without the argument writes its events file as it always does)."""
+    directory (a backend without the argument writes its events file as it always does). types: only the events of
+    these types (a backend that takes the argument may skip the raw lines that cannot hold one; without it they are
+    filtered here)."""
     be = backend()
-    if not write and "write" in inspect.signature(be.events).parameters:
-        return be.events(state_dir, write=False)
-    return be.events(state_dir)
+    params = inspect.signature(be.events).parameters
+    kw = {}
+    if not write and "write" in params:
+        kw["write"] = False
+    if types is not None and "types" in params:
+        kw["types"] = set(types)
+    out = be.events(state_dir, **kw)
+    if types is not None:
+        out = [e for e in out if e.get("type") in types]
+    return out
 
 
 def log_stat(state_dir):
@@ -140,6 +162,12 @@ def main(argv):
         return 0
     if op == "matches" and len(a) == 2:
         return 0 if matches(a[1], a[0]) else 1
+    if op == "match-pattern" and len(a) == 1:
+        pat = match_pattern(a[0])
+        if pat is None:
+            return 1
+        print(pat)
+        return 0
     if op == "preflight" and not a:
         msg = preflight()
         if msg:

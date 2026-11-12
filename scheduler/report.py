@@ -294,11 +294,11 @@ def sessions(state):
     return out
 
 
-def narration(d):
+def narration(d, evs=None):
     """The orchestrator's latest plain-text lines, and the subagent it is waiting on (if any), from the events of the
-    session in state directory d."""
+    session in state directory d (evs: its events, when the caller has them)."""
     texts, agents, done = [], {}, set()
-    for e in harness.events(d, write=False):
+    for e in (harness.events(d, write=False) if evs is None else evs):
         t = e.get("type")
         if e.get("subagent"):
             continue
@@ -312,10 +312,10 @@ def narration(d):
     return texts[-8:], (running[-1] if running else None)
 
 
-def last_result(d):
+def last_result(d, evs=None):
     """The text of the session's last result (its closing message), or None."""
     last = None
-    for e in harness.events(d, write=False):
+    for e in (harness.events(d, write=False) if evs is None else evs):
         if e.get("type") == "result":
             last = e.get("text")
     return last
@@ -335,18 +335,18 @@ def whole(v):
     return isinstance(v, int) and num(v) and v >= 0
 
 
-def cost_turns(d):
+def cost_turns(d, evs=None):
     """(latest cost, turns summed over results) of the well-formed results in the events of the session in state
     directory d, or None."""
     cost, turns, found = 0.0, 0, False
-    for e in harness.events(d, write=False):
+    for e in (harness.events(d, write=False) if evs is None else evs):
         if e.get("type") == "result" and num(e.get("cost")) and whole(e.get("turns")):
             cost, turns, found = e["cost"], turns + e["turns"], True
     return (cost, turns) if found else None
 
 
-def cost_text(d):
-    ct = cost_turns(d)
+def cost_text(d, evs=None):
+    ct = cost_turns(d, evs)
     return "no cost yet" if ct is None else "$%.2f, %d turns" % ct
 
 
@@ -483,9 +483,10 @@ def body_for(a, sts, prs, rs=None):
         line = "### %s, running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
         if n in prs:
             line += ", PR #%s" % prs[n]
-        line += ", " + cost_text(tdir(state, n))
+        evs = harness.events(tdir(state, n), write=False)   # once for the cost and the narration
+        line += ", " + cost_text(tdir(state, n), evs)
         out += ["", line]
-        texts, agent = narration(tdir(state, n))
+        texts, agent = narration(tdir(state, n), evs)
         if agent:
             out += ["", "Now running subagent: **%s**" % agent]
         out += [""] + (["> %s" % t for t in texts[-4 if many else -8:]] or ["> (nothing yet)"])

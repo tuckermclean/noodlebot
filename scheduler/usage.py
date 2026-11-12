@@ -38,7 +38,7 @@ def readings(root, now):
             m = harness.log_stat(d).get("mtime")   # the raw log's age, not the events file's: the real clock
             if m is None or m < time.time() - WEEK:
                 continue
-            evs = harness.events(d, write=False)
+            evs = harness.events(d, write=False, types={"usage"})
         except Exception:
             continue
         for e in evs:

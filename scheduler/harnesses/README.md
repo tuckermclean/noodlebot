@@ -22,16 +22,16 @@ and the interface operation that serves it. Capabilities (`usage`, `resume`, `bg
 | Call site | What it does | What it reads | Operation |
 |---|---|---|---|
 | `loop.sh` `launch` (~l.513-521) | starts a session with `run-session.sh` under setsid | the prompt and `unattended.md` it renders; writes `session.jsonl`, `session.stderr`, `session.rc` | `start` |
-| `loop.sh` `resume_idle` (~l.455-472) | resumes a limit-idle conversation in the same worktree, appending to the same log | the session id of the last start event, the prompt in `resume-prompt.md`; writes the number of start events so far to `resume.size` (~l.462) | `resume` |
+| `loop.sh` `resume_idle` (~l.455-472) | resumes a limit-idle conversation in the same worktree, appending to the same log | the session id of the last start event, the prompt in `resume-prompt.md`; writes the number of start events so far to `resume.starts` (~l.462) | `resume` |
 | `loop.sh` skill choice (~l.828-831) | names the node skill in the start prompt (`/noodlebot:node` or the repository's own `/node`) | whether `origin/main` ships `.claude/skills/node` | `skill_command` |
 | `loop.sh` `start_triage` (~l.535) | names the triage skill in the start prompt (`/noodlebot:triage <n>`) | the issue number | `skill_command` |
 | `loop.sh` `start_update` (~l.561) | names the triage skill in its update form in the start prompt (`/noodlebot:triage --update <n>`) | the pull request number | `skill_command` |
 | `loop.sh` oauth check (~l.96) | refuses to start the loop without the session credential | the credential file `~/.config/noodlebot/oauth-token` (exists, readable) | `preflight` |
-| `loop.sh` `alive` (~l.201-205) | is this pid that unit's session (guards pid reuse) | `/proc/<pid>/cmdline` | `matches` |
+| `loop.sh` `alive` (~l.201-205) | is this pid that unit's session (guards pid reuse) | `/proc/<pid>/cmdline` | `matches` (as a pattern the loop asks for once per start, `harness.py match-pattern`, when the backend has one) |
 | `loop.sh` `limit_exit` (~l.209-222) | the session ended by the plan's usage limit (no start used up) | last 400 KB of the log: the last usage reading's status, the last result's text and subtype | `events` |
 | `loop.sh` `idle_by_limit`, `idle_tail` (~l.225-262) | the log ends with the usage limit and has a reset time; the session id to resume | last 400 KB of the log: the last line (unknown when unparseable), usage status and reset time; the last init session id anywhere in the log | `events` |
 | `loop.sh` `bg_cut_off` (~l.264-269) | the CLI stopped background tasks still running after the last turn (no start used up) | the last 100 KB of `session.stderr` | `events` |
-| `loop.sh` `ended`, resume check (~l.295-306) | the resumed session wrote a start of its own | the number of start events, against the count in `resume.size` taken before the resume (a count of events, no longer a byte offset of the raw log) | `events` |
+| `loop.sh` `ended`, resume check (~l.295-306) | the resumed session wrote a start of its own | the number of start events, against the count in `resume.starts` taken before the resume (a count of events, no longer a byte offset of the raw log) | `events` |
 | `loop.sh` background-wait cut-off check and throttle (~l.264, ~l.1004-1007) | features that exist only if the harness has them: usage readings, resume, the background-wait setting | which capabilities are on | `capabilities` |
 | `loops.sh` (~l.221) | a loop's live sessions listed for `loops.sh` status and stop | `/proc/<pid>/cmdline` of each `session.pid` | `matches` |
 | `status.sh` (~l.40) | which node sessions of a loop are live | `/proc/<pid>/cmdline` | `matches` |
@@ -61,7 +61,7 @@ order. Readers must not rely on more fields than listed. The Claude Code backend
 surrogate of a cut string is written too; a raw line whose events cannot be made for any reason is one `garbled` event
 and the lines after it are translated as usual (live and rebuilt alike; on stderr only the exception's type, never
 event text). Events carry no offset into the raw log: a reader that needs "after this point" counts events (the loop's
-`resume.size` holds the number of `start` events before a resume). When a resume appends to a raw log whose last line
+`resume.starts` holds the number of `start` events before a resume). When a resume appends to a raw log whose last line
 was cut (no newline at its end), the backend writes the newline first, so the resumed stream's first line is a line of
 its own and its `start` is kept by a rebuild too.
 

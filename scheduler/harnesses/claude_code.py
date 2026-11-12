@@ -37,6 +37,12 @@ def matches(cmdline, unit):
     return re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (re.escape(unit), re.escape(unit)), cmdline) is not None
 
 
+def match_pattern(unit):
+    """matches() as an extended regex for grep -E, the unit written into it (the loop asks once with a placeholder)."""
+    u = re.escape(unit)
+    return r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (u, u)
+
+
 def _oauth_path():
     return os.path.join(os.environ.get("HOME", ""), ".config", "noodlebot", "oauth-token")
 
@@ -284,28 +290,38 @@ def _read_events(ev):
         return []
 
 
-def _translate_file(state_dir):
+# The raw bytes a line must hold to give an event of that type: a reader that wants only those types does not parse
+# the other lines (the usage readings of a week of logs are a few lines in thousands).
+_MARKERS = {"usage": b"rate_limit_event"}
+
+
+def _translate_file(state_dir, types=None):
     """The events of the raw log, translated in memory (no file is written, no lock taken); None without a raw log."""
     raw, _, _, err = _paths(state_dir)
+    marks = [_MARKERS[t] for t in types] if types and all(t in _MARKERS for t in types) else None
     out = []
     try:
         with open(raw, "rb") as f:
             for line in f:
+                if marks is not None and not any(m in line for m in marks):
+                    continue
                 out.extend(translate(line.decode("utf-8", "replace")))
     except OSError:
         return None
-    if _cut_off(err):
+    if (types is None or "cutoff" in types) and _cut_off(err):
         out.append({"t": None, "type": "cutoff"})
     return out
 
 
-def events(state_dir, write=True):
+def events(state_dir, write=True, types=None):
     """The events of the session. write=False (the readers that must not write: the API, the report) translates the
-    raw log in memory and creates no file; a state dir without a raw log gives the events file as it is."""
+    raw log in memory and creates no file; a state dir without a raw log gives the events file as it is. types: only
+    events of these types."""
     raw, ev, pos, _ = _paths(state_dir)
     if not write:
-        out = _translate_file(state_dir)
-        return _read_events(ev) if out is None else json.loads(json.dumps(out))
+        out = _translate_file(state_dir, types)
+        out = _read_events(ev) if out is None else json.loads(json.dumps(out))
+        return out if types is None else [e for e in out if e.get("type") in types]
     try:
         rsize = os.path.getsize(raw)
     except OSError:
@@ -322,7 +338,8 @@ def events(state_dir, write=True):
             rebuild(state_dir)
         except Exception as e:   # never a traceback for the readers: they get the events file as it is
             _say("events.jsonl not rebuilt", e)
-    return _read_events(ev)
+    out = _read_events(ev)
+    return out if types is None else [e for e in out if e.get("type") in types]
 
 
 def _finish(state_dir):

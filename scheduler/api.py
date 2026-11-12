@@ -279,6 +279,8 @@ def at_limit(d):
         if t == "garbled":
             last = None
             continue
+        if t == "cutoff":   # not a line of the log: a stale cut-off note must not hide the limit
+            continue
         last = e
         if t == "usage":
             if e.get("info_bad"):   # a reading that is no object: the loop fails on it, so not idle

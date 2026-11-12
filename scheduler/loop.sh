@@ -98,6 +98,8 @@ pf=$(python3 -I -B "$nb/scheduler/harness.py" preflight 2>&1) || { echo "loop.sh
 hname=${SCHED_HARNESS:-claude-code}
 caps=$(python3 -I -B "$nb/scheduler/harness.py" capabilities 2>/dev/null) || caps='usage resume bg-wait'
 caps=" $(echo $caps) "
+# The harness's process match as an extended regex with @UNIT@ for the task key (empty: ask it for each check).
+match_tpl=$(python3 -I -B "$nb/scheduler/harness.py" match-pattern '@UNIT@' 2>/dev/null) || match_tpl=
 has_cap() { [[ $caps == *" $1 "* ]]; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
@@ -209,7 +211,11 @@ ensure_labels
 # (a node ID or an issue number); guards against pid reuse.
 alive() {
 	kill -0 "$1" 2>/dev/null || return 1
-	python3 -I -B "$here/harness.py" matches "$2" "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)"
+	if [ -n "$match_tpl" ]; then   # the harness's pattern, asked once per loop start: no python run per check
+		tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -Eq -- "${match_tpl//@UNIT@/$2}"
+	else
+		python3 -I -B "$here/harness.py" matches "$2" "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)"
+	fi
 }
 
 # hev <mode> <dir> [<n>]: the session's normalised events (harness.py events) read by one python run:
@@ -242,6 +248,7 @@ last = reset = sid = None
 for e in evs:
     t = e.get("type")
     if t == "garbled": last = None; continue
+    if t == "cutoff": continue   # not a line of the log: a cut-off note left by an earlier part must not hide its end
     last = e
     if t == "usage":
         if e.get("info_bad"): sys.exit(1)
@@ -306,13 +313,14 @@ ended() {
 	p=$(cat "$d/session.pid"); wait "$p" 2>/dev/null
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
-	if [ -e "$d/resume.size" ]; then
-		[ "$(hev starts "$d" 2>/dev/null || echo 0)" -gt "$(cat "$d/resume.size")" ] || {
-			say "$saw; session $(task_name "$d") could not be resumed: the resumed claude wrote no init line (rc $rc)"
+	if [ -e "$d/resume.starts" ]; then
+		[ "$(hev starts "$d" 2>/dev/null || echo 0)" -gt "$(cat "$d/resume.starts")" ] || {
+			say "$saw; session $(task_name "$d") could not be resumed: the resumed session wrote no start (rc $rc)"
 			: >"$d/force-limit"
 		}
-		rm -f "$d/resume.size"
+		rm -f "$d/resume.starts"
 	fi
+	rm -f "$d/resume.size"   # left by a resume begun before this name (a byte offset then): taken as resumed
 	# a failed resume is a limit exit whatever claude's exit code was
 	if [ -e "$d/force-limit" ]; then [ "$rc" != 0 ] || rc=143; fi
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
@@ -468,7 +476,7 @@ resume_idle() {
 		fi
 		echo "$reset" >"$d/resumed"
 		{ cat "$here/limit-resume.md"; printf '\nThe limit window reset at %s UTC (epoch %s).\n' "$(date -u -d "@$reset" +%H:%M:%S)" "$reset"; } >"$d/resume-prompt.md"
-		hev starts "$d" >"$d/resume.size"
+		hev starts "$d" >"$d/resume.starts"
 		rm -f "$d/session.rc"
 		NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$wt" "${a[3]}" "${a[4]}" "$sid" </dev/null 9>&- >>"$d/session.jsonl" 2>>"$d/session.stderr" &
 		pr=$!
@@ -522,7 +530,7 @@ stop_done() {
 # launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
 # prompt's last word: a node ID or an issue number).
 launch() {
-	rm -f "$2/session.rc" "$2/resumed" "$2/resume.size" "$2/force-limit"
+	rm -f "$2/session.rc" "$2/resumed" "$2/resume.starts" "$2/resume.size" "$2/force-limit"
 	# 9>&-: the session must not hold the loop's lock.
 	NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
 	pid=$! node=${3##* }
@@ -541,7 +549,7 @@ start_triage() {
 	site_sed
 	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
-	skill=$(python3 -I -B "$here/harness.py" skill-command triage "$n") || skill="/noodlebot:triage $n"
+	skill=$(python3 -I -B "$here/harness.py" skill-command triage "$n") || { note "$saw; #$n: the harness gave no skill command; not started"; return 1; }
 	launch "$wt" "$d" "$skill"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
@@ -567,7 +575,7 @@ start_update() {
 	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-update.md" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
-	skill=$(python3 -I -B "$here/harness.py" skill-command triage "--update $n") || skill="/noodlebot:triage --update $n"
+	skill=$(python3 -I -B "$here/harness.py" skill-command triage "--update $n") || { note "$saw; PR #$n: the harness gave no skill command; not started"; return 1; }
 	launch "$wt" "$d" "$skill"
 	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
@@ -839,7 +847,7 @@ start_node() {
 	# The repository's own /node skill while main still has one; the bot's plugin skill after.
 	shipped=0
 	git -C "$clone" cat-file -e origin/main:.claude/skills/node/SKILL.md 2>/dev/null && shipped=1
-	skill=$(python3 -I -B "$here/harness.py" skill-command node "$id" "$shipped") || skill="/noodlebot:node $id"
+	skill=$(python3 -I -B "$here/harness.py" skill-command node "$id" "$shipped") || { note "$saw; $id: the harness gave no skill command; not started"; return 1; }
 	launch "$wt" "$d" "$skill"
 	[ "$resume" = 1 ] && rm -f "$d/leftover.pending"
 	live+=("$pid $id")
