@@ -83,6 +83,8 @@ would enter a local build: build from a fresh clone.
 - **One replica per runtime root.** The StatefulSet has `replicas: 1` and the volume is the runtime root
   (`~/.local/share/noodlebot`) with the live checkout: one replica takes it, and two schedulers, or the container and
   the machine's own loops, on the same `repos` start every session twice. Never scale it up.
+  The runtime root must stay on the home volume, never on the image's overlay filesystem: `loops.sh` and the API read
+  whether a loop runs from `/proc/locks`, which shows an overlay file under another device and inode than `stat`.
 - **Nested rootless podman.** Sessions run `podman` as `noodlebot`, with no container-runtime socket mounted and
   without `--privileged`. For that the compose file and the manifests carry these settings:
   - `/dev/fuse` (compose `devices`): the storage driver is fuse-overlayfs. Kubernetes has no device field: the cluster
