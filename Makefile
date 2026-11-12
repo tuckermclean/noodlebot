@@ -112,7 +112,8 @@ TESTS = \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	site/site.test.sh \
-	scheduler/runtests.test.sh
+	scheduler/runtests.test.sh \
+	container/entrypoint.test.sh
 
 test:
 	sh scheduler/runtests.sh $(TESTS)
