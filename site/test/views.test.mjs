@@ -91,7 +91,7 @@ test('W03-AC-1 a text from the data holding <script> or " is shown escaped in th
   assert.ok(th.includes('&lt;script&gt;alert(1)&lt;/script&gt; and &quot;'), 'the throttle reason, escaped');
   const rp = views.renderRepos(d2, ctx);
   assert.doesNotMatch(rp, /<script/i);
-  assert.ok(!rp.includes('"><'), 'no attribute is broken out of by a quote');
+  for (const tag of rp.match(/<[^<>]*>/g)) assert.equal((tag.match(/"/g) || []).length % 2, 0, `no attribute is broken out of by a quote: ${tag.slice(0, 80)}`);
   assert.ok(rp.includes('&lt;script&gt;'), 'the repository name, escaped');
   for (const h of [th, rp, views.renderActivity(d2, ctx), views.renderRepo(d2, { ...ctx, repo: `acme/${X}"` })]) {
     assert.doesNotMatch(h, /<script/i);
