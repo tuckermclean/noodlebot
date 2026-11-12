@@ -176,4 +176,20 @@ for kv in TEST_BUDGET_ENFORCE=1 TEST_FILE_BUDGET=60 TEST_BUDGET=360 SITE_TESTS=r
 done
 hasnt "D03-AC-5: scheduler/deploy.sh sets none of TEST_BUDGET_ENFORCE, TEST_FILE_BUDGET, TEST_BUDGET, TEST_JOBS" "$src/deploy.sh" 'TEST_(BUDGET|FILE_BUDGET|JOBS)'
 
+# D04-AC-4: "FAILED <file>" right after the TIME line of each file that exited non-zero, none for a passing file.
+# $m (the sequential run: bad, ok, slow) has one failing file; a second run has two failing files at TEST_JOBS=2.
+after_time() { grep -A1 -E "^TIME $num $2\$" "$1" 2>/dev/null | sed -n 2p; }
+if [ "$(after_time "$m" "$t/bad.test.sh")" = "FAILED $t/bad.test.sh" ]; then pass "D04-AC-4: FAILED <file> follows the TIME line of the failing file"; else fail "D04-AC-4: FAILED <file> follows the TIME line of the failing file"; fi
+if [ "$(grep -c '^FAILED ' "$m" 2>/dev/null)" = 1 ]; then pass "D04-AC-4: exactly one FAILED line for one failing file"; else fail "D04-AC-4: exactly one FAILED line for one failing file"; fi
+hasnt "D04-AC-4: no FAILED line for a passing file (ok, slow)" "$m" '^FAILED .*(ok|slow)\.test\.sh'
+hasnt "D04-AC-4: no FAILED line when every file passes" "$tmp/out/fileonly" '^FAILED '
+cp "$t/bad.test.sh" "$t/bad2.test.sh"
+run twobad TEST_JOBS=2 -- "$t/bad.test.sh" "$t/ok.test.sh" "$t/bad2.test.sh"
+wait
+for f in bad bad2; do
+	if [ "$(after_time "$tmp/out/twobad" "$t/$f.test.sh")" = "FAILED $t/$f.test.sh" ]; then pass "D04-AC-4: TEST_JOBS=2: FAILED <file> follows the TIME line of $f.test.sh"; else fail "D04-AC-4: TEST_JOBS=2: FAILED <file> follows the TIME line of $f.test.sh"; fi
+done
+if [ "$(grep -c '^FAILED ' "$tmp/out/twobad" 2>/dev/null)" = 2 ]; then pass "D04-AC-4: one FAILED line per failing file, none for the passing one"; else fail "D04-AC-4: one FAILED line per failing file, none for the passing one"; fi
+[ "$(rc twobad)" -ne 0 ] && pass "D04-AC-4: FAILED lines do not change the exit status (non-zero)" || fail "D04-AC-4: FAILED lines do not change the exit status (non-zero)"
+
 [ "$fails" -eq 0 ]
