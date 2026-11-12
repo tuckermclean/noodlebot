@@ -30,7 +30,7 @@ const HELP = shell('setup', {}, '<h1>No status gist set</h1>' +
   '(<code>{"gist": "&lt;gist id&gt;"}</code>).</p>');
 
 export function createApp({ location, fetch, now, hidden }) {
-  const app = { gist: null, poller: null };
+  const app = { gist: null, poller: null, cur: null, prev: null, changedAt: null };
 
   async function readConfig() {
     try {
@@ -42,6 +42,16 @@ export function createApp({ location, fetch, now, hidden }) {
     }
   }
 
+  // the previous data and when the current data replaced it: recorded whenever the poller's data object changes
+  // (a 304 keeps the object), not when a route is drawn
+  const track = () => {
+    const d = app.poller && app.poller.state.data;
+    if (!d || d === app.cur) return;
+    app.prev = app.cur;
+    app.cur = d;
+    app.changedAt = now();
+  };
+
   app.start = async () => {
     let config = null;
     if (!resolveGist({ search: location.search, config: null })) config = await readConfig();
@@ -49,21 +59,28 @@ export function createApp({ location, fetch, now, hidden }) {
     if (!app.gist) return;
     app.poller = createPoller({ gist: app.gist, fetch, now, hidden });
     await app.poller.tick();
+    track();
   };
 
-  app.tick = async () => (app.poller ? app.poller.tick() : false);
+  app.tick = async () => {
+    if (!app.poller) return false;
+    const r = await app.poller.tick();
+    track();
+    return r;
+  };
 
   app.render = () => {
     if (!app.gist || !app.poller) return HELP;
     const route = parseRoute(location.hash);
     const st = app.poller.state;
+    track();
     const notice = app.poller.statusText();
     if (!st.data) {
       const msg = st.message ? ` (${escapeHtml(st.message)})` : '';
       const view = route.name === 'not-found' ? 'not-found' : route.name;
       return shell(view, { stale: true, notice }, `<p>${st.status === 'schema' ? '' : `No data yet${msg}.`}</p>`);
     }
-    const ctx = { now: now(), lastSuccess: st.lastSuccess, repo: route.repo, view: parseViewState(location.hash), notice, ...(app.sort || {}) };
+    const ctx = { now: now(), lastSuccess: st.lastSuccess, prev: app.prev, changedAt: app.changedAt, repo: route.repo, view: parseViewState(location.hash), notice, ...(app.sort || {}) };
     if (route.name === 'not-found') {
       return page('not-found', st.data, ctx, `<p>No such page: ${escapeHtml(location.hash)}</p>`);
     }

@@ -60,6 +60,22 @@ const badge = (value, text = value) => `<span class="badge" data-badge="${e(valu
 const stateBadge = (state) => `<span class="badge" data-badge="${e(state)}" style="background:${stateVar(state)}">${e(state)}</span>`;
 const table = (inner, attrs = '') => `<div class="table-scroll"><table${attrs}>${inner}</table></div>`;
 
+// The change mark (W06): what differs from the data before, for 2 minutes after the new data arrived (by the page's
+// clock). ctx.prev is the previous data (null for the first), ctx.changedAt the time the current data replaced it.
+const MARK_MS = 2 * MIN;
+const prevData = (ctx) => (ctx.prev && ctx.changedAt != null && ctx.now - ctx.changedAt < MARK_MS ? ctx.prev : null);
+const NEW = ' data-new="true"';
+const prevRepo = (ctx, repo) => { const p = prevData(ctx); return p ? repoFiles(p).find((f) => f.repo === repo) || null : null; };
+const countsOf = (r) => { const c = {}; for (const n of r.nodes || []) c[n.state] = (c[n.state] || 0) + 1; return JSON.stringify(c); };
+const evKey = (v) => JSON.stringify([v.time, v.repo, v.text]);
+// the ids of the nodes of `r` whose state differs from the previous data's (or that are not in it)
+export function changedNodes(r, ctx) {
+  const before = prevRepo(ctx, r.repo);
+  if (!before) return new Set();
+  const old = new Map((before.nodes || []).map((n) => [n.id, n.state]));
+  return new Set((r.nodes || []).filter((n) => old.get(n.id) !== n.state).map((n) => n.id));
+}
+
 const repoFiles = (data) => Object.entries(data.files || {}).filter(([k]) => k.startsWith('repo.')).map(([, v]) => v);
 const ghUrl = (repo, kind, n) => `https://github.com/${repo}/${kind}/${n}`;
 const link = (href, text) => `<a href="${e(href)}">${e(text)}</a>`;
@@ -70,6 +86,8 @@ const loopBadges = (r) => badge(r.running ? 'running' : 'idle') + (r.stop ? ` ${
 
 export function renderRepos(data, ctx) {
   const items = repoFiles(data).map((r) => {
+    const before = prevRepo(ctx, r.repo);
+    const isNew = before && (!!before.running !== !!r.running || !!before.stop !== !!r.stop || countsOf(before) !== countsOf(r));
     const nodes = r.nodes || [];
     const counts = {};
     for (const n of nodes) counts[n.state] = (counts[n.state] || 0) + 1;
@@ -78,7 +96,7 @@ export function renderRepos(data, ctx) {
       `<span class="seg" data-state="${e(k)}" title="${v} ${e(k)}" style="width:${((100 * v) / nodes.length).toFixed(1)}%;background:${stateVar(k)}"></span>`).join('');
     const summary = nodes.length ? `<p class="count">${merged} of ${nodes.length} merged</p><div class="bar" role="img" aria-label="node states">${segs}</div>`
       : '<p class="count">no nodes</p>';
-    return `<li class="card" data-card="${e(r.repo)}"><div class="card-head"><h2><a href="#/repo/${e(r.repo)}">${e(r.repo)}</a></h2>` +
+    return `<li class="card" data-card="${e(r.repo)}"${isNew ? NEW : ''}><div class="card-head"><h2><a href="#/repo/${e(r.repo)}">${e(r.repo)}</a></h2>` +
       `<span class="loop">${loopBadges(r)}</span></div>${summary}</li>`;
   });
   return page('repos', data, ctx, `<h1>Repositories</h1><ul class="cards">${items.join('')}</ul>`);
@@ -125,24 +143,26 @@ export function renderThrottle(data, ctx) {
   return page('throttle', data, ctx, body);
 }
 
-const eventItem = (v) => `<li><time>${e(v.time)}</time> <span class="ev-repo">${e(v.repo)}</span> <span class="ev-text">${e(v.text)}</span></li>`;
+const eventItem = (v, isNew = false) => `<li${isNew ? NEW : ''}><time>${e(v.time)}</time> <span class="ev-repo">${e(v.repo)}</span> <span class="ev-text">${e(v.text)}</span></li>`;
 
 // the events grouped by the date of their `time`, newest day first, W03's order within a day
-function timeline(events) {
+function timeline(events, seen) {
   const days = new Map();
   for (const v of events) {
     const d = String(v.time ?? '').slice(0, 10);
     days.set(d, [...(days.get(d) || []), v]);
   }
   return [...days.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
-    .map(([d, evs]) => `<div class="day"><h3>${e(d)}</h3><ul class="timeline">${evs.map(eventItem).join('')}</ul></div>`).join('');
+    .map(([d, evs]) => `<div class="day"><h3>${e(d)}</h3><ul class="timeline">${evs.map((v) => eventItem(v, !!seen && !seen.has(evKey(v)))).join('')}</ul></div>`).join('');
 }
 
 const mergeBadge = (m) => badge(m);
 
 export function renderActivity(data, ctx) {
   const act = data.files['activity.json'] || { events: [], triage: [], deploy: { events: [], rejected: [] } };
-  const events = timeline((act.events || []).filter((v) => !ctx.repo || v.repo === ctx.repo));
+  const pd = prevData(ctx);
+  const seen = pd ? new Set((((pd.files || {})['activity.json'] || {}).events || []).map(evKey)) : null;
+  const events = timeline((act.events || []).filter((v) => !ctx.repo || v.repo === ctx.repo), seen);
   const prs = repoFiles(data).flatMap((r) => (r.open_prs || []).map((p) =>
     `<li>${e(r.repo)} ${prLink(r.repo, p.number)} ${e(p.branch)} ${mergeBadge(p.mergeable)}</li>`)).join('');
   const triage = (act.triage || []).map((i) =>
@@ -151,7 +171,7 @@ export function renderActivity(data, ctx) {
   const d = act.deploy || { events: [], rejected: [] };
   const deploys = `<p>version ${e(d.version ?? 'none')}, previous ${e(d.previous ?? 'none')}</p>` +
     `<p>rejected: ${(d.rejected || []).map(e).join(', ') || 'none'}</p>` +
-    `<ul>${(d.events || []).map(eventItem).join('')}</ul>`;
+    `<ul>${(d.events || []).map((v) => eventItem(v)).join('')}</ul>`;
   const cur = (on) => (on ? ' aria-current="true"' : '');
   const filters = `<p class="filter">filter: <a href="#/activity"${cur(!ctx.repo)}>all</a>` +
     `${repoFiles(data).map((r) => ` <a href="#/activity?repo=${e(r.repo)}"${cur(ctx.repo === r.repo)}>${e(r.repo)}</a>`).join('')}</p>`;
@@ -183,6 +203,7 @@ export function renderRepo(data, ctx) {
   }
   const issueNo = (n) => { const m = /\/issues\/(\d+)$/.exec(n.url || ''); return m ? m[1] : null; };
   const view = ctx.view || {};
+  const changed = changedNodes(r, ctx);
   const rows = nodes.map((n) => {
     const det = [];
     if (n.text) det.push(e(n.text));
@@ -190,7 +211,7 @@ export function renderRepo(data, ctx) {
     if (issueNo(n)) det.push(`issue ${issueLink(r.repo, issueNo(n))}`);
     if (n.mergeable) det.push(e(n.mergeable));
     if ((n.waiting_for || []).length) det.push(`waiting for ${n.waiting_for.map(e).join(', ')}`);
-    return `<tr data-node="${e(n.id)}" data-selected="${n.id === view.node}"><td>${link(`https://github.com/${r.repo}/blob/main/nodes/${n.id}-${n.name}.md`, n.id)}</td>` +
+    return `<tr data-node="${e(n.id)}" data-selected="${n.id === view.node}"${changed.has(n.id) ? NEW : ''}><td>${link(`https://github.com/${r.repo}/blob/main/nodes/${n.id}-${n.name}.md`, n.id)}</td>` +
       `<td><a data-select="${e(n.id)}" href="${e(buildHash(r.repo, { ...view, node: n.id }))}">${e(n.name)}</a></td><td>${e(n.track)}</td><td>${stateBadge(n.state)}${det.length ? ` (${det.join('; ')})` : ''}</td>` +
       `<td>${(n.deps || []).map(e).join(', ')}</td><td>${e(n.starts)}</td></tr>`;
   }).join('');
@@ -199,7 +220,7 @@ export function renderRepo(data, ctx) {
   const loop = `<p class="loop" data-loop="${r.running ? 'running' : 'idle'}">loop: ${badge(r.running ? 'running' : 'idle')}</p>` +
     `<p class="stop" data-stop="${r.stop ? 'true' : 'false'}">STOP: ${r.stop ? badge('STOP', 'requested') : 'not set'}</p>`;
   const body = `${title}<div class="loop-state">${loop}</div><section class="panel" data-section="prs"><h2>Open PRs</h2><ul>${prs}</ul></section>` +
-    `${renderExplorer(r, view)}` +
+    `${renderExplorer(r, view, changed)}` +
     table(`<tr>${head}</tr>${rows}`, ' data-table="nodes"');
   return page('repo', data, ctx, body);
 }

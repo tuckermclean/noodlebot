@@ -96,7 +96,7 @@ function panel(repo, r, n, view, tags = []) {
     '</aside>';
 }
 
-export function renderExplorer(r, view = {}) {
+export function renderExplorer(r, view = {}, changed = new Set()) {
   const repo = r.repo;
   const nodes = r.nodes || [];
   const root = (inner) => `<section data-explorer="${e(repo)}">${inner}</section>`;
@@ -180,7 +180,7 @@ export function renderExplorer(r, view = {}) {
     const label = `<a data-select="${e(n.id)}" href="${e(href)}">${rect}<text x="6" y="18" font-size="12"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text>${mark}</a>`;
     const tagText = tags.map((t, i) => prTag(repo, t, i)).join('');
     return `<g data-node="${e(n.id)}" data-state="${e(n.state)}" data-x="${p.x}" data-y="${p.y}" data-selected="${n.id === sel}"` +
-      `${heavy ? ' data-chain="true"' : ''}${attrs}${hl(inLit(n.id))} transform="translate(${p.x},${p.y})">` +
+      `${changed.has(n.id) ? ' data-new="true"' : ''}${heavy ? ' data-chain="true"' : ''}${attrs}${hl(inLit(n.id))} transform="translate(${p.x},${p.y})">` +
       `${label}${tagText}</g>`;
   });
   for (const g of added) {
