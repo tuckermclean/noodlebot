@@ -1355,7 +1355,5 @@ while :; do
 		{ "$here/deploy.sh" --runtime-changed "$nb" "$start_head" 9>&-; [ $? != 1 ]; }; then
 		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
 	fi
-	# A deploy that did not re-exec: the next report names the running sessions again, as a start would.
-	[ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] && last_note=''
 	pause
 done

@@ -1,6 +1,7 @@
 #!/bin/sh
 # deploy.sh <live checkout>        deploy origin/main into the live checkout if it passes make test
 # deploy.sh --rollback <live>      return the live checkout to the recorded previous commit
+# deploy.sh --runtime-changed <live checkout> <from> [<to>]   exit 0 if the range changes a runtime path, 1 if not, 2 if unknown
 #
 # Fetches origin main (fatal on failure) and then origin's tags, forced (non-fatal: a failure only
 # notes "could not fetch tags" on stderr and versions may be stale). Every status line names the
@@ -206,10 +207,23 @@ fast_forward() {
 # fast_forward_plain: move the live checkout to $new without make test; deploy/previous is left as it is.
 fast_forward_plain() {
 	if ! git -C "$live" merge -q --ff-only "$new" >/dev/null 2>&1 9>&-; then
-		echo "deploy.sh: cannot fast-forward $live to $new; will retry" >&2
+		# Failed attempts per sha ("<sha> <n>" in $sd/plain-tries), rejected after $max_tries as fast_forward does.
+		pn=0
+		[ -f "$sd/plain-tries" ] && read -r psha pn <"$sd/plain-tries" && [ "$psha" = "$new" ] || pn=0
+		case $pn in ''|*[!0-9]*) pn=0 ;; esac
+		pn=$((pn + 1))
+		[ "$pn" = 1 ] && echo "not deployed: $new (version $(version "$new")) cannot fast-forward $live (will retry the fast-forward)"
+		if [ "$pn" -ge "$max_tries" ]; then
+			echo "deploy.sh: cannot fast-forward $live to $new ($pn times); recorded, not tried again" >&2
+			echo "$new" >>"$sd/rejected"
+			rm -f "$sd/plain-tries"
+			return 1
+		fi
+		echo "$new $pn" >"$sd/plain-tries"
+		echo "deploy.sh: cannot fast-forward $live to $new (attempt $pn of $max_tries); will retry the fast-forward" >&2
 		return 2
 	fi
-	rm -f "$sd/tries" "$sd/passed"
+	rm -f "$sd/tries" "$sd/passed" "$sd/plain-tries"
 	echo "deployed $old..$new (version $(version "$new")) without make test: no runtime change"
 }
 
@@ -248,7 +262,7 @@ consume_requests() {
 	if [ -n "$rsha" ] && rejected "$rsha"; then
 		if grep -Fvx -e "$rsha" "$sd/rejected" >"$sd/rejected.tmp" 2>/dev/null; then rc=0; else rc=$?; fi
 		if [ "$rc" -le 1 ] && mv -f "$sd/rejected.tmp" "$sd/rejected" 2>/dev/null; then
-			for f in tries passed; do
+			for f in tries passed plain-tries; do
 				[ -f "$sd/$f" ] || continue
 				if read -r fsha _ <"$sd/$f" && [ "$fsha" = "$rsha" ]; then rm -f "$sd/$f"; fi
 			done
