@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | P03 | R02 | L |
+| now | P03 | R02, S09 | L |
 
 **Owns:** `scheduler/harness.py` (the harness interface, its CLI, backend selection, the normalised event log and the capability rule), `scheduler/harness.test.sh` (the conformance suite) and its line in the `Makefile`'s `test` target; `scheduler/harnesses/` (the Claude Code backend `claude_code.py`: the `claude` command line, its settings and credential, the stream-json translation, how a prompt names a skill; `README.md`, the operation table across harnesses); the fake harness and its fixtures `scheduler/testdata/harness/`; the harness rules of `scheduler/agnostic.test.sh` (this node creates the file and its line in the `Makefile`'s `test` target when G04 has not merged first; G04 then adds its forge rules); in `scheduler/run-session.sh`, starting and resuming a session through the backend and writing `events.jsonl`; in `scheduler/loop.sh`, the harness setting (`SCHED_HARNESS`), the credential check, the limit-exit, idle-by-limit, resume and background cut-off checks, the session's process match and the skill command of a start; the event reading of `scheduler/usage.py`, `scheduler/api.py`, `scheduler/report.py` and `scheduler/site.py`; the process match in `scheduler/loops.sh`, and the process match and session reading in `scheduler/status.sh`; passing `SCHED_HARNESS` per loop in `scheduler/loops.sh`; the harness part of the README's usage; `scheduler/loop-s08*.test.sh` (new) and their lines in the `Makefile`'s `test` target; their cases in the existing `*.test.sh` files.
 **Resolves:** #84
