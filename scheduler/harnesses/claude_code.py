@@ -5,16 +5,14 @@ names a skill, how a session's process is recognised, and the translation of its
 normalised event log events.jsonl. The contract of a backend is in scheduler/testdata/harness/fake.py (its header);
 the operations and events are documented in scheduler/harnesses/README.md.
 """
+import _thread
 import fcntl
 import json
 import math
 import os
 import re
-import signal
 import stat
-import subprocess
 import sys
-import threading
 import time
 
 NAME = "claude-code"
@@ -217,7 +215,7 @@ def _cut_off(stderr_path):
 
 
 def _tmp(path):
-    return "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())   # readers and the recorder never share one
+    return "%s.%d.%d.tmp" % (path, os.getpid(), _thread.get_ident())   # readers and the recorder never share one
 
 
 def _replace(path, text):
@@ -464,6 +462,7 @@ def record(state_dir, fresh, pidfile=None):
     SIGTERM (stop_idle signals every child of run-session.sh; the agent stops, this finishes at EOF, so events.jsonl is
     complete). A background task that kept the pipe open must not hold the session: once the agent (pid in pidfile) is
     gone and nothing has come on the stream for 5 s, it ends."""
+    import signal, threading   # imported here: only the recorder and the runner need them (start-up cost of the readers)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     base = _end_cut_line(state_dir, _out_base())
     fd, evf = _open_events(state_dir, fresh, base)
@@ -541,6 +540,7 @@ def _run(worktree, state_dir, argv, fresh):
         env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
     base = _end_cut_line(state_dir, _out_base())
     fd, evf = _open_events(state_dir, fresh, base)
+    import signal, subprocess, threading
     proc = subprocess.Popen(argv, cwd=worktree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
 
     def fwd(signum, frame):

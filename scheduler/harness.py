@@ -18,7 +18,6 @@ the operations are described in harnesses/README.md.
   harness.py log-stat <state-dir>                      (the raw log: one JSON object with path, size, mtime)
 """
 import importlib.util
-import inspect
 import json
 import os
 import sys
@@ -88,7 +87,8 @@ def events(state_dir, write=True, types=None):
     these types (a backend that takes the argument may skip the raw lines that cannot hold one; without it they are
     filtered here)."""
     be = backend()
-    params = inspect.signature(be.events).parameters
+    code = be.events.__code__   # its parameter names (inspect.signature costs ~20 ms of import at every call)
+    params = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
     kw = {}
     if not write and "write" in params:
         kw["write"] = False

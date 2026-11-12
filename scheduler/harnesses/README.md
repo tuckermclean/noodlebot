@@ -5,7 +5,9 @@ folder (`claude_code.py`, the first) or the fake harness of `scheduler/testdata/
 contract). `$SCHED_HARNESS` chooses it: unset or `claude-code`, or `fake`; any other name exits 2 with a message.
 
 A backend exports `NAME`, `capabilities()`, `skill_command()`, `matches()`, `preflight()`, `start()`, `resume()`,
-`events()` and `log_stat()`; `harness.py` re-exports each as a function and as a CLI subcommand (`harness.py skill-command ...`). The
+`events()` and `log_stat()`, and optionally `match_pattern()` (`matches()` as a `grep -E` pattern; without it callers ask
+`matches()` each time) and the `types=` argument of `events()` (only the events of those types, so the raw lines that cannot
+hold one may be skipped; without it `harness.py` filters); `harness.py` re-exports each as a function and as a CLI subcommand (`harness.py skill-command ...`). The
 raw log `session.jsonl` is the harness's own stream (stdout of `run-session.sh`, set up by the loop); only the backend
 reads it, and writes the normalised log `events.jsonl` next to it as the session runs. `events()` rebuilds
 `events.jsonl` from the raw log (and `session.stderr` for `cutoff`) when it is missing or behind the raw log (the
