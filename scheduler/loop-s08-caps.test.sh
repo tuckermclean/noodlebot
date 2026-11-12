@@ -8,6 +8,7 @@
 . "$(dirname "$0")/testdata/lib/loop-prelude.sh"
 . "$src/testdata/lib/loop-s08.sh"
 lacks() { echo "harness fake lacks $1: $2 off"; }
+s08n_is() { [ "$(s08n "$1" "$2")" = "$3" ]; }
 L_USAGE=$(lacks usage throttle) L_RESUME=$(lacks resume 'limit resume') L_BG=$(lacks bg-wait 'cut-off check')
 ALL=usage,resume,bg-wait
 
@@ -44,7 +45,7 @@ ok "S08-AC-6 (control): with every capability nothing is said to be lacking" tes
 kill "$cupid"; wait "$cupid" 2>/dev/null
 ok "S08-AC-6 (usage): the stopped loop released its lock" wait_until 10 flock -n "$tmp/d-cu/state/cu/loop.lock" true
 s08loop cu "$tmp/bin08" SCHED_HARNESS=fake FAKE_HARNESS_CAPS=resume,bg-wait FAKE_HARNESS_SCRIPT="$S08/plain.events"
-ok "S08-AC-6 (usage): a second loop start says it again" wait_until 20 test "$(s08n cu "$L_USAGE")" = 2
+ok "S08-AC-6 (usage): a second loop start says it again" wait_until 20 s08n_is cu "$L_USAGE" 2
 s08ticks cu 3
 ok "S08-AC-6 (usage): and only once more" test "$(s08n cu "$L_USAGE")" = 2
 
