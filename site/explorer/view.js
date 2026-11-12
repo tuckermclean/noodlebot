@@ -140,7 +140,7 @@ export function renderExplorer(r, view = {}, changed = new Set()) {
 
   const prTag = (repoName, g, i) => {
     const what = g.kind === 'changed' ? `: ${Object.keys(g.fields || {}).map(e).join(', ')}` : '';
-    return `<a href="${e(ghUrl(repoName, 'pull', num(g.pr)))}"><text x="6" y="${30 + i * 10}" font-size="10">#${num(g.pr)}${what}</text></a>`;
+    return `<a href="${e(ghUrl(repoName, 'pull', num(g.pr)))}"><text class="pr-tag" x="6" y="${30 + i * 10}">#${num(g.pr)}${what}</text></a>`;
   };
 
   const edges = [];
@@ -177,7 +177,7 @@ export function renderExplorer(r, view = {}, changed = new Set()) {
     const rect = `<rect class="box" width="${BOX_W}" height="${BOX_H}" rx="6" fill="${colour(n.state)}" style="fill:${colour(n.state)}" stroke-width="${heavy ? 4 : 1}"${dash}/>` +
       (n.id === sel ? `<rect class="outline" data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="6" fill="none" stroke-width="3" pointer-events="none"/>` : '');
     const mark = ready.has(n.id) ? `<circle class="ready-dot" data-mark="ready-next" cx="${BOX_W - 10}" cy="10" r="5" stroke-width="2"/>` : '';
-    const label = `<a data-select="${e(n.id)}" href="${e(href)}">${rect}<text x="6" y="18" font-size="12"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text>${mark}</a>`;
+    const label = `<a data-select="${e(n.id)}" href="${e(href)}">${rect}<text x="6" y="18"${struck ? ' text-decoration="line-through"' : ''}>${e(n.id)} ${e(n.name)}</text>${mark}</a>`;
     const tagText = tags.map((t, i) => prTag(repo, t, i)).join('');
     return `<g data-node="${e(n.id)}" data-state="${e(n.state)}" data-x="${p.x}" data-y="${p.y}" data-selected="${n.id === sel}"` +
       `${changed.has(n.id) ? ' data-new="true"' : ''}${heavy ? ' data-chain="true"' : ''}${attrs}${hl(inLit(n.id))} transform="translate(${p.x},${p.y})">` +
@@ -188,10 +188,10 @@ export function renderExplorer(r, view = {}, changed = new Set()) {
     boxes.push(`<g data-node="${e(g.id)}" data-ghost="added" data-pr="${num(g.pr)}" data-x="${p.x}" data-y="${p.y}"${hl(false)} data-selected="${!!ghostSel && g.id === ghostSel.id}" transform="translate(${p.x},${p.y})">` +
       `<rect class="box ghost" width="${BOX_W}" height="${BOX_H}" rx="6" stroke-width="1" stroke-dasharray="6 4"/>` +
       (ghostSel && g.id === ghostSel.id ? `<rect class="outline" data-outline="selected" width="${BOX_W}" height="${BOX_H}" rx="6" fill="none" stroke-width="3" pointer-events="none"/>` : '') +
-      `<text x="6" y="18" font-size="12">${e(g.id)} ${e(g.name)}</text>${prTag(repo, g, 0)}</g>`);
+      `<text x="6" y="18">${e(g.id)} ${e(g.name)}</text>${prTag(repo, g, 0)}</g>`);
   }
 
-  const bands = L.bands.map((b) => `<text class="band-label" x="2" y="${b.y + 10}" font-size="10">${e(b.track)}</text>`).join('');
+  const bands = L.bands.map((b) => `<text class="band-label" x="2" y="${b.y + 10}">${e(b.track)}</text>`).join('');
   const svg = `<div class="explorer-scroll"><svg viewBox="0 0 ${W} ${Math.max(H, 1)}" width="${W}" height="${Math.max(H, 1)}" role="img" aria-label="node graph">${bands}${edges.join('')}${boxes.join('')}</svg></div>`;
   const ghostPanel = (g) => `<aside data-panel="${e(g.id)}"><h2>${e(g.id)} ${e(g.name)}</h2>` +
     `<p data-field="summary">${e(g.summary)}</p><p data-field="track">${e(g.track)}</p>` +

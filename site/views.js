@@ -114,7 +114,7 @@ function history(h) {
   const grid = [[1, '100%'], [0.5, '50%'], [0, '0%']].map(([u, l]) =>
     `<line class="grid" x1="${PL}" y1="${y(u).toFixed(1)}" x2="${W - PR}" y2="${y(u).toFixed(1)}"/>` +
     `<text class="axis" x="${PL - 6}" y="${(y(u) + 4).toFixed(1)}" text-anchor="end">${l}</text>`).join('');
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="utilization history">` +
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="utilization history">` +
     `${grid}<polygon class="area" points="${area}"/><polyline class="line" fill="none" points="${pts.join(' ')}"/>` +
     `<text class="axis" x="${PL}" y="${H - 8}">${hm(t0)}</text><text class="axis" x="${W - PR}" y="${H - 8}" text-anchor="end">${hm(h[h.length - 1].t)}</text></svg>`;
 }

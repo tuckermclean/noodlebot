@@ -42,6 +42,9 @@
   --fs-base: 1rem;
   --fs-lg: 1.25rem;
   --fs-xl: 1.6rem;
+  --fs-svg-xs: 10px;
+  --fs-svg-sm: 11px;
+  --fs-svg: 12px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -138,7 +141,8 @@ meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--warn); }
 .chart-panel { overflow-x: auto; }
 svg { max-width: 100%; height: auto; }
 .chart .grid { stroke: var(--grid); stroke-width: 1; }
-.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart { width: 100%; height: auto; display: block; }
+.chart .axis { fill: var(--muted); font-size: var(--fs-svg-sm); }
 .chart .area { fill: var(--accent); fill-opacity: 0.15; }
 .chart .line { stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
 
@@ -170,7 +174,9 @@ svg [data-node] a { cursor: pointer; text-decoration: none; }
 .outline { stroke: var(--accent); }
 .ready-dot { fill: var(--surface); stroke: var(--on-state); }
 .edge { stroke: var(--edge); }
-.band-label { fill: var(--muted); }
+.band-label { fill: var(--muted); font-size: var(--fs-svg-xs); }
+[data-explorer] svg text { font-size: var(--fs-svg); }
+[data-explorer] svg text.pr-tag { font-size: var(--fs-svg-xs); }
 .swatch { display: inline-block; width: 0.9em; height: 0.9em; border: 1px solid var(--border); border-radius: var(--radius-sm); vertical-align: middle; }
 .legend span[data-legend], .filters a { margin-right: var(--space-3); }
 .legend, .filters { margin: var(--space-2) 0; }
