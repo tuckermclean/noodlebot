@@ -153,6 +153,36 @@ scn norepos token oauth-token; refuse "missing repos" 'repos' ''
 scn notoken repos oauth-token; refuse "missing token script" 'token' 'oauth'
 scn nooauth repos token; refuse "missing harness credential" 'oauth-token' ''
 
+# --- D06-AC-4 (stricter): the reason must be the right one, as a whole token, after $HOME is replaced by ~
+# (scenario folders are neutral, so a bare path in the message cannot satisfy a reason word)
+# refuse2 <label> <reason-regex> <wrong-regex>
+gone='(missing|not found|no such|absent|does not exist|not exist|cannot find|unreadable)'
+refuse2() {
+	label=$1 re=$2 wre=$3
+	run_bg
+	wait_file 10 "$sdir/rc" || { kill -KILL "$pid" 2>/dev/null; echo none >"$sdir/rc"; }
+	rc=$(cat "$sdir/rc")
+	sed "s|$HOME|~|g" "$sdir/out" >"$sdir/out.s"
+	if [ -f "$ep" ] && [ "$rc" != 0 ] && [ "$rc" != none ] && [ "$(wc -l <"$sdir/out")" -eq 1 ]; then
+		pass "D06-AC-4 strict $label: refuses with exactly one line"
+	else fail "D06-AC-4 strict $label: refuses with exactly one line (rc $rc, got: $(tr '\n' '|' <"$sdir/out.s"))"; fi
+	if grep -Eq -- "$re" "$sdir/out.s"; then
+		pass "D06-AC-4 strict $label: the line names the reason as a whole token"
+	else fail "D06-AC-4 strict $label: the line names the reason as a whole token (got: $(tr '\n' '|' <"$sdir/out.s"))"; fi
+	if [ -n "$wre" ] && grep -Eq -- "$wre" "$sdir/out.s"; then
+		fail "D06-AC-4 strict $label: the line does not name a wrong reason (got: $(tr '\n' '|' <"$sdir/out.s"))"
+	else pass "D06-AC-4 strict $label: the line does not name a wrong reason"; fi
+}
+scn r1 $FULL; FAKE_UID=0 refuse2 "root" '(^|[^A-Za-z])root([^A-Za-z]|$)' '(^|[ /])(repos|token|oauth-token)( |$|:)'
+scn r2 -; refuse2 "missing config folder" "config folder|~/\\.config/noodlebot( |\$|:)" '(^|[ /])(repos|token|oauth-token)( |$|:)|root'
+grep -Eqi -- "$gone" "$sdir/out.s" && pass "D06-AC-4 strict missing config folder: says it is missing" || fail "D06-AC-4 strict missing config folder: says it is missing"
+scn r3 token oauth-token; refuse2 "missing repos" '(^|[ /])repos( |$|:)' '(^|[ /])(oauth-)?token( |$|:)|root'
+grep -Eqi -- "$gone" "$sdir/out.s" && pass "D06-AC-4 strict missing repos: says it is missing" || fail "D06-AC-4 strict missing repos: says it is missing"
+scn r4 repos oauth-token; refuse2 "missing token script" '(^|[ /])token( |$|:)' 'oauth|(^|[ /])repos( |$|:)|root'
+grep -Eqi -- "$gone" "$sdir/out.s" && pass "D06-AC-4 strict missing token script: says it is missing" || fail "D06-AC-4 strict missing token script: says it is missing"
+scn r5 repos token; refuse2 "missing harness credential" '(^|[ /])oauth-token( |$|:)' '(^|[ /])repos( |$|:)|(^|[ /])token( |$|:)|root'
+grep -Eqi -- "$gone" "$sdir/out.s" && pass "D06-AC-4 strict missing harness credential: says it is missing" || fail "D06-AC-4 strict missing harness credential: says it is missing"
+
 # --- D06-AC-5: SIGTERM runs loops.sh stop once and exits 0
 scn term $FULL gitconfig
 run_bg; wait_until 15 started
