@@ -774,5 +774,39 @@ cat "$res/pub.out"
 n=$(grep -c '^FAIL' "$res/pub.out")
 if [ "$prc" -gt 1 ]; then fail "W02 the publish check harness itself failed (rc $prc)"; fi
 fails=$((fails + n))
+# ---- U03-AC-4: a node whose WAITING-PR is in merged-prs.txt has the state api.py gives it, not waiting-pr
+# Own small runtime root (zeta): Z01 waits for spec PR 7 (merged), Z02 for spec PR 8 (open). ready.py names Z01 (its merged PR
+# lets it resume); the build is run once with the throttle holding and once with it open.
+u3=$tmp/u03
+mkdir -p "$u3/data/state/zeta/node/Z01" "$u3/data/state/zeta/node/Z02" "$u3/data/repos" "$u3/data/deploy"
+cat >"$u3/data/state/zeta/graph.yaml" <<'GRAPH'
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - {id: Z01, track: now, name: merged-spec, deps: [], summary: "Spec PR merged"}
+  - {id: Z02, track: now, name: open-spec, deps: [], summary: "Spec PR open"}
+GRAPH
+echo public >"$u3/data/state/zeta/visibility"
+echo 7 >"$u3/data/state/zeta/node/Z01/WAITING-PR"; echo 8 >"$u3/data/state/zeta/node/Z02/WAITING-PR"
+printf '7\n' >"$u3/data/state/zeta/merged-prs.txt"; printf '7 spec/z01-spec 0123abc\n' >"$u3/data/state/zeta/merged-prs.tsv"
+printf '8 spec/z02-spec 4567def true MERGEABLE\n' >"$u3/data/state/zeta/open-prs.tsv"; printf 'spec/z02-spec\n' >"$u3/data/state/zeta/open-prs.txt"
+: >"$u3/data/state/zeta/subjects.txt"
+echo acme/zeta >"$u3/repos"
+u3build() { # <out> <throttle line>
+	mkdir -p "$1"
+	(cd "$tmp/cwd" && NOODLEBOT_DATA=$u3/data python3 -I "$src/site.py" build --data-root "$u3/data" --repos "$u3/repos" --out "$1" --now 1700001000 --throttle "$2" >"$1.log" 2>&1 </dev/null)
+}
+u3build "$u3/outh" "$HOLD"
+u3build "$u3/outo" "open: usage is fine"
+u3state() { # <out> <id>: the node's state in the build
+	python3 -I -c 'import json,sys; print(next(n["state"] for n in json.load(open(sys.argv[1] + "/repo.acme.zeta.json"))["nodes"] if n["id"] == sys.argv[2]))' "$1" "$2" 2>/dev/null
+}
+u3is() { [ "$(u3state "$1" "$2")" = "$3" ]; }
+if u3is "$u3/outh" Z01 held; then pass "U03-AC-4 site: a node whose WAITING-PR is in merged-prs.txt is held while the throttle holds (as api.py), not waiting-pr"
+else fail "U03-AC-4 site: a node whose WAITING-PR is in merged-prs.txt is held while the throttle holds (as api.py), not waiting-pr (got '$(u3state "$u3/outh" Z01)')"; fi
+if u3is "$u3/outo" Z01 ready; then pass "U03-AC-4 site: a node whose WAITING-PR is in merged-prs.txt is ready with the throttle open (as api.py), not waiting-pr"
+else fail "U03-AC-4 site: a node whose WAITING-PR is in merged-prs.txt is ready with the throttle open (as api.py), not waiting-pr (got '$(u3state "$u3/outo" Z01)')"; fi
+if u3is "$u3/outh" Z02 waiting-pr && u3is "$u3/outo" Z02 waiting-pr; then pass "U03-AC-4 site: a node whose spec PR is still open keeps waiting-pr (throttle holding and open)"
+else fail "U03-AC-4 site: a node whose spec PR is still open keeps waiting-pr (got '$(u3state "$u3/outh" Z02)' and '$(u3state "$u3/outo" Z02)')"; fi
+
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"

@@ -17,6 +17,7 @@ TESTS = \
 	scheduler/report-review.test.sh \
 	scheduler/report-regress.test.sh \
 	scheduler/report-g02.test.sh \
+	scheduler/report-queue.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
@@ -51,6 +52,7 @@ TESTS = \
 	scheduler/loop-s01-takeover.test.sh \
 	scheduler/loop-s07-slots.test.sh \
 	scheduler/loop-g01.test.sh \
+	scheduler/loop-u03.test.sh \
 	scheduler/loop-s07.test.sh \
 	scheduler/loop-s06.test.sh \
 	scheduler/loop-s06-later.test.sh \
