@@ -203,4 +203,129 @@ rm -rf "$d"; mkdir -p "$d"
 place A1 a --gap 10; want "no state folder: not waiting" "not waiting"
 [ -z "$(ls -A "$d")" ] && pass "U03-AC-1 no state folder: place creates nothing (data folder stays empty)" || fail "U03-AC-1 no state folder: place created $(ls -A "$d" | tr '\n' ' ')"
 
+
+# ---- U03-AC-1, slice 3: --kind (and --size) place a key that is not in its loop's live list as a unit that joins now
+#   place KEY --root D --repo R --kind triage|update|followup|resumed|fresh [--size S|M|L|-]
+# kind: the unit is appended to its loop's list with since = now (wait 0), then ordered as ask orders: behind the units
+# of its group that already wait, ahead of the later groups. A key in the list is placed as before (kind ignored); a
+# given-back key, and a loop with no live list, stay "not waiting".
+# kplace <key> <repo> <kind args...>: like place, with --gap 10 (sets rc, out, err).
+kplace() { k=$1 r=$2; shift 2; place "$k" "$r" --gap 10 "$@"; }
+reset; hb a "$base"
+{
+	echo "A1 triage - $(w 4500)"
+	echo "A2 fresh S $(w 300)"
+	echo "A3 resumed - $(w 100)"
+	echo "A4 fresh M $(w 900)"
+} | list a 1000
+kplace X a --kind triage; want "--kind triage: behind the triage and the resumed unit, ahead of the fresh nodes" "2 ahead, waited 0h00m, gap passed"
+kplace X a --kind update; want "--kind update: the same group as a triage" "2 ahead, waited 0h00m, gap passed"
+kplace X a --kind resumed; want "--kind resumed: behind the units of the small group" "2 ahead, waited 0h00m, gap passed"
+kplace X a --kind followup; want "--kind followup: behind the units of the small group" "2 ahead, waited 0h00m, gap passed"
+kplace X a --kind fresh --size S; want "--kind fresh --size S: behind the small group and the fresh S that waits" "3 ahead, waited 0h00m, gap passed"
+kplace X a --kind fresh --size M; want "--kind fresh --size M: behind the small group, the fresh S and the fresh M that wait" "4 ahead, waited 0h00m, gap passed"
+kplace X a --kind fresh --size L; want "--kind fresh --size L: behind every unit that waits" "4 ahead, waited 0h00m, gap passed"
+kplace X a --kind fresh; want "--kind fresh without --size counts as L (size defaults to -)" "4 ahead, waited 0h00m, gap passed"
+kplace X a --kind triage --size S; want "--size is ignored for a triage" "2 ahead, waited 0h00m, gap passed"
+place X a --gap 10; want "without --kind a key not in the list is still not waiting" "not waiting"
+place X someone/a --gap 10 --kind triage; want "--kind with --repo OWNER/NAME" "2 ahead, waited 0h00m, gap passed"
+out=$(T place --root "$d" --repo a --now "$base" --gap 10 --kind triage X 2>"$tmp/err"); rc=$?; err=$(cat "$tmp/err")
+want "KEY after the options with --kind" "2 ahead, waited 0h00m, gap passed"
+# a key that is in the list: as before, --kind and --size ignored
+kplace A2 a --kind triage; want "a key in the list is placed as before whatever --kind says" "2 ahead, waited 0h05m, gap passed"
+kplace A1 a --kind fresh --size L; want "a key in the list: the first unit stays first with --kind fresh" "0 ahead, waited 1h15m, gap passed"
+
+# a starved unit is ahead of the new unit (it would join after the starved ones)
+reset; hb a "$base"
+{ echo "Sm fresh S $(w 100)"; echo "Lg fresh L $(w 2000)"; echo "A9 triage - $(w 50)"; } | list a 1000
+kplace X a --kind triage --starve 1000; want "--kind triage: the starved L is ahead, then the waiting triage" "2 ahead, waited 0h00m, gap passed"
+kplace X a --kind triage --starve 3000; want "--kind triage with nothing starved: only the waiting triage is ahead" "1 ahead, waited 0h00m, gap passed"
+kplace X a --kind fresh --size S --starve 1000; want "--kind fresh --size S: starved L, triage and the fresh S that waits are ahead" "3 ahead, waited 0h00m, gap passed"
+
+# across two repositories; wait 0 ties by repository name, then loop index
+reset; hb a "$base"; hb b "$base"
+{ echo "A1 triage - $(w 400)"; echo "A0 triage - $(w 0)"; } | list a 1000
+{ echo "B1 update - $(w 500)"; echo "B2 fresh S $(w 100)"; echo "B3 resumed - $(w 0)"; } | list b 1000
+kplace X a --kind triage; want "two repositories: a new triage of a is behind b's update, a's triage and a's unit that has waited 0 (tie: loop index), ahead of b's" "3 ahead, waited 0h00m, gap passed"
+kplace Y b --kind triage; want "two repositories: a new triage of b is behind a's units and b's own unit that has waited 0 (tie: repository name, then index)" "4 ahead, waited 0h00m, gap passed"
+kplace Y b --kind fresh --size S; want "two repositories: a new fresh S of b is behind every small unit and the fresh S that waits" "5 ahead, waited 0h00m, gap passed"
+
+# a given-back key, and given-back units
+reset; hb a "$base"
+{ echo "A1 triage - $(w 900)"; echo "A2 triage - $(w 800)"; } | list a 1000
+T giveback A1 --root "$d" --repo a >/dev/null 2>&1
+kplace A1 a --kind triage; want "--kind: a given-back key (in the list) is still not waiting" "not waiting"
+kplace X a --kind triage; want "--kind: a given-back unit is not counted ahead of the new unit" "1 ahead, waited 0h00m, gap passed"
+reset; hb a "$base"
+echo "A1 triage - $(w 900)" | list a 1000
+T giveback A1 --root "$d" --repo a >/dev/null 2>&1
+kplace X a --kind triage; want "--kind: the only unit given back: the new unit is first" "0 ahead, waited 0h00m, gap passed"
+
+# a loop with no live list: not waiting with --kind too, and nothing is created
+reset; hb a $((base - 4000))
+echo "A1 triage - $(w 900)" | list a 1000
+kplace X a --kind triage; want "--kind: a stale loop has no live list" "not waiting"
+hb a "$base"
+rm -f "$d/state/a/waiting.json"
+kplace X a --kind triage; want "--kind: a loop with a heartbeat and no waiting.json" "not waiting"
+echo '{not json' >"$d/state/a/waiting.json"
+kplace X a --kind triage; want "--kind: a malformed waiting.json" "not waiting"
+printf '{"tick": 1000, "units": "none", "gaveback": []}\n' >"$d/state/a/waiting.json"
+kplace X a --kind triage; want "--kind: a waiting.json whose units are not a list" "not waiting"
+reset; mkdir -p "$d/state/a"
+printf '{"tick": 1000, "units": [], "gaveback": []}\n' >"$d/state/a/waiting.json"
+kplace X a --kind triage; want "--kind: a list but no heartbeat" "not waiting"
+reset; hb b "$base"
+echo "B1 triage - $(w 900)" | list b 1000
+kplace X a --kind triage; want "--kind: the repository has no state folder (another loop is live)" "not waiting"
+[ ! -e "$d/state/a" ] && pass "U03-AC-1 --kind creates no state folder for the repository" || fail "U03-AC-1 --kind created $d/state/a"
+rm -rf "$d"; mkdir -p "$d"
+kplace X a --kind triage; want "--kind: no state folder at all" "not waiting"
+[ -z "$(ls -A "$d")" ] && pass "U03-AC-1 --kind with no state folder creates nothing" || fail "U03-AC-1 --kind with no state folder created $(ls -A "$d" | tr '\n' ' ')"
+reset; hb a "$base"
+echo "A1 triage - $(w 900)" | list a 1000
+rm -f "$d/state/a/heartbeat"
+kplace A1 a --kind triage; want "--kind: no heartbeat, a key in the list: not waiting" "not waiting"
+
+# an empty live list: the new unit is first
+reset; hb a "$base"
+: | list a 1000
+kplace X a --kind triage; want "--kind: an empty live list puts the new unit first" "0 ahead, waited 0h00m, gap passed"
+# another loop's live list still counts ahead of the new unit
+reset; hb a "$base"; hb b "$base"
+: | list a 1000
+{ echo "B1 triage - $(w 300)"; echo "B2 fresh L $(w 200)"; } | list b 1000
+kplace X a --kind triage; want "--kind: the units of another live loop that are ahead are counted" "1 ahead, waited 0h00m, gap passed"
+kplace X a --kind fresh --size S; want "--kind fresh --size S: behind b's triage, ahead of b's fresh L" "1 ahead, waited 0h00m, gap passed"
+kplace X a --kind fresh --size L; want "--kind fresh --size L: behind b's triage and b's fresh L" "2 ahead, waited 0h00m, gap passed"
+
+# the gap, with --kind
+reset; hb a "$base"
+echo "A1 triage - $(w 900)" | list a 1000
+printf '%s\n' "{\"time\": $((base - 5)), \"repo\": \"b\", \"unit\": \"X\"}" >"$d/state/starts.json"
+kplace X a --kind triage; want "--kind: gap not passed after a start 5 s ago (gap 10)" "1 ahead, waited 0h00m, gap not passed"
+printf '%s\n' "{\"time\": $((base - 50)), \"repo\": \"b\", \"unit\": \"X\"}" >"$d/state/starts.json"
+kplace X a --kind triage; want "--kind: gap passed after a start 50 s ago (gap 10)" "1 ahead, waited 0h00m, gap passed"
+
+# bad --kind or --size: argparse's usage error (exit 2), nothing printed on stdout
+kplace X a --kind nonsense; [ $rc = 2 ] && [ -z "$out" ] && printf '%s' "$err" | grep -q "invalid choice" && pass "U03-AC-1 a bad --kind exits 2 as argparse does (invalid choice)" || fail "U03-AC-1 --kind nonsense: rc=$rc out='$out'"
+kplace X a --kind triage --size XL; [ $rc = 2 ] && [ -z "$out" ] && printf '%s' "$err" | grep -q "invalid choice" && pass "U03-AC-1 a bad --size exits 2 as argparse does (invalid choice)" || fail "U03-AC-1 --size XL: rc=$rc out='$out'"
+
+# read-only with --kind: starts.json and every waiting list byte-identical, nothing created
+reset; hb a "$base"; hb b "$base"
+{ echo "A1 triage - $(w 400)"; echo "A2 fresh M $(w 5000)"; } | list a 1000
+{ echo "B1 update - $(w 500)"; echo "B2 fresh S $(w 100)"; } | list b 1000
+printf '%s\n' "{\"time\": $((base - 5)), \"repo\": \"b\", \"unit\": \"X\", \"prev\": null}" >"$d/state/starts.json"
+rm -rf "$tmp/snap2"; mkdir "$tmp/snap2"; cp -rp "$d" "$tmp/snap2/d"
+find "$d" | sort >"$tmp/files.before"
+f0=$fails
+kplace NEW a --kind triage; want "read-only --kind run answers" "2 ahead, waited 0h00m, gap not passed"
+kplace NEW2 b --kind fresh --size M; want "read-only --kind run, fresh M of b" "4 ahead, waited 0h00m, gap not passed"
+kplace NEW3 nolist --kind triage; want "read-only --kind run, unknown repository" "not waiting"
+find "$d" | sort >"$tmp/files.after"
+ran && diff -r "$tmp/snap2/d" "$d" >/dev/null 2>&1 && pass "U03-AC-1 the data folder is byte-identical after place --kind (the new unit is not stored)" || fail "U03-AC-1 the data folder changed by place --kind"
+ran && cmp -s "$tmp/files.before" "$tmp/files.after" && pass "U03-AC-1 place --kind creates no file or directory" || fail "U03-AC-1 place --kind created or removed files: $(diff "$tmp/files.before" "$tmp/files.after" | tr '\n' ' ')"
+kplace A1 a --kind triage; want "a key that is in the list is placed as before after the --kind runs (b's update is ahead)" "1 ahead, waited 0h06m, gap not passed"
+place NEW a --gap 10; want "a key placed with --kind before is still not waiting without it" "not waiting"
+
 [ $fails = 0 ] && echo "ok: turn-place" || { echo "$fails failure(s)"; exit 1; }
