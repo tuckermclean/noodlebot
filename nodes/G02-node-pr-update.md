@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G01, U01 | G04 | L |
+| now | G01, U01 | G04, G06 | L |
 
 **Owns:** the update procedure for node PRs (`--update <PR>`), the resolution review and the scratch-folder rule for test blocks in `plugin/skills/node/SKILL.md`; the resolution review in the update procedure of `plugin/skills/triage/SKILL.md`; `plugin/skills/node/skill.test.sh` and its line in the `Makefile`'s `test` target; `scheduler/unattended-node-update.md`; in `scheduler/loop.sh`, finding the bot's node PRs that need an update, starting them (`/noodlebot:node --update <N>`) and their ends, including an end with `QUESTION.md`; in `scheduler/report.py`, the questions of node-PR updates on the node's home issue and the answers taken there; their cases in `scheduler/loop.test.sh`, `scheduler/report.test.sh` and `plugin/skills/triage/nodes.test.sh`.
 **Resolves:** #44
