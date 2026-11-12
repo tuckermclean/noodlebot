@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-res-1","timestamp":"2026-11-09T14:00:00Z"}
+{"type":"rate_limit_event","timestamp":"2026-11-09T14:00:01Z","rate_limit_info":{"status":"allowed","resetsAt":1795021600}}
+{"type":"assistant","timestamp":"2026-11-09T14:00:02Z","message":{"content":[{"type":"text","text":"Resumed, carrying on."}]}}
+{"type":"result","subtype":"success","timestamp":"2026-11-09T14:00:03Z","result":"Finished.","total_cost_usd":1.1,"num_turns":6}

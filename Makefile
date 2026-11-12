@@ -18,9 +18,11 @@ TESTS = \
 	scheduler/report-regress.test.sh \
 	scheduler/report-g03.test.sh \
 	scheduler/loop-g03-skills.test.sh \
+	scheduler/report-g02.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
+	scheduler/api-s08.test.sh \
 	scheduler/turn.test.sh \
 	scheduler/turn-gap.test.sh \
 	scheduler/turn-race.test.sh \
@@ -40,6 +42,9 @@ TESTS = \
 	scheduler/loop-s07-starve.test.sh \
 	scheduler/loop-s07-same.test.sh \
 	scheduler/loop-s07-caps.test.sh \
+	scheduler/loop-s08.test.sh \
+	scheduler/loop-s08-caps.test.sh \
+	scheduler/loop-s08-ramp.test.sh \
 	scheduler/loop-s03.test.sh \
 	scheduler/loop-s01.test.sh \
 	scheduler/loop-s01-closed.test.sh \
@@ -82,6 +87,20 @@ TESTS = \
 	scheduler/loop-d02.test.sh \
 	scheduler/loop-s04-unusual.test.sh \
 	scheduler/loop-g01-list.test.sh \
+	scheduler/loop-g02.test.sh \
+	scheduler/loop-g02-end.test.sh \
+	scheduler/loop-g02-limit.test.sh \
+	scheduler/loop-g02-question.test.sh \
+	scheduler/loop-g02-max.test.sh \
+	scheduler/loop-g02-node.test.sh \
+	scheduler/loop-g02-unpushed.test.sh \
+	scheduler/loop-g02-commit.test.sh \
+	scheduler/loop-g02-cap.test.sh \
+	scheduler/loop-g02-review.test.sh \
+	scheduler/loop-g02-review2.test.sh \
+	scheduler/loop-g02-review3.test.sh \
+	scheduler/loop-g02-gone.test.sh \
+	scheduler/loop-g02-gone2.test.sh \
 	scheduler/loop-s06-review.test.sh \
 	scheduler/loop-s02.test.sh \
 	scheduler/loop-v01.test.sh \
@@ -91,6 +110,7 @@ TESTS = \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
+	scheduler/loops-s08.test.sh \
 	scheduler/loops-api.test.sh \
 	scheduler/api.test.sh \
 	scheduler/api-sessions.test.sh \
@@ -98,9 +118,12 @@ TESTS = \
 	scheduler/api-fifo.test.sh \
 	scheduler/api-root2.test.sh \
 	scheduler/api-p03.test.sh \
+	scheduler/harness.test.sh \
+	scheduler/agnostic.test.sh \
 	scheduler/move-runtime.test.sh \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
+	plugin/skills/node/skill.test.sh \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \

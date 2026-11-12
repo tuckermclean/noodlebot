@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | U02, W04 | none | M |
+| now | U02, W04 | W06 | M |
 
 **Owns:** in `scheduler/report.py`: the status-site address (`--site`), the site links it builds and their place in the log issue's body, its morning overview, its closing summary, its event comments and the units' home issues; in `scheduler/loop.sh`: reading `~/.config/noodlebot/site`, the condition for site links, passing `--site` to `report.py` and the site line rendered into session prompts; the site line of each session template `scheduler/unattended*.md`; in `site/`: what the repository view shows for a node link to a node it does not have, and its tests in `site/test/`; the site-address part of the README's status-site section; their cases in `scheduler/report-w05.test.sh`, `scheduler/loop-w05.test.sh` and `scheduler/loop-w05b.test.sh` (parts of `scheduler/report.test.sh` and `scheduler/loop.test.sh`), with their helpers `scheduler/testdata/lib/report-w05.sh`, `scheduler/testdata/lib/loop-w05.sh` and the golden `scheduler/testdata/report-w05.golden`.
 **Resolves:** #83

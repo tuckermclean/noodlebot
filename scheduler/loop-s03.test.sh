@@ -21,6 +21,7 @@ mkdir -p "$S03" "$tmp/bin6" "$tmp/nb6/scheduler" "$tmp/nb6/plugin"
 write_closed_py "$S03/closed.py"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$src"/usage.py "$tmp/nb6/scheduler/"
+[ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb6/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb6/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb6/scheduler/harnesses/"; }
 [ -f "$src/unattended-followup.md" ] && cp "$src/unattended-followup.md" "$tmp/nb6/scheduler/"
 git init -q -b main "$tmp/work6"; mkdir -p "$tmp/work6/docs"
 { echo 'nodes:'; for i in 1 2 3 4 5 6 7 8; do echo "  - {id: G0$i, name: n$i, deps: []}"; done; } >"$tmp/work6/docs/graph.yaml"

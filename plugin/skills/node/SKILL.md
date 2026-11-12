@@ -1,10 +1,12 @@
 ---
 name: node
 description: Build one node of a graph-regime repository (docs/graph.yaml + nodes/<ID>-<name>.md) test-first - brief, tester RED, verified RED, implementer GREEN, independent review, CI evidence for criteria that need a build, a boot or GitHub, and a PR with the criterion → evidence table. Use for "/noodlebot:node <ID>" or when asked to implement, build or start a node such as F01 or B01.
-argument-hint: "<node-id, e.g. F01> [AC ids to limit the slice]"
+argument-hint: "<node-id, e.g. F01> [AC ids to limit the slice] | --update <PR> [--dry-run]"
 ---
 
 # /noodlebot:node $ARGUMENTS
+
+Build a node: `/noodlebot:node <ID> [AC ids]`. Bring an open node PR up to date with `main`: `/noodlebot:node --update <PR> [--dry-run]` (the section after step 7).
 
 Feedback on one of the bot's open PRs (the feedback flag with a PR number): go straight to §8 and create no branch.
 
@@ -36,7 +38,7 @@ Split a large node into **slices** of 3–8 related criteria. Order them so earl
 ## 2. RED (per slice)
 Dispatch a **new** tester with the brief path and the slice's criterion IDs. Never resume an old agent.
 
-The tester ports or keeps the existing tests first, then adds tests for the criteria they do not cover. Verify the handoff yourself:
+The tester ports or keeps the existing tests first, then adds tests for the criteria they do not cover. A test block appended to a shared test file (one other nodes also append to) keeps all its scratch paths under a folder named after its node, `<ID>`: scratch folders, fake remotes, state directories and fake binaries. Two nodes' blocks then share no names or state. Verify the handoff yourself:
 - `git show --stat <red>` touches only the repository's test and fixture paths;
 - tests stay frozen for the whole node: `git diff <node-base>..<red> -- <test and fixture paths>` changes no test or fixture that an earlier RED commit of this node, or an earlier node, committed, apart from added lines (new cases). Changing or removing a frozen line needs the owner's explicit approval first, recorded in the brief and the PR (step 7);
 - every test the node spec ports is in the commit, changed only as its **Tests** section lists, and the commit message lists each change (the repository's porting rules say how to diff against the source);
@@ -71,6 +73,7 @@ Record each command, exit code and log path or run URL. A criterion verified by 
 
 ## 6. Pull request
 Before the final CI run, merge `origin/main` again: other nodes merge while you work.
+If the merge had conflicts, run the resolution review (below) on it before you continue. Do the same for any other merge of `origin/main` made while building.
 
 Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` needs a token with workflow permission; use the credential your run provides, transiently, or ask the owner to push the branch.
 
@@ -98,6 +101,26 @@ Stop for:
 Propose the amendment. Do not continue on a guess. A spec change is the owner's, made on its own branch; run the spec checker after it.
 
 **Small spec amendments go in the node PR.** A change to this node's spec that leaves the meaning of every criterion intact needs no stop and no spec PR: a clearer or corrected *Verify* line, an added or corrected path (**Owns:**, the files a change names), a stale fact in Purpose or Risks, a typo. Commit it on the node branch on its own (`spec(<ID>): …`), run the spec checker, and list it in the PR's **Spec amendments** section with its reason; the owner reviews it with the PR, and the fresh reviewer checks that no criterion's meaning changed. Anything that adds, removes or weakens a criterion, changes what a criterion requires, touches another node's spec, the graph or the repository's main spec, or changes a frozen test still gets its own spec PR, after you stop and ask.
+
+## Update a node PR: `/noodlebot:node --update <PR> [--dry-run]`
+Bring an open node PR up to date with `main` when it conflicts. Work in a worktree checked out on the PR's named branch, not a detached HEAD. Change nothing else.
+A restarted update first reads the owner's answer: every file in `answered/` of the state directory the run's prompt names, oldest first. `answered/` builds up across update cycles: only the newest QUESTION/ANSWER pair is the owner's decision for this run. Older pairs are context from earlier cycles, not approval. An owner's approval in that newest answer permits exactly the change it approves, quoted in the PR comment; anything else the rules below forbid still ends in `QUESTION.md`.
+1. Read the PR with `gh pr view <PR> --json headRefName,body`: its branch, and the body with the criterion → evidence table. `git fetch origin`, bring the branch to `origin/<branch>` (a fast-forward), then merge `origin/main`: a merge commit, never a rebase, never a force push.
+2. If resolving a conflict would change a frozen test or fixture line, or a spec file, run `git merge --abort`, push nothing, and write `QUESTION.md` (in the state directory the run names, else `out/node/pr-<N>/QUESTION.md`) with the conflicting files and lines and your recommendation. End.
+3. Otherwise resolve by keeping both sides. Add test lines only to keep appended test blocks apart: lines between the blocks, e.g. clearing the first block's scratch paths; never rename or change an existing line. Leave no conflict markers. Commit the merge with its resolution now, before the tests and the review.
+4. Run the repository's test entry point (`make test`) and each red target: from the PR body's criterion → evidence table, else the `TDD-Red-Target:` trailers in `git log origin/main..HEAD`. A failing test the resolution cannot fix: push nothing, write `QUESTION.md` with the failure, run `git reset --hard origin/<branch>` (no merge commit left) and end.
+5. Run the resolution review (below) with a new reviewer. Push only after it approves.
+6. Rerun the whole-node fresh review (build step 6, Fresh review on the PR) only when the resolution changed the node's own code beyond keeping both sides. With `--dry-run` this fresh review posts nothing on the PR: its verdict goes into `result.md`, like the resolution review's.
+7. With `--dry-run`, stop before the push and write `out/node/pr-<N>/result.md`: the merge result, each resolved file and how, each added test line, the test results and each review's verdict; or that it wrote `QUESTION.md` and left no merge commit. No push, no comment.
+8. Push the branch. Comment on the PR with each resolved file and how, each added test line, the test results and the review's verdict.
+
+### Resolution review
+Run after any merge of `origin/main` that had conflicts, before anything is pushed. Dispatch a **new** reviewer (a resolution review) with the merge commit and its diffs against both parents; these inputs and this checklist replace the reviewer's usual brief, criteria and SHA inputs. It checks that:
+- the resolution keeps the intent of both sides;
+- the test blocks of different nodes share no names or state;
+- no frozen test line was changed, removed or renamed.
+
+Its verdict is posted on the PR as `Resolution review (<verdict>)` with `gh pr comment <N> --body-file <file>`: a comment, never an approval; with `--dry-run` the verdict goes into `result.md` and is not posted. In a node build with no PR yet, it goes into the PR body's deviations and is posted as that comment once the PR is open. Nothing is pushed until it approves. On `request_changes`, fix the findings as new commits and run one more new reviewer on the result. A second rejection pushes nothing: write `QUESTION.md` with the findings and leave the branch as it was. With `--update`, run `git reset --hard origin/<branch>` (no merge commit left). In a node build's own merge of `origin/main` (build step 6), undo only the merge (`git reset --hard` to the merge's first parent, or `ORIG_HEAD`), never losing the node's commits. Then end.
 
 ## 8. Feedback on a PR: `/noodlebot:node --feedback <PR> [--dry-run]`
 Run by the loop for one of the bot's own open node PRs that has new feedback from the owner. This session acts as the node's orchestrator for this PR, on the PR's branch, not a new one. Work in a worktree checked out on the PR's branch, brought to `origin/<branch>` (a fast-forward), and read `FEEDBACK.md` in your state folder: each item has its kind, URL, author, body and, for a line comment, its file, line and thread.

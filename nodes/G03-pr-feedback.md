@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G01, U01 | G04 | L |
+| now | G01, U01 | G04, G06 | L |
 
 **Owns:** `scheduler/feedback.py` (finding the owner's new feedback on the bot's open PRs, the acted-on record, `FEEDBACK.md`), `scheduler/feedback.test.sh`, its line in the `Makefile`'s `test` target, the fixtures `scheduler/testdata/feedback/`; the session prompt `scheduler/unattended-feedback.md`; in `scheduler/loop.sh`, the feedback step (running `feedback.py` each tick, handing `FEEDBACK.md` to the PR's unit, starting feedback sessions for node and spec PRs, and their ends); the feedback procedure (`--feedback <PR>`) in `plugin/skills/node/SKILL.md` and in `plugin/skills/triage/SKILL.md`; in `scheduler/report.py`, where the questions of spec-PR feedback sessions are posted and the answers taken there; their cases in `scheduler/loop-g03*.test.sh` (over the fixture `scheduler/testdata/lib/loop-g03.sh`) and `scheduler/report-g03.test.sh`, and their lines in the `Makefile`'s `TESTS`.
 **Resolves:** #39

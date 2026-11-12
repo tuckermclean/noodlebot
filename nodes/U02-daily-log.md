@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | U01 | W05 | M |
+| now | U01 | U03, W05 | M |
 
 **Owns:** in `scheduler/report.py`: finding or opening the day's log issue, its body (the status table), its first comment (the morning overview), its event comments, the daily rollover (closing summary, closing, opening the next, pinning), closing the old status issue, and the answers it still takes on the log and the old status issue; the README's section on watching the loop; their cases in `scheduler/report.test.sh`.
 **Resolves:** #23

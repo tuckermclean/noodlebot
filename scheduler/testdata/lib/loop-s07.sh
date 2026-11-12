@@ -32,6 +32,7 @@ qsetup() { # <tag> "<ID:Size> ..." (o/qa) "<ID:Size> ..." (o/qb)
 	done
 	cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/issues.py "$src"/unattended*.md "$qnb/scheduler/"
 	[ -f "$src/turn.py" ] && cp "$src/turn.py" "$qnb/scheduler/"
+	[ -f "$src/harness.py" ] && { mkdir -p "$qnb/scheduler/harnesses"; cp "$src/harness.py" "$qnb/scheduler/"; cp "$src"/harnesses/*.py "$qnb/scheduler/harnesses/"; }
 	: >"$q/starts.log"; echo "open: test opens" >"$q/usage"
 	printf '#!/usr/bin/env python3\nprint(open("%s/usage").read().strip())\n' "$q" >"$qnb/scheduler/usage.py"
 	sed "s|@Q@|$q|g" >"$q/bin/claude" <<'EOF'

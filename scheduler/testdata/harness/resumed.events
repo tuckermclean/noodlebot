@@ -1,0 +1,8 @@
+{"t":"2026-11-09T12:00:00Z","type":"start","session":"sess-res-1"}
+{"t":"2026-11-09T12:00:01Z","type":"text","text":"Starting."}
+{"t":"2026-11-09T12:00:02Z","type":"usage","status":"rejected","reset":1795010800}
+{"t":"2026-11-09T12:00:03Z","type":"result","subtype":"success","text":"Claude usage limit reached","cost":0.4,"turns":2,"limit":true}
+{"t":"2026-11-09T14:00:00Z","type":"start","session":"sess-res-1"}
+{"t":"2026-11-09T14:00:01Z","type":"usage","status":"allowed","reset":1795021600}
+{"t":"2026-11-09T14:00:02Z","type":"text","text":"Resumed, carrying on."}
+{"t":"2026-11-09T14:00:03Z","type":"result","subtype":"success","text":"Finished.","cost":1.1,"turns":6,"limit":false}

@@ -23,12 +23,15 @@ Each run:
      on one issue is not answered again from the other;
   3. posts new status.log events (starts, ends, releases, merges, FAILED) as one comment, one line each (an
      ended session's line with its total cost; no closing summary);
-  4. posts each new unanswered QUESTION.md once: a short `## <ID> asks` pointer on the status issue (its
+  4. posts each new unanswered QUESTION.md once (a node-PR update's, from a PR folder with a `node` file, only on
+     its node's home issue, created like the node's own when it has none, as the milestone "PR #N asks"; the update
+     has no issue of its own and its answer, taken like a unit's, needs the prefix `PR #N:` when the node or another
+     update waits on the same issue): a short `## <ID> asks` pointer on the status issue (its
      Waiting on you item links the question's comment on the unit's issue), and
      the whole QUESTION.md as a milestone on the unit's home issue; a spec-PR feedback session's QUESTION.md (pr/<N>/ with
      a FEEDBACK.md) the same, its home being issue N for a PR on `spec/triage-<N>-*` and the PR itself otherwise (the
      branch from open-prs.tsv, or FEEDBACK.md's `Branch:` line), and the owner's comment there after it becomes
-     pr/<N>/ANSWER.md; an update session's QUESTION.md (no FEEDBACK.md) is not posted;
+     pr/<N>/ANSWER.md; a spec-PR update session's QUESTION.md (no FEEDBACK.md, no `node` file) is not posted;
   5. posts milestones on each unit's home issue, each once, each starting with a `**Stage:**` line: a start
      or resume (with its start count, read from new status.log lines), the question, answer received, FAILED.
      The home issue of a triage of N is N; of a node, the first issue on the **Resolves:** line of its spec
@@ -59,6 +62,10 @@ where this one stopped.
 """
 import argparse, hashlib, json, math, os, re, subprocess, sys, time
 from datetime import datetime, timedelta, timezone
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import harness   # the one interface to the agent harness (S08)
 
 LABEL = "noodlebot-status"
 EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
@@ -193,6 +200,17 @@ def pr_home(state, task):
     return int(m.group(1) if m else num)
 
 
+def pr_node(state, task):
+    """The node ID of a node-PR update ("PR #N" whose folder holds a `node` file), else None (a spec-PR update)."""
+    if not task.startswith("PR #"):
+        return None
+    try:
+        v = open(os.path.join(tdir(state, task), "node")).read().split()[0]
+    except (OSError, IndexError):
+        return None
+    return v if NODE.match(v) else None
+
+
 def tdir(state, task):
     if task.startswith("PR #"):
         return os.path.join(state, "pr", task[4:])
@@ -310,51 +328,37 @@ def sessions(state):
             continue
         k = n.rsplit("#", 1)[-1]
         # a node's feedback prompt ends in the PR number: its state folder tells the node
-        if re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)|run-session\.sh [^ ]+ [^ ]*/node/%s "
-                     r"/noodlebot:node --feedback [0-9]+( |$)" % (k, k, k), cmd):
+        if harness.matches(cmd, k) or re.search(r"run-session\.sh [^ ]+ [^ ]*/node/%s /noodlebot:node --feedback [0-9]+( |$)"
+                                                % re.escape(k), cmd):
             out.append((n, pid, os.path.getmtime(f)))
     return out
 
 
-def narration(log):
-    """The orchestrator's latest plain-text lines, and the subagent it is waiting on (if any)."""
+def narration(d, evs=None):
+    """The orchestrator's latest plain-text lines, and the subagent it is waiting on (if any), from the events of the
+    session in state directory d (evs: its events, when the caller has them)."""
     texts, agents, done = [], {}, set()
-    for line in tail_lines(log, 1 << 20):
-        try:
-            d = json.loads(line)
-        except ValueError:
+    for e in (harness.events(d, write=False) if evs is None else evs):
+        t = e.get("type")
+        if e.get("subagent"):
             continue
-        if not isinstance(d, dict) or d.get("parent_tool_use_id"):
-            continue
-        msg = d.get("message")
-        content = msg.get("content") if isinstance(msg, dict) else None
-        if not isinstance(content, list):
-            continue
-        for c in content:
-            if not isinstance(c, dict):
-                continue
-            if d.get("type") == "assistant" and c.get("type") == "text" and c.get("text", "").strip():
-                texts.append(" ".join(c["text"].split())[:400])
-            elif d.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("name") in ("Agent", "Task"):
-                agents[c.get("id")] = (c.get("input") or {}).get("description") or "a subagent"
-            elif d.get("type") == "user" and c.get("type") == "tool_result":
-                done.add(c.get("tool_use_id"))
-        if d.get("type") == "result":
-            texts.append("(session turn ended: %s)" % d.get("subtype"))
+        if t == "text":
+            texts.append(e.get("text") or "")
+        elif t == "tool" and e.get("name") in ("Agent", "Task"):
+            agents[e.get("id")] = e.get("desc") or "a subagent"
+        elif t == "tool_result":
+            done.add(e.get("id"))
     running = [desc for i, desc in agents.items() if i not in done]
     return texts[-8:], (running[-1] if running else None)
 
 
-def last_result(log):
+def last_result(d, evs=None):
     """The text of the session's last result (its closing message), or None."""
-    for line in reversed(tail_lines(log, 1 << 20)):
-        if '"type":"result"' in line.replace(" ", ""):
-            try:
-                r = json.loads(line).get("result")
-            except (ValueError, AttributeError):
-                return None
-            return r.strip() or None if isinstance(r, str) else None
-    return None
+    last = None
+    for e in (harness.events(d, write=False) if evs is None else evs):
+        if e.get("type") == "result":
+            last = e.get("text")
+    return last
 
 
 def num(v):
@@ -371,33 +375,18 @@ def whole(v):
     return isinstance(v, int) and num(v) and v >= 0
 
 
-def cost_turns(log):
-    """(latest total_cost_usd, turns summed over results) of the well-formed result events in the whole log, or None.
-
-    Streams the file line by line (memory is bounded by the longest line) and parses only lines that mention a
-    result. Any error while decoding, parsing or checking one line makes it a malformed line, which is skipped."""
+def cost_turns(d, evs=None):
+    """(latest cost, turns summed over results) of the well-formed results in the events of the session in state
+    directory d, or None."""
     cost, turns, found = 0.0, 0, False
-    try:
-        with open(log, "rb") as f:
-            for raw in f:
-                if b'"result"' not in raw:
-                    continue
-                try:
-                    d = json.loads(raw.decode("utf-8", "replace"))
-                    if not (isinstance(d, dict) and d.get("type") == "result" and num(d.get("total_cost_usd"))
-                            and whole(d.get("num_turns"))):
-                        continue
-                    c, t = d["total_cost_usd"], d["num_turns"]
-                except Exception:  # e.g. too deeply nested (RecursionError): a malformed line
-                    continue
-                cost, turns, found = c, turns + t, True
-    except OSError:
-        return None
+    for e in (harness.events(d, write=False) if evs is None else evs):
+        if e.get("type") == "result" and num(e.get("cost")) and whole(e.get("turns")):
+            cost, turns, found = e["cost"], turns + e["turns"], True
     return (cost, turns) if found else None
 
 
-def cost_text(log):
-    ct = cost_turns(log)
+def cost_text(d, evs=None):
+    ct = cost_turns(d, evs)
     return "no cost yet" if ct is None else "$%.2f, %d turns" % ct
 
 
@@ -462,7 +451,7 @@ def question_link(a, rs, task):
 def unit_ref(a, n):
     """' Unit issue: #N.' for a unit whose home issue is recorded, else ''."""
     try:
-        return " Unit issue: #%d." % int(open(os.path.join(tdir(a.state, n), "issue")).read().split()[0])
+        return " Unit issue: #%d." % int(open(os.path.join(tdir(a.state, pr_node(a.state, n) or n), "issue")).read().split()[0])
     except (OSError, ValueError, IndexError):
         return ""
 
@@ -478,7 +467,7 @@ def waiting_items(a, sts, prs, rs):
                 why = fh.readline().strip() or "no reason given"
             items.append("- **%s FAILED**: %s. To retry, delete `%s`.%s" % (n, why, path, unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
-            items.append("- %s: %s.%s" % (n, answered_text(state, n) if n in nodes(state) and not n.startswith("#") else "answered",
+            items.append("- %s: %s.%s" % (n, answered_text(state, n) if n in nodes(state) and not n.startswith(("#", "PR #")) else "answered",
                                          unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and not n.startswith("#") and is_merged(state, n):
             items.append("- **%s's PR is merged; its question is still open, and an answer starts a follow-up** "
@@ -534,9 +523,10 @@ def body_for(a, sts, prs, rs=None):
         line = "### %s, running for %dh%02dm (start %s of 2, pid %s)" % (label, mins // 60, mins % 60, starts, pid)
         if n in prs:
             line += ", PR #%s" % prs[n]
-        line += ", " + cost_text(os.path.join(tdir(state, n), "session.jsonl"))
+        evs = harness.events(tdir(state, n), write=False)   # once for the cost and the narration
+        line += ", " + cost_text(tdir(state, n), evs)
         out += ["", line]
-        texts, agent = narration(os.path.join(tdir(state, n), "session.jsonl"))
+        texts, agent = narration(tdir(state, n), evs)
         if agent:
             out += ["", "Now running subagent: **%s**" % agent]
         out += [""] + (["> %s" % t for t in texts[-4 if many else -8:]] or ["> (nothing yet)"])
@@ -815,7 +805,7 @@ def day_summary(a, date):
             ended.add(m.group(1) or m.group(2) or m.group(3))
     cost = 0.0
     for t in ended:
-        ct = cost_turns(os.path.join(tdir(a.state, t), "session.jsonl"))
+        ct = cost_turns(tdir(a.state, t))
         cost += ct[0] if ct else 0.0
     return sorted(ended), cost
 
@@ -928,6 +918,8 @@ def spec_info(a, node):
 
 def home_issue(a, rs, task):
     """The unit's home issue number: the recorded one, else decided (and for a Build issue created) and recorded."""
+    if pr_node(a.state, task):  # a node-PR update has no issue of its own: its node's
+        return home_issue(a, rs, pr_node(a.state, task))
     if task.startswith("PR #"):  # a spec-PR feedback unit: decided from its branch, never recorded
         return pr_home(a.state, task)
     f = os.path.join(tdir(a.state, task), "issue")
@@ -964,6 +956,7 @@ def home_issue(a, rs, task):
                                       "result). Its spec is %s on the main branch. The loop closes this issue once "
                                       "the node is merged." % (task, spec) +
                                  ("\n\n" + site_line(a, task) if site_base(a) else ""))})["number"]
+    os.makedirs(os.path.dirname(f), exist_ok=True)
     with open(f + ".tmp", "w") as fh:
         fh.write("%d\n" % n)
     os.replace(f + ".tmp", f)
@@ -972,8 +965,9 @@ def home_issue(a, rs, task):
 
 def milestone(a, rs, task, key, stage, body=""):
     """Post one milestone comment on the unit's home issue, once per key (recorded in report.json after the post)."""
-    if task.startswith("PR #") and not pr_feedback(a.state, task):  # a spec-PR update is not a unit: no issue
-        return
+    if task.startswith("PR #") and not pr_feedback(a.state, task) and \
+            not (pr_node(a.state, task) and key.split(":")[0] in ("question", "answer")):
+        return  # a spec-PR update is not a unit: no issue; a node-PR update posts only its question and answer, on its node's
     u = rs.setdefault("units", {}).setdefault(task, {})
     done = u.setdefault("done", [])
     if key in done:
@@ -982,7 +976,7 @@ def milestone(a, rs, task, key, stage, body=""):
     text = "**Stage:** " + link_nodes(a, stage)
     if not u.get("intro") and site_base(a) and task.startswith("#"):
         text += "\n\n" + site_line(a, task)
-    if not u.get("intro") and not task.startswith("#"):
+    if not u.get("intro") and not task.startswith("#") and not task.startswith("PR #"):
         resolves = spec_info(a, task)[1]
         if resolves and site_base(a):
             text += "\n\n" + site_line(a, task)
@@ -1128,7 +1122,7 @@ def record_answer(a, rs, node, c, text):
                 (node, a.owner, c["created_at"], c["html_url"], text))
     os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
     a.answered = True
-    what = None if node.startswith(("#", "PR #")) else answered_text(a.state, node)
+    what = None if node.startswith("#") or node.startswith("PR #") else answered_text(a.state, node)
     queue(a, rs, node, "answer:%s" % c["id"], "answer received" + (", " + what if what else ""),
           "The owner's answer was recorded: %s" % c["html_url"])
     flush(a, rs)
@@ -1143,10 +1137,11 @@ def home_units(a):
             if n in waiting(a.state):
                 out.setdefault(pr_home(a.state, n), []).append(n)
             continue
-        if n.startswith("PR #"):
+        if n.startswith("PR #") and not pr_node(a.state, n):
             continue
         try:
-            out.setdefault(int(open(os.path.join(tdir(a.state, n), "issue")).read().split()[0]), []).append(n)
+            d = tdir(a.state, pr_node(a.state, n) or n)
+            out.setdefault(int(open(os.path.join(d, "issue")).read().split()[0]), []).append(n)
         except (OSError, ValueError, IndexError):
             pass
     return out
@@ -1157,6 +1152,8 @@ def finished(a, n):
     in progress; a triage once it ended done. A new QUESTION.md makes it unfinished again."""
     if held(a, n) or has(a.state, n, "session.pid") or has(a.state, n, "FAILED"):
         return False
+    if n.startswith("PR #"):  # a node-PR update: nothing more once it asks nothing
+        return True
     if n.startswith("#"):  # done: its done line was seen (queued or posted)
         rs = getattr(a, "rs", None) or {}
         return any(k.startswith("done:") for k in rs.get("units", {}).get(n, {}).get("done", [])) or \
@@ -1169,7 +1166,7 @@ def held(a, n):
     return has(a.state, n, "QUESTION.md") or has(a.state, n, "FOLLOWUP")
 
 
-ID_PREFIX = re.compile(r"\s*\**((?:PR )?#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
+ID_PREFIX = re.compile(r"\s*\**(PR #\d+|#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
 
 
 def pr_homes(a):
@@ -1297,7 +1294,7 @@ def post_events(a, rs, issue):
             stamp, what = event_text(l)
             m = re.search(r"session ([A-Z][0-9][0-9]) ended|triage of (#\d+) (?:ended|done)|update of (PR #\d+) ended", what)
             task = m and (m.group(1) or m.group(2) or m.group(3))
-            ct = task and cost_turns(os.path.join(tdir(a.state, task), "session.jsonl"))
+            ct = task and cost_turns(tdir(a.state, task))
             out.append("- `%s` %s" % (stamp, link_nodes(a, what)) + (" (total $%.2f, %d turns)" % ct if ct else ""))
         text = "\n".join(out)
         comment(a, issue, text)
@@ -1307,7 +1304,7 @@ def post_events(a, rs, issue):
 def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
-        if n.startswith("PR #") and not pr_feedback(a.state, n):  # an update's question is not posted
+        if n.startswith("PR #") and not pr_feedback(a.state, n) and not pr_node(a.state, n):  # a spec-PR update's question is not posted
             continue
         q = os.path.join(tdir(a.state, n), "QUESTION.md")
         key = mtime_key(q)
@@ -1317,7 +1314,9 @@ def post_questions(a, rs, issue):
             home = home_issue(a, rs, n)
             if ("question:" + key) not in rs.get("units", {}).get(n, {}).get("done", []):
                 reopen(a, rs, home)
-            if posted.get(n) != key:
+            if posted.get(n) != key and pr_node(a.state, n):
+                posted[n] = key  # a node-PR update's question is only on its node's issue
+            elif posted.get(n) != key:
                 comment(a, issue, link_nodes(a, "## %s asks\n\nThe question is on #%d, the unit's issue; answer it there, or here "
                         "starting the reply with `%s:`.\n" % (n, home, n)))
                 posted[n] = key
