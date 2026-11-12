@@ -8,12 +8,17 @@
 # qa: triage #7, A02 (M), A03 (L); qb: triage #9, B01 (S), B04 (L). No seeds: the loops write the records.
 qsetup C "A02:M A03:L" "B01:S B04:L"
 echo '[{"number": 7}]' >"$q/issues.qa.json"; echo '[{"number": 9}]' >"$q/issues.qb.json"
-# tick 3 (qa): live at qb's turns through a loaded tick, so the first turn is t7's (see the fixture); tick 2 (qb) asks alone
-# after the reopening. Gap 6 s: the hold after the first turn comes before any later turn, also when a loop had read the
-# throttle open just before the hold (the old gap of 1 s was shorter than a loaded tick).
+# tick 3 (qa): live at qb's turns through a loaded tick, so the first turn is t7's (see the fixture); tick 3 (qb): it asks
+# alone after the reopening and must be live in the tick that first reads the opened throttle (w < 8 s), and live at qa's
+# asks then (else qa takes A02). Gap 6 s: the hold after the first turn comes before any later turn, also when a loop had
+# read the throttle open just before the hold (the old gap of 1 s was shorter than a loaded tick).
+# As at the base, qa starts first: #7 and #9 are both triages with no seeds, so the older record goes first; qb starts
+# only after qa has written its records and listed #7, so #7's record is no later than #9's, and a tie (same second)
+# goes to qa by the repository's name (turn.py). Both loops start with the throttle holding and list every unit first.
 QENV="SCHED_START_GAP=6 SCHED_STARVE=3600"
 t_c0=$(date +%s)
-qboth 3 2 $QENV
+qhold; qloop qa 3 $QENV; qwait 8 qfirst qa; qwait 8 qlisted qa "#7" A02 A03
+qloop qb 3 $QENV; qwait 8 qfirst qb
 qcompete "#7 A02 A03" "#9 B01 B04"
 qopen
 qwait 12 qhave t7; qhold
@@ -41,9 +46,12 @@ qopen; t_open=$(date +%s.%N)
 qwait_n 8 2; wait_until 15 qev_ge 2
 # "at the first turn after the throttle opens" (the old window of 2.6 s was a tick and a gap of 1 s): B01 is the next start
 # after the opening, in the starts and in the status logs (no other start event), and qb started it in the tick that
-# read the opened throttle: no more than one of qb's ticks began (asked for the merged PRs, before it reads the throttle)
-# between the opening and B01's start.
-qsecond_soon() { [ "$(sort -n "$q/starts.log" | sed -n 2p | awk '{ print $3 }')" = B01 ] && [ "$(qev '' | wc -l)" = 2 ] && awk -v a="$t_open" -v b="$(qt B01)" 'BEGIN { exit !(b - a >= 0) }' && [ "$(qtickt qb "$t_open" "$(qt B01)")" -le 1 ]; }
+# first read the opened throttle: that tick logs "throttle released" (qb held since the hold after t7), at or after the
+# opening's second, and B01's tick (its heartbeat, qhb) had begun by that line's second (a later tick begins at least
+# SCHED_TICK after the second in which the one before ended). No more than one of qb's ticks began (asked for the merged
+# PRs, before it reads the throttle) between the opening and B01's start.
+qreleased() { grep '; throttle released' "$(qlog qb)" | awk '{ print $1 }' | while read -r t; do date -d "$t" +%s; done | awk -v a="${t_open%.*}" '$1 >= a { print; exit }'; }
+qsecond_soon() { local r h; r=$(qreleased) h=$(qhb B01); [ "$(sort -n "$q/starts.log" | sed -n 2p | awk '{ print $3 }')" = B01 ] && [ "$(qev '' | wc -l)" = 2 ] && awk -v a="$t_open" -v b="$(qt B01)" 'BEGIN { exit !(b - a >= 0) }' && [ "$(qtickt qb "$t_open" "$(qt B01)")" -le 1 ] && [ -n "$r" ] && [ -n "$h" ] && [ "$h" -le "$r" ]; }
 qok "S07-AC-1: the next unit (the S node) starts at the first turn after the throttle opens, within 2.6 s" qsecond_soon
 qok "S07-AC-5: the started node's record is removed" test ! -e "$qd/state/qb/node/B01/waiting" -a -n "$ra03"
 qstop

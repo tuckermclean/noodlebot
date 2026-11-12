@@ -13,9 +13,12 @@ qseed qa node/A02 100; qseed qa node/A03 100; qseed qb node/B01 100
 # tick 3 (qa): live at qb's turns through a loaded tick, else B01 (tied with A03, after it by the repository's name) takes
 # the turn; tick 2 (qb) asks alone for B01 (see the fixture). Once A03 has started the throttle holds until the blocker is
 # gone and qa has listed A02 again (no longer given back): otherwise every turn of qa after the gap fails A02 again and
-# gives it back, and qb's next turn takes B01 before it. Gap 4 s: no turn passes the gap between A03's start and the hold,
-# also for a loop that read the throttle open just before it.
-qboth 3 2 SCHED_START_GAP=4 SCHED_STARVE=3600
+# gives it back, and qb's next turn takes B01 before it. Gap 8 s (no check names it): the hold comes as soon as A03's
+# session has logged, and qa's next tick reads it; only a qb tick that read the throttle open just before the hold can ask
+# again, and its turn would need the gap to have passed since A03's turn (and qa not yet to have listed A02 again). That
+# is more than 8 s of a tick's work between reading the throttle and asking; the old gap of 4 s was within a loaded tick
+# (the work of a tick is several seconds under load).
+qboth 3 2 SCHED_START_GAP=8 SCHED_STARVE=3600
 qcompete "A02 A03" B01
 qopen
 qwait 10 qhave A03; qhold; wait_until 15 qev_ge 1; qticks 1
