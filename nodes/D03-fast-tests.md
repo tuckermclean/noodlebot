@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | none | M |
+| now | none | D04, D05 | M |
 
 **Owns:** the `Makefile`'s `test` target; `scheduler/runtests.sh` (the test runner) and `scheduler/runtests.test.sh`; the shared test helpers and fakes under `scheduler/testdata/lib/`; in the existing `*.test.sh` files, how each case waits, how their fakes are implemented, the code they share and the merging of overlapping cases (Changes 3 to 6, never what a check expects); the time budget settings in `.github/workflows/test.yml`; the `make test` line under Commands and the Tests bullet of `AGENTS.md`.
 **Resolves:** #68
