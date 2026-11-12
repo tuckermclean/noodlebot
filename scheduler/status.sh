@@ -78,7 +78,9 @@ for d in "$state"/node/*/ "$state"/issue/*/; do
 		found=1; echo "   $id FAILED: $(head1 "$d/FAILED")"
 		echo "      to retry: rm $d/FAILED"
 	elif [ -e "$d/QUESTION.md" ] && [ -e "$d/ANSWER.md" ]; then
-		found=1; echo "   $id answered: restarts at the next tick"
+		found=1
+		clause=$(python3 -I "$nb/scheduler/report.py" --repo "$repo" --state "$state" --clause "$id" 2>/dev/null | head -n 1)
+		echo "   $id answered: ${clause:-restarts at the next tick}"
 	elif [ -e "$d/QUESTION.md" ]; then
 		found=1; echo "   $id QUESTION: $(head1 "$d/QUESTION.md")"
 		echo "      read it: less $d/QUESTION.md"

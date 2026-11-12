@@ -27,7 +27,8 @@ DATA/state/starts.lock, and files are replaced atomically, so two loops asking a
             OWNER/NAME; the part after the last "/" is the folder). Prints
             "<N> ahead, waited <H>h<MM>m, gap passed|gap not passed", N being the units before KEY in the
             order ask uses (live loops only, given-back units not counted), or "not waiting" when KEY is not in
-            this loop's live list, was given back (until the next list), or there is no state folder. It creates nothing and writes nothing (a shared flock on starts.lock when
+            this loop's live list (unless --kind K [--size S] is given: KEY is then placed as a unit of that
+            kind appended to the list with wait 0, in memory only), was given back (until the next list), or there is no state folder. It creates nothing and writes nothing (a shared flock on starts.lock when
             that exists), so it works on a read-only state folder.
 
 Order: units that waited more than the starvation limit (--starve, SCHED_STARVE, 21600 s) first, the
@@ -192,14 +193,20 @@ def ask(state, repo, now, args):
     return "%s\t%s" % (u["key"], text)
 
 
-def place(state, repo, now, key, args):
+def place(state, repo, now, key, args, kind=None, size="-"):
     try:
         lists = live_lists(state, now)
     except OSError:
         return "not waiting"  # no state folder (read-only: nothing is created)
     d = lists.get(repo)
-    if d is None or key in d.get("gaveback", []) or not any(u["key"] == key for u in d["units"]):
+    if d is None or key in d.get("gaveback", []):
         return "not waiting"  # a given-back key gets no turn from ask, so it is not waiting
+    if not any(u["key"] == key for u in d["units"]):
+        if kind is None:
+            return "not waiting"
+        # as if it were listed now: appended to this loop's list (in memory only), waited 0
+        d = dict(d, units=d["units"] + [{"key": key, "kind": kind, "size": size, "since": now}])
+        lists = dict(lists, **{repo: d})
     gap = start_gap(lists, args)
     starve = args.starve
     if starve is None:
@@ -214,7 +221,7 @@ def place(state, repo, now, key, args):
         if r == repo and u["key"] == key:
             break
         ahead += 1
-    wait = max(now - u["since"] for u in d["units"] if u["key"] == key)
+    wait = max(now - x["since"] for x in d["units"] if x["key"] == key)
     return "%d ahead, waited %s, gap %s" % (ahead, hm(wait), "passed" if passed else "not passed")
 
 
@@ -261,6 +268,8 @@ def main():
     p.add_argument("--gap", type=float)
     p.add_argument("--starve", type=float)
     p.add_argument("--now", type=float)
+    p.add_argument("--kind", choices=("triage", "update", "followup", "resumed", "fresh"))
+    p.add_argument("--size", choices=("S", "M", "L", "-"), default="-")
     # KEY may follow the options (`took --root D --repo R A1`);
     # an older parse_args (3.12.3) binds an empty KEY with COMMAND and rejects it
     args = p.parse_intermixed_args()
@@ -279,7 +288,7 @@ def main():
             if lock:
                 fcntl.flock(lock, fcntl.LOCK_SH)
             now = time.time() if args.now is None else args.now
-            print(place(state, args.repo.rsplit("/", 1)[-1], now, args.key, args))
+            print(place(state, args.repo.rsplit("/", 1)[-1], now, args.key, args, args.kind, args.size))
         finally:
             if lock:
                 lock.close()
