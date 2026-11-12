@@ -8,12 +8,17 @@
 # not passed after A02's start, the idle session is neither stopped nor resumed.
 qresetup R1
 qseed qa node/A02 100; qseed qb node/B01 50
-qboth 1 1 SCHED_START_GAP=4 SCHED_STARVE=3600
+# qa tick 2: live at qb's turns through a loaded tick, and its next tick after A02's start still asks within the gap the
+# checks name (4 s); qb tick 3 (see the fixture and D05's open question on this gap)
+qboth 2 3 SCHED_START_GAP=4 SCHED_STARVE=3600
+qcompete A02 B01
 qopen
 qwait_n 10 1
-# A02's log has the rejection, and the loop has ticked on it, well before the gap of 4 s since A02's start has passed
+# A02's log has the rejection, and the loop has ticked on it: its next tick listed A02 as a resumed unit (it found the
+# idle session), asked for a turn and ended (one more tick began). That tick asked while the gap of 4 s since A02's start
+# had not passed: had the gap passed, the resume (first in the order) would have started in it.
 qrejected() { grep -q rate_limit_event "$qd/state/qa/node/A02/session.jsonl" 2>/dev/null; }
-qwait 5 qrejected; qticks 2   # the old sleep was 2.2 s, and the check ends before the gap of 4 s since A02 started: a third tick would pass it under load
+qwait 5 qrejected; qwait 8 qlisted qa A02:resumed; qticks 1
 pid_a=$(qpid)
 qok "S07-AC-6: (precondition) A02 started first, and its log has the usage-limit rejection" sh -c "[ \"\$(sed -n 1p '$q/starts.log' | awk '{ print \$3 }')\" = A02 ] && grep -q rate_limit_event '$qd/state/qa/node/A02/session.jsonl'"
 qok "S07-AC-6: while the gap has not passed the idle session is not resumed (no resume start)" test "$(qn)" = 1

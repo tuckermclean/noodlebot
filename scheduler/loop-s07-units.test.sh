@@ -15,7 +15,9 @@ for i in A02 A03; do echo "Q1: q" >"$qd/state/qa/node/$i/QUESTION.md"; echo "Q1:
 git -C "$qd/repos/qa" worktree add -q -b node/A03-u-A03 "$qd/worktrees/qa/A03" origin/main
 git -C "$qd/worktrees/qa/A03" -c user.name=t -c user.email=t@t commit -q --allow-empty -m wip
 qseed qa pr/31 100; qseed qa node/A02 200; qseed qa node/A03 300; qseed qa node/A04 500; qseed qb node/B01 50
-qboth 1 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+# tick 3: both loops stay live through a loaded tick (B01's event names qa/A04: qa is live at qb's turn); see the fixture
+qboth 3 3 SCHED_START_GAP=1 SCHED_STARVE=3600
+qcompete "PR#31:update A02:followup A03:resumed A04:fresh" "B01:fresh"
 qopen
 qrun_until 30 5
 qok "S07-AC-2: the order: resumed and follow-up and update by wait (A03 300 s, A02 200 s, PR 31 100 s), then S (B01), then the node with no Size as L (A04)" test "$(qseq)" = "A03 A02 t31 B01 A04"

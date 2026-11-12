@@ -9,7 +9,8 @@
 qsetup G1 "A02:S" "B01:S"
 echo '[{"number": 7}, {"number": 8}]' >"$q/issues.qa.json"
 QENV="SCHED_START_GAP=1 SCHED_STARVE=3600"
-qloop qa 1 $QENV
+# tick 2: a loop asking alone stays live through a loaded tick (see the fixture)
+qloop qa 2 $QENV
 qwait_n 12 2; qticks 3
 qok "S07-AC-7: the triage and the node start (the triage first)" test "$(qseq)" = "t7 A02"
 qok "S07-AC-7: a second labelled issue does not start while the first triage runs" sh -c "! grep -q ' t8\$' '$q/starts.log'"
@@ -22,7 +23,7 @@ qok "S07-AC-7: the running node session is still running" qalive qa/node/A02
 qstop
 # G2: SCHED_MAX=2 in qa with three nodes.
 qsetup G2 "A02:S A03:M A04:L" "B01:S"
-qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600 SCHED_MAX=2
+qloop qa 2 SCHED_START_GAP=1 SCHED_STARVE=3600 SCHED_MAX=2
 qwait_n 12 2; qticks 3
 qok "S07-AC-7: SCHED_MAX=2 caps the repository's sessions at two, started in the queue's order" test "$(qseq)" = "A02 A03" -a "$(qn)" = 2
 qok "S07-AC-1: the two starts of a capped repository are at least the gap apart" qgap_n 2 0.6

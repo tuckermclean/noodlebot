@@ -6,7 +6,9 @@
 
 # -- Phase D: both loops reach a turn at the same moment (both start together, the throttle opens for both)
 qsetup D "A03:L A04:L" "B04:L B05:L"
-qboth 1 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+# tick 3: both loops stay live through a loaded tick (see the fixture); the gap (1 s) the checks name is SCHED_START_GAP
+qboth 3 3 SCHED_START_GAP=1 SCHED_STARVE=3600
+qcompete "A03 A04" "B04 B05"
 qopen
 qrun_until 25 4
 qok "S07-AC-3: four units, two loops at the same moments: four sessions start, each unit once, by its own loop" test "$(qn)" = 4 -a "$(qpairs)" = "qa:A03 qa:A04 qb:B04 qb:B05"

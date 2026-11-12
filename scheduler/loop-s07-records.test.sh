@@ -8,12 +8,16 @@
 # qa: triage #7, A02 (M), A03 (L); qb: triage #9, B01 (S), B04 (L). No seeds: the loops write the records.
 qsetup C "A02:M A03:L" "B01:S B04:L"
 echo '[{"number": 7}]' >"$q/issues.qa.json"; echo '[{"number": 9}]' >"$q/issues.qb.json"
-QENV="SCHED_START_GAP=1 SCHED_STARVE=3600"
-qopen
+# tick 3 (qa): live at qb's turns through a loaded tick, so the first turn is t7's (see the fixture); tick 2 (qb) asks alone
+# after the reopening. Gap 6 s: the hold after the first turn comes before any later turn, also when a loop had read the
+# throttle open just before the hold (the old gap of 1 s was shorter than a loaded tick).
+QENV="SCHED_START_GAP=6 SCHED_STARVE=3600"
 t_c0=$(date +%s)
-qloop qa 1 $QENV; qwait 8 qfirst qa; qloop qb 1 $QENV
+qboth 3 2 $QENV
+qcompete "#7 A02 A03" "#9 B01 B04"
+qopen
 qwait 12 qhave t7; qhold
-qticks 3
+qticks 3 qa qb
 qok "S07-AC-1: the throttle holding from the second turn: only the first unit started" test "$(qseq)" = "t7"
 qrecs() { local f; for f in qa/node/A02 qa/node/A03 qb/node/B01 qb/node/B04 qb/issue/9; do [ -e "$qd/state/$f/waiting" ] || return 1; done; }
 qwait 3 qrecs
@@ -22,7 +26,7 @@ qok "S07-AC-5: each unit found waiting has a record (epoch seconds, no earlier t
 qok "S07-AC-5: the record of the started triage is removed" test ! -e "$qd/state/qa/issue/7/waiting"
 ra02=$(qrec qa node/A02); ra03=$(qrec qa node/A03); rb04=$(qrec qb node/B04); rb9=$(qrec qb issue/9)
 touch "$HOME/STOP-qa"; qwait 6 sh -c "! kill -0 ${qp[qa]} 2>/dev/null"; rm -f "$HOME/STOP-qa"
-qloop qa 1 $QENV; qwait 8 sh -c "[ \$(grep -c 'loop started' '$(qlog qa)') -ge 2 ]"; qticks 2
+qloop qa 3 $QENV; qwait 8 sh -c "[ \$(grep -c 'loop started' '$(qlog qa)') -ge 2 ]"; qticks 2
 qok "S07-AC-5: a record survives a loop restart with its time unchanged" test -n "$ra02" -a "$(qrec qa node/A02)" = "$ra02" -a "$(qrec qa node/A03)" = "$ra03"
 echo "Q1: q" >"$qd/state/qa/node/A03/QUESTION.md"; touch "$qd/state/qb/node/B04/FAILED"; echo '[]' >"$q/issues.qb.json"
 qgone_after() { [ -n "$2" ] || return 1; qwait 5 test ! -e "$1"; }
@@ -34,8 +38,12 @@ qnewer() { [ -n "$2" ] && qwait 5 test -e "$1" && [ "$(cat "$1")" -gt "$2" ]; }
 qok "S07-AC-5: an answered node's wait restarts: a new record, later than the old" qnewer "$qd/state/qa/node/A03/waiting" "$ra03"
 qok "S07-AC-5: a node that lost its FAILED waits anew: a new record, later than the old" qnewer "$qd/state/qb/node/B04/waiting" "$rb04"
 qopen; t_open=$(date +%s.%N)
-qwait_n 8 2; wait_until 5 qev_ge 2
-qsecond_soon() { [ "$(sort -n "$q/starts.log" | sed -n 2p | awk '{ print $3 }')" = B01 ] && awk -v a="$t_open" -v b="$(qt B01)" 'BEGIN { exit !(b - a >= 0 && b - a <= 2.6) }'; }
+qwait_n 8 2; wait_until 15 qev_ge 2
+# "at the first turn after the throttle opens" (the old window of 2.6 s was a tick and a gap of 1 s): B01 is the next start
+# after the opening, in the starts and in the status logs (no other start event), and qb started it in the tick that
+# read the opened throttle: no more than one of qb's ticks began (asked for the merged PRs, before it reads the throttle)
+# between the opening and B01's start.
+qsecond_soon() { [ "$(sort -n "$q/starts.log" | sed -n 2p | awk '{ print $3 }')" = B01 ] && [ "$(qev '' | wc -l)" = 2 ] && awk -v a="$t_open" -v b="$(qt B01)" 'BEGIN { exit !(b - a >= 0) }' && [ "$(qtickt qb "$t_open" "$(qt B01)")" -le 1 ]; }
 qok "S07-AC-1: the next unit (the S node) starts at the first turn after the throttle opens, within 2.6 s" qsecond_soon
 qok "S07-AC-5: the started node's record is removed" test ! -e "$qd/state/qb/node/B01/waiting" -a -n "$ra03"
 qstop

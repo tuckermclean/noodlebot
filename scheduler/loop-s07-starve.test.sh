@@ -8,7 +8,9 @@
 qsetup B "A02:M" "B01:S"
 echo '[{"number": 7}]' >"$q/issues.qa.json"
 qseed qa issue/7 100; qseed qa node/A02 7200; qseed qb node/B01 100
+# the ticks stay 1 and 2: the gap check names the largest tick (2 s); see D05's open question on qa's tick 1 under load
 qboth 1 2 SCHED_STARVE=3600
+qcompete "#7 A02" B01
 qopen
 qwait_n 25 3; wait_until 5 qev_ge 3
 qok "S07-AC-2: an M node past SCHED_STARVE starts before the triage and the S node" test "$(qseq)" = "A02 t7 B01"

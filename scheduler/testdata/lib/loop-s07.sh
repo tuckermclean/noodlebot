@@ -10,7 +10,16 @@
 #   removed when the unit starts or stops waiting (QUESTION.md, FAILED, label removed, repository at SCHED_MAX).
 #   A loop lists its waiting units (turn.py list) every tick, also while the throttle holds, so that the
 #   machine's order is known before the throttle opens; it asks for a turn (turn.py ask) only when the throttle is open.
-#   Phases whose order matters start both loops with the throttle holding, wait for each first tick, then open it.
+#   Phases whose order matters start both loops with the throttle holding, wait until each loop lists every unit that is
+#   to compete (qcompete), then open it.
+# Ticks (D05): turn.py counts a loop as live only while its heartbeat (whole epoch seconds, written when a tick begins) is
+# less than three of its ticks old. A loop asks at the end of its tick (after the tick's work, w: git, gh, usage, ready.py,
+# turn.py), and another loop's heartbeat is up to a whole cycle (w + SCHED_TICK) and a second (rounding) old when it is
+# read. So a phase where the order across the two loops matters needs w < 2 x tick - 1 s (tick 3: w < 5 s; tick 2: w < 3
+# s), and a loop asking alone w < 3 x tick - 1 s (tick 2: w < 5 s); w is several seconds on a loaded machine. A phase uses
+# tick 1 only where its loop takes no turn (throttle held, SCHED_RAMP=0, killed, or its tick ends before the queue), or
+# where a check names that tick. Waits count the loops' ticks (qticks) or wait for what the next check reads; the
+# negative checks wait as many ticks as before.
 declare -A qp=()
 qsetup() { # <tag> "<ID:Size> ..." (o/qa) "<ID:Size> ..." (o/qb)
 	local k ids spec id w
@@ -39,6 +48,7 @@ qsetup() { # <tag> "<ID:Size> ..." (o/qa) "<ID:Size> ..." (o/qb)
 q=@Q@
 case "$2" in "/noodlebot:triage "*) id=t${2##* } ;; *) id=${2##* } ;; esac
 r=$(pwd -P | sed 's#.*/worktrees/\([^/]*\)/.*#\1#')
+cat "$q/data/state/$r/heartbeat" >"$q/hb.$id" 2>/dev/null   # the heartbeat of the tick that started it (qhb)
 echo "$(date +%s.%N) $r $id" >>"$q/starts.log"
 while [ ! -e "$q/end" ] && [ ! -e "$q/end.$id" ]; do sleep 0.2; done
 case $id in t*) ;; *) echo "Q1: x" >"$q/data/state/$r/node/$id/QUESTION.md" ;; esac
@@ -49,6 +59,7 @@ EOF
 q=@Q@
 r=$(echo "$*" | sed -n 's#.*repos/o/\([a-z]*\)[/ ?].*#\1#p')
 case " $* " in
+*" --state merged "*) date +%s.%N >>"$q/ticks.$(echo "$*" | sed -n 's#.*--repo o/\([a-z]*\).*#\1#p')"; exit 0 ;;   # once a tick (qtickt)
 *" --state "*) exit 0 ;;
 *"/issues?labels=noodlebot"*) cat "$q/issues.$r.json" ;;
 *"/events"*) echo '[{"event": "labeled", "label": {"name": "noodlebot"}, "actor": {"login": "o"}}]' ;;
@@ -88,11 +99,49 @@ qopen() { echo "open: test opens" >"$q/usage"; }
 qhold() { echo "hold: test holds" >"$q/usage"; }
 # qev_ge <n>: the status logs of both loops have n start events (the old fixed sleeps after the last start let them be written).
 qev_ge() { [ "$(qev '' | wc -l)" -ge "$1" ]; }
-# qticks <n> [qa|qb]: that loop (default qa) has started n more ticks.
-qticks() { wait_ticks "$1" "$qd/state/${2:-qa}"; }
+# qticks <n> [qa|qb...]: each of those loops (default qa) has started n more ticks (its heartbeat changed n times), counted
+# at the same time. Where a check says something did NOT happen, this is the wait (D03's rule). Gives up after 3 ticks and
+# 10 s a tick (the loop's tick, qtk, on a loaded machine).
+declare -A qtk=()
+qticks() {
+	local n=$1 l k end t=1; shift; [ $# -gt 0 ] || set -- qa
+	local -A last=() left=()
+	for l in "$@"; do last[$l]=$(cat "$qd/state/$l/heartbeat" 2>/dev/null); left[$l]=$n; [ "${qtk[$l]:-1}" -gt $t ] && t=${qtk[$l]}; done
+	end=$(( $(date +%s) + n * (3 * t + 10) ))
+	while :; do
+		k=0
+		for l in "$@"; do
+			if [ "${left[$l]}" -gt 0 ] && _hbchg "${last[$l]}" "$qd/state/$l"; then
+				last[$l]=$(cat "$qd/state/$l/heartbeat" 2>/dev/null); left[$l]=$((left[$l] - 1))
+			fi
+			k=$((k + left[$l]))
+		done
+		[ $k = 0 ] && return 0
+		[ "$(date +%s)" -lt "$end" ] || return 1
+		sleep 0.1
+	done
+}
+# qlisted <qa|qb> <key>[:<kind>]...: that loop's waiting.json lists those units (of that kind).
+qlisted() {
+	local f=$qd/state/$1/waiting.json k; shift
+	for k in "$@"; do
+		case $k in
+		*:*) grep -qF "\"key\": \"${k%%:*}\", \"kind\": \"${k#*:}\"" "$f" 2>/dev/null || return 1 ;;
+		*) grep -qF "\"key\": \"$k\"" "$f" 2>/dev/null || return 1 ;;
+		esac
+	done
+}
+# qcompete "<qa units>" "<qb units>": wait until each loop lists every unit that is to compete (before the throttle opens).
+qcompete() { qwait 8 qlisted qa $1; qwait 8 qlisted qb $2; }
+# qhb <id>: the heartbeat (epoch second) of the tick of its loop that started the session.
+qhb() { cat "$q/hb.$1" 2>/dev/null; }
+# qtickt <qa|qb> <from> <to>: how many ticks of that loop asked for the merged PRs (early in a tick, before the throttle
+# is read) after <from> and before <to> (epoch seconds, with fractions). Not with qghx when merged.<repo>.tsv exists.
+qtickt() { awk -v a="$2" -v b="$3" '$1 > a && $1 < b' "$q/ticks.$1" 2>/dev/null | wc -l; }
 qalive() { local p; p=$(cat "$qd/state/$1/session.pid" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
 qloop() { # <qa|qb> <tick> [VAR=value...]
 	local n=$1 t=$2; shift 2
+	qtk[$n]=$t
 	( exec env NOODLEBOT_DATA="$qd" PATH="$q/bin:$PATH" SCHED_RAMP=1 SCHED_REPORT=0 SCHED_TICK="$t" SCHED_POLL=0.2 "$@" \
 		bash "$qnb/scheduler/loop.sh" "o/$n" >>"$q/loop-$n.out" 2>&1 ) &
 	qp[$n]=$!; pids+=("$!")
@@ -119,7 +168,9 @@ qsample() { # every machine-wide file that exists is well-formed JSON
 qrun_until() {
 	local end=$(( $(date +%s) + $1 * 3 )) settle
 	while [ "$(qn)" -lt "$2" ] && [ "$(date +%s)" -lt "$end" ]; do qsample; sleep 0.05; done
-	wait_until 10 qev_ge "$2"   # every start has its event in the status log (written by the loop after the session began)
+	wait_until 30 qev_ge "$2"   # every start has its event in the status log (written by the loop after the session began)
+	# a sampling window, not a wait: the loops rewrite the files every tick and nothing marks the last write; 2 s more
+	# samples (after the last start) for the well-formed-JSON check
 	settle=$(( $(date +%s) + 2 )); while [ "$(date +%s)" -lt "$settle" ]; do qsample; sleep 0.05; done
 }
 
