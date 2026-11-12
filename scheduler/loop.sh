@@ -96,7 +96,8 @@ set_starts() { echo "$2" >"$1/starts"; }
 pf=$(python3 -I -B "$nb/scheduler/harness.py" preflight 2>&1) || { echo "loop.sh: $pf" >&2; exit 2; }
 # The harness's capabilities, read once per loop start; each one lacking is said once and its feature is off.
 hname=${SCHED_HARNESS:-claude-code}
-caps=$(python3 -I -B "$nb/scheduler/harness.py" capabilities 2>/dev/null) || caps='usage resume bg-wait'
+caps_failed=0
+caps=$(python3 -I -B "$nb/scheduler/harness.py" capabilities 2>/dev/null) || { caps='usage resume bg-wait'; caps_failed=1; }
 caps=" $(echo $caps) "
 # The harness's process match as an extended regex with @UNIT@ for the task key (empty: ask it for each check).
 match_tpl=$(python3 -I -B "$nb/scheduler/harness.py" match-pattern '@UNIT@' 2>/dev/null) || match_tpl=
@@ -113,6 +114,7 @@ signature=$(sh "$here/version.sh" --signature "$nb" 2>/dev/null) || signature=
 [ -n "$signature" ] || signature="— n00dl3b0t unknown"
 { echo "$version" >"$state/version.tmp" && mv "$state/version.tmp" "$state/version"; } 2>/dev/null || say "could not write $state/version"
 say "loop started for $repo, version $version"
+[ "$caps_failed" = 0 ] || say "could not read the harness's capabilities; assuming all"
 has_cap usage || say "harness $hname lacks usage: throttle off"
 has_cap resume || say "harness $hname lacks resume: limit resume off"
 has_cap bg-wait || say "harness $hname lacks bg-wait: cut-off check off"
@@ -448,7 +450,8 @@ resume_idle() {
 		read -r reset sid <<<"$rs"
 		[ $(($(date +%s) - reset)) -gt 120 ] || continue
 		[ "$(cat "$d/resumed" 2>/dev/null)" = "$reset" ] && continue
-		if [ "$ramp" = 1 ] && [ -z "$only" ]; then
+		# without resume the session is not a waiting unit: it is ended below as a limit exit, restarting as a new start
+		if [ "$ramp" = 1 ] && [ -z "$only" ] && has_cap resume; then
 			case $d in "$state"/issue/*) k="#$id" ;; "$state"/pr/*) k="PR#$id" ;; *) k=$id ;; esac
 			want "$k" resumed - "$d" "resume|$d"
 			continue
