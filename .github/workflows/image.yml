@@ -25,6 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: "Host: allow nested user namespaces"
         # Ubuntu 24.04 restricts unprivileged user namespaces by AppArmor; rootless podman in the container needs them.
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -40,15 +41,31 @@ jobs:
         run: |
           set -eu
           head=$(git rev-parse HEAD)
-          docker run --rm --entrypoint bash -e "HEAD_SHA=$head" -e "REPO_URL=$REPO_URL" "$IMAGE" -ec '
+          tags=$(git tag | sort | sha256sum | cut -d' ' -f1)
+          desc=$(git describe --tags --always)
+          echo "runner: HEAD=$head tags=$tags describe=$desc"
+          docker run --rm --entrypoint bash -e "HEAD_SHA=$head" -e "REPO_URL=$REPO_URL" \
+            -e "RUNNER_TAGS=$tags" -e "RUNNER_DESCRIBE=$desc" "$IMAGE" -ec '
+            echo "check: user is noodlebot, uid 1000, not root"
+            echo "image: $(id -un) $(id -u)"
             [ "$(id -un)" = noodlebot ]; [ "$(id -u)" != 0 ]; [ "$(id -u)" = 1000 ]
+            echo "check: the tools are on PATH"
             for c in bash git gawk python3 gh tmux node claude podman flock; do command -v "$c"; done
             python3 -c "import yaml"
             claude --version
-            [ "$(git -C /opt/noodlebot rev-parse HEAD)" = "$HEAD_SHA" ]
-            git -C /opt/noodlebot tag | grep -q .
-            git -C /opt/noodlebot describe --tags
-            [ "$(git -C /opt/noodlebot remote get-url origin)" = "$REPO_URL" ]
+            echo "check: /opt/noodlebot is at the built commit"
+            got=$(git -C /opt/noodlebot rev-parse HEAD); echo "image: $got runner: $HEAD_SHA"
+            [ "$got" = "$HEAD_SHA" ]
+            echo "check: the tags equal the runner checkout tags"
+            got=$(git -C /opt/noodlebot tag | sort | sha256sum | cut -d" " -f1); echo "image: $got runner: $RUNNER_TAGS"
+            [ "$got" = "$RUNNER_TAGS" ]
+            echo "check: git describe --tags --always equals the runner checkout"
+            got=$(git -C /opt/noodlebot describe --tags --always); echo "image: $got runner: $RUNNER_DESCRIBE"
+            [ "$got" = "$RUNNER_DESCRIBE" ]
+            echo "check: origin is the repository https URL"
+            got=$(git -C /opt/noodlebot remote get-url origin); echo "image: $got runner: $REPO_URL"
+            [ "$got" = "$REPO_URL" ]
+            echo "check: no config folder in the image"
             test ! -e "$HOME/.config/noodlebot"
             test ! -e /opt/noodlebot/.config
           '
@@ -67,24 +84,22 @@ jobs:
           echo dummy > "$work/config/oauth-token"
           chmod 755 "$work" "$work/config" "$work/config/token"
           chmod 644 "$work/config/repos" "$work/config/oauth-token"
-          # The override names the image built above. systempaths=unconfined is for docker only (its masked /proc
-          # paths stop podman nested in the container from mounting a /proc); podman does not need it.
+          # The override names the image built above and nothing else: the other settings are compose.yaml's.
           cat > "$work/override.yaml" <<EOY
           services:
             noodlebot:
               image: $IMAGE
-              security_opt:
-                - systempaths=unconfined
           EOY
           export NOODLEBOT_CONFIG=$work/config
           dc() { docker compose -p nbsmoke -f container/compose.yaml -f "$work/override.yaml" "$@"; }
           nb='$HOME/gitrepos/noodlebot'
+          trap 'echo "smoke start failed: container logs follow"; dc ps -a || true; dc logs --tail 200 || true' EXIT
           waitstatus() {
             for _ in $(seq 120); do
               dc exec -T noodlebot sh -c "$nb/scheduler/loops.sh status" && return 0
               sleep 2
             done
-            dc logs; return 1
+            return 1
           }
           dc up -d
           waitstatus
@@ -103,6 +118,7 @@ jobs:
           [ "$before" = "$after" ]
           echo "commit kept across a stop and a start: $after"
           dc down -v
+          trap - EXIT
       - name: "D06-AC-8: the manifests against the Kubernetes schema"
         run: |
           set -eu

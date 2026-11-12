@@ -61,7 +61,9 @@ Node, the Claude Code CLI with its self-updater off, rootless podman) and a copy
 `.github/workflows/image.yml` builds it from `container/Containerfile` and, on a push to `main`, pushes
 `ghcr.io/<owner>/<name>` (the repository's name in lowercase) tagged with the commit and `latest`. The package's
 visibility is for the owner to set. Build it yourself with
-`podman build -f container/Containerfile --build-arg REPO_URL=https://github.com/<owner>/<name>.git .` from a full clone.
+`podman build -f container/Containerfile --build-arg REPO_URL=https://github.com/<owner>/<name>.git .` from a fresh full clone with its tags (the image's `/opt/noodlebot` is the build context, so its tags and its `.git` come
+from it). `.containerignore` keeps out what `.gitignore` ignores, `out/` and the config folder, but an untracked local file
+would enter a local build: build from a fresh clone.
 
 - **The config folder** is `~/.config/noodlebot` as above: `repos`, the token script `token` (executable), the Claude
   Code credential `oauth-token` and, optionally, `gitconfig`, which `~/.gitconfig` in the container includes so
@@ -95,10 +97,15 @@ visibility is for the owner to set. Build it yourself with
   The image's `/etc/containers/containers.conf` has no cgroup manager, the file events logger and the container's
   network namespace, so nested podman needs no `/dev/net/tun`.
   Host requirements: unprivileged user namespaces allowed (on Ubuntu 24.04, `sysctl kernel.apparmor_restrict_unprivileged_userns=0`),
-  `/dev/fuse`, and a volume filesystem that supports the overlay storage driver (not NFS). Docker also masks parts of
-  `/proc`, which can stop nested podman from mounting its own: if `podman run` fails with a `proc` permission error,
-  add `systempaths=unconfined` to `security_opt` (the image workflow's smoke start does). The image workflow's run of
-  `container/compose.yaml` is the recorded check.
+  `/dev/fuse`, and a volume filesystem that supports the overlay storage driver (not NFS).
+  Docker and Kubernetes also mask parts of `/proc` in the container, which would stop nested podman from mounting a
+  `/proc` of its own. The image's `containers.conf` sets `volumes = ["/proc:/proc"]`, which binds the container's `/proc`
+  into each nested container instead, so neither the compose file nor the pod needs `systempaths=unconfined` or
+  `procMount: Unmasked`.
+  The image workflow's run of `container/compose.yaml` is the recorded check.
+- **Pod Security.** The `Unconfined` seccomp and AppArmor profiles are not allowed below the `privileged` Pod Security
+  level: the `baseline` level rejects them. Put the namespace at `pod-security.kubernetes.io/enforce: privileged`
+  (the pod itself is still not `privileged: true` and mounts no socket).
 - **Deploys and updates.** Code deploys still go through `scheduler/deploy.sh` (D01) inside the container: the checkout on the volume
   is tested, fast-forwarded and re-executed as on the machine. A new image (a new toolchain or Claude Code CLI) takes a
   restart, which stops the running sessions (S04 resumes them). A repository whose builds need more tools gets a derived

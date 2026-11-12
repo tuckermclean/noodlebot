@@ -5,6 +5,8 @@ kind: StatefulSet
 metadata:
   name: noodlebot
 spec:
+  # No Service by this name is made; some API versions require the field.
+  serviceName: noodlebot
   replicas: 1
   selector:
     matchLabels:
