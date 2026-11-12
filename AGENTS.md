@@ -5,6 +5,8 @@ Agent guidance for noodlebot. Architecture and principles are in `SPEC.md`; usag
 ## Where things are
 
 - `scheduler/`: the loop and its helpers, each with a `*.test.sh` next to it; `scheduler/testdata/`.
+- `container/`: the image (`Containerfile`, `entrypoint.sh`), `compose.yaml`, the manifests `k8s/`, their tests and
+  `testdata/`; `.containerignore` and `.github/workflows/image.yml` are its build context rules and CI.
 - `plugin/`: the Claude Code plugin (skills `node` and `triage`, the regime checker).
 - `docs/graph.yaml` and `nodes/`: this repository's planned work, under the graph regime.
 - `.claude/agents/`: this repository's role agents.

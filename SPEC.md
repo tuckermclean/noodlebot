@@ -37,6 +37,9 @@ way.
   `status.sh` (a terminal view), `move-runtime.sh` (the one-time move of an older installation's runtime
   folders to the runtime root), and the session templates `unattended.md` and
   `unattended-triage.md`.
+- `container/`: the image (`Containerfile`, the entrypoint that puts the live checkout on the home volume and starts the
+  loops), `compose.yaml` for one host and `k8s/` for a cluster (one replica), with `.containerignore` and the image
+  workflow `.github/workflows/image.yml`.
 - `plugin/`: the Claude Code plugin every session loads (`--plugin-dir`): the skills
   `/noodlebot:node` (build a node) and `/noodlebot:triage` (fit an issue into the graph), and the graph
   regime's spec checker `plugin/skills/node/check-regime.py`.

@@ -1,0 +1,10 @@
+# Docker build-context rules (podman and buildah read this file too): the context is the repository's tracked
+# files and its .git, nothing else. Nothing from ~/.config/noodlebot/ and no untracked work file reaches the image.
+# What .gitignore ignores:
+/repos
+/worktrees
+/state
+**/__pycache__
+# Untracked work files and credentials:
+out
+.config/noodlebot

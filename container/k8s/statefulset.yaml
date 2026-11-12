@@ -1,0 +1,54 @@
+# One noodlebot scheduler: exactly one replica per runtime root (the claim below). No Service: the API is a Unix
+# socket on the volume (kubectl exec ... nbctl). The Secret noodlebot-config is created by hand and is not here.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: noodlebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noodlebot
+  template:
+    metadata:
+      labels:
+        app: noodlebot
+    spec:
+      # Longer than loops.sh stop's 300 s wait.
+      terminationGracePeriodSeconds: 330
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        seccompProfile:
+          type: Unconfined
+      containers:
+        - name: noodlebot
+          image: ghcr.io/owner/name:latest
+          securityContext:
+            privileged: false
+            # newuidmap and newgidmap are setuid: rootless podman nested in the pod needs them to work.
+            allowPrivilegeEscalation: true
+            appArmorProfile:
+              type: Unconfined
+          volumeMounts:
+            - name: home
+              mountPath: /home/noodlebot
+            - name: config
+              mountPath: /home/noodlebot/.config/noodlebot
+              readOnly: true
+      volumes:
+        - name: config
+          secret:
+            secretName: noodlebot-config
+            # r-x for owner and group: the files are group fsGroup (noodlebot's group), and the token script is run.
+            defaultMode: 0550
+  volumeClaimTemplates:
+    - metadata:
+        name: home
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 20Gi

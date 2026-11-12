@@ -1,0 +1,23 @@
+# noodlebot on one host (D06): `docker compose -f container/compose.yaml up -d` or `podman compose -f ...`.
+# Replace owner/name below with the repository the image is built from (ghcr.io/<owner>/<name>, lowercase), or
+# add an override file that names the image. The config folder (repos, token, oauth-token, optional gitconfig)
+# is the host's ~/.config/noodlebot, or the folder in $NOODLEBOT_CONFIG; it is mounted read-only.
+# The settings under devices and security_opt are what rootless podman nested in this container needs
+# (README, section "Container"); the container is not privileged and mounts no container-runtime socket.
+services:
+  noodlebot:
+    image: ghcr.io/owner/name:latest
+    restart: unless-stopped
+    # Longer than loops.sh stop's 300 s wait.
+    stop_grace_period: 330s
+    volumes:
+      - noodlebot-home:/home/noodlebot
+      - ${NOODLEBOT_CONFIG:-~/.config/noodlebot}:/home/noodlebot/.config/noodlebot:ro
+    devices:
+      - /dev/fuse
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+      - apparmor=unconfined
+volumes:
+  noodlebot-home:

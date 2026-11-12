@@ -1,0 +1,149 @@
+# The container image (D06): on a pull request that changes container/, .containerignore or this file, and on
+# every push to main: build container/Containerfile with podman (which honours .containerignore), check the image
+# (the user, the tools, the copy of noodlebot, make test inside it), smoke-start it with container/compose.yaml
+# (loops.sh status, nested podman, a commit kept across a stop and a start) and validate container/k8s/ against the
+# Kubernetes schema. Only a push to main then pushes ghcr.io/<owner>/<name>, from the push job, with GITHUB_TOKEN.
+name: image
+on:
+  pull_request:
+    paths:
+      - 'container/**'
+      - '.containerignore'
+      - '.github/workflows/image.yml'
+  push:
+    branches: [main]
+permissions:
+  contents: read
+env:
+  IMAGE: localhost/noodlebot:ci
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      # A full clone with its tags: the build context becomes /opt/noodlebot in the image.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: "Host: allow nested user namespaces"
+        # Ubuntu 24.04 restricts unprivileged user namespaces by AppArmor; rootless podman in the container needs them.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build the image
+        env:
+          REPO_URL: https://github.com/${{ github.repository }}.git
+        run: sudo podman build -f container/Containerfile -t "$IMAGE" --build-arg "REPO_URL=$REPO_URL" .
+      - name: Load the image into docker (the smoke start runs it with docker compose)
+        run: sudo podman save "$IMAGE" | docker load
+      - name: "D06-AC-1, D06-AC-2: checks inside the image"
+        env:
+          REPO_URL: https://github.com/${{ github.repository }}.git
+        run: |
+          set -eu
+          head=$(git rev-parse HEAD)
+          docker run --rm --entrypoint bash -e "HEAD_SHA=$head" -e "REPO_URL=$REPO_URL" "$IMAGE" -ec '
+            [ "$(id -un)" = noodlebot ]; [ "$(id -u)" != 0 ]; [ "$(id -u)" = 1000 ]
+            for c in bash git gawk python3 gh tmux node claude podman flock; do command -v "$c"; done
+            python3 -c "import yaml"
+            claude --version
+            [ "$(git -C /opt/noodlebot rev-parse HEAD)" = "$HEAD_SHA" ]
+            git -C /opt/noodlebot tag | grep -q .
+            git -C /opt/noodlebot describe --tags
+            [ "$(git -C /opt/noodlebot remote get-url origin)" = "$REPO_URL" ]
+            test ! -e "$HOME/.config/noodlebot"
+            test ! -e /opt/noodlebot/.config
+          '
+      - name: "D06-AC-1: make test inside the image"
+        run: |
+          docker run --rm --entrypoint bash \
+            -e SITE_TESTS=required -e TEST_BUDGET_ENFORCE=1 -e TEST_FILE_BUDGET=60 -e TEST_BUDGET=360 \
+            "$IMAGE" -ec 'git clone -q /opt/noodlebot /tmp/nb && cd /tmp/nb && make test'
+      - name: "D06-AC-6: smoke start with container/compose.yaml"
+        run: |
+          set -eu
+          work=$RUNNER_TEMP/smoke
+          mkdir -p "$work/config"
+          : > "$work/config/repos"
+          printf '#!/bin/sh\necho dummy-token\n' > "$work/config/token"
+          echo dummy > "$work/config/oauth-token"
+          chmod 755 "$work" "$work/config" "$work/config/token"
+          chmod 644 "$work/config/repos" "$work/config/oauth-token"
+          # The override names the image built above. systempaths=unconfined is for docker only (its masked /proc
+          # paths stop podman nested in the container from mounting a /proc); podman does not need it.
+          cat > "$work/override.yaml" <<EOY
+          services:
+            noodlebot:
+              image: $IMAGE
+              security_opt:
+                - systempaths=unconfined
+          EOY
+          export NOODLEBOT_CONFIG=$work/config
+          dc() { docker compose -p nbsmoke -f container/compose.yaml -f "$work/override.yaml" "$@"; }
+          nb='$HOME/gitrepos/noodlebot'
+          waitstatus() {
+            for _ in $(seq 120); do
+              dc exec -T noodlebot sh -c "$nb/scheduler/loops.sh status" && return 0
+              sleep 2
+            done
+            dc logs; return 1
+          }
+          dc up -d
+          waitstatus
+          cid=$(dc ps -q noodlebot)
+          [ "$(docker inspect -f '{{.HostConfig.Privileged}}' "$cid")" = false ]
+          if docker inspect -f '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$cid" | grep -E '\.sock|^/(var/)?run(/|$)'; then
+            echo "a socket is mounted"; exit 1
+          fi
+          dc exec -T noodlebot sh -c '[ "$(id -u)" != 0 ] && podman run --rm quay.io/podman/hello'
+          dc exec -T noodlebot sh -c "git -C $nb -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m smoke"
+          before=$(dc exec -T noodlebot sh -c "git -C $nb rev-parse HEAD")
+          dc stop
+          dc up -d
+          waitstatus
+          after=$(dc exec -T noodlebot sh -c "git -C $nb rev-parse HEAD")
+          [ "$before" = "$after" ]
+          echo "commit kept across a stop and a start: $after"
+          dc down -v
+      - name: "D06-AC-8: the manifests against the Kubernetes schema"
+        run: |
+          set -eu
+          d=$(mktemp -d)
+          curl -fsSL -o "$d/kubeconform.tar.gz" https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  $d/kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf "$d/kubeconform.tar.gz" -C "$d" kubeconform
+          kubectl kustomize container/k8s | "$d/kubeconform" -strict -summary -
+      - name: Save the tested image for the push job
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: sudo podman save "$IMAGE" | gzip -1 > "$RUNNER_TEMP/image.tar.gz"
+      - name: Upload the tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image
+          path: ${{ runner.temp }}/image.tar.gz
+          compression-level: 0
+          retention-days: 1
+  push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image
+          path: ${{ runner.temp }}
+      - name: Push ghcr.io/<owner>/<name> tagged with the commit and latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          repo=${GITHUB_REPOSITORY,,}
+          podman load -i "$RUNNER_TEMP/image.tar.gz"
+          podman tag "$IMAGE" "ghcr.io/$repo:$GITHUB_SHA"
+          podman tag "$IMAGE" "ghcr.io/$repo:latest"
+          printf '%s' "$GITHUB_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          podman push "ghcr.io/$repo:$GITHUB_SHA"
+          podman push "ghcr.io/$repo:latest"

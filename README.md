@@ -54,6 +54,56 @@ resolving it is merged and no unit whose home it is has a question open (or answ
 follow-up in progress, and reopens it when a unit whose home it is asks a new question. A question shows on the status issue
 as a short pointer to its comment on the home issue.
 
+## Container
+
+noodlebot also runs as one container: the image holds the toolchain (bash, git, gawk, python3 with PyYAML, `gh`, tmux,
+Node, the Claude Code CLI with its self-updater off, rootless podman) and a copy of noodlebot in `/opt/noodlebot`.
+`.github/workflows/image.yml` builds it from `container/Containerfile` and, on a push to `main`, pushes
+`ghcr.io/<owner>/<name>` (the repository's name in lowercase) tagged with the commit and `latest`. The package's
+visibility is for the owner to set. Build it yourself with
+`podman build -f container/Containerfile --build-arg REPO_URL=https://github.com/<owner>/<name>.git .` from a full clone.
+
+- **The config folder** is `~/.config/noodlebot` as above: `repos`, the token script `token` (executable), the Claude
+  Code credential `oauth-token` and, optionally, `gitconfig`, which `~/.gitconfig` in the container includes so
+  that sessions commit with your identity. It is never part of the image; the container mounts it read-only, so
+  nothing may write into it. The user in the container is `noodlebot`, uid 1000: the folder and the token script
+  must be readable and executable for that uid.
+- **One host:** `container/compose.yaml` has one service, a named volume `noodlebot-home` at `/home/noodlebot`, the config
+  folder (`$NOODLEBOT_CONFIG`, default `~/.config/noodlebot`) read-only at `/home/noodlebot/.config/noodlebot`,
+  `restart: unless-stopped`, a stop grace period of 330 s (longer than `loops.sh stop`'s 300 s wait) and no published
+  port. Name your image in it (`ghcr.io/owner/name:latest`) or in an override file, then
+  `docker compose -f container/compose.yaml up -d` or `podman compose -f container/compose.yaml up -d`.
+- **A cluster:** `container/k8s/` holds a `kustomization.yaml` and a StatefulSet. Create the Secret by hand from the
+  config folder, `kubectl create secret generic noodlebot-config --from-file=$HOME/.config/noodlebot`, then
+  `kubectl apply -k container/k8s`. The Secret is mounted read-only with mode `0550` (the files belong to the pod's
+  `fsGroup`, which `noodlebot` is in, so it can run the token script). The `images:` entry of the kustomization names
+  another image. There is no Service: the API is a Unix socket on the volume (`kubectl exec ... nbctl`).
+- **One replica per runtime root.** The StatefulSet has `replicas: 1` and the volume is the runtime root
+  (`~/.local/share/noodlebot`) with the live checkout: one replica takes it, and two schedulers, or the container and
+  the machine's own loops, on the same `repos` start every session twice. Never scale it up.
+- **Nested rootless podman.** Sessions run `podman` as `noodlebot`, with no container-runtime socket mounted and
+  without `--privileged`. For that the compose file and the manifests carry these settings:
+  - `/dev/fuse` (compose `devices`): the storage driver is fuse-overlayfs. Kubernetes has no device field: the cluster
+    needs a FUSE device plugin that offers `/dev/fuse` to the pod, or set `STORAGE_DRIVER=vfs` (slow, no device).
+  - `label=disable` (compose `security_opt`): SELinux does not confine the container, which lets nested podman mount.
+  - `seccomp=unconfined` (compose `security_opt`) and `seccompProfile: Unconfined` (the pod's `securityContext`): the
+    default profile blocks the `mount` and `unshare` calls that creating a user namespace needs.
+  - `apparmor=unconfined` (compose `security_opt`) and `appArmorProfile: Unconfined` (the container's `securityContext`):
+    the same, for AppArmor hosts.
+  - `allowPrivilegeEscalation: true`: `newuidmap` and `newgidmap` are setuid, and map the user's 65536 subordinate ids
+    (the same range as `quay.io/podman/stable`, so it also works when the outer container is itself rootless).
+  The image's `/etc/containers/containers.conf` has no cgroup manager, the file events logger and the container's
+  network namespace, so nested podman needs no `/dev/net/tun`.
+  Host requirements: unprivileged user namespaces allowed (on Ubuntu 24.04, `sysctl kernel.apparmor_restrict_unprivileged_userns=0`),
+  `/dev/fuse`, and a volume filesystem that supports the overlay storage driver (not NFS). Docker also masks parts of
+  `/proc`, which can stop nested podman from mounting its own: if `podman run` fails with a `proc` permission error,
+  add `systempaths=unconfined` to `security_opt` (the image workflow's smoke start does). The image workflow's run of
+  `container/compose.yaml` is the recorded check.
+- **Deploys and updates.** Code deploys still go through `scheduler/deploy.sh` (D01) inside the container: the checkout on the volume
+  is tested, fast-forwarded and re-executed as on the machine. A new image (a new toolchain or Claude Code CLI) takes a
+  restart, which stops the running sessions (S04 resumes them). A repository whose builds need more tools gets a derived
+  image: `FROM ghcr.io/<owner>/<name>` plus the tools, and its own `ENTRYPOINT` left alone.
+
 ## Status site
 
 The loop can publish a status site for the repositories it watches. The files are sent to a public gist you make once by hand;

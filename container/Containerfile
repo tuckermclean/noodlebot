@@ -1,0 +1,48 @@
+# The noodlebot image (D06): the toolchain the loops and `make test` use, rootless podman for the containers
+# sessions run, and a copy of noodlebot at /opt/noodlebot. The entrypoint puts the live checkout on the home
+# volume on the first start; from then on D01 deploys inside the container.
+#   podman build -f container/Containerfile --build-arg REPO_URL=https://github.com/<owner>/<name>.git .
+# The build context is a full clone with its tags (.containerignore keeps all but tracked files and .git out).
+FROM debian:trixie-slim
+
+# The repository's https URL: the image copy's `origin`, and so the checkout's.
+ARG REPO_URL
+# The Claude Code CLI version, pinned; its self-updater is off, a new version is a new image.
+ARG CLAUDE_CODE_VERSION=2.1.322
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash git gawk python3 python3-yaml gh tmux util-linux procps make ca-certificates curl file jq \
+      nodejs npm \
+      podman uidmap fuse-overlayfs slirp4netns passt crun \
+ && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/* /root/.npm
+
+# noodlebot: uid 1000 (the manifests' runAsUser). Its subordinate ids fit a 65536-id user namespace (1-999 and
+# 1001-65535 inside), so rootless podman works nested in an outer container that is itself rootless.
+# newuidmap and newgidmap are setuid root so that the nested user namespace can map those ids.
+RUN useradd -u 1000 -m -d /home/noodlebot -s /bin/bash noodlebot \
+ && printf 'noodlebot:1:999\nnoodlebot:1001:64535\n' > /etc/subuid \
+ && cp /etc/subuid /etc/subgid \
+ && chmod 4755 /usr/bin/newuidmap /usr/bin/newgidmap \
+ && install -d -o noodlebot -g noodlebot /home/noodlebot/.local/share/containers
+
+# Nested rootless podman: no cgroup manager (the outer container's cgroup is not ours), the file events logger,
+# the host network namespace of the outer container (no /dev/net/tun needed), fuse-overlayfs as the storage driver.
+COPY container/containers.conf /etc/containers/containers.conf
+COPY container/storage.conf /etc/containers/storage.conf
+
+# noodlebot at the built commit, with its tags, owned by root; origin is the repository's https URL.
+COPY . /opt/noodlebot
+RUN : "${REPO_URL:?build with --build-arg REPO_URL=<the repository https URL>}" \
+ && git -C /opt/noodlebot remote set-url origin "$REPO_URL" \
+ && printf '[safe]\n\tdirectory = /opt/noodlebot/.git\n\tdirectory = /opt/noodlebot\n' >> /etc/gitconfig
+
+ENV HOME=/home/noodlebot \
+    DISABLE_AUTOUPDATER=1 \
+    SITE_TESTS=required
+USER noodlebot
+WORKDIR /home/noodlebot
+ENTRYPOINT ["/opt/noodlebot/container/entrypoint.sh"]

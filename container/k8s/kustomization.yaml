@@ -1,0 +1,10 @@
+# kubectl apply -k container/k8s   (README, section "Container")
+# Create the Secret first, from the config folder: kubectl create secret generic noodlebot-config --from-file=...
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - statefulset.yaml
+# Name another image here (or: kustomize edit set image ghcr.io/owner/name=<image>:<tag>).
+images:
+  - name: ghcr.io/owner/name
+    newTag: latest
