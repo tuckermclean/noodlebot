@@ -27,7 +27,7 @@ DATA/state/starts.lock, and files are replaced atomically, so two loops asking a
             OWNER/NAME; the part after the last "/" is the folder). Prints
             "<N> ahead, waited <H>h<MM>m, gap passed|gap not passed", N being the units before KEY in the
             order ask uses (live loops only, given-back units not counted), or "not waiting" when KEY is not in
-            this loop's live list. It creates nothing and writes nothing (a shared flock on starts.lock when
+            this loop's live list, was given back (until the next list), or there is no state folder. It creates nothing and writes nothing (a shared flock on starts.lock when
             that exists), so it works on a read-only state folder.
 
 Order: units that waited more than the starvation limit (--starve, SCHED_STARVE, 21600 s) first, the
@@ -193,10 +193,13 @@ def ask(state, repo, now, args):
 
 
 def place(state, repo, now, key, args):
-    lists = live_lists(state, now)
+    try:
+        lists = live_lists(state, now)
+    except OSError:
+        return "not waiting"  # no state folder (read-only: nothing is created)
     d = lists.get(repo)
-    if d is None or not any(u["key"] == key for u in d["units"]):
-        return "not waiting"
+    if d is None or key in d.get("gaveback", []) or not any(u["key"] == key for u in d["units"]):
+        return "not waiting"  # a given-back key gets no turn from ask, so it is not waiting
     gap = start_gap(lists, args)
     starve = args.starve
     if starve is None:
