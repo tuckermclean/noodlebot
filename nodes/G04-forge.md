@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G02, G03 | R02 | L |
+| now | G02, G03 | R02, S09 | L |
 
 **Owns:** `scheduler/forge.py` (the forge interface, its CLI, backend selection, the capability rule), `scheduler/forge.test.sh` (the conformance suite) and its line in the `Makefile`'s `test` target; `scheduler/forges/` (the GitHub backend `github.py` with the token script call, gist publishing and the GitHub web and clone URLs; `README.md`, the operation table across forges); the fake forge and its fixtures `scheduler/testdata/forge/`; `scheduler/agnostic.test.sh` (the forge rules of the core check) and its line in the `Makefile`'s `test` target; every forge call and forge URL in core code, converted to the interface: in `scheduler/loop.sh` (the loop's `[<forge>:]<path>` argument, the clone, the PR lists, the visibility record, the token fetches, G02's update step and G03's feedback step), `scheduler/report.py`, `scheduler/issues.py`, `scheduler/labels.py`, `scheduler/feedback.py`, `scheduler/site.py`, `scheduler/api.py`, `scheduler/nbctl.py`, `scheduler/status.sh`, `scheduler/version.sh`, `scheduler/loops.sh` (passing the argument through) and `plugin/skills/triage/nodes.py`; the export of the forge CLI to sessions in `scheduler/run-session.sh`; the forge part of the README's usage; their cases in the existing `*.test.sh` files.
 **Resolves:** #84

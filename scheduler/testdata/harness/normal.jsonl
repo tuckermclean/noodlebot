@@ -1,0 +1,12 @@
+{"type":"system","subtype":"init","session_id":"sess-norm-1","timestamp":"2026-11-09T09:00:00Z"}
+{"type":"system","subtype":"hook_started","timestamp":"2026-11-09T09:00:00Z"}
+{"type":"rate_limit_event","timestamp":"2026-11-09T09:00:01Z","rate_limit_info":{"status":"allowed","resetsAt":1795000000,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.25,"resetsAt":1795000000,"status":"allowed"},"seven_day":{"utilization":0.4,"resetsAt":1795400000,"status":"allowed"}}}}
+{"type":"assistant","timestamp":"2026-11-09T09:00:02Z","message":{"content":[{"type":"text","text":"Reading  the spec\nfirst."}]}}
+{"type":"assistant","timestamp":"2026-11-09T09:00:03Z","message":{"content":[{"type":"tool_use","id":"toolu_a1","name":"Bash","input":{"command":"git status\nmore","description":"Check the tree"}}]}}
+{"type":"user","timestamp":"2026-11-09T09:00:04Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a1","content":"clean"}]}}
+{"type":"assistant","timestamp":"2026-11-09T09:00:05Z","message":{"content":[{"type":"tool_use","id":"toolu_a2","name":"Agent","input":{"description":"Review the slice","prompt":"look"}}]}}
+{"type":"assistant","timestamp":"2026-11-09T09:00:06Z","parent_tool_use_id":"toolu_a2","message":{"content":[{"type":"tool_use","id":"toolu_s1","name":"Read","input":{"file_path":"/x/y.md"}}]}}
+{"type":"user","timestamp":"2026-11-09T09:00:07Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a2","content":[{"type":"text","text":"reviewed"}]}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_a3","name":"Skill","input":{"skill":"noodlebot:node"}}]}}
+{"type":"assistant","timestamp":"2026-11-09T09:00:09Z","message":{"content":[{"type":"tool_use","id":"toolu_a4","name":"ScheduleWakeup","input":{"delaySeconds":600,"reason":"wait for CI"}}]}}
+{"type":"result","subtype":"success","timestamp":"2026-11-09T09:00:10Z","result":"  All done.  ","total_cost_usd":1.25,"num_turns":12,"is_error":false}

@@ -46,6 +46,9 @@ import time
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+sys.path.insert(0, HERE)
+import harness   # the one interface to the agent harness (S08)
 URL = re.compile(r"https?://[^\s<>\"')\]]+")
 PATH = re.compile(r"(?<![\w.~-])/[\w.@+-]+(?:/[\w.@+-]*)+")
 TOKEN = re.compile(r"(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|sk-ant-)[\w-]*")
@@ -162,8 +165,7 @@ def alive(pidfile, key):
             cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
     except (OSError, ValueError, OverflowError):
         return False
-    k = re.escape(key)
-    return bool(re.search(r"run-session\.sh .* %s( |$)|claude -p /node %s( |$)" % (k, k), cmd))
+    return harness.matches(cmd, key)
 
 
 def git_show(clone, spec):

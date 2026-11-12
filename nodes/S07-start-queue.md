@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | T01, S06 | D05 | M |
+| now | T01, S06 | D05, U03 | M |
 
 **Owns:** `scheduler/turn.py`, `scheduler/turn.test.sh`, its line in the `Makefile`'s `test` target; in `scheduler/loop.sh`: the waiting records, the list of units waiting to start, the turn taken before each start (a node, follow-up, triage or update start, and S06's resume), the turn in the start's status-log event, the settings `SCHED_RAMP`, `SCHED_START_GAP` and `SCHED_STARVE` and their lines in the header comment; in `scheduler/loop.test.sh`: the `SCHED_RAMP=0` export that keeps the existing runs as they are, and the start-queue run.
 **Resolves:** #55

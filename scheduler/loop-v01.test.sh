@@ -14,6 +14,7 @@ export V01 V01_CLONE
 mkdir -p "$nbv/scheduler" "$nbv/plugin" "$datav/repos" "$statev/node" "$V01" "$tmp/bin5"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$src"/usage.py "$nbv/scheduler/"
+[ -f "$src/harness.py" ] && { mkdir -p "$nbv/scheduler/harnesses"; cp "$src/harness.py" "$nbv/scheduler/"; cp "$src"/harnesses/*.py "$nbv/scheduler/harnesses/"; }
 [ -f "$src/version.sh" ] && cp "$src/version.sh" "$nbv/scheduler/"
 touch "$nbv/plugin/.keep"
 git init -q -b main "$nbv"
