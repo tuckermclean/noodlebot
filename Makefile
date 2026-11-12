@@ -69,6 +69,7 @@ TESTS = \
 	scheduler/loop-g03-question.test.sh \
 	scheduler/loop-g03-slot.test.sh \
 	scheduler/loop-g03-update.test.sh \
+	scheduler/loop-g03-nodeupdate.test.sh \
 	scheduler/loop-g03-throttle.test.sh \
 	scheduler/loop-g03-max.test.sh \
 	scheduler/loop-g03-queue.test.sh \
