@@ -174,7 +174,8 @@ for job in (d.get("jobs") or {}).values():
 for kv in TEST_BUDGET_ENFORCE=1 TEST_FILE_BUDGET=60 TEST_BUDGET=360 SITE_TESTS=required; do
 	if printf '%s\n' "$got" | grep -Fqx "$kv"; then pass "D03-AC-5: test.yml make test step sets $kv"; else fail "D03-AC-5: test.yml make test step sets $kv"; fi
 done
-hasnt "D03-AC-5: scheduler/deploy.sh sets none of TEST_BUDGET_ENFORCE, TEST_FILE_BUDGET, TEST_BUDGET, TEST_JOBS" "$src/deploy.sh" 'TEST_(BUDGET|FILE_BUDGET|JOBS)'
+hasnt "D03-AC-5: scheduler/deploy.sh sets none of TEST_BUDGET_ENFORCE, TEST_FILE_BUDGET, TEST_BUDGET" "$src/deploy.sh" 'TEST_(BUDGET|FILE_BUDGET)'
+if grep -E 'TEST_JOBS' "$src/deploy.sh" | grep -Eqv 'TEST_JOBS=1([^0-9]|$)'; then fail "D03-AC-5/D04-AC-4: scheduler/deploy.sh sets TEST_JOBS only to 1 (D04's rerun)"; else pass "D03-AC-5/D04-AC-4: scheduler/deploy.sh sets TEST_JOBS only to 1 (D04's rerun)"; fi
 
 # D04-AC-4: "FAILED <file>" right after the TIME line of each file that exited non-zero, none for a passing file.
 # $m (the sequential run: bad, ok, slow) has one failing file; a second run has two failing files at TEST_JOBS=2.

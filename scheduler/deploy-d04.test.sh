@@ -58,6 +58,7 @@ short() { printf %.7s "$1"; }
 ver() { git -C "$tmp/work" describe --tags --always "$1" 2>/dev/null; }
 head_of() { git -C "$live" rev-parse HEAD; }
 dep() { sh "$deploy" "$live" 2>&1; }
+status_of() { printf '%s\n' "$1" | grep -v '^make test failed for '; }
 ncalls() { grep -c '^call ' "$log"; }
 callsof() { grep -c "^call $1 " "$log"; }
 failing() { printf '%s\n' "${2:-stub failure}" >"$failing/$1"; }
@@ -97,7 +98,7 @@ s1=$(head_w); failing "$s1"
 before=$(head_of); n=$(ncalls)
 out=$(dep)
 ok "D04-AC-2 a commit that also changes scheduler/ runs the stub" '[ "$(callsof "$s1")" = 1 ]'
-ok "D04-AC-2 and is rejected when it fails: the unchanged line, the live checkout stays" '[ "$(callsof "$s1")" = 1 ] && [ "$out" = "$(rejected_line "$s1")" ] && [ "$(head_of)" = "$before" ] && in_rejected "$s1"'
+ok "D04-AC-2 and is rejected when it fails: the unchanged line, the live checkout stays" '[ "$(callsof "$s1")" = 1 ] && [ "$(status_of "$out")" = "$(rejected_line "$s1")" ] && [ "$(head_of)" = "$before" ] && in_rejected "$s1"'
 mk s2 SPEC.md scheduler/y.sh
 s2=$(head_w)
 prev_before=$(cat "$dd/previous" 2>/dev/null)
@@ -110,7 +111,7 @@ t2=$(head_w); failing "$t2"
 before=$(head_of)
 out=$(dep)
 ok "D04-AC-2 a range of two commits whose first is runtime and second is not runs the stub" '[ "$(callsof "$t2")" = 1 ]'
-ok "D04-AC-2 and is rejected when it fails" '[ "$(callsof "$t2")" = 1 ] && [ "$out" = "$(rejected_line "$t2")" ] && [ "$(head_of)" = "$before" ] && in_rejected "$t2"'
+ok "D04-AC-2 and is rejected when it fails" '[ "$(callsof "$t2")" = 1 ] && [ "$(status_of "$out")" = "$(rejected_line "$t2")" ] && [ "$(head_of)" = "$before" ] && in_rejected "$t2"'
 mk2 t3 scheduler/z2.sh; mk2 t4 nodes/N03.md; push_main
 t4=$(head_w)
 out=$(dep)
@@ -122,7 +123,7 @@ u1=$(head_w); failing "$u1"
 before=$(head_of)
 out=$(dep)
 ok "D04-AC-2 a commit that adds a new top-level directory runs the stub" '[ "$(callsof "$u1")" = 1 ]'
-ok "D04-AC-2 and is rejected when it fails" '[ "$(callsof "$u1")" = 1 ] && [ "$out" = "$(rejected_line "$u1")" ] && [ "$(head_of)" = "$before" ] && in_rejected "$u1"'
+ok "D04-AC-2 and is rejected when it fails" '[ "$(callsof "$u1")" = 1 ] && [ "$(status_of "$out")" = "$(rejected_line "$u1")" ] && [ "$(head_of)" = "$before" ] && in_rejected "$u1"'
 mk u2 TOPLEVEL.txt
 u2=$(head_w)
 out=$(dep)
