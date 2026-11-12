@@ -16,6 +16,7 @@ TESTS = \
 	scheduler/report-first-deploy.test.sh \
 	scheduler/report-review.test.sh \
 	scheduler/report-regress.test.sh \
+	scheduler/report-g02.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
@@ -71,6 +72,20 @@ TESTS = \
 	scheduler/loop-d02.test.sh \
 	scheduler/loop-s04-unusual.test.sh \
 	scheduler/loop-g01-list.test.sh \
+	scheduler/loop-g02.test.sh \
+	scheduler/loop-g02-end.test.sh \
+	scheduler/loop-g02-limit.test.sh \
+	scheduler/loop-g02-question.test.sh \
+	scheduler/loop-g02-max.test.sh \
+	scheduler/loop-g02-node.test.sh \
+	scheduler/loop-g02-unpushed.test.sh \
+	scheduler/loop-g02-commit.test.sh \
+	scheduler/loop-g02-cap.test.sh \
+	scheduler/loop-g02-review.test.sh \
+	scheduler/loop-g02-review2.test.sh \
+	scheduler/loop-g02-review3.test.sh \
+	scheduler/loop-g02-gone.test.sh \
+	scheduler/loop-g02-gone2.test.sh \
 	scheduler/loop-s06-review.test.sh \
 	scheduler/loop-s02.test.sh \
 	scheduler/loop-v01.test.sh \
@@ -93,6 +108,7 @@ TESTS = \
 	scheduler/move-runtime.test.sh \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
+	plugin/skills/node/skill.test.sh \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	site/site.test.sh \
