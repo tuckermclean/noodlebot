@@ -239,6 +239,7 @@ pr_tsvs() {
 	python3 -I -c '
 import json, os, sys
 here, repo, state, open_limit = sys.argv[1:5]
+sys.dont_write_bytecode = True   # the checkout gets no __pycache__
 sys.path.insert(0, here)
 import forge
 def s(v):
