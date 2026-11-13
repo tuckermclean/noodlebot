@@ -34,6 +34,7 @@ warnings during a publish go to DIR/site/build.log; a fatal build error is the o
 import argparse
 import collections
 import fcntl
+import glob
 import hashlib
 import json
 import math
@@ -118,37 +119,81 @@ def jdump(obj):
 
 # ---- the loop's facts
 
+_NESTED_PIDNS = []
+INIT_PIDNS = "pid:[4026531836]"  # the kernel's fixed name of the initial pid namespace (PROC_PID_INIT_INO)
+
+
+def scan_fdinfo():
+    """Whether held() may scan /proc/<pid>/fdinfo after a /proc/locks miss: under NOODLEBOT_PROC_LOCKS
+    (tests), or outside the initial pid namespace (/proc/self/ns/pid is not INIT_PIDNS; unreadable:
+    unknown, so yes). NSpid in /proc/self/status cannot tell: a /proc mounted inside the namespace shows
+    one pid. In the initial namespace /proc/locks lists every lock, so the scan could find nothing and
+    would only cost (thousands of fds). Computed once."""
+    if os.environ.get("NOODLEBOT_PROC_LOCKS"):
+        return True
+    if not _NESTED_PIDNS:
+        try:
+            _NESTED_PIDNS.append(os.readlink("/proc/self/ns/pid") != INIT_PIDNS)
+        except OSError:
+            _NESTED_PIDNS.append(True)
+    return _NESTED_PIDNS[0]
+
+
 def held(lockfile):
-    """Some process holds a lock on the file, as /proc/locks shows it (as loops.sh held() reads it)."""
+    """Some process holds a lock on the file, as /proc/locks shows it (as loops.sh held() reads it).
+    NOODLEBOT_PROC_LOCKS names the file read instead (tests only); with no line there, the lock lines
+    in /proc/<pid>/fdinfo/<fd> of the fds with the file's inode are tried, only where scan_fdinfo() says
+    so (not in the initial pid namespace, whose /proc/locks lists every lock: the scan would be pure cost)."""
     try:
         st = os.stat(lockfile)
-        with open("/proc/locks", encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
     except OSError:
         return False
     dev = "%d:%d" % (os.major(st.st_dev), os.minor(st.st_dev))
-    mdev = None
-    for line in lines:
-        w = line.split()
-        if len(w) < 6 or w[1] == "->":
-            continue
-        ldev, _, lino = w[5].rpartition(":")
-        if lino != str(st.st_ino):
-            continue
-        try:
-            a, b = ldev.split(":")
-            ldev = "%d:%d" % (int(a, 16), int(b, 16))
-        except ValueError:
-            continue
-        if ldev == dev:
-            return True
-        if mdev is None:
+    mdev = []
+
+    def match(lines):
+        for line in lines:
+            w = line.split()
+            if len(w) < 6 or w[1] == "->":
+                continue
+            ldev, _, lino = w[5].rpartition(":")
+            if lino != str(st.st_ino):
+                continue
             try:
-                r = subprocess.run(["findmnt", "-n", "-o", "MAJ:MIN", "-T", lockfile], capture_output=True, text=True)
-                mdev = r.stdout.replace(" ", "").strip() or "none"
-            except OSError:
-                mdev = "none"
-        if ldev == mdev:
+                a, b = ldev.split(":")
+                ldev = "%d:%d" % (int(a, 16), int(b, 16))
+            except ValueError:
+                continue
+            if ldev == dev:
+                return True
+            if not mdev:
+                try:
+                    r = subprocess.run(["findmnt", "-n", "-o", "MAJ:MIN", "-T", lockfile], capture_output=True, text=True)
+                    mdev.append(r.stdout.replace(" ", "").strip() or "none")
+                except OSError:
+                    mdev.append("none")
+            if ldev == mdev[0]:
+                return True
+        return False
+
+    try:
+        with open(os.environ.get("NOODLEBOT_PROC_LOCKS") or "/proc/locks", encoding="utf-8", errors="replace") as f:
+            if match(f.read().splitlines()):
+                return True
+    except OSError:
+        return False
+    if not scan_fdinfo():
+        return False
+    want = "ino:\t%d" % st.st_ino
+    for fi in glob.iglob("/proc/[0-9]*/fdinfo/*"):
+        try:
+            with open(fi, encoding="utf-8", errors="replace") as f:
+                t = f.read()
+        except OSError:
+            continue
+        if want not in t.splitlines():
+            continue
+        if match(l[5:] for l in t.splitlines() if l.startswith("lock:")):
             return True
     return False
 

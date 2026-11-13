@@ -107,6 +107,7 @@ TESTS = \
 	scheduler/loops-status.test.sh \
 	scheduler/loops-s08.test.sh \
 	scheduler/loops-api.test.sh \
+	scheduler/loops-pidns.test.sh \
 	scheduler/api.test.sh \
 	scheduler/api-sessions.test.sh \
 	scheduler/api-events.test.sh \
@@ -123,7 +124,9 @@ TESTS = \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	site/site.test.sh \
-	scheduler/runtests.test.sh
+	scheduler/runtests.test.sh \
+	container/entrypoint.test.sh \
+	container/container.test.sh
 
 test:
 	sh scheduler/runtests.sh $(TESTS)
