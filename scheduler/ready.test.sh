@@ -117,5 +117,31 @@ check "S03-AC-1: --all: an unmerged answered node keeps its plain line, before a
 answered
 check "S03-AC-1: without --all only the first ready line is printed (the followup)" "A02 second-node followup" --merged A01 --merged A02 --merged A03
 
+# G05: a spec PR closed without merging (--closed-prs) releases its WAITING-PR like a merged one; SPEC-PR-SCOPE resumes.
+G05=$tmp/G05; mkdir -p "$G05"; printf '%s\n' 33 >"$G05/closed"
+reset; mkdir -p "$tmp/m/A02"; echo 33 >"$tmp/m/A02/WAITING-PR"
+check "G05-AC-5: an unmerged node whose WAITING-PR is in --closed-prs is printed" "A02 second-node" --merged A01 --closed-prs "$G05/closed"
+reset; mkdir -p "$tmp/m/A02"; echo 33 >"$tmp/m/A02/WAITING-PR"
+check "G05-AC-5: a merged node whose WAITING-PR is in --closed-prs is printed as a follow-up" "A02 second-node followup" --merged A01 --merged A02 --closed-prs "$G05/closed"
+reset; mkdir -p "$tmp/m/A02"; echo 34 >"$tmp/m/A02/WAITING-PR"
+check "G05-AC-5: a WAITING-PR in neither --merged-prs nor --closed-prs holds the node" "A03 third-node" --merged A01 --merged-prs "$tmp/prs" --closed-prs "$G05/closed"
+reset; mkdir -p "$tmp/m/A02"; echo 34 >"$tmp/m/A02/WAITING-PR"
+check "G05-AC-5: a WAITING-PR with an empty --closed-prs and no --merged-prs holds the node" "A03 third-node" --merged A01 --closed-prs "$G05/none"
+: >"$G05/none"
+reset; mkdir -p "$tmp/m/A02"; echo 34 >"$tmp/m/A02/WAITING-PR"
+check "G05-AC-5: an empty --closed-prs file holds a WAITING-PR" "A03 third-node" --merged A01 --closed-prs "$G05/none"
+reset; mkdir -p "$tmp/m/A02"; echo 12 >"$tmp/m/A02/WAITING-PR"
+check "G05-AC-5: --merged-prs still releases a WAITING-PR when --closed-prs is given too" "A02 second-node" --merged A01 --merged-prs "$tmp/prs" --closed-prs "$G05/closed"
+reset; mkdir -p "$tmp/m/A02"; echo 12 >"$tmp/m/A02/WAITING-PR"
+check "G05-AC-5: --merged-prs alone still releases a WAITING-PR" "A02 second-node" --merged A01 --merged-prs "$tmp/prs"
+reset; mkdir -p "$tmp/m/A02"; echo 33 >"$tmp/m/A02/WAITING-PR"; : >"$tmp/m/A02/FAILED"
+check "G05-AC-5: FAILED still holds a node whose WAITING-PR is in --closed-prs" "A03 third-node" --merged A01 --closed-prs "$G05/closed"
+reset; mkdir -p "$tmp/m/A02"; echo 34 >"$tmp/m/A02/WAITING-PR"; printf 'pr 34\nbranch spec/x\nhead abc\npath scheduler/x.test.sh\n' >"$tmp/m/A02/SPEC-PR-SCOPE"
+check "G05-AC-6: a WAITING-PR with SPEC-PR-SCOPE next to it is printed (resume)" "A02 second-node" --merged A01
+reset; mkdir -p "$tmp/m/A02"; echo 34 >"$tmp/m/A02/WAITING-PR"; printf 'pr 34\nbranch spec/x\nhead abc\npath scheduler/x.test.sh\n' >"$tmp/m/A02/SPEC-PR-SCOPE"
+check "G05-AC-6: SPEC-PR-SCOPE resumes a merged node as a follow-up" "A02 second-node followup" --merged A01 --merged A02
+reset; mkdir -p "$tmp/m/A02"; echo 34 >"$tmp/m/A02/WAITING-PR"; printf 'pr 34\nbranch spec/x\nhead abc\npath p\n' >"$tmp/m/A02/SPEC-PR-SCOPE"; : >"$tmp/m/A02/FAILED"
+check "G05-AC-6: FAILED still holds a node with SPEC-PR-SCOPE" "A03 third-node" --merged A01
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all scheduler-ready checks"

@@ -99,6 +99,7 @@ TESTS = \
 	scheduler/loop-s04-ignored.test.sh \
 	scheduler/loop-p03.test.sh \
 	scheduler/loop-p03-ramp.test.sh \
+	scheduler/loop-g05.test.sh \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
