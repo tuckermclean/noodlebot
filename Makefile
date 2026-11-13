@@ -88,6 +88,9 @@ TESTS = \
 	scheduler/loop-g03-limit.test.sh \
 	scheduler/loop-g03-fail.test.sh \
 	scheduler/loop-g03-starts.test.sh \
+	scheduler/loop-g06-branch.test.sh \
+	scheduler/loop-g06-branch2.test.sh \
+	scheduler/loop-g06-question.test.sh \
 	scheduler/loop-s07-records.test.sh \
 	scheduler/loop-s04.test.sh \
 	scheduler/loop-d01.test.sh \
@@ -113,6 +116,8 @@ TESTS = \
 	scheduler/loop-g02-review3.test.sh \
 	scheduler/loop-g02-gone.test.sh \
 	scheduler/loop-g02-gone2.test.sh \
+	scheduler/feedback-g06.test.sh \
+	scheduler/loop-g06-limit.test.sh \
 	scheduler/loop-s06-review.test.sh \
 	scheduler/loop-s02.test.sh \
 	scheduler/loop-v01.test.sh \
