@@ -111,6 +111,11 @@ specbranch cp spec/g02 nodes/G02-n02.md scheduler/x.test.sh
 printf '102 spec/g02\n' >"$G05/cp/open.tsv"; mkdir -p "$(st cp G02)"; echo 102 >"$(st cp G02)/WAITING-PR"
 touch "$G05/cp/hold.G01"
 loop5 sf sf; loop5 nl nl; loop5 cp cp 1
+# fu (S4): a merged node G05 whose spec PR 105 was closed without merging: a follow-up session, so its prompt is rendered from the follow-up template.
+mkrepo fu none G05
+printf '20 node/G05-n05\n' >"$G05/fu/merged.tsv"; printf '105 spec/g05 2026-01-01T00:00:00Z false\n' >"$G05/fu/closed.tsv"
+mkdir -p "$(st fu G05)"; echo 105 >"$(st fu G05)/WAITING-PR"
+loop5 fu fu
 
 # ---- sf: the Spec files line is on origin/main ----
 okw sf "G05-AC-6: a node waiting on an open spec PR whose branch changes a test file is started" 6 nruns sf G01 1
@@ -175,6 +180,49 @@ atleast cp "$(mark cp)" 2
 chk cp "G05-AC-6: ... once only" nruns cp G02 1
 chk cp "G05-AC-6: ... with one answered/<ts>-SPEC-PR-SCOPE" test "$(nscope cp G02)" = 1
 chk cp "G05-AC-6: ... and one status-log event naming PR #102 and the path" lg cp 'spec PR #102 .*scheduler/x.test.sh' 1
+
+# ---- S4: the rendered prompts of a node session (sf G03, closed spec PR) and of a follow-up session (fu G05) ----
+# The loop renders scheduler/unattended.md / unattended-followup.md into state/node/<ID>/unattended.md. A check reads the prompt
+# as one line and looks for meaning-bearing words near each other, so the wording may vary.
+pn=$(st sf G03)/unattended.md; pf=$(st fu G05)/unattended.md
+okw sf "G05-AC-3: (setup) the node session's prompt is rendered" 5 test -s "$pn"
+okw fu "G05-AC-3: (setup) a follow-up session starts for the merged node whose spec PR was closed, its prompt is rendered" 10 test -s "$pf"
+flat() { tr '\n' ' ' <"$1" | tr -s ' '; }
+pg() { flat "$2" | grep -Eiq -- "$1"; }                                        # pg <regex> <file>
+pscope() { flat "$2" | grep -oE 'SPEC-PR-SCOPE.*' | head -n1 | cut -c1-4500 | grep -Eiq -- "$1"; }   # the text from SPEC-PR-SCOPE on
+pclosed() { flat "$2" | grep -oE 'SPEC-PR-CLOSED.*' | head -n1 | cut -c1-2500 | grep -Eiq -- "$1"; }
+pabsent() { ! grep -qF -- "$1" "$2"; }                                         # pabsent <text> <file>
+pfrozen() { ! flat "$1" | grep -oE '[^.]*frozen test[^.]*\.' | grep -Ei 'spec (PR|branch|worktree)|spec change' | grep -viE 'not |never|no spec|node branch|instead|rather|outside' | grep -q .; }
+# both <name> <function> <argument>: the check on the node session's prompt and on the follow-up session's
+both() { chk sf "$1 (node session)" "$2" "$3" "$pn"; chk fu "$1 (follow-up session)" "$2" "$3" "$pf"; }
+both "G05-AC-3: a spec PR changes only the repository's spec files" pg 'spec (PR|branch)[^.]{0,150}only[^.]{0,80}spec files'
+both "G05-AC-3: the prompt runs the checker check-spec-diff.py" pg 'check-spec-diff\.py'
+both "G05-AC-3: the checker runs against origin/main before the spec branch is pushed" pg 'check-spec-diff.{0,250}origin/main.{0,250}before.{0,80}push|before.{0,100}push.{0,250}check-spec-diff.{0,200}origin/main|check-spec-diff.{0,250}before.{0,80}push'
+both "G05-AC-3: on exit 1 the session removes those changes or stops" pg 'exit 1.{0,200}(remov|stop)|(remov|stop).{0,200}exit 1'
+both "G05-AC-3: an approval of a frozen test line is applied on the node branch, test-first" pg 'frozen test.{0,300}node branch.{0,200}test-first|frozen test.{0,300}test-first.{0,200}node branch|node branch.{0,200}test-first.{0,300}frozen test'
+both "G05-AC-3: an approval of a file outside the node's Owns is applied on the node branch, test-first" pg 'outside.{0,60}Owns.{0,300}(node branch.{0,200}test-first|test-first.{0,200}node branch)|(node branch.{0,200}test-first|test-first.{0,200}node branch).{0,300}outside.{0,60}Owns'
+both "G05-AC-3: the prompt does not name docs/migration.tsv" pabsent docs/migration.tsv
+both "G05-AC-3: the prompt does not name docs/capabilities.md (another repository's spec file)" pabsent docs/capabilities.md
+both "G05-AC-3: the prompt never says that a frozen test change goes in a spec PR" pfrozen x
+# G05 change 5: a spec PR closed without merging
+both "G05-AC-5: the prompt describes <ts>-SPEC-PR-CLOSED as a spec PR closed without merging" pclosed 'closed.{0,40}without merging|without merging.{0,60}closed|not merged'
+both "G05-AC-5: ... its spec changes did not land" pclosed "did not land|didn't land|not land|never landed|has not landed|were not (merged|applied)|did not reach"
+both "G05-AC-5: ... the approvals that need no spec change are carried out on the node branch, test-first" pclosed 'approvals.{0,300}(node branch.{0,200}test-first|test-first.{0,200}node branch)'
+both "G05-AC-5: ... a spec change still needed is a new question, not a reopened PR" pclosed 'new question.{0,200}(not|never|no).{0,60}reopen|(not|never|no).{0,60}reopen.{0,200}new question'
+# G05 change 7: a spec PR sent back
+both "G05-AC-7: the prompt describes <ts>-SPEC-PR-SCOPE" pg '[0-9a-z<>]-SPEC-PR-SCOPE'
+both "G05-AC-7: one new commit restores the listed paths to their origin/main state" pscope 'one new commit.{0,250}origin/main|origin/main.{0,250}one new commit'
+both "G05-AC-7: with no amend, rebase or force push" pscope '(no|never|not|without)[^;]{0,25}amend.{0,80}rebase.{0,80}force'
+both "G05-AC-7: the checker runs at exit 0" pscope 'check-spec-diff.{0,250}exit 0|exit 0.{0,250}check-spec-diff'
+both "G05-AC-7: and the spec checker at PROBLEMS 0" pscope 'PROBLEMS 0'
+both "G05-AC-7: a comment on the PR names the paths taken out" pscope 'comment.{0,250}paths|paths.{0,250}comment'
+both "G05-AC-7: ... and the commit that held them" pscope 'commit that (held|had|carried|contained|changed|introduced)'
+both "G05-AC-7: a PR with no change left is closed" pscope 'clos.{0,150}no change|no change.{0,200}clos'
+both "G05-AC-7: ... and the node carries on" pscope 'carr(y|ies|ied) on'
+both "G05-AC-7: otherwise the session writes WAITING-PR again" pscope 'otherwise.{0,200}WAITING-PR again|WAITING-PR again'
+both "G05-AC-7: the removed paths are named in the brief for the resumed session" pscope 'brief.{0,300}(removed|taken out|restored|listed)|(removed|taken out|restored).{0,300}brief'
+both "G05-AC-7: ... which makes them test-first" pscope '(removed|taken out|restored|listed|approved changes).{0,300}test-first|test-first.{0,300}(removed|taken out|restored)'
+touch "$HOME/STOP-fu"
 touch "$HOME/STOP-cp"
 for f in "$NOODLEBOT_DATA"/state/*/node/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
 loop_end
