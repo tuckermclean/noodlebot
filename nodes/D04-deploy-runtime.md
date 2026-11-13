@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D01, D03 | none | M |
+| now | D01, D03 | D07 | M |
 
 **Owns:** in `scheduler/deploy.sh`: the runtime-path list and its check (`--runtime-changed`), the fast-forward without `make test`, the rerun of failed files and the flaky record, the kept log `deploy/test-failed.log` and the stderr lines naming failed files, and their lines in the header comment; `scheduler/deploy-d04.test.sh` (new) and its line in the `Makefile`'s `TESTS`; in `scheduler/loop.sh`: the re-exec condition after a deploy and its line in the header comment; `scheduler/loop-d04.test.sh` (new) and its line in the `Makefile`'s `TESTS`; in `scheduler/runtests.sh`: the `FAILED <file>` line and its header-comment line, and its case in `scheduler/runtests.test.sh`.
 **Resolves:** #92
