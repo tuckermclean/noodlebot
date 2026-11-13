@@ -67,22 +67,37 @@ fi
 # "->" are blocked waiters). Inode and device must match; where stat's device is not the one the
 # kernel shows there (btrfs subvolumes, overlayfs), the device of the file's mount is tried. The pid
 # is of no use for a loop: it is the short-lived `flock` command's, not the loop's. For the API server, which
-# takes the lock itself, it is the server (left in $hpid), and stop sends it TERM.
+# takes the lock itself, it is the server (left in $hpid), and stop sends it TERM. NOODLEBOT_PROC_LOCKS names
+# the file read instead of /proc/locks (tests only). If that has no line for the file, the lock lines in
+# /proc/<pid>/fdinfo/* are tried (a pid namespace's /proc/locks lacks the locks); $hpid is then that <pid>.
 held() {
 	local f=$1 st ino dev mdev='' n type adv rw pid id rest lino ldev
 	[ -e "$f" ] || return 1
 	st=$(stat -L -c '%i %d' "$f" 2>/dev/null) || return 1
 	ino=${st% *} dev=${st#* }
 	dev=$(( ((dev >> 8) & 0xfff) | ((dev >> 32) & ~0xfff) )):$(( (dev & 0xff) | ((dev >> 12) & ~0xff) ))
-	while read -r n type adv rw pid id rest; do
-		[ "$type" = "->" ] && continue
-		lino=${id##*:} ldev=${id%:*}
-		[ "$lino" = "$ino" ] || continue
-		ldev=$((16#${ldev%%:*})):$((16#${ldev#*:}))
-		[ "$ldev" = "$dev" ] && { hpid=$pid; return 0; }
-		[ -n "$mdev" ] || { mdev=$(findmnt -n -o MAJ:MIN -T "$f" 2>/dev/null | tr -d ' '); mdev=${mdev:-none}; }
-		[ "$ldev" = "$mdev" ] && { hpid=$pid; return 0; }
-	done </proc/locks
+	# lockmatch [pid]: reads lock lines; a match sets hpid (to the pid argument when given, else the line's).
+	lockmatch() {
+		while read -r n type adv rw pid id rest; do
+			[ "$type" = "->" ] && continue
+			lino=${id##*:} ldev=${id%:*}
+			[ "$lino" = "$ino" ] || continue
+			ldev=$((16#${ldev%%:*})):$((16#${ldev#*:}))
+			[ "$ldev" = "$dev" ] && { hpid=${1:-$pid}; return 0; }
+			[ -n "$mdev" ] || { mdev=$(findmnt -n -o MAJ:MIN -T "$f" 2>/dev/null | tr -d ' '); mdev=${mdev:-none}; }
+			[ "$ldev" = "$mdev" ] && { hpid=${1:-$pid}; return 0; }
+		done
+		return 1
+	}
+	lockmatch <"${NOODLEBOT_PROC_LOCKS:-/proc/locks}" && return 0
+	# No line in /proc/locks (in a pid namespace of its own it does not list the locks): only now look
+	# at the lock lines in /proc/<pid>/fdinfo/<fd>, and only in the fds whose "ino:" is the file's
+	# (one grep over all of them). The holder is the pid of the matching path, never the one on the line.
+	local fi p
+	while read -r fi; do
+		p=${fi#/proc/}; p=${p%%/*}
+		lockmatch "$p" < <(sed -n 's/^lock:[[:space:]]*//p' "$fi" 2>/dev/null) && return 0
+	done < <(grep -s -l -E "^ino:[[:space:]]+$ino\$" /proc/[0-9]*/fdinfo/* 2>/dev/null)
 	return 1
 }
 # running <name>: the loop's lock is held.

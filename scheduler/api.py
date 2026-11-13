@@ -31,6 +31,7 @@ import base64
 import collections
 import datetime
 import fcntl
+import glob
 import http.server
 import importlib.util
 import json
@@ -145,30 +146,46 @@ def _mount_dev(path):
 
 
 def held(path):
-    """Some process holds a lock on the file, as /proc/locks shows it; the lock is never taken."""
+    """Some process holds a lock on the file, as /proc/locks shows it; the lock is never taken.
+    NOODLEBOT_PROC_LOCKS names the file read instead (tests only); with no line there, the lock lines
+    in /proc/<pid>/fdinfo/<fd> of the fds with the file's inode are tried (a pid namespace's
+    /proc/locks lacks them)."""
     try:
         st = os.stat(path)
     except OSError:
         return False
     dev = (os.major(st.st_dev), os.minor(st.st_dev))
     mdev = None
-    t = read_text("/proc/locks") or ""
-    for line in t.splitlines():
-        f = line.split()
-        if len(f) < 6 or f[1] == "->" or f[0] == "->":
-            continue
-        try:
-            maj, mnr, ino = f[5].split(":")
-            if int(ino) != st.st_ino:
+
+    def match(lines):
+        nonlocal mdev
+        for line in lines:
+            f = line.split()
+            if len(f) < 6 or f[1] == "->" or f[0] == "->":
                 continue
-            ldev = (int(maj, 16), int(mnr, 16))
-        except ValueError:
+            try:
+                maj, mnr, ino = f[5].split(":")
+                if int(ino) != st.st_ino:
+                    continue
+                ldev = (int(maj, 16), int(mnr, 16))
+            except ValueError:
+                continue
+            if ldev == dev:
+                return True
+            if mdev is None:
+                mdev = _mount_dev(path) or ()
+            if ldev == mdev:
+                return True
+        return False
+
+    if match((read_text(os.environ.get("NOODLEBOT_PROC_LOCKS") or "/proc/locks") or "").splitlines()):
+        return True
+    want = "ino:\t%d" % st.st_ino
+    for fi in glob.iglob("/proc/[0-9]*/fdinfo/*"):
+        t = read_text(fi)
+        if t is None or want not in t.splitlines():
             continue
-        if ldev == dev:
-            return True
-        if mdev is None:
-            mdev = _mount_dev(path) or ()
-        if ldev == mdev:
+        if match(l[5:] for l in t.splitlines() if l.startswith("lock:")):
             return True
     return False
 
