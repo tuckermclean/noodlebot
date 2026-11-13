@@ -31,6 +31,7 @@ import base64
 import collections
 import datetime
 import fcntl
+import glob
 import http.server
 import importlib.util
 import json
@@ -144,31 +145,69 @@ def _mount_dev(path):
     return None
 
 
+_NESTED_PIDNS = []
+INIT_PIDNS = "pid:[4026531836]"  # the kernel's fixed name of the initial pid namespace (PROC_PID_INIT_INO)
+
+
+def scan_fdinfo():
+    """Whether held() may scan /proc/<pid>/fdinfo after a /proc/locks miss: under NOODLEBOT_PROC_LOCKS
+    (tests), or outside the initial pid namespace (/proc/self/ns/pid is not INIT_PIDNS; unreadable:
+    unknown, so yes). NSpid in /proc/self/status cannot tell: a /proc mounted inside the namespace shows
+    one pid. In the initial namespace /proc/locks lists every lock, so the scan could find nothing and
+    would only cost (thousands of fds). Computed once."""
+    if os.environ.get("NOODLEBOT_PROC_LOCKS"):
+        return True
+    if not _NESTED_PIDNS:
+        try:
+            _NESTED_PIDNS.append(os.readlink("/proc/self/ns/pid") != INIT_PIDNS)
+        except OSError:
+            _NESTED_PIDNS.append(True)
+    return _NESTED_PIDNS[0]
+
+
 def held(path):
-    """Some process holds a lock on the file, as /proc/locks shows it; the lock is never taken."""
+    """Some process holds a lock on the file, as /proc/locks shows it; the lock is never taken.
+    NOODLEBOT_PROC_LOCKS names the file read instead (tests only); with no line there, the lock lines
+    in /proc/<pid>/fdinfo/<fd> of the fds with the file's inode are tried, only where scan_fdinfo() says
+    so (not in the initial pid namespace, whose /proc/locks lists every lock: the scan would be pure cost)."""
     try:
         st = os.stat(path)
     except OSError:
         return False
     dev = (os.major(st.st_dev), os.minor(st.st_dev))
     mdev = None
-    t = read_text("/proc/locks") or ""
-    for line in t.splitlines():
-        f = line.split()
-        if len(f) < 6 or f[1] == "->" or f[0] == "->":
-            continue
-        try:
-            maj, mnr, ino = f[5].split(":")
-            if int(ino) != st.st_ino:
+
+    def match(lines):
+        nonlocal mdev
+        for line in lines:
+            f = line.split()
+            if len(f) < 6 or f[1] == "->" or f[0] == "->":
                 continue
-            ldev = (int(maj, 16), int(mnr, 16))
-        except ValueError:
+            try:
+                maj, mnr, ino = f[5].split(":")
+                if int(ino) != st.st_ino:
+                    continue
+                ldev = (int(maj, 16), int(mnr, 16))
+            except ValueError:
+                continue
+            if ldev == dev:
+                return True
+            if mdev is None:
+                mdev = _mount_dev(path) or ()
+            if ldev == mdev:
+                return True
+        return False
+
+    if match((read_text(os.environ.get("NOODLEBOT_PROC_LOCKS") or "/proc/locks") or "").splitlines()):
+        return True
+    if not scan_fdinfo():
+        return False
+    want = "ino:\t%d" % st.st_ino
+    for fi in glob.iglob("/proc/[0-9]*/fdinfo/*"):
+        t = read_text(fi)
+        if t is None or want not in t.splitlines():
             continue
-        if ldev == dev:
-            return True
-        if mdev is None:
-            mdev = _mount_dev(path) or ()
-        if ldev == mdev:
+        if match(l[5:] for l in t.splitlines() if l.startswith("lock:")):
             return True
     return False
 
