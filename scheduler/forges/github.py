@@ -18,12 +18,15 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from urllib.parse import quote
 
 import forge
 
 _TOKENS = {}  # repository -> token (kept in this process's memory only)
+_TOKEN_LOCK = threading.Lock()  # the script runs at most once per repository, also under threads
 TIMEOUT = 60
+PATCH_TIMEOUT = 120  # the gist PATCH of a site publish (site.py's own)
 CAPABILITIES = frozenset(forge.CAPABILITIES)
 
 
@@ -38,22 +41,23 @@ def _token(repo):
     """(token, from the script): the caller's GH_TOKEN as given (None: leave the environment alone), else the script's."""
     if os.environ.get("GH_TOKEN"):
         return None
-    if repo in _TOKENS:
-        return _TOKENS[repo]
     script = os.environ.get("NOODLEBOT_FORGE_TOKEN_SCRIPT")
-    if not script:
-        return None
-    try:
-        r = subprocess.run([script, repo], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError) as e:
-        raise forge.ForgeError("token script failed for %s: %s" % (repo, type(e).__name__))
-    if r.returncode != 0:
-        raise forge.ForgeError("token script failed for %s (exit %d)" % (repo, r.returncode))
-    tok = r.stdout.strip()
-    if not tok:
-        raise forge.ForgeError("token script printed no token for %s" % repo)
-    _TOKENS[repo] = tok
-    return tok
+    with _TOKEN_LOCK:
+        if repo in _TOKENS:
+            return _TOKENS[repo]
+        if not script:
+            return None
+        try:
+            r = subprocess.run([script, repo], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise forge.ForgeError("token script failed for %s: %s" % (repo, type(e).__name__))
+        if r.returncode != 0:
+            raise forge.ForgeError("token script failed for %s (exit %d)" % (repo, r.returncode))
+        tok = r.stdout.strip()
+        if not tok:
+            raise forge.ForgeError("token script printed no token for %s" % repo)
+        _TOKENS[repo] = tok
+        return tok
 
 
 def _user(u, assoc=None):
@@ -69,15 +73,16 @@ def _time(v):
 def _pr(o):
     merged = bool(o.get("merged") or o.get("merged_at"))
     return {"number": o["number"], "title": o.get("title") or "", "body": o.get("body") or "",
-            "state": "merged" if merged else o["state"], "head": o["head"]["ref"], "head_sha": o["head"]["sha"],
-            "base": o["base"]["ref"], "author": _user(o.get("user"), o.get("author_association")),
+            "state": "merged" if merged else o.get("state") or "", "head": (o.get("head") or {}).get("ref"),
+            "head_sha": (o.get("head") or {}).get("sha"), "base": (o.get("base") or {}).get("ref"), "author": _user(o.get("user"), o.get("author_association")),
             "mergeable": {True: "MERGEABLE", False: "CONFLICTING"}.get(o.get("mergeable"), "UNKNOWN"),
             "created_at": o.get("created_at"), "merged_at": o.get("merged_at"), "closed_at": o.get("closed_at"),
             "url": o.get("html_url") or ""}
 
 
 def _issue(o):
-    return {"number": o["number"], "title": o.get("title") or "", "body": o.get("body") or "", "state": o["state"],
+    return {"number": o["number"], "title": o.get("title") or "", "body": o.get("body") or "",
+            "state": o.get("state") or "",
             "labels": [(l.get("name") if isinstance(l, dict) else l) for l in o.get("labels") or []],
             "is_pr": "pull_request" in o, "author": _user(o.get("user"), o.get("author_association")),
             "created_at": o.get("created_at"), "url": o.get("html_url") or ""}
@@ -133,6 +138,14 @@ _PR_LINES = {
 }
 
 
+def _pr_form(state, keys):
+    """The _PR_LINES form of (state, fields), the fields compared as a set."""
+    for (st, fl), form in _PR_LINES.items():
+        if st == state and set(fl) == set(keys):
+            return form
+    return None
+
+
 class Backend:
     name = "github"
     capabilities = CAPABILITIES
@@ -153,12 +166,12 @@ class Backend:
         text = " ".join((text or "").split())
         return text.replace(tok, "***") if tok else text
 
-    def _run(self, cmd, label, stdin=None):
+    def _run(self, cmd, label, stdin=None, timeout=TIMEOUT):
         """(stdout) of a child with the token in its environment; a failure is a ForgeError naming `label`."""
         env, tok = self._env()
         try:
             r = subprocess.run(cmd, input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL,
-                               capture_output=True, text=True, errors="replace", timeout=TIMEOUT, env=env)
+                               capture_output=True, text=True, errors="replace", timeout=timeout, env=env)
         except (OSError, subprocess.SubprocessError) as e:
             raise forge.ForgeError("%s failed: %s" % (label, type(e).__name__))
         if r.returncode != 0:
@@ -171,9 +184,9 @@ class Backend:
             raise e
         return r.stdout
 
-    def _gh(self, args, body=None, label=None):
+    def _gh(self, args, body=None, label=None, timeout=TIMEOUT):
         label = label or "gh " + " ".join(a for a in args if not a.startswith("--") or a == "--paginate")[:80]
-        return self._run(["gh"] + args, label, json.dumps(body) if body is not None else None)
+        return self._run(["gh"] + args, label, json.dumps(body) if body is not None else None, timeout)
 
     def _api(self, method, path, body=None, extra=()):
         args = ["api", "-X", method, path] + list(extra) + (["--input", "-"] if body is not None else [])
@@ -230,17 +243,17 @@ class Backend:
         return {"owner": self.repo.split("/")[0], "bot": None}
 
     # --- pull requests ---
-    def pr_list(self, state="open", limit=500, fields=None):
+    def pr_list(self, state="open", limit=None, fields=None):
         if state not in ("open", "closed", "merged", "all"):
             raise forge.ForgeError("pr list: bad state %r" % (state,))
         limit = None if limit is None else int(limit)
         keys = list(fields) if fields else None
-        bad = [k for k in keys or () if k not in _PR_KEYS and (state, tuple(keys)) not in _PR_LINES]
+        bad = [k for k in keys or () if k not in _PR_KEYS and _pr_form(state, keys) is None]
         if bad:
             raise forge.ForgeError("pr list: unknown fields %s" % bad)
         lim = [] if limit is None else ["--limit", str(limit)]
         base = ["pr", "list", "--repo", self.repo, "--state", state] + lim
-        form = _PR_LINES.get((state, tuple(keys))) if keys else None
+        form = _pr_form(state, keys) if keys else None
         if form:
             jsonf, jq, pat, conv = form
             out = self._gh(base + ["--json", jsonf, "-q", jq], None, "gh pr list --state " + state)
@@ -463,7 +476,8 @@ class Backend:
                 for o in got.get("workflow_runs") or [] if isinstance(o, dict)]
 
     def site_publish(self, target, input):
-        self._gh(["api", "-X", "PATCH", "gists/" + target, "--input", input], None, "gh api -X PATCH gists")
+        self._gh(["api", "-X", "PATCH", "gists/" + target, "--input", input], None, "gh api -X PATCH gists",
+                 PATCH_TIMEOUT)
         return {}
 
     def branch_push(self, path, branch):

@@ -136,7 +136,12 @@ class Forge:
         def call(*args, **kwargs):
             if cap and cap not in self.capabilities:
                 raise CapabilityOff(self.name, cap)
-            return fn(*args, **kwargs)
+            try:
+                return fn(*args, **kwargs)
+            except ForgeError:
+                raise
+            except Exception as e:  # noqa: BLE001 (bad data from a backend is a failed call, never a raw traceback)
+                raise ForgeError("%s %s failed: %s" % (self.name, attr.replace("_", " ", 1), type(e).__name__))
         call.__name__ = attr
         return call
 

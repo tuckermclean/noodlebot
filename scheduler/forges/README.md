@@ -103,14 +103,17 @@ fields below are the arguments (not result keys: callers read the guaranteed key
 
 - `state=merged`, `fields=[number, head]`: `gh pr list --state merged --json number,headRefName -q ...` (loop.sh).
 - `state=open`, `fields=[number, head, head_sha, author_is_bot, mergeable]`: `gh pr list --state open --json
-  number,headRefName,headRefOid,author,mergeable -q ...` (loop.sh). `author_is_bot` is a field of this form only.
+  number,headRefName,headRefOid,author,mergeable -q ...` (loop.sh). `author_is_bot` is a field of this form only; of the `author` it gives only `is_bot` (`login` is null,
+  `is_owner` false). `mergeable` is reliable only from this form and from `pr view`.
 - `state=closed`, `fields=[number, head, closed_at, merged]`: `gh pr list --state closed --json
   number,headRefName,closedAt,mergedAt -q ...` (loop.sh). `merged` is a field of this form only; it gives `state`.
 - `state=open`, `fields=[number, title]`: `gh pr list --state open --json number,title,author -q ...` (status.sh).
+- The fields of a form match as a set (their order does not matter); the argv of a form is fixed.
 - other `fields` without `author` (nodes.py): `gh pr list --json` of the matching gh fields, no `-q`.
 - no `fields`, or `author` among them (report.py): `gh api -X GET repos/R/pulls?state=S&per_page=100` (further pages
   `&page=P`); `author_association` gives `is_owner`. `merged` and `closed` map to REST `closed`; `merged` keeps the pulls
-  with a `merged_at`. `gh pr list` has no `authorAssociation` field, so it is never asked for.
+  with a `merged_at`. The REST list has no `mergeable`, so `mergeable` is always `UNKNOWN` here (use `pr view`).
+  `gh pr list` has no `authorAssociation` field, so it is never asked for.
 - `limit` omitted (`None`): no `--limit` for `gh pr list`, every page for REST.
 
 ## Operations
@@ -153,6 +156,6 @@ merge request (`iid`), Gitea and Forgejo share issue comments with pulls and mar
 | `label add` | [`POST /repos/R/issues/N/labels`](https://docs.github.com/en/rest/issues/labels#add-labels-to-an-issue) | [`PUT /projects/:id/issues/:iid` `add_labels=`](https://docs.gitlab.com/ee/api/issues.html#edit-an-issue) | [`POST /repos/{o}/{r}/issues/{index}/labels`](https://docs.gitea.com/api/1.22/#tag/issue/operation/issueAddLabel) | [`POST /repos/{o}/{r}/issues/{index}/labels`](https://codeberg.org/api/swagger#/issue/issueAddLabel) |
 | `label remove` | [`DELETE /repos/R/issues/N/labels/NAME`](https://docs.github.com/en/rest/issues/labels#remove-a-label-from-an-issue) | [`PUT /projects/:id/issues/:iid` `remove_labels=`](https://docs.gitlab.com/ee/api/issues.html#edit-an-issue) | [`DELETE /repos/{o}/{r}/issues/{index}/labels/{id}`](https://docs.gitea.com/api/1.22/#tag/issue/operation/issueRemoveLabel) | [`DELETE /repos/{o}/{r}/issues/{index}/labels/{id}`](https://codeberg.org/api/swagger#/issue/issueRemoveLabel) |
 | `commit checks` | [`GET /repos/R/commits/SHA/check-runs`](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference) | [`GET /projects/:id/repository/commits/:sha/statuses`](https://docs.gitlab.com/ee/api/commits.html#list-the-statuses-of-a-commit) | [`GET /repos/{o}/{r}/commits/{ref}/statuses`](https://docs.gitea.com/api/1.22/#tag/repository/operation/repoListStatuses) | [`GET /repos/{o}/{r}/commits/{ref}/statuses`](https://codeberg.org/api/swagger#/repository/repoListStatuses) |
-| `ci runs` | [`GET /repos/R/actions/workflows/WF/runs?head_sha=&event=&branch=`](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow) | [`GET /projects/:id/pipelines?sha=&ref=&source=push`](https://docs.gitlab.com/ee/api/pipelines.html#list-project-pipelines) | [`GET /repos/{o}/{r}/actions/runs?head_sha=&event=&branch=` (Gitea 1.24+)](https://docs.gitea.com/api/next/) | none: capability off (no run-list endpoint this table can vouch for; [API](https://codeberg.org/api/swagger)) |
+| `ci runs` | [`GET /repos/R/actions/workflows/WF/runs?head_sha=&event=&branch=`](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow) | [`GET /projects/:id/pipelines?sha=&ref=&source=push`](https://docs.gitlab.com/ee/api/pipelines.html#list-project-pipelines) | [`GET /repos/{o}/{r}/actions/runs?head_sha=&event=&branch=` (Gitea 1.24+)](https://docs.gitea.com/api/next/) | [`GET /repos/{o}/{r}/actions/tasks` (Forgejo's task list; head_sha, branch and event are filtered by the caller)](https://codeberg.org/api/swagger#/repository/ListActionTasks) |
 | `site publish` | [`PATCH /gists/ID`](https://docs.github.com/en/rest/gists/gists#update-a-gist) | [`PUT /snippets/:id`](https://docs.gitlab.com/ee/api/snippets.html#update-snippet) | none: capability off | none: capability off |
 | `branch push` | [`git push <clone-url> BRANCH` with the token from the environment](https://docs.github.com/en/get-started/git-basics/about-remote-repositories) | [`git push <clone-url> BRANCH` with the token from the environment](https://docs.gitlab.com/ee/user/project/repository/) | [`git push <clone-url> BRANCH` with the token from the environment](https://docs.gitea.com/development/api-usage) | [`git push <clone-url> BRANCH` with the token from the environment](https://forgejo.org/docs/latest/user/api-usage/) |
