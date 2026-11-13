@@ -147,6 +147,7 @@ TESTS = \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
+	scheduler/forge.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
 	container/entrypoint.test.sh \
