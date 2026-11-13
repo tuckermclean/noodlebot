@@ -625,7 +625,7 @@ def last_status_lines():
                 break
             ts, _, text = raw.decode("utf-8", "replace").rstrip("\r").partition(" ")
             for k in list(todo):
-                if text.startswith(k) and (k != "not deployed: " or text.endswith(" fails make test") or "make test timed out or was killed" in text
+                if text.startswith(k) and (k != "not deployed: " or text.endswith(" fails make test") or "make test timed out or was killed" in text or "smoke check timed out or was killed" in text
                                                   or " fails CI: " in text or " fails the smoke check: " in text):
                     t = epoch(ts)
                     if t is not None:

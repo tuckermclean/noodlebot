@@ -1,5 +1,5 @@
 #!/bin/sh
-# deploy.sh <live checkout>        deploy origin/main into the live checkout if it passes make test
+# deploy.sh <live checkout>        deploy origin/main into the live checkout if it passes make test, or CI and the smoke check when deploy-ci is set
 # deploy.sh --rollback <live>      return the live checkout to the recorded previous commit
 # deploy.sh --runtime-changed <live checkout> <from> [<to>]   exit 0 if the range changes a runtime path, 1 if not, 2 if unknown
 #
@@ -51,8 +51,8 @@
 #  - gh or the token script fails, times out or answers something unreadable: a wait whose stderr line names the failure
 #    ("deploy.sh: gh failed ...", "deploy.sh: token script failed ..."), no status line, nothing recorded.
 # Smoke check (D07): the CI-passed sha is checked out in a scratch worktree and, in the clean environment of make test under a
-# 60 s timeout, each tracked *.sh under scheduler/ and plugin/ is read with sh -n or bash -n (as its first line names; sh
-# otherwise) and each tracked *.py there is compiled with python3 -I, writing no bytecode. A file that fails rejects the sha with
+# 60 s timeout, each tracked *.sh under scheduler/ and plugin/ is read with bash -n if its first line is a #! line naming bash,
+# sh -n if it is a #! line naming sh, and bash -n if it has no #! line, and each tracked *.py there is compiled with python3 -I, writing no bytecode. A file that fails rejects the sha with
 # "not deployed: <sha> (version <v>) fails the smoke check: <file>" and the checker's message on stderr; a smoke check that
 # times out or is killed is retried and counted as a timed-out make test is ("smoke check timed out or was killed <n> times").
 # State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed,plain-tries,waiting,test-failed.log,retry,rollback-request} (default
@@ -62,12 +62,15 @@
 # Nothing is written inside the live checkout. Exit:
 # 0 nothing to do, deployed, or rolled back;
 # 1 not deployed and recorded as rejected (fails make test, $max_tries failed fast-forwards, or timed
-#   out / killed $max_tries times);
+#   out / killed $max_tries times, fails CI, fails the smoke check, or the smoke check timed out / was
+#   killed $max_tries times);
 # 2 not rejected, retried next run: usage, not a git checkout, fetch or git failure, a live checkout
 #   that cannot fast-forward or has uncommitted changes, make test timed out or killed (fewer than
 #   $max_tries times), make could not run (status 125-127: timeout or make missing), a fast-forward
 #   that failed after make test passed (fewer than $max_tries times; the pass is remembered), a failed
-#   rollback (nothing recorded), or a TERM/INT (message on stderr).
+#   rollback (nothing recorded), waiting for CI (queued, in progress or no run), a gh or token script
+#   failure, a malformed deploy-ci, a smoke check that timed out or was killed (fewer than $max_tries
+#   times), or a TERM/INT (message on stderr).
 # Runtime paths: a range that changes only the non-runtime paths (see is_runtime_path) is fast-forwarded without
 # make test (a failed plain fast-forward is counted in deploy/plain-tries and the sha rejected after $max_tries, as
 # a failed fast-forward after a pass is), with the line "deployed <old>..<new> (version <v>) without make test: no runtime change", and deploy/previous
@@ -285,7 +288,11 @@ smoke_check() {
 				case $f in
 				*.sh)
 					read -r first <"$f"
-					case $first in *bash*) sh_n=bash ;; *) sh_n=sh ;; esac
+					case $first in
+					"#!"*bash*) sh_n=bash ;;
+					"#!"*sh*) sh_n=sh ;;
+					*) sh_n=bash ;;
+					esac
 					"$sh_n" -n "$f" || { echo "$f" >&3; exit 1; } ;;
 				*.py)
 					python3 -I -c "import sys; compile(open(sys.argv[1], \"rb\").read(), sys.argv[1], \"exec\")" "$f" ||
