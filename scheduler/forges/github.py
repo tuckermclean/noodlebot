@@ -7,9 +7,10 @@ never an argument, never output, a log, a file or Git configuration.
 
 The argv of each `gh` call is the form the scheduler's call sites used before the interface (see forges/README.md); a few
 operations choose between forms by their arguments:
-  pr list   (state, fields) matching a loop form runs `gh pr list ... --json F -q 'jq'` and parses its lines (_PR_LINES);
-            other fields run `gh pr list ... --json F` (JSON); rest=True runs `gh api -X GET repos/R/pulls?state=S&per_page=100`
-  issue comments   page=None reads every page (the first without a page parameter); page=P reads that page only
+  pr list   (state, fields) matching a loop/status.sh form runs `gh pr list ... --json F -q 'jq'` and parses its lines
+            (_PR_LINES); other fields without `author` run `gh pr list ... --json F` (nodes.py); no fields, or `author`,
+            runs `gh api -X GET repos/R/pulls?state=S&per_page=100` (report.py; its author_association gives is_owner)
+  issue comments   reads every page itself (the first without a page parameter)
   issue list       oldest_first adds `&per_page=50&sort=created&direction=asc` (one page), else `&per_page=100`
 """
 import json
@@ -100,11 +101,12 @@ def _line_comment(o):
             "created_at": o.get("created_at"), "url": o.get("html_url") or ""}
 
 
-# `gh pr list --json` field of each pr key; "author" also needs authorAssociation
+# `gh pr list --json` field of each pr key it can give (`author` is not here: its is_owner needs author_association,
+# which only the REST list has, and gh pr list has no authorAssociation field)
 _PR_JSON = {"number": ["number"], "title": ["title"], "body": ["body"], "state": ["state"], "head": ["headRefName"],
-            "head_sha": ["headRefOid"], "base": ["baseRefName"], "author": ["author", "authorAssociation"],
-            "mergeable": ["mergeable"], "created_at": ["createdAt"], "merged_at": ["mergedAt"],
-            "closed_at": ["closedAt"], "url": ["url"]}
+            "head_sha": ["headRefOid"], "base": ["baseRefName"], "mergeable": ["mergeable"],
+            "created_at": ["createdAt"], "merged_at": ["mergedAt"], "closed_at": ["closedAt"], "url": ["url"]}
+_PR_KEYS = set(_PR_JSON) | {"author"}
 # The loop's, status.sh's forms: (state, fields) -> (--json fields, -q expression, line pattern, converters). The
 # conversions give the pr keys of the fields; "author_is_bot" and "merged" are fields of these forms only.
 _PR_LINES = {
@@ -145,7 +147,7 @@ class Backend:
         tok = _token(self.repo)
         if tok:
             env["GH_TOKEN"] = tok
-        return env, tok
+        return env, env.get("GH_TOKEN")  # whichever token the child gets, for scrubbing its error text
 
     def _scrub(self, text, tok):
         text = " ".join((text or "").split())
@@ -160,9 +162,10 @@ class Backend:
         except (OSError, subprocess.SubprocessError) as e:
             raise forge.ForgeError("%s failed: %s" % (label, type(e).__name__))
         if r.returncode != 0:
-            err = self._scrub(r.stderr or r.stdout, tok)[:300]
-            m = re.search(r"\bHTTP (\d{3})\b", err)
-            e = forge.ForgeError("%s failed (exit %d): %s" % (label, r.returncode, err), int(m[1]) if m else None)
+            full = self._scrub(r.stderr or r.stdout, tok)
+            m = re.findall(r"\bHTTP (\d{3})\b", full)
+            e = forge.ForgeError("%s failed (exit %d): %s" % (label, r.returncode, full[:300]), int(m[-1]) if m else None)
+            e.text = full
             e.stdout = self._scrub(r.stdout, tok)
             e.raw_stdout = r.stdout
             raise e
@@ -179,6 +182,13 @@ class Backend:
             return json.loads(out) if out.strip() else None
         except ValueError:
             raise forge.ForgeError("gh api %s %s: the answer is not JSON" % (method, path.split("?")[0]))
+
+    def _obj(self, method, path, body=None):
+        """_api for an operation whose answer is one object: an empty answer is a failed call."""
+        got = self._api(method, path, body)
+        if not isinstance(got, dict):
+            raise forge.ForgeError("gh api %s %s: no object in the answer" % (method, path.split("?")[0]))
+        return got
 
     def _paginate(self, path):
         out = self._gh(["api", "--paginate", path], None, "gh api --paginate " + path)
@@ -220,17 +230,17 @@ class Backend:
         return {"owner": self.repo.split("/")[0], "bot": None}
 
     # --- pull requests ---
-    def pr_list(self, state="open", limit=500, fields=None, rest=False):
+    def pr_list(self, state="open", limit=500, fields=None):
         if state not in ("open", "closed", "merged", "all"):
             raise forge.ForgeError("pr list: bad state %r" % (state,))
-        limit = 500 if limit is None else int(limit)
-        if rest:
-            if state == "merged":
-                raise forge.ForgeError("pr list: the REST list has no merged state")
-            got = self._api("GET", self._r("/pulls?state=%s&per_page=%d" % (state, min(limit, 100)))) or []
-            return [_pr(o) for o in got]
-        base = ["pr", "list", "--repo", self.repo, "--state", state, "--limit", str(limit)]
-        form = _PR_LINES.get((state, tuple(fields))) if fields else None
+        limit = None if limit is None else int(limit)
+        keys = list(fields) if fields else None
+        bad = [k for k in keys or () if k not in _PR_KEYS and (state, tuple(keys)) not in _PR_LINES]
+        if bad:
+            raise forge.ForgeError("pr list: unknown fields %s" % bad)
+        lim = [] if limit is None else ["--limit", str(limit)]
+        base = ["pr", "list", "--repo", self.repo, "--state", state] + lim
+        form = _PR_LINES.get((state, tuple(keys))) if keys else None
         if form:
             jsonf, jq, pat, conv = form
             out = self._gh(base + ["--json", jsonf, "-q", jq], None, "gh pr list --state " + state)
@@ -241,17 +251,32 @@ class Backend:
                     raise forge.ForgeError("gh pr list --state %s: an unreadable line" % state)
                 rows.append(conv(m))
             return rows
-        keys = list(fields) if fields else list(_PR_JSON)
-        bad = [k for k in keys if k not in _PR_JSON]
-        if bad:
-            raise forge.ForgeError("pr list: unknown fields %s" % bad)
-        names = []
-        for k in keys:
-            names += [n for n in _PR_JSON[k] if n not in names]
-        got = self._json(base + ["--json", ",".join(names)], "gh pr list --state " + state)
-        if not isinstance(got, list):
-            raise forge.ForgeError("gh pr list: the answer is not a list")
-        return [self._pr_row(r, keys) for r in got]
+        if keys and "author" not in keys:
+            # nodes.py's forms: `gh pr list --json` with fields gh knows (authorAssociation is not one of them)
+            names = []
+            for k in keys:
+                names += [n for n in _PR_JSON[k] if n not in names]
+            got = self._json(base + ["--json", ",".join(names)], "gh pr list --state " + state)
+            if not isinstance(got, list):
+                raise forge.ForgeError("gh pr list: the answer is not a list")
+            return [self._pr_row(r, keys) for r in got]
+        rows = self._pr_rest(state, limit)
+        return [{k: r[k] for k in keys} for r in rows] if keys else rows
+
+    def _pr_rest(self, state, limit):
+        """report.py's form: `gh api -X GET repos/R/pulls?state=S&per_page=100`, further pages with &page=P. The REST list
+        knows open and closed (merged pulls included); `merged` keeps those with a merged_at."""
+        api = {"open": "open", "closed": "closed", "merged": "closed", "all": "all"}[state]
+        out, page = [], 1
+        while page <= 50:
+            got = self._api("GET", self._r("/pulls?state=%s&per_page=100%s" % (api, "&page=%d" % page if page > 1 else ""))) or []
+            if not isinstance(got, list):
+                raise forge.ForgeError("gh api pulls: the answer is not a list")
+            out += [r for r in map(_pr, got) if state != "merged" or r["merged_at"]]
+            if (limit is not None and len(out) >= limit) or len(got) < 100:
+                break
+            page += 1
+        return out if limit is None else out[:limit]
 
     def _json(self, args, label):
         out = self._gh(args, None, label)
@@ -265,10 +290,6 @@ class Backend:
         for k in keys:
             if k == "state":
                 out[k] = str(r.get("state") or "").lower()
-            elif k == "author":
-                a = r.get("author") or {}
-                out[k] = {"login": a.get("login"), "is_bot": bool(a.get("is_bot")),
-                          "is_owner": r.get("authorAssociation") == "OWNER"}
             elif k in ("merged_at", "closed_at"):
                 out[k] = _time(r.get(_PR_JSON[k][0]))
             elif k in ("title", "body"):
@@ -278,20 +299,20 @@ class Backend:
         return out
 
     def pr_view(self, number):
-        return _pr(self._api("GET", self._r("/pulls/%d" % int(number))))
+        return _pr(self._obj("GET", self._r("/pulls/%d" % int(number))))
 
     def pr_create(self, head, base, title, body):
-        return _pr(self._api("POST", self._r("/pulls"), {"head": head, "base": base, "title": title, "body": body}))
+        return _pr(self._obj("POST", self._r("/pulls"), {"head": head, "base": base, "title": title, "body": body}))
 
     def pr_edit(self, number, title=None, body=None):
-        return _pr(self._api("PATCH", self._r("/pulls/%d" % int(number)), self._set(title=title, body=body)))
+        return _pr(self._obj("PATCH", self._r("/pulls/%d" % int(number)), self._set(title=title, body=body)))
 
     @staticmethod
     def _set(**kw):
         return {k: v for k, v in kw.items() if v is not None}
 
     def pr_comment(self, number, body):
-        return _comment(self._api("POST", self._r("/issues/%d/comments" % int(number)), {"body": body}))
+        return _comment(self._obj("POST", self._r("/issues/%d/comments" % int(number)), {"body": body}))
 
     def pr_comments(self, number):
         return [_comment(o) for o in self._paginate(self._r("/issues/%d/comments" % int(number)))]
@@ -303,7 +324,7 @@ class Backend:
         return [_line_comment(o) for o in self._paginate(self._r("/pulls/%d/comments" % int(number)))]
 
     def pr_reply(self, number, to, body):
-        return _line_comment(self._api("POST", self._r("/pulls/%d/comments/%d/replies" % (int(number), int(to))),
+        return _line_comment(self._obj("POST", self._r("/pulls/%d/comments/%d/replies" % (int(number), int(to))),
                                        {"body": body}))
 
     def pr_resolve_thread(self, thread):
@@ -331,13 +352,11 @@ class Backend:
         return [_issue(o) for o in out]
 
     def issue_view(self, number):
-        return _issue(self._api("GET", self._r("/issues/%d" % int(number))))
+        return _issue(self._obj("GET", self._r("/issues/%d" % int(number))))
 
-    def issue_comments(self, number, since=None, page=None):
+    def issue_comments(self, number, since=None):
         tail = "&since=" + since if since else ""
         base = "/issues/%d/comments?per_page=100" % int(number)
-        if page is not None:
-            return [_comment(o) for o in self._api("GET", self._r("%s&page=%d%s" % (base, int(page), tail))) or []]
         out, p = [], 1
         while p <= 50:
             got = self._api("GET", self._r("%s%s%s" % (base, "&page=%d" % p if p > 1 else "", tail))) or []
@@ -348,20 +367,20 @@ class Backend:
         return [_comment(o) for o in out]
 
     def issue_create(self, title, body, labels=None):
-        return _issue(self._api("POST", self._r("/issues"), self._set(title=title, body=body, labels=labels)))
+        return _issue(self._obj("POST", self._r("/issues"), self._set(title=title, body=body, labels=labels)))
 
     def issue_edit(self, number, title=None, body=None):
-        return _issue(self._api("PATCH", self._r("/issues/%d" % int(number)), self._set(title=title, body=body)))
+        return _issue(self._obj("PATCH", self._r("/issues/%d" % int(number)), self._set(title=title, body=body)))
 
     def issue_comment(self, number, body):
-        return _comment(self._api("POST", self._r("/issues/%d/comments" % int(number)), {"body": body}))
+        return _comment(self._obj("POST", self._r("/issues/%d/comments" % int(number)), {"body": body}))
 
     def issue_close(self, number):
-        return _issue(self._api("PATCH", self._r("/issues/%d" % int(number)),
+        return _issue(self._obj("PATCH", self._r("/issues/%d" % int(number)),
                                 {"state": "closed", "state_reason": "completed"}))
 
     def issue_reopen(self, number):
-        return _issue(self._api("PATCH", self._r("/issues/%d" % int(number)), {"state": "open"}))
+        return _issue(self._obj("PATCH", self._r("/issues/%d" % int(number)), {"state": "open"}))
 
     def _pin(self, number, op):
         node = (self._api("GET", self._r("/issues/%d" % int(number))) or {}).get("node_id")
@@ -401,19 +420,22 @@ class Backend:
                 for o in self._labels()]
 
     def label_ensure(self, name, color, description):
-        if name.lower() in {(o.get("name") or "").lower() for o in self._labels()}:
-            return {"name": name, "created": False}
         try:
             self._api("POST", self._r("/labels"), {"name": name, "color": color, "description": description})
         except forge.ForgeError as e:
-            try:
-                errs = json.loads(getattr(e, "raw_stdout", "") or "").get("errors") or []
-            except (ValueError, AttributeError):
-                errs = []
-            if any(isinstance(x, dict) and x.get("code") == "already_exists" for x in errs):
+            if e.status == 422 and self._already_exists(e):
                 return {"name": name, "created": False}
             raise
         return {"name": name, "created": True}
+
+    @staticmethod
+    def _already_exists(e):
+        """A 422 whose answer says the label exists: code already_exists in the JSON on stdout, or in the error text."""
+        try:
+            errs = json.loads(getattr(e, "raw_stdout", "") or "").get("errors") or []
+        except (ValueError, AttributeError):
+            errs = []
+        return any(isinstance(x, dict) and x.get("code") == "already_exists" for x in errs) or "already_exists" in getattr(e, "text", "")
 
     def label_add(self, number, name):
         self._api("POST", self._r("/issues/%d/labels" % int(number)), {"labels": [name]})
@@ -448,12 +470,12 @@ class Backend:
         helper = '!f() { echo username=x-access-token; echo "password=$NOODLEBOT_PUSH_TOKEN"; }; f'
         cmd = ["git", "-C", path]
         env, tok = self._env()
-        if tok or env.get("GH_TOKEN"):
-            env["NOODLEBOT_PUSH_TOKEN"] = tok or env["GH_TOKEN"]
+        env.pop("GH_TOKEN", None)  # git gets the token only as the variable its credential helper reads
+        if tok:
+            env["NOODLEBOT_PUSH_TOKEN"] = tok
             cmd += ["-c", "credential.helper=", "-c", "credential.helper=" + helper]
         env.setdefault("GIT_TERMINAL_PROMPT", "0")
         cmd += ["push", self.repo_clone_url(), branch]
-        secret = env.get("NOODLEBOT_PUSH_TOKEN")
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=300, env=env,
                                stdin=subprocess.DEVNULL)
@@ -461,5 +483,5 @@ class Backend:
             raise forge.ForgeError("git push of %s failed: %s" % (branch, type(e).__name__))
         if r.returncode != 0:
             raise forge.ForgeError("git push of %s failed (exit %d): %s" % (
-                branch, r.returncode, self._scrub(r.stderr, secret)[:300]))
+                branch, r.returncode, self._scrub(r.stderr, tok)[:300]))
         return {}
