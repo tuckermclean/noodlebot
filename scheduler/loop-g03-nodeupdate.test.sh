@@ -32,6 +32,17 @@ g03n_prs 12 CONFLICTING
 wait_ticks 3
 ok "G03-AC-4: no node feedback session starts while the update of that node's PR runs" runsis fbnode.11 0
 ok "G03-AC-4: nothing is handed over meanwhile (no FEEDBACK.md in the node's folder)" test ! -e "$x/FEEDBACK.md"
+# The same without the session being the loop's child: restart the loop while fbnode.12 is still held, so alive() alone
+# (not a wait on its own child) has to see the node feedback session as the node's.
+g03n_took() { tail -n +"$1" "$state/status.log" | grep -qE 'running: .*X02'; }
+g03n_l=$(($(wc -l <"$state/status.log") + 1))
+kill "$lp6"; wait "$lp6" 2>/dev/null
+ok "G03-AC-4 (restarted loop): stopping the loop leaves the feedback session of X02 running" runsis fbnode.12 1
+loop6
+ok "G03-AC-4 (restarted loop): the restarted loop takes the running session of X02 over" waitf 30 g03n_took "$g03n_l"
+wait_ticks 3
+ok "G03-AC-4 (restarted loop): alive() counts the feedback session no longer its child: no update of PR 12 starts while it runs" runsis nupd.12 0
+ok "G03-AC-4 (restarted loop): the status log has no line saying X02's session ended" test "$(grep -cE 'X02.* ended' "$state/status.log")" = 0
 ok "G03-AC-4: alive() counts a running node feedback session (its command ends in --feedback <N>) as the node's session: no update of PR 12 starts while it runs" runsis nupd.12 0
 g03_release nupd.11; g03_release fbnode.12
 ok "G03-AC-4: held node feedback starts its session after the update ended" waitf 30 runsis fbnode.11 1
