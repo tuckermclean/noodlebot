@@ -458,6 +458,18 @@ chk("D06-AC-9 workflow-level permissions are at most contents: read", perms_ok)
 chk("D06-AC-9 only the pushing job has packages: write", pkg_write_only_pusher)
 chk("D06-AC-9 the only secret referenced is GITHUB_TOKEN", secrets_ok)
 
+def checkout_steps():
+    return [s for j in jobs.values() for s in (j.get("steps") or [])
+            if str(s.get("uses", "")).startswith("actions/checkout")]
+
+def checkouts_keep_no_creds():
+    cs = checkout_steps()
+    return len(cs) > 0 and all(
+        ((s.get("with") or {}).get("persist-credentials", True) in (False, "false")) for s in cs)
+
+chk("D06-AC-2 image.yml checkout steps keep persist-credentials: false (no CI token in /opt/noodlebot/.git/config)",
+    checkouts_keep_no_creds)
+
 # ---------------------------------------------------------------- README, SPEC, AGENTS (AC-10)
 
 
