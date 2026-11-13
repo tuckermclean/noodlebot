@@ -72,6 +72,7 @@ ok "U-3: with the item" g03b_seen 12 conversation 231 fbnode.12.1
 # U-4: no feedback.py is left behind when the loop is stopped (a signal, then ~/STOP).
 ok "U-4 setup: the session of X02 ended" waitf 10 g03_idle "$y"
 touch "$GD/fb.slow"
+touch "$GD/fb.slow1"   # 12 s a run: an orphaned run is still alive at the fbnone checks
 ok "U-4 setup: a run is in flight" waitf 10 fbbusy
 kill "$lp6"
 ok "U-4 setup: the loop is gone after the signal" waitf 20 g01_gone "$lp6"
@@ -81,6 +82,7 @@ ok "U-4 setup: the restarted loop has a run in flight" waitf 10 fbbusy
 touch "$HOME/STOP-up"
 ok "U-4 setup: the loop is gone after ~/STOP" waitf 20 g01_gone "$lp6"
 ok "U-4: no feedback.py of the loop is left running after ~/STOP" waitf 2 fbnone
+rm -f "$GD/fb.slow1"
 rm -f "$HOME/STOP-up"
 ok "U-1: the listing runs never overlapped over the whole file" test ! -s "$tmp/fbconc"
 g03_stop
