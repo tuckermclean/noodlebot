@@ -384,6 +384,7 @@ ok "S01-AC-4: and the path to delete" sh -c "printf '%s\n' \"\$1\" | grep 'C05 F
 ok "S01-AC-4: and not the fixed text" sh -c "! printf '%s\n' \"\$1\" | grep 'C05 FAILED' | grep -q '2 starts with no PR'" _ "$s01body"
 ok "S01-AC-4: and not the file's later lines" sh -c "! printf '%s\n' \"\$1\" | grep -q second-line-detail" _ "$s01body"
 
+rm -f "$tmp/state/usage.json"  # U03: the answers below are given with the throttle open
 # G01-AC-7: a spec PR's update session is the task "PR #N" (state/pr/<N>/): running, it is a section of
 # the status issue; FAILED, it is an item under "Waiting on you" with the first line of its FAILED file
 # and the path to delete.

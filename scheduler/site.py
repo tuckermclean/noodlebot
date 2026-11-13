@@ -260,6 +260,7 @@ def repo_file(root, repo, running, hold, home):
     merged_rows = [(r[0], r[1]) for r in rows(os.path.join(state, "merged-prs.tsv")) if len(r) >= 2 and r[0].isdigit()]
     open_rows = [r for r in rows(os.path.join(state, "open-prs.tsv")) if len(r) >= 5 and r[0].isdigit()]
     subjects = (read(os.path.join(state, "subjects.txt")) or "").splitlines()
+    merged_prs = set((read(os.path.join(state, "merged-prs.txt")) or "").split())   # spec PRs merged: not waiting-pr (as api.py)
     merged_ids = {branch_id(b) for _, b in merged_rows} - {None}
     open_ids = {branch_id(r[1]) for r in open_rows} - {None}
     for n in nodes:
@@ -316,7 +317,7 @@ def repo_file(root, repo, running, hold, home):
                 o["url"] = "https://github.com/%s/%s/issues/%d" % (owner, name, num)
         elif has("QUESTION.md"):
             o["state"] = "answered"
-        elif has("WAITING-PR"):
+        elif has("WAITING-PR") and (read(os.path.join(d, "WAITING-PR"), 32) or "").strip() not in merged_prs:
             o["state"] = "waiting-pr"
             w = (read(os.path.join(d, "WAITING-PR"), 32) or "").strip()
             o["pr"] = int(w) if w.isdigit() else None
