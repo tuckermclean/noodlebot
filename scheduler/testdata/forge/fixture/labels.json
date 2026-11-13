@@ -1,0 +1,17 @@
+[
+ {
+  "name": "noodlebot",
+  "color": "0e8a16",
+  "description": "Work for the bot"
+ },
+ {
+  "name": "bug",
+  "color": "d73a4a",
+  "description": ""
+ },
+ {
+  "name": "noodlebot-status",
+  "color": "ededed",
+  "description": "Status of the loop"
+ }
+]
