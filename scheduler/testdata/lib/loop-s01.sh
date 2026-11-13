@@ -20,6 +20,7 @@ mkdir -p "$S01" "$tmp/bin4" "$tmp/nb4/scheduler" "$tmp/nb4/plugin"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/report.py "$src"/usage.py "$tmp/nb4/scheduler/"
 [ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb4/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb4/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb4/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/nb4/scheduler/forges"; cp "$src/forge.py" "$tmp/nb4/scheduler/"; cp "$src"/forges/*.py "$tmp/nb4/scheduler/forges/"; }
 git init -q -b main "$tmp/work4"; mkdir -p "$tmp/work4/docs"
 { echo 'nodes:'; for i in 1 2 3 4 5 6 7; do echo "  - {id: B0$i, name: n$i, deps: []}"; done; } >"$tmp/work4/docs/graph.yaml"
 git -C "$tmp/work4" add -A && git -C "$tmp/work4" -c user.name=t -c user.email=t@t commit -q -m init

@@ -25,6 +25,7 @@ st4=$data7/state/s4 wt7=$data7/worktrees/s4
 S04_STATE=$st4; export S04_STATE
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/nb7/scheduler/" ;; esac; done
 [ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb7/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb7/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb7/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/nb7/scheduler/forges"; cp "$src/forge.py" "$tmp/nb7/scheduler/"; cp "$src"/forges/*.py "$tmp/nb7/scheduler/forges/"; }
 git init -q -b main "$tmp/work7"; mkdir -p "$tmp/work7/docs"
 { echo 'nodes:'; for i in 1 2 3 4 5 6 7; do echo "  - {id: E0$i, name: n$i, deps: []}"; done; } >"$tmp/work7/docs/graph.yaml"
 printf 'base\n' >"$tmp/work7/base.txt"; printf 'doomed\n' >"$tmp/work7/d.txt"; printf 'out/\n*.ign\n' >"$tmp/work7/.gitignore"

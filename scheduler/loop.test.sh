@@ -13,6 +13,7 @@ mkdir -p "$state/node/A02" "$state/node/A03"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/usage.py "$src"/unattended-triage.md "$nb/scheduler/"
 [ -f "$src/harness.py" ] && { mkdir -p "$nb/scheduler/harnesses"; cp "$src/harness.py" "$nb/scheduler/"; cp "$src"/harnesses/*.py "$nb/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$nb/scheduler/forges"; cp "$src/forge.py" "$nb/scheduler/"; cp "$src"/forges/*.py "$nb/scheduler/forges/"; }
 git clone -q "$tmp/remote.git" "$nb/repos/proj"
 fake_main_gh
 # claude, per node and run:

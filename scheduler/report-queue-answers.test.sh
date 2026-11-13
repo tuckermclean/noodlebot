@@ -276,6 +276,7 @@ ok "U03-AC-4: status.sh does not say it waits for your merge" hasnt "$out" "wait
 mkdir -p "$tmp/sched-fail/harnesses"
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/sched-fail/" ;; esac; done
 cp "$src"/harnesses/*.py "$tmp/sched-fail/harnesses/" 2>/dev/null
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/sched-fail/forges"; cp "$src/forge.py" "$tmp/sched-fail/"; cp "$src"/forges/*.py "$tmp/sched-fail/forges/"; }
 cat >"$tmp/sched-fail/turn.py" <<EOF
 #!/usr/bin/env python3
 import sys

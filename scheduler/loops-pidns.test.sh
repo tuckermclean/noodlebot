@@ -71,6 +71,7 @@ scenario() {
 	mkdir -p "$HOME/.config/noodlebot" "$nb/scheduler/harnesses" "$data/state/alpha"
 	cp "$src/loops.sh" "$src/harness.py" "$nb/scheduler/"
 	cp "$src"/harnesses/*.py "$nb/scheduler/harnesses/"
+	[ -f "$src/forge.py" ] && { mkdir -p "$nb/scheduler/forges"; cp "$src/forge.py" "$nb/scheduler/"; cp "$src"/forges/*.py "$nb/scheduler/forges/"; }
 	echo o/alpha >"$HOME/.config/noodlebot/repos"
 	cat >"$nb/scheduler/loop.sh" <<'EOT'
 #!/bin/sh
