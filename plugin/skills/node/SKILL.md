@@ -8,6 +8,8 @@ argument-hint: "<node-id, e.g. F01> [AC ids to limit the slice] | --update <PR> 
 
 Build a node: `/noodlebot:node <ID> [AC ids]`. Bring an open node PR up to date with `main`: `/noodlebot:node --update <PR> [--dry-run]` (the section after step 7).
 
+Feedback on one of the bot's open PRs (the feedback flag with a PR number): go straight to §8 and create no branch.
+
 You are the **orchestrator**. You never write tests or implementation yourself. You prepare context, dispatch fresh role agents (the repository's tester, implementer and reviewer), check their evidence, get the criteria that need a build, a boot or CI verified in CI, push, and open the PR. The owner merges.
 
 **The repository's part.** Read the repository's `AGENTS.md` first, its **Building a node** section above all. It names the authority order of its documents, the role agents, the spec checker, the test, lint and CI commands, the frozen test paths, any extra precondition, and, if the repository ports code from a predecessor, its porting rules (what to port first, the baseline, the ledger). Where this skill says "the repository's …", use what that section says. Where the two differ, the repository wins.
@@ -126,6 +128,15 @@ Run after any merge of `origin/main` that had conflicts, before anything is push
 - no frozen test line was changed, removed or renamed.
 
 Its verdict is posted on the PR as `Resolution review (<verdict>)` with `gh pr comment <N> --body-file <file>`: a comment, never an approval; with `--dry-run` the verdict goes into `result.md` and is not posted. In a node build with no PR yet, it goes into the PR body's deviations and is posted as that comment once the PR is open. Nothing is pushed until it approves. On `request_changes`, fix the findings as new commits and run one more new reviewer on the result. A second rejection pushes nothing: write `QUESTION.md` with the findings and leave the branch as it was. With `--update`, run `git reset --hard origin/<branch>` (no merge commit left). In a node build's own merge of `origin/main` (build step 6), undo only the merge (`git reset --hard` to the merge's first parent, or `ORIG_HEAD`), never losing the node's commits. Then end.
+
+## 8. Feedback on a PR: `/noodlebot:node --feedback <PR> [--dry-run]`
+Run by the loop for one of the bot's own open node PRs that has new feedback from the owner. This session acts as the node's orchestrator for this PR, on the PR's branch, not a new one. Work in a worktree checked out on the PR's branch, brought to `origin/<branch>` (a fast-forward), and read `FEEDBACK.md` in your state folder: each item has its kind, URL, author, body and, for a line comment, its file, line and thread.
+1. Sort the points. A point that changes behaviour goes through the usual test-first steps: a new tester's RED commit (verified RED), a new implementer's GREEN, then the review (§2–§4). A point that is a question, a nit or a wording fix needs no tester. A point that would change, remove or rename a frozen test or fixture line, or change a spec file, is not made: collect those points, with your recommendation, for QUESTION.md (item 4 or 5 says when it is written).
+2. Never rebase or force-push; add commits and merge `origin/main` if the PR needs it. Never edit a frozen test or fixture line.
+3. Rerun the repository's test entry point (e.g. `make test`) and the red targets that the PR's criterion → evidence table names. When the node's code changed, rerun the whole-node fresh review (§6) and post it as a new `Fresh review (<verdict>)` comment; update the PR body's table when its evidence changed.
+4. With `--dry-run`: no push, no reply, no comment, no PR edit, no thread resolved. Write `out/node/pr-<N>/result.md` holding the commits (SHA and subject, e.g. the RED and GREEN commits) and one reply per item, each naming the commit (or why nothing changed) and, for a fixed line comment, the thread it would resolve; and write QUESTION.md for the points of item 1 that need the owner, with your recommendation (the loop posts it; the answer comes back as ANSWER.md). QUESTION.md goes in the state folder the loop gives; with none (a dry run by hand), next to result.md as `out/node/pr-<N>/QUESTION.md`. Stop there.
+5. Otherwise push, then reply to each point: a line comment in its own thread, every other point in one PR comment that links each of them. Each reply says what changed, with the commit, or why nothing did. Resolve the line threads you fixed (GitHub's GraphQL `resolveReviewThread`); leave the others open. Write QUESTION.md last, for the points of item 1 that need the owner, with your recommendation.
+6. Never approve or merge the PR, and never dismiss a review. Write no closing keyword before an issue number.
 
 ## Cost discipline
 - Hand agents file paths and section pointers, not pasted documents.

@@ -1,0 +1,14 @@
+[
+ {
+  "id": 1500,
+  "html_url": "https://github.com/o/r/pull/15#pullrequestreview-1500",
+  "user": {
+   "login": "owner",
+   "type": "User"
+  },
+  "author_association": "OWNER",
+  "state": "APPROVED",
+  "body": "LGTM",
+  "submitted_at": "2026-11-02T11:00:00Z"
+ }
+]

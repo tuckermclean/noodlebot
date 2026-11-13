@@ -16,6 +16,8 @@ TESTS = \
 	scheduler/report-first-deploy.test.sh \
 	scheduler/report-review.test.sh \
 	scheduler/report-regress.test.sh \
+	scheduler/report-g03.test.sh \
+	scheduler/loop-g03-skills.test.sh \
 	scheduler/report-g02.test.sh \
 	scheduler/report-queue.test.sh \
 	scheduler/report-queue-answers.test.sh \
@@ -70,6 +72,22 @@ TESTS = \
 	scheduler/loop-w05b.test.sh \
 	scheduler/loop-g01-lim.test.sh \
 	scheduler/loop-g01-throttle.test.sh \
+	scheduler/loop-g03.test.sh \
+	scheduler/loop-g03-own.test.sh \
+	scheduler/loop-g03-question.test.sh \
+	scheduler/loop-g03-slot.test.sh \
+	scheduler/loop-g03-update.test.sh \
+	scheduler/loop-g03-nodeupdate.test.sh \
+	scheduler/loop-g03-bg.test.sh \
+	scheduler/loop-g03-bg2.test.sh \
+	scheduler/loop-g03-throttle.test.sh \
+	scheduler/loop-g03-max.test.sh \
+	scheduler/loop-g03-queue.test.sh \
+	scheduler/loop-g03-arrive.test.sh \
+	scheduler/loop-g03-ends.test.sh \
+	scheduler/loop-g03-limit.test.sh \
+	scheduler/loop-g03-fail.test.sh \
+	scheduler/loop-g03-starts.test.sh \
 	scheduler/loop-s07-records.test.sh \
 	scheduler/loop-s04.test.sh \
 	scheduler/loop-d01.test.sh \
@@ -123,6 +141,7 @@ TESTS = \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
+	scheduler/feedback.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
 	container/entrypoint.test.sh \

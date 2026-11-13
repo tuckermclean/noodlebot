@@ -1,0 +1,14 @@
+[
+ {
+  "id": 1400,
+  "html_url": "https://github.com/o/r/pull/14#pullrequestreview-1400",
+  "user": {
+   "login": "owner",
+   "type": "User"
+  },
+  "author_association": "OWNER",
+  "state": "COMMENTED",
+  "body": "a general remark",
+  "submitted_at": "2026-11-02T11:00:00Z"
+ }
+]

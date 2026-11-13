@@ -28,7 +28,10 @@ Each run:
      has no issue of its own and its answer, taken like a unit's, needs the prefix `PR #N:` when the node or another
      update waits on the same issue): a short `## <ID> asks` pointer on the status issue (its
      Waiting on you item links the question's comment on the unit's issue), and
-     the whole QUESTION.md as a milestone on the unit's home issue;
+     the whole QUESTION.md as a milestone on the unit's home issue; a spec-PR feedback session's QUESTION.md (pr/<N>/ with
+     a FEEDBACK.md) the same, its home being issue N for a PR on `spec/triage-<N>-*` and the PR itself otherwise (the
+     branch from open-prs.tsv, or FEEDBACK.md's `Branch:` line), and the owner's comment there after it becomes
+     pr/<N>/ANSWER.md; a spec-PR update session's QUESTION.md (no FEEDBACK.md, no `node` file) is not posted;
   5. posts milestones on each unit's home issue, each once, each starting with a `**Stage:**` line: a start
      or resume (with its start count, read from new status.log lines), the question, answer received, FAILED.
      The home issue of a triage of N is N; of a node, the first issue on the **Resolves:** line of its spec
@@ -180,6 +183,27 @@ def nodes(state):
         if os.path.isdir(d):
             out += [fmt % n for n in sorted(os.listdir(d)) if pat.match(n) and os.path.isdir(os.path.join(d, n))]
     return out
+
+
+def pr_feedback(state, task):
+    """A spec-PR feedback unit: "PR #N" whose state folder holds a FEEDBACK.md (an update's has none)."""
+    return task.startswith("PR #") and has(state, task, "FEEDBACK.md")
+
+
+def pr_home(state, task):
+    """The home issue number of a spec-PR feedback unit: issue N for a PR on spec/triage-<N>-*, else the PR itself."""
+    num = task[4:]
+    branch = ""
+    for f in (l.split() for l in read_lines(os.path.join(state, "open-prs.tsv"))):
+        if len(f) > 1 and f[0] == num:
+            branch = f[1]
+    if not branch:
+        for l in read_lines(os.path.join(tdir(state, task), "FEEDBACK.md")):
+            if l.startswith("Branch:"):
+                branch = l.split(":", 1)[1].strip()
+                break
+    m = re.match(r"spec/triage-(\d+)-", branch)
+    return int(m.group(1) if m else num)
 
 
 def pr_node(state, task):
@@ -423,7 +447,9 @@ def sessions(state):
         except OSError:
             continue
         k = n.rsplit("#", 1)[-1]
-        if harness.matches(cmd, k):
+        # a node's feedback prompt ends in the PR number: its state folder tells the node
+        if harness.matches(cmd, k) or re.search(r"run-session\.sh [^ ]+ [^ ]*/node/%s /noodlebot:node --feedback [0-9]+( |$)"
+                                                % re.escape(k), cmd):
             out.append((n, pid, os.path.getmtime(f)))
     return out
 
@@ -1014,6 +1040,8 @@ def home_issue(a, rs, task):
     """The unit's home issue number: the recorded one, else decided (and for a Build issue created) and recorded."""
     if pr_node(a.state, task):  # a node-PR update has no issue of its own: its node's
         return home_issue(a, rs, pr_node(a.state, task))
+    if task.startswith("PR #"):  # a spec-PR feedback unit: decided from its branch, never recorded
+        return pr_home(a.state, task)
     f = os.path.join(tdir(a.state, task), "issue")
     try:
         return int(open(f).read().split()[0])
@@ -1057,7 +1085,8 @@ def home_issue(a, rs, task):
 
 def milestone(a, rs, task, key, stage, body=""):
     """Post one milestone comment on the unit's home issue, once per key (recorded in report.json after the post)."""
-    if task.startswith("PR #") and not (pr_node(a.state, task) and key.split(":")[0] in ("question", "answer")):
+    if task.startswith("PR #") and not pr_feedback(a.state, task) and \
+            not (pr_node(a.state, task) and key.split(":")[0] in ("question", "answer")):
         return  # a spec-PR update is not a unit: no issue; a node-PR update posts only its question and answer, on its node's
     u = rs.setdefault("units", {}).setdefault(task, {})
     done = u.setdefault("done", [])
@@ -1267,6 +1296,10 @@ def home_units(a):
     """{issue number: [tasks]} for the units whose home issue is recorded."""
     out = {}
     for n in nodes(a.state):
+        if pr_feedback(a.state, n):  # listed only while its question waits for an answer
+            if n in waiting(a.state):
+                out.setdefault(pr_home(a.state, n), []).append(n)
+            continue
         if n.startswith("PR #") and not pr_node(a.state, n):
             continue
         try:
@@ -1299,10 +1332,16 @@ def held(a, n):
 ID_PREFIX = re.compile(r"\s*\**(PR #\d+|#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
 
 
+def pr_homes(a):
+    """The PR numbers that are the home of their own feedback unit: the owner's comments there are feedback."""
+    return {pr_home(a.state, n) for n in nodes(a.state) if pr_feedback(a.state, n) and pr_home(a.state, n) == int(n[4:])}
+
+
 def take_home_answers(a, rs, status_issue):
     """The owner's new comments on the units' home issues: the answer to the one open question there, with a +1;
     a reply only when none is open, or several are and the comment does not start with one's ID."""
     seen = rs.setdefault("home", {})
+    on_pr = pr_homes(a)
     for issue, tasks in sorted(home_units(a).items()):
         st = seen.get(str(issue))
         for rid in list((st or {}).get("react", [])):  # a failed +1 is retried even when the unit is finished
@@ -1342,7 +1381,9 @@ def take_home_answers(a, rs, status_issue):
                         return c["id"] > qc["id"] if isinstance(qc.get("id"), int) else (qc.get("at") or "") < c["created_at"]
                     cands = [t for t in opened if after(t)]
                     m = ID_PREFIX.match(text)
-                    if not pending:
+                    if issue in on_pr and not cands:
+                        pass  # a comment on a bot PR is feedback, not a stray answer
+                    elif not pending:
                         comment(a, issue, "Not recorded as an answer: no question is waiting on this issue.")
                     elif len(cands) > 1 and not (m and m.group(1) in cands):
                         comment(a, issue, "Not recorded as an answer: more than one unit is waiting on this issue (%s). "
@@ -1426,7 +1467,7 @@ def post_events(a, rs, issue):
 def post_questions(a, rs, issue):
     posted = rs.setdefault("questions", {})
     for n in waiting(a.state):
-        if n.startswith("PR #") and not pr_node(a.state, n):
+        if n.startswith("PR #") and not pr_feedback(a.state, n) and not pr_node(a.state, n):  # a spec-PR update's question is not posted
             continue
         q = os.path.join(tdir(a.state, n), "QUESTION.md")
         key = mtime_key(q)
@@ -1548,7 +1589,10 @@ def closing_candidates(a, rs):
 
 def reopen(a, rs, issue):
     """Make a unit's home issue open for its new question (closed by the loop, or by someone else)."""
-    if gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
+    cur = gh("GET", "repos/%s/issues/%s" % (a.repo, issue))
+    if cur.get("pull_request"):  # never reopen a PR: a closed PR home is skipped
+        return
+    if cur.get("state") == "closed":
         gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "open"})
     if (rs.get("closed") or {}).pop(str(issue), None) is not None:
         a.save()

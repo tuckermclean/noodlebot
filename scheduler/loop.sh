@@ -6,6 +6,10 @@
 # (/noodlebot:triage --update <N>; the same one slot as a triage); and one update session for each bot's
 # node/* PR that GitHub reports CONFLICTING (/noodlebot:node --update <N>; no slot, but it counts toward
 # SCHED_MAX, and its node's own session waits for it).
+# Each tick it also reads the last finished run of feedback.py (which runs in the background, one at a time): the owner's new comments and reviews on the bot's open PRs start one
+# feedback session for the PR's unit (/noodlebot:node --feedback <N> for a node or follow-up PR, in the node's
+# worktree; /noodlebot:triage --feedback <N> for a spec PR, in the triage's slot), with the items in the unit's
+# FEEDBACK.md. Feedback sessions count toward SCHED_MAX.
 #   tmux new -d -s sched ~/gitrepos/noodlebot/scheduler/loop.sh [owner/name]   (default tuckermclean/themonolith)
 # One loop per repository, each with its own lock, state and status issue.
 #   touch ~/STOP          (every loop exits within seconds; running sessions keep going)
@@ -31,7 +35,7 @@
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
-#   worktrees/<name>/pr-<N>  one worktree per update of a spec PR or a node PR, on the PR's branch
+#   worktrees/<name>/pr-<N>  one worktree per update of a spec PR or a node PR, or per spec-PR feedback session, on the PR's branch
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED, SPEC-PR-SCOPE (the loop's: the spec PR
@@ -39,10 +43,12 @@
 #                            (the loop's cache: "<PR> <head>" last checked);
 #                            visibility (public, private or unknown: the repository's, asked at start and again while unknown),
 #                            site.log (stderr of the status-site publish step);
-#                            answered/ keeps released questions and spec PRs;
+#                            answered/ keeps released questions, spec PRs and finished FEEDBACK.md;
+#                            feedback/ (feedback.py's record per PR: N, N.md, N.next); FEEDBACK.md in a unit's folder holds the
+#                            feedback handed to its session and not yet answered; session.kind says "feedback" for such a session;
 #                            node/<ID>/detached names the branch the loop detached its idle worktree from for an update (start_node puts it back);
-#                            issue/<N>/ (a triage) and pr/<N>/ (an update of a spec PR or a node PR: also from, done, and node, the
-#                            node ID, for a node PR) hold the same files; a node PR's question moves into its answered/
+#                            issue/<N>/ (a triage) and pr/<N>/ (an update of a spec PR or a node PR, or a spec-PR feedback: also from, done,
+#                            and node, the node ID, for a node PR's update) hold the same files; a node PR's question moves into its answered/
 #                            once the PR is no longer open (pr_gone)
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
@@ -220,13 +226,17 @@ ensure_labels() {
 ensure_labels
 
 # alive <pid> <key>: the process exists and is that task's session, whose prompt ends in <key>
-# (a node ID or an issue number); guards against pid reuse.
+# (a node ID or an issue number), or is a node feedback prompt on node/<key>; guards against pid reuse.
 alive() {
 	kill -0 "$1" 2>/dev/null || return 1
+	local cmd
+	cmd=$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)
+	# a node's feedback prompt ends in the PR number, so it is recognised by the node's state folder
+	grep -qE "run-session\.sh [^ ]+ [^ ]*/node/$2 /noodlebot:node --feedback [0-9]+( |\$)" <<<"$cmd" && return 0
 	if [ -n "$match_tpl" ]; then   # the harness's pattern, asked once per loop start: no python run per check
-		tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -Eq -- "${match_tpl//@UNIT@/$2}"
+		grep -Eq -- "${match_tpl//@UNIT@/$2}" <<<"$cmd"
 	else
-		python3 -I -B "$here/harness.py" matches "$2" "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)"
+		python3 -I -B "$here/harness.py" matches "$2" "$cmd"
 	fi
 }
 
@@ -335,6 +345,7 @@ ended() {
 	rm -f "$d/resume.size"   # left by a resume begun before this name (a byte offset then): taken as resumed
 	# a failed resume is a limit exit whatever claude's exit code was
 	if [ -e "$d/force-limit" ]; then [ "$rc" != 0 ] || rc=143; fi
+	if [ "$(cat "$d/session.kind" 2>/dev/null)" = feedback ]; then feedback_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; session $id ended (rc $rc), held by FAILED"
@@ -354,6 +365,34 @@ ended() {
 		set_starts "$d" 0   # deleting FAILED gives the node 2 fresh starts
 		say "$saw; session $id ended (rc $rc), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
 	else say "$saw; session $id ended (rc $rc), no PR, no QUESTION.md; may start again"
+	fi
+}
+
+# feedback_ended <dir> <saw> <rc>: a feedback session (node/<ID> or pr/<N>) is gone. FEEDBACK.md stays while there
+# is feedback work left: after a question, a failed end or a limit exit; rc 0 with no question moves it into answered/.
+feedback_ended() {
+	local d=$1 saw=$2 rc=$3 name ts n
+	name=$(task_name "$d") n=$(basename "$d")
+	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; feedback session of $name ended (rc $rc), held by FAILED"
+	elif [ -e "$d/QUESTION.md" ]; then rm -f "$d/stopped"; say "$saw; feedback session of $name ended (rc $rc) with QUESTION.md"
+	elif bg_cut_off "$d"; then
+		not_counted "$d"
+		say "$saw; feedback session of $name ended (rc $rc) with its background work cut off; start not counted"
+	elif [ "$rc" = 0 ]; then
+		set_starts "$d" 0
+		ts=$(date -u +%Y%m%dT%H%M%SZ)
+		mkdir -p "$d/answered" && [ -e "$d/FEEDBACK.md" ] && mv "$d/FEEDBACK.md" "$d/answered/$ts-FEEDBACK.md"
+		[ "$(basename "$(dirname "$d")")" = pr ] && git -C "$clone" worktree remove --force "$wtroot/pr-$n" 2>/dev/null
+		say "$saw; feedback session of $name ended (rc 0); FEEDBACK.md moved to answered/, not started again until new feedback arrives"
+	elif limit_exit "$d"; then
+		record_stop "$d" "$rc"
+		not_counted "$d"
+		say "$saw; feedback session of $name stopped by the usage limit (rc $rc); start not counted, it starts again when the throttle opens"
+	elif [ "$(starts_of "$d")" -ge 2 ]; then
+		echo "$(date -u +%FT%TZ) second exit (rc $rc) of a feedback session without finishing" >"$d/FAILED"
+		set_starts "$d" 0
+		say "$saw; feedback session of $name ended (rc $rc), 2 starts used: wrote FAILED"
+	else say "$saw; feedback session of $name ended (rc $rc); may start again"
 	fi
 }
 
@@ -559,7 +598,7 @@ stop_done() {
 # launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
 # prompt's last word: a node ID or an issue number).
 launch() {
-	rm -f "$2/session.rc" "$2/resumed" "$2/resume.starts" "$2/resume.size" "$2/force-limit"
+	rm -f "$2/session.rc" "$2/resumed" "$2/resume.starts" "$2/resume.size" "$2/force-limit" "$2/session.kind"
 	# 9>&-: the session must not hold the loop's lock.
 	NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
 	pid=$! node=${3##* }
@@ -701,6 +740,115 @@ start_update() {
 	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--update $n") || { note "$saw; PR #$n: the harness gave no skill command; not started"; return 1; }
 	launch "$wt" "$d" "$cmd"
 	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
+}
+
+# fb_blocked <unit dir> <PR>: feedback for the unit's PR must wait: its own session runs, or a session of pr/<PR>/
+# (an update of the same PR), or it has FAILED, WAITING-PR or a QUESTION.md without ANSWER.md.
+fb_blocked() {
+	[ -e "$1/session.pid" ] || [ -e "$state/pr/$2/session.pid" ] || [ -e "$1/FAILED" ] || [ -e "$1/WAITING-PR" ] ||
+		{ [ -e "$1/QUESTION.md" ] && [ ! -e "$1/ANSWER.md" ]; }
+}
+
+# fbsay <name> <text>: a failure of start_feedback, said once per streak of the same failure of a unit (not note: that
+# would alternate with "nothing ready" and break the idle loop's one-line-per-10-minutes rule).
+declare -A fb_said=()
+fbsay() { [ "${fb_said[$1]:-}" = "${2#*; }" ] || { say "$2"; fb_said[$1]=${2#*; }; }; }
+
+# start_feedback <node|spec> <node ID, or PR number for spec> <PR> <branch> <saw>: start the feedback session of a PR's
+# unit (/noodlebot:node --feedback <PR> in the node's worktree, /noodlebot:triage --feedback <PR> in worktrees/<name>/pr-<PR>,
+# in the triage's slot). Nothing is handed over (the PR's feedback is not appended and its record not advanced) unless
+# the session starts; a unit that already has a FEEDBACK.md (a restart, or the start after an answer) keeps it as it is.
+# A node's branch may be held by a leftover update worktree (pr-<N>): free_branch detaches it, as for start_node, before
+# anything is handed over, and node/<ID>/detached is removed once the node's worktree is back on the branch.
+# fbnew (set by tick_run) says which PRs have new feedback this tick.
+start_feedback() {
+	local t=$1 key=$2 n=$3 br=$4 saw=$5 d wt name cmd released list u ni pn=''
+	if [ "$t" = node ]; then d=$state/node/$key wt=$wtroot/$key name=$key cmd="/noodlebot:node --feedback $n"
+	else d=$state/pr/$n wt=$wtroot/pr-$n name="PR #$n" cmd="/noodlebot:triage --feedback $n"; fi
+	mkdir -p "$d"
+	fb_blocked "$d" "$n" && return 1
+	[ "$t" = node ] || [ -z "$triaging" ] || return 1
+	[ -r "$here/unattended-feedback.md" ] || { fbsay "$name" "$saw; $name: no unattended-feedback.md; feedback not started"; return 1; }
+	# a leftover update worktree (pr-<N>) may still have the node's branch: freed first (as start_node does), so a failure hands nothing over
+	[ "$t" != node ] || free_branch "$br" "$wt" "$saw; $name" 'pr-*' || return 1
+	released=$(sh "$here/release-markers.sh" "$d") || { fbsay "$name" "$saw; releasing $name's markers failed"; return 1; }
+	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $name: $(echo "$released" | paste -sd';')"; fi
+	# A hand-over is due: no run is in flight while it happens (the run is stopped, which is not waiting on it, and a killed run
+	# hands nothing over), and N.md and N.next are put back from the copies made when the whole run was read, so a run killed
+	# between writing the two (or an orphan's write) cannot leave a FEEDBACK.md that `mark` does not record.
+	if [ -n "${fbnew[$n]:-}" ]; then
+		fb_stop
+		if [ -s "$state/feedback-carry/$n.md" ] && [ -s "$state/feedback-carry/$n.next" ]; then
+			cp -f "$state/feedback-carry/$n.next" "$state/feedback/$n.next" && cp -f "$state/feedback-carry/$n.md" "$state/feedback/$n.md" ||
+				{ fbsay "$name" "$saw; $name: restoring the feedback of PR #$n failed; not started"; return 1; }
+		else unset "fbnew[$n]"; fi
+	fi
+	# new items are handed over below and start the count again; a restart (pending FEEDBACK.md) keeps its 2-starts limit
+	if [ -z "${fbnew[$n]:-}" ] || [ ! -s "$state/feedback/$n.md" ]; then
+		[ "$(starts_of "$d")" -lt 2 ] || { fbsay "$name" "$saw; $name has feedback but has used 2 starts; not started"; return 1; }
+	fi
+	if [ "$t" = node ]; then
+		if [ ! -d "$wt" ]; then
+			git -C "$clone" worktree add -q -b "$br" "$wt" "origin/$br" 2>/dev/null ||
+				git -C "$clone" worktree add -q "$wt" "$br" || { fbsay "$name" "$saw; worktree for $name failed"; return 1; }
+		fi
+		save_leftover "$key" "$wt" "$d" "$saw" || return 1
+		# on the PR's branch, brought to origin/<branch>: unpushed commits that origin/<branch> has not got stay when it
+		# is only ahead; commits that diverged from it are kept under refs/noodlebot/leftover/ and the branch is reset
+		# a worktree free_branch detached (an update took the branch; node/<ID>/detached) must be at an ancestor of the
+		# branch: commits it lacks are not lost, the start is refused
+		if [ "$(cat "$d/detached" 2>/dev/null)" = "$br" ] && ! git -C "$wt" symbolic-ref -q HEAD >/dev/null &&
+			git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
+			! git -C "$wt" merge-base --is-ancestor HEAD "refs/heads/$br" 2>/dev/null; then
+			fbsay "$name" "$saw; $name: its worktree is detached at commits $br lacks; feedback not started"; return 1
+		fi
+		{ [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$br" ] || git -C "$wt" checkout -q "$br"; } 2>/dev/null ||
+			{ fbsay "$name" "$saw; $name: checking out $br failed; feedback not started"; return 1; }
+		rm -f "$d/detached"
+		if ! { git -C "$wt" merge-base --is-ancestor "origin/$br" HEAD || git -C "$wt" merge -q --ff-only "origin/$br"; } 2>/dev/null; then
+			local lref=refs/noodlebot/leftover/$key/$(date -u +%Y%m%dT%H%M%SZ)
+			git -C "$wt" update-ref "$lref" HEAD && git -C "$wt" reset -q --hard "origin/$br" 2>/dev/null ||
+				{ fbsay "$name" "$saw; $name: bringing its worktree to origin/$br failed; feedback not started"; return 1; }
+			say "$saw; $name: its commits had diverged from origin/$br; kept at $lref, worktree reset to origin/$br"
+		fi
+	elif [ -d "$wt" ]; then
+		{ git -C "$wt" merge --abort; git -C "$wt" checkout -q -f -B "$br" "origin/$br" &&
+			git -C "$wt" reset -q --hard "origin/$br" && git -C "$wt" clean -qfd; } 2>/dev/null ||
+			{ fbsay "$name" "$saw; resetting the worktree of PR #$n failed; feedback not started"; return 1; }
+	else
+		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { fbsay "$name" "$saw; worktree for PR #$n failed"; return 1; }
+	fi
+	# hand over: append the PR's new feedback to the unit's FEEDBACK.md, then advance the PR's record
+	if [ -n "${fbnew[$n]:-}" ] && [ -s "$state/feedback/$n.md" ]; then
+		# the file is in place before the record advances: a death in between leaves a duplicate, never a loss
+		local had=0; [ -s "$d/FEEDBACK.md" ] && cp -p "$d/FEEDBACK.md" "$d/FEEDBACK.md.old" && had=1
+		if { [ "$had" = 0 ] || { cat "$d/FEEDBACK.md"; echo; }; cat "$state/feedback/$n.md"; } >"$d/FEEDBACK.md.tmp" &&
+			mv -f "$d/FEEDBACK.md.tmp" "$d/FEEDBACK.md" &&
+			python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" --prs "$state/open-prs.tsv" mark "$n"; then
+			rm -f "$d/FEEDBACK.md.old"
+		else
+			rm -f "$d/FEEDBACK.md.tmp"
+			if [ "$had" = 1 ]; then mv -f "$d/FEEDBACK.md.old" "$d/FEEDBACK.md"; else rm -f "$d/FEEDBACK.md"; fi
+			fbsay "$name" "$saw; $name: handing over the feedback of PR #$n failed; not started"; return 1
+		fi
+		unset "fbcarry[$n]" "fbnew[$n]"; rm -f "$state/feedback-carry/$n.md" "$state/feedback-carry/$n.next"
+		set_starts "$d" 0
+	fi
+	[ -s "$d/FEEDBACK.md" ] || { fbsay "$name" "$saw; $name: no FEEDBACK.md; feedback not started"; return 1; }
+	[ "$t" = node ] && [[ $br == node/$key-followup-* ]] && ! fu_branch "$d" >/dev/null && echo "$br" >"$d/FOLLOWUP"
+	ni=$(grep -c '^kind: ' "$d/FEEDBACK.md")
+	while read -r u; do list+="${list:+\n}- $(sedesc "$u")"; done < <(sed -n 's/^url: //p' "$d/FEEDBACK.md")
+	site_sed
+	sed "${ssed[@]}" -e "s|^@ITEMS@\$|${list:-- (none)}|" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
+		-e "s|@BR@|$(sedesc "$br")|g" -e "s|@FB@|$(sedesc "$d/FEEDBACK.md")|g" -e "s|@CMD@|$cmd|g" -e "s|@LOOP@|$here/loop.sh|g" \
+		-e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-feedback.md" >"$d/unattended.md" ||
+		{ fbsay "$name" "$saw; $name: rendering unattended-feedback.md failed; not started"; return 1; }
+	unset "fb_said[$name]"
+	launch "$wt" "$d" "$cmd"
+	echo feedback >"$d/session.kind"
+	if [ "$t" = node ]; then live+=("$pid $key"); pn="feedback session of $name on PR #$n"
+	else live+=("$pid $n"); triaging=$n; pn="feedback session of $name"; fi
+	say "$saw; started $pn ($ni items) in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
 # graph_clash <branch>: origin/<branch>'s graph gives an ID of origin/main's graph to a node of another name.
@@ -1080,6 +1228,8 @@ start_turn() {
 	update) start_update "$a" "$b" "$c" "$d" "$2" "$e" && live+=("$pid $a") && { [ -n "$e" ] || triaging=$a; } ;;
 	node) start_node "$a" "$b" "$2" "$c" && started[$a]=1 ;;   # started: tick's, for the RELEASE lines
 	resume) resume_idle "$2" "$a" ;;
+	fbnode) start_feedback node "$a" "$b" "$c" "$2" ;;
+	fbspec) start_feedback spec "$a" "$a" "$b" "$2" ;;
 	*) return 1 ;;
 	esac
 }
@@ -1142,7 +1292,7 @@ print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 listed=0 open_limit=500 rels=()
+open='' merged='' tick_tok='' live=() throttled=0 listed=0 fb_failed=0 fb_pid='' fb_pre='' fb_n=0 fb_ok=0 open_limit=500 rels=()
 # tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
@@ -1191,6 +1341,7 @@ spec_scope() {
 }
 
 tick_run() {
+	fb_ok=0
 	date +%s >"$state/heartbeat.tmp" && mv "$state/heartbeat.tmp" "$state/heartbeat"
 	# RELEASE markers: taken (and removed) now, so they go also when the tick ends early; see the ready loop
 	rels=()
@@ -1253,7 +1404,7 @@ tick_run() {
 			say "$saw; throttle released: ${usage#open: }"; throttled=0
 		fi
 	fi
-	local wlist=(); local -A wspec=() wdir=()   # the start queue's waiting units (want)
+	local wlist=(); local -A wspec=() wdir=() fbnew=()   # the start queue's waiting units (want); PRs with new feedback
 	resume_idle "$saw"
 	# with the queue on, the throttle does not stop units waiting: it only stops the asking
 	full() { { [ "$throttled" = 1 ] && [ "$ramp" != 1 ]; } || { [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; }; }
@@ -1283,6 +1434,61 @@ tick_run() {
 		done < <(next_update)
 	fi
 
+	# Feedback: the owner's new comments and reviews on the bot's open PRs (feedback.py reads and records nothing until a
+	# session starts). A unit with a FEEDBACK.md has feedback work too (a restart, or the start after an answer).
+	# feedback.py runs in the background (fb_launch, once per loop iteration after `report`, only after a tick that got this
+	# far, i.e. with a good open-PR list, and on its own copy of that list; one run at a time, never waited for). The tick reads
+	# only a run that has finished (its process is gone) with its output renamed into place (exit 0), and reads it once. That
+	# whole result replaces fbcarry, the PRs with new feedback not yet handed over: a unit keeps being wanted (fbnew) every tick,
+	# also while a later run is in flight, until its feedback is handed over (start_feedback, which first stops any run in
+	# flight and puts back the PR's N.md/N.next from the copy made here) or a newer whole result replaces it. An answer recorded
+	# by `report` drops the run and the carry. A failed or killed run is logged (once per streak), hands nothing over and
+	# advances no record.
+	local fo='' fn fbr fbot fk fid fdir fk2
+	fb_ok=1
+	if [ -n "$fb_pid" ] && ! kill -0 "$fb_pid" 2>/dev/null; then
+		wait "$fb_pid" 2>/dev/null; fb_pid=''
+		if [ -e "$fb_pre.out" ]; then
+			fo=$(cat "$fb_pre.out"); fb_failed=0
+			fbcarry=(); rm -rf "$state/feedback-carry"; mkdir -p "$state/feedback-carry"
+			while read -r fn fbr; do
+				[[ $fn =~ ^[0-9]+$ ]] || continue
+				cp -f "$state/feedback/$fn.md" "$state/feedback/$fn.next" "$state/feedback-carry/" 2>/dev/null && fbcarry[$fn]=$fbr
+			done <<<"$fo"
+		else
+			# said once per run of failures (not note: that would break the idle loop's one-line-per-10-minutes rule)
+			[ "$fb_failed" = 1 ] || say "$saw; feedback.py failed (see report.log); carrying on"
+			fb_failed=1
+		fi
+		rm -f "$fb_pre".*
+	fi
+	for fk2 in "${!fbcarry[@]}"; do fbnew[$fk2]=${fbcarry[$fk2]}; done
+	# a pending FEEDBACK.md whose PR is no longer open (merged or closed) and with no session running is finished:
+	# it moves into answered/ so that it blocks nothing and is not appended to later
+	for fdir in "$state"/node/*/ "$state"/pr/*/; do
+		fdir=${fdir%/}
+		[ -s "$fdir/FEEDBACK.md" ] && [ ! -e "$fdir/session.pid" ] || continue
+		fn=$(sed -n 's/^PR: //p' "$fdir/FEEDBACK.md" | tail -n1)
+		[[ $fn =~ ^[0-9]+$ ]] || continue
+		cut -d' ' -f1 "$state/open-prs.tsv" | grep -qx "$fn" && continue
+		mkdir -p "$fdir/answered" && mv "$fdir/FEEDBACK.md" "$fdir/answered/$(date -u +%Y%m%dT%H%M%SZ)-FEEDBACK.md" &&
+			say "$saw; ${fdir#$state/}: PR #$fn is no longer open; its pending FEEDBACK.md moved to answered/"
+	done
+	while read -r fn fbr fo fbot fk; do
+		[ "$fbot" = true ] || continue
+		if [[ $fbr == spec/* ]]; then fk=spec fid=$fn fdir=$state/pr/$fn
+		elif [[ $fbr =~ ^node/([A-Z][0-9][0-9])- ]]; then fk=node fid=${BASH_REMATCH[1]} fdir=$state/node/${BASH_REMATCH[1]}
+		else continue; fi
+		[ -n "${fbnew[$fn]:-}" ] || [ -e "$fdir/FEEDBACK.md" ] || continue
+		fb_blocked "$fdir" "$fn" && continue
+		full && continue
+		if [ "$fk" = spec ]; then
+			[ -z "$triaging" ] && [ -z "${wspec[PR#$fn]:-}" ] || continue
+			if [ "$ramp" = 1 ]; then want "PR#$fn" update - "$fdir" "fbspec|$fn|$fbr"; else start_feedback spec "$fn" "$fn" "$fbr" "$saw"; fi
+		elif [ "$ramp" = 1 ]; then want "$fid" resumed - "$fdir" "fbnode|$fid|$fn|$fbr"
+		else start_feedback node "$fid" "$fn" "$fbr" "$saw"; fi
+	done <"$state/open-prs.tsv"
+
 	# Every ready node that has no session yet, in graph order (SCHED_MAX caps the sessions; 0: none).
 	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.yaml" || { note "no graph on origin/main"; return; }
 	git -C "$clone" log --format=%s origin/main >"$state/subjects.txt"
@@ -1302,6 +1508,10 @@ tick_run() {
 	while read -r id name kind; do
 		[ -n "$id" ] || continue
 		[ -e "$state/node/$id/session.pid" ] && continue   # its session is running
+		# feedback work (a FEEDBACK.md, or feedback that the loop just wanted) is the feedback step's, never a plain start
+		[ -n "${wspec[$id]:-}" ] && continue
+		# (a WAITING-PR holds feedback, so the start that releases it once its spec PR is merged is not skipped)
+		[ -e "$state/node/$id/FEEDBACK.md" ] && [ ! -e "$state/node/$id/WAITING-PR" ] && [[ " $open " == *" $id "* ]] && continue
 		node_updating "$id" && continue   # an update of its PR runs
 		if full; then
 			# the throttle's hold is lifted for a released node; SCHED_MAX is not
@@ -1345,6 +1555,8 @@ tick_run() {
 		elif [ -e "$state/node/$id/session.pid" ]; then say "$saw; $id: RELEASE found, nothing started: it has a running session"
 		elif node_updating "$id"; then say "$saw; $id: RELEASE found, nothing started: an update of its PR is running"
 		elif [ -e "$state/node/$id/FAILED" ]; then say "$saw; $id: RELEASE found, nothing started: it is FAILED"
+		elif [[ ${wspec[$id]:-} == fbnode\|* ]] || { [ -e "$state/node/$id/FEEDBACK.md" ] && [ ! -e "$state/node/$id/WAITING-PR" ] && [[ " $open " == *" $id "* ]]; }; then
+			say "$saw; $id: RELEASE found, nothing started: its PR feedback is for the feedback step, never a plain start"
 		elif [ -n "${isready[$id]:-}" ]; then
 			if [ "$cap" -gt 0 ] && [ "${#live[@]}" -ge "$cap" ]; then say "$saw; $id: RELEASE found, the throttle is open; not started, SCHED_MAX ($cap) sessions are running"
 			elif [ "$ramp" = 1 ]; then say "$saw; $id: RELEASE found, the throttle is open; it takes no turn out of order and waits for its turn"
@@ -1388,18 +1600,47 @@ pause() {
 	done
 }
 
+# fb_launch <token>: start feedback.py's listing run in the background (when none is in flight), on its own copy of the
+# tick's open-PR list. Its files are per run ($state/feedback-run.<loop pid>.<n>.*): stdout goes to a temp file renamed to .out
+# only when it exits 0, so a finished run without .out failed or was killed (the timeout). Files of an orphan of an earlier
+# loop have other names, are removed at start-up and never read. fb_stop: kill the run (the wrapper and its timeout/python
+# only, never a session), reap it and clear its files.
+declare -A fbcarry=()   # PRs with new feedback from the last whole run, not yet handed over (PR -> branch)
+rm -rf "$state"/feedback-run.* "$state/feedback-carry"
+fb_launch() {
+	[ -z "$fb_pid" ] && [ "$fb_ok" = 1 ] && [ -n "$1" ] || return 0
+	fb_n=$((fb_n + 1)); fb_pre=$state/feedback-run.$$.$fb_n
+	cp -f "$state/open-prs.tsv" "$fb_pre.prs" || { rm -f "$fb_pre".*; return 0; }
+	( GH_TOKEN=$1 timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
+		--prs "$fb_pre.prs" >"$fb_pre.tmp" 2>>"$state/report.log" &&
+		mv -f "$fb_pre.tmp" "$fb_pre.out" || rm -f "$fb_pre.tmp" ) 9>&- &
+	fb_pid=$!
+}
+fb_stop() {
+	[ -n "$fb_pid" ] || return 0
+	local kids; kids=$(pgrep -P "$fb_pid" 2>/dev/null)
+	kill $fb_pid $kids 2>/dev/null; wait "$fb_pid" 2>/dev/null; fb_pid=''
+	rm -f "$fb_pre".*
+}
+trap fb_stop EXIT
+
 while :; do
 	requests
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
+	ftok=$tick_tok
 	report; rc=$?; tick_tok=''
+	if [ $rc = 3 ]; then   # an answer was recorded: a listing made before it existed is never handed over
+		fb_stop; fbcarry=(); rm -rf "$state/feedback-carry"
+		publish; continue
+	fi
+	[ "$fb_ok" = 1 ] && fb_launch "$ftok"; ftok=''
 	publish
-	[ $rc = 3 ] && continue
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] &&
 		{ "$here/deploy.sh" --runtime-changed "$nb" "$start_head" 9>&-; [ $? != 1 ]; }; then
-		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
+		fb_stop; exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
 	fi
 	pause
 done
