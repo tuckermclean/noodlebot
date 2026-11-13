@@ -806,7 +806,7 @@ start_feedback() {
 				git -C "$wt" checkout -q -B "$br" HEAD 2>/dev/null ||
 					{ fbsay "$name" "$saw; $name: putting its worktree back on $br failed; feedback not started"; return 1; }
 			else
-				local dref=refs/noodlebot/leftover/$key/$(date -u +%Y%m%dT%H%M%SZ)
+				local dref=refs/noodlebot/leftover/$key/$(date -u +%Y%m%dT%H%M%SZ)-detached
 				git -C "$wt" update-ref "$dref" HEAD && git -C "$wt" checkout -q "$br" 2>/dev/null ||
 					{ fbsay "$name" "$saw; $name: putting its worktree back on $br failed; feedback not started"; return 1; }
 				say "$saw; $name: its worktree's commits were not on $br; kept at $dref"
