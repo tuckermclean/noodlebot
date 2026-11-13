@@ -136,6 +136,13 @@ use the controls.
 The loop carries out the first three at its next iteration or tick; `deploy.sh` carries out the retry and the rollback at
 its next run, which a loop makes, and logs a line for each.
 
+`deploy.sh` runs `make test` on each runtime commit before it deploys it, unless `~/.config/noodlebot/deploy-ci` exists. Its
+first line, `<owner/name> <workflow file> <branch>` (for example `owner/repo test.yml main`), names the repository whose CI is
+read, the workflow and the branch whose push runs count. The deploy then waits for that workflow's push run on the new commit:
+it deploys the commit once the run passed (after a short local syntax check) and rejects it when the run failed, and it never
+runs `make test`. The GitHub App behind `~/.config/noodlebot/token` must be able to read that repository's Actions. Without the
+file, the deploy runs `make test` as before.
+
 From another machine, forward the socket over SSH and use it there:
 
     ssh -L /tmp/nb.sock:/home/<user>/.local/share/noodlebot/api.sock host
