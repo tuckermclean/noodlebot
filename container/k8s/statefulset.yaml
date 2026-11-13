@@ -46,7 +46,7 @@ spec:
           image: ghcr.io/owner/name:latest
           securityContext:
             privileged: false
-            # newuidmap and newgidmap are setuid: rootless podman nested in the pod needs them to work.
+            # newuidmap and newgidmap have file capabilities (a privilege gain too): rootless podman nested in the pod needs them to work.
             allowPrivilegeEscalation: true
             appArmorProfile:
               type: Unconfined

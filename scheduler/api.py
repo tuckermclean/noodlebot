@@ -169,8 +169,7 @@ def held(path):
     """Some process holds a lock on the file, as /proc/locks shows it; the lock is never taken.
     NOODLEBOT_PROC_LOCKS names the file read instead (tests only); with no line there, the lock lines
     in /proc/<pid>/fdinfo/<fd> of the fds with the file's inode are tried, only where scan_fdinfo() says
-    so (not in the initial pid namespace, whose /proc/locks lists every lock: the scan would be pure cost) (a pid namespace's
-    /proc/locks lacks them), only where scan_fdinfo() says so (see there)."""
+    so (not in the initial pid namespace, whose /proc/locks lists every lock: the scan would be pure cost)."""
     try:
         st = os.stat(path)
     except OSError:

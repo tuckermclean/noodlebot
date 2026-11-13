@@ -66,6 +66,10 @@ jobs:
             echo "check: origin is the repository https URL"
             got=$(git -C /opt/noodlebot remote get-url origin); echo "image: $got runner: $REPO_URL"
             [ "$got" = "$REPO_URL" ]
+            echo "check: newuidmap and newgidmap carry file capabilities"
+            getcap /usr/bin/newuidmap /usr/bin/newgidmap
+            getcap /usr/bin/newuidmap | grep -q cap_setuid
+            getcap /usr/bin/newgidmap | grep -q cap_setgid
             echo "check: no config folder in the image"
             test ! -e "$HOME/.config/noodlebot"
             test ! -e /opt/noodlebot/.config
@@ -113,6 +117,7 @@ jobs:
           if docker inspect -f '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$cid" | grep -E '\.sock|^/(var/)?run(/|$)'; then
             echo "a socket is mounted"; exit 1
           fi
+          dc exec -T noodlebot sh -c 'getcap /usr/bin/newuidmap /usr/bin/newgidmap; grep ^Cap /proc/self/status'
           dc exec -T noodlebot sh -c '[ "$(id -u)" != 0 ] && podman run --rm quay.io/podman/hello'
           dc exec -T noodlebot sh -c "git -C $nb -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m smoke"
           before=$(dc exec -T noodlebot sh -c "git -C $nb rev-parse HEAD")
