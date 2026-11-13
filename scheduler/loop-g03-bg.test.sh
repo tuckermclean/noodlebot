@@ -4,9 +4,10 @@
 . "$(dirname "$0")/testdata/lib/loop-prelude.sh"
 . "$src/testdata/lib/loop-g03.sh"
 
-# A slow api: while $GD/fb.slow exists every `gh api` call of the fake gh sleeps 0.3 s (a run of feedback.py makes 3 calls
-# per open bot PR: about 4 s). The other behaviour of the fake is the fixture's ($GD/fb.fail makes the calls fail).
+# A slow api: while $GD/fb.slow exists each `gh api` call of the fake gh sleeps 0.3 s, and 1.7 s more while $GD/fb.slow1 also exists (2 s a call); a run makes 3 calls per open bot PR (9) on 4 threads: about 1 s, about 6 s with fb.slow1 (U-1 only).
+# The other behaviour of the fake is the fixture's ($GD/fb.fail makes the calls fail).
 sed -i '/^\t*echo "\$3" >>"\$GD\/fbcalls"/a \	[ -e "$GD/fb.slow" ] \&\& sleep 0.3' "$tmp/bin6/gh"
+sed -i '/^\t*echo "\$3" >>"\$GD\/fbcalls"/a \	[ -e "$GD/fb.slow1" ] \&\& sleep 1.7' "$tmp/bin6/gh"
 # fbprocs: the listing runs of feedback.py (not its `mark` call) of the loop on this state dir.
 fbprocs() { ps -eo args= | grep -E "^python3 -I [^ ]*feedback\\.py .*--state $state( |\$)" | grep -vcE ' mark( |$)'; }
 fbbusy() { [ "$(fbprocs)" -ge 1 ]; }
@@ -40,9 +41,11 @@ x=$state/node/X01 y=$state/node/X02
 
 # U-1: a slow api does not slow the ticks, and one run of feedback.py is in flight at a time.
 touch "$GD/fb.slow"
+touch "$GD/fb.slow1"
 ok "U-1 setup: a run of feedback.py is in flight under the slow api" waitf 10 fbbusy
-ok "U-1: the ticks keep their pace while the run is in flight: 4 ticks within 8 s (a run takes about 4 s)" ticks_in 8 4
+ok "U-1: the ticks keep their pace while the run is in flight: 4 ticks within 8 s (a run takes about 6 s)" ticks_in 8 4
 ok "U-1: and a feedback.py is still running (the loop did not wait for it)" fbbusy
+rm -f "$GD/fb.slow1"
 
 # U-2: feedback added while the api is slow still starts its session, with the item.
 fbadd 11 conversation 121 'node point'
