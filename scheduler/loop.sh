@@ -34,7 +34,9 @@
 #   worktrees/<name>/pr-<N>  one worktree per update of a spec PR or a node PR, on the PR's branch
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
-#                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED;
+#                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED, SPEC-PR-SCOPE (the loop's: the spec PR
+#                            named by WAITING-PR changes files outside the spec files; sends the node back), SPEC-PR-CHECKED
+#                            (the loop's cache: "<PR> <head>" last checked);
 #                            visibility (public, private or unknown: the repository's, asked at start and again while unknown),
 #                            site.log (stderr of the status-site publish step);
 #                            answered/ keeps released questions and spec PRs;
@@ -966,7 +968,7 @@ start_node() {
 	fbr=$br; [ "$kind" = followup ] && { fbr=$(fu_branch "$d") || fbr=''; }
 	[ -z "$fbr" ] || free_branch "$fbr" "$wt" "$saw; $id" 'pr-*' || return 1
 	# An answer or a merged spec PR is new information: the node gets 2 fresh starts.
-	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing $id's markers failed"; return 1; }
+	released=$(sh "$here/release-markers.sh" "$d" "$state/closed-unmerged-prs.txt") || { note "$saw; releasing $id's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $id: $(echo "$released" | paste -sd';')"; fi
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; $id ready but has used 2 starts; not started"; return 1; }
 	if [ "$kind" = followup ]; then
@@ -1149,6 +1151,43 @@ tick() {
 	tick_run
 	[ "$listed" = 1 ] || rm -f "$state/waiting.json"
 }
+# spec_scope <saw>: a node waiting (WAITING-PR, no session) on an OPEN spec PR is checked against the spec files, once per
+# head commit (SPEC-PR-CHECKED holds "<PR> <head>"; release-markers.sh removes it). A PR that changes other files gets
+# SPEC-PR-SCOPE next to WAITING-PR: ready.py then resumes the node and start_node releases it with the paths. A repeat
+# (the session was sent back for this PR already) is a FAILED. A repository without a **Spec files:** line gets one
+# log line only. No gh call; git runs only for a new head. A missing checker or an error is a note; retried next tick.
+spec_scope() {
+	local w d id n head chk=$here/../plugin/skills/node/check-spec-diff.py out rc paths
+	for w in "$state"/node/*/WAITING-PR; do
+		[ -e "$w" ] || continue
+		d=$(dirname "$w"); id=$(basename "$d")
+		[ -e "$d/session.pid" ] || [ -e "$d/SPEC-PR-SCOPE" ] || [ -e "$d/FAILED" ] && continue
+		n=$(cat "$w" 2>/dev/null); [[ $n =~ ^[0-9]+$ ]] || continue
+		head=$(awk -v n="$n" '$1 == n { print $3; exit }' "$state/open-prs.tsv") || continue
+		[ -n "$head" ] || continue
+		[ "$(cat "$d/SPEC-PR-CHECKED" 2>/dev/null)" = "$n $head" ] && continue
+		[ -r "$chk" ] || { note "$1; $id: no spec-PR scope checker; not checked"; continue; }
+		out=$(python3 -I "$chk" --repo "$clone" origin/main "$head" 2>/dev/null); rc=$?
+		case $rc in
+		0) echo "$n $head" >"$d/SPEC-PR-CHECKED" ;;
+		1)
+			paths=$(printf '%s\n' "$out" | sed -n 's/^NOT SPEC //p')
+			if printf '%s\n' "$out" | sed -n 2p | grep -q '^from: default'; then
+				echo "$n $head" >"$d/SPEC-PR-CHECKED"
+				say "$id: spec PR #$n changes files outside the default spec files ($(echo $paths)), but the repository's AGENTS.md names no spec files (no **Spec files:** line); not sent back"
+			elif grep -lxF "pr $n" "$d"/answered/*-SPEC-PR-SCOPE >/dev/null 2>&1; then
+				echo "$n $head" >"$d/SPEC-PR-CHECKED"
+				echo "spec PR #$n still changes files outside the spec files after it was sent back: $(echo $paths)" >"$d/FAILED"
+				say "$id: spec PR #$n still changes files outside the spec files after it was sent back: $(echo $paths); FAILED"
+			else
+				{ echo "pr $n"; echo "branch $(awk -v n="$n" '$1 == n { print $2; exit }' "$state/open-prs.tsv")"; echo "head $head"
+					printf '%s\n' "$paths" | sed 's/^/path /'; } >"$d/SPEC-PR-SCOPE" && echo "$n $head" >"$d/SPEC-PR-CHECKED"
+			fi ;;
+		*) note "$1; $id: checking spec PR #$n failed; not checked" ;;
+		esac
+	done
+}
+
 tick_run() {
 	date +%s >"$state/heartbeat.tmp" && mv "$state/heartbeat.tmp" "$state/heartbeat"
 	# RELEASE markers: taken (and removed) now, so they go also when the tick ends early; see the ready loop
@@ -1181,6 +1220,7 @@ tick_run() {
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
 	cut -d' ' -f1 "$state/merged-prs.tsv" >"$state/merged-prs.txt"
+	awk '$4 == "false" { print $1 }' "$state/closed-prs.tsv" >"$state/closed-unmerged-prs.txt"
 	local saw="open=[${open% }] merged-prs=[${merged% }]" id name triaging='' p
 	tok=''
 
@@ -1245,10 +1285,12 @@ tick_run() {
 	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.yaml" || { note "no graph on origin/main"; return; }
 	git -C "$clone" log --format=%s origin/main >"$state/subjects.txt"
 	local args=() ready
+	spec_scope "$saw"
 	for id in $merged; do args+=(--merged "$id"); done
 	for id in $open; do args+=(--open "$id"); done
 	ready=$(python3 -I "$here/ready.py" --graph "$state/graph.yaml" --markers "$state/node" \
-		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --all "${args[@]}") ||
+		--subjects "$state/subjects.txt" --merged-prs "$state/merged-prs.txt" --closed-prs "$state/closed-unmerged-prs.txt" \
+		--all "${args[@]}") ||
 		{ note "$saw; ready.py failed; nothing started"; return; }
 	requests   # a request's event is logged before any node starts (a record that came in during ready.py too)
 	local -A isrel=() handled=() isready=() started=()
