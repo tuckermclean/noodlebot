@@ -50,8 +50,10 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
     is a new question in QUESTION.md, not a reopened PR; end the run once you have written it.
   - <ts>-SPEC-PR-SCOPE: the loop found that the open spec PR named by WAITING-PR changes files outside
     the spec files, and sent the node back. The file holds `pr`, `branch`, `head` and one `path` line
-    for each such file. Act on this file only when it is the newest file in answered/ (an older
-    one has been handled). Check the spec branch out in a spec worktree at origin/<branch>:
+    for each such file. Act on this file only when it is the newest file in answered/ and the
+    brief does not record "<file name> handled" (an older one, or one so recorded, has been
+    handled; after a later fresh start the file is still the newest, so check the brief).
+    Check the spec branch out in a spec worktree at origin/<branch>:
     git fetch origin && git worktree add -B <branch> @WT@-spec origin/<branch>
     and confirm that HEAD there is the `head` line of the file, the PR's head before your restore
     (if it is not, someone pushed since: remove the spec worktree, write QUESTION.md and end the
@@ -63,12 +65,15 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
     PROBLEMS 0. If either does not, remove the spec worktree (git worktree remove @WT@-spec), write
     QUESTION.md saying what it reports and end the run. Otherwise push the commit, and comment on
     the PR (gh pr comment) naming the paths taken out and the `head` line commit that held them
-    (the comment may also name the new restoring commit). If no change is left in the PR
-    (git diff --quiet origin/main...HEAD exits 0), close it (gh pr close) and the node carries on.
-    Otherwise write WAITING-PR again with the same PR number. Before you end the run, remove the
-    spec worktree (git worktree remove @WT@-spec) and name the removed paths in the brief and in
-    the PR body or comment: the resumed session makes those changes on the node branch,
-    test-first, as the approved changes they are. Then end the run (nothing comes after it).
+    (the comment may also name the new restoring commit). Record "<file name> handled" in the
+    brief. Then take one of two branches. No change left in the PR (git diff --quiet
+    origin/main...HEAD exits 0): close it (gh pr close), remove the spec worktree (git worktree
+    remove @WT@-spec), name the removed paths in the brief, and carry on with the node in this run,
+    making those changes on the node branch, test-first, as the approved changes they are; do not
+    end the run. Otherwise: write WAITING-PR again with the same PR number, remove the spec
+    worktree (git worktree remove @WT@-spec), name the removed paths in the brief and in the PR
+    body or comment (the resumed session makes those changes on the node branch, test-first, as
+    the approved changes they are), and end the run (nothing comes after it).
   - Files outside the spec files that a merged spec PR of this node carried: for each <ts>-SPEC-PR, get
     its merge commit (gh pr view <N> --json mergeCommit --jq .mergeCommit.oid) and run
     python3 -I "$(dirname "@LOOP@")/../plugin/skills/node/check-spec-diff.py" <sha>^ <sha>. Each path it prints as
