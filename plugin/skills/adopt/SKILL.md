@@ -114,10 +114,12 @@ fixing the drafts (not the checker). Also check the drafted `AGENTS.md` commands
 ## 5. The PR
 - One commit on `spec/adopt`, subject `Spec: adopt the repository into the graph regime`, body: what
   was drafted and the owner's answers it carries out.
-- Before the push, run the checker against `origin/main`:
-  `python3 -I <plugin dir>/skills/node/check-spec-diff.py --allow AGENTS.md origin/main HEAD`
-  (`AGENTS.md` is allowed because this PR adds the section). On exit 1 it names the other paths
-  (`NOT SPEC <path>`): stop, and do not push.
+- Before the push, run the checker against origin/main (origin/<default branch> where that is not main):
+  `python3 -I <plugin dir>/skills/node/check-spec-diff.py --allow AGENTS.md --allow .noodlebot/roles.yaml origin/main HEAD`
+  (drop `--allow .noodlebot/roles.yaml` when section 3 drafted no such file). Both are outside the
+  default list: this PR is the one that sets up the regime files, and no **Spec files:** line exists at
+  origin/main yet. On exit 1 it names the other paths (`NOT SPEC <path>`): stop, and do not push. On
+  exit 2 (git failed) stop too.
 - Push the branch and open one PR (`gh pr create`). Body: what was drafted; which owner answers it
   carries out (by number); open decisions and their defaults; what to check first (scope, track
   order, sizes); `Refs #N` for the issues the nodes cover. Never merge, approve or push to main.

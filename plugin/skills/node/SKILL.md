@@ -55,7 +55,7 @@ Dispatch a **new** implementer with the brief path, the RED SHA, the red target 
 - the repository's quick test gate passes, with every other test target the slice touched; targets that need a build, a boot or CI run in step 5;
 - if the slice touched a workflow, the repository's workflow lint passes;
 - `git diff <first-red>..HEAD -- <test and fixture paths>`, from the node's first RED commit, modifies or deletes no frozen test or fixture, ported or new; later RED commits only add (above);
-- everything the repository's porting rules check at GREEN (ported files equal their source plus the numbered changes, the ledger on the node's last slice, provenance in commit messages only). A needed change to a ledger is a spec change (step 7).
+- everything the repository's porting rules check at GREEN (ported files equal their source plus the numbered changes, the ledger on the node's last slice, provenance in commit messages only). A needed change to a ledger is a spec change only when the ledger is one of the repository's spec files (the **Spec files:** line); otherwise the owner approves it as a question (step 7) and it is made on the node branch.
 
 Retries are bounded: **at most 4 implementer attempts per slice.** Attempts 1–3 use the agent's model. Attempt 4 uses the Agent tool's `model: "opus"` override and gets every earlier finding and failed diff SHA. After that, go to step 7.
 
@@ -75,6 +75,8 @@ If the merge had conflicts, run the resolution review (below) on it before you c
 
 Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` needs a token with workflow permission; use the credential your run provides, transiently, or ask the owner to push the branch.
 
+**Files a merged spec PR carried.** When the `answered/` of the state directory the run names has merged spec PRs (`<ts>-SPEC-PR`), run the checker on each PR's merge commit: `python3 -I <plugin dir>/skills/node/check-spec-diff.py <sha>^ <sha>`. Every file outside the spec files that it prints as `NOT SPEC <path>` gets a row in the criterion → evidence table, naming the spec PR. The whole-node fresh reviewer gets those diffs too: it reviews them as part of the node.
+
 Open the PR with `gh pr create`. The body has:
 - what the node delivers, in two or three sentences;
 - the files ported or brought in, with their source and the numbered changes applied, tests first;
@@ -85,9 +87,7 @@ Open the PR with `gh pr create`. The body has:
 - files that a merged spec PR of this node carried outside the spec files (below), or "none";
 - deviations and open questions.
 
-**Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL and the evidence table. It has seen none of the slice reviews. Post its verdict and findings on the PR with `gh pr comment <N> --body-file <file>`, headed `Fresh review (<verdict>)`. This is a comment, never an approval. On `request_changes`, give the findings to a new implementer (the slice retry budget applies), push, then run a new reviewer and post a new comment. On `test_spec_conflict`, go to step 7.
-
-**Files a merged spec PR carried.** When the `answered/` of the state directory the run names has merged spec PRs (`<ts>-SPEC-PR`), run the checker on each PR's merge commit: `python3 -I <plugin dir>/skills/node/check-spec-diff.py <sha>^ <sha>`. Every file outside the spec files that it prints as `NOT SPEC <path>` gets a row in the criterion → evidence table, naming the spec PR. Give those diffs to the whole-node fresh reviewer too: it reviews them as part of the node.
+**Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL, the evidence table and the diffs of any merged spec PR's files outside the spec files (above). It has seen none of the slice reviews. Post its verdict and findings on the PR with `gh pr comment <N> --body-file <file>`, headed `Fresh review (<verdict>)`. This is a comment, never an approval. On `request_changes`, give the findings to a new implementer (the slice retry budget applies), push, then run a new reviewer and post a new comment. On `test_spec_conflict`, go to step 7.
 
 Give the owner the PR URL. You never approve or merge.
 
@@ -103,7 +103,7 @@ Propose the amendment. Do not continue on a guess. A spec change is the owner's,
 
 **A spec PR changes only the repository's spec files.** These are the paths in backticks on the **Spec files:** line of the "Building a node" section of the repository's `AGENTS.md`, else `SPEC.md`, `docs/graph.yaml` and `nodes/`; `check-spec-diff.py` (next to this skill, `skills/node/check-spec-diff.py` under the plugin directory) reads the same list. Changing a frozen test line, or a file outside the node's **Owns:**, needs the owner's approval, asked for as a question and recorded in the answer (quote it in the spec PR when there is one). The change itself is made on the node branch, test-first, where the node's review and the criterion → evidence table cover it; it never goes in a spec PR.
 
-**Before pushing a spec branch**, run the checker against `origin/main`: `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/main HEAD`. On exit 1 it names each path outside the spec files as `NOT SPEC <path>`: remove those changes from the spec branch, and stop if you cannot.
+**Before pushing a spec branch**, run the checker against `origin/main`: `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/main HEAD`. On exit 1 it names each path outside the spec files as `NOT SPEC <path>`: remove those changes from the spec branch, and stop if you cannot; on exit 2 (git failed) stop.
 
 **Small spec amendments go in the node PR.** A change to this node's spec that leaves the meaning of every criterion intact needs no stop and no spec PR: a clearer or corrected *Verify* line, an added or corrected path (**Owns:**, the files a change names), a stale fact in Purpose or Risks, a typo. Adding a path to the node's own **Owns:** is such a small amendment: it stays in the node PR. Commit it on the node branch on its own (`spec(<ID>): ...`), run the spec checker, and list it in the PR's **Spec amendments** section with its reason; the owner reviews it with the PR, and the fresh reviewer checks that no criterion's meaning changed. Anything that adds, removes or weakens a criterion, changes what a criterion requires, or touches another node's spec, the graph or the repository's main spec still gets its own spec PR, after you stop and ask, and that PR holds spec files only.
 
