@@ -98,9 +98,9 @@ robj() {
 	printf '{"id": %s, "status": "%s", "conclusion": %s, "created_at": "%s", "head_sha": "%s", "event": "push", "head_branch": "main"}' "$1" "$2" "$c" "$4" "$5"
 }
 setruns() {
-	s=$1; shift; body=; n=0
-	for r in "$@"; do body=${body:+$body, }$r; n=$((n + 1)); done
-	printf '{"total_count": %s, "workflow_runs": [%s]}\n' "$n" "$body" >"$D07/runs/$s"
+	s=$1; shift; body=; cnt=0
+	for r in "$@"; do body=${body:+$body, }$r; cnt=$((cnt + 1)); done
+	printf '{"total_count": %s, "workflow_runs": [%s]}\n' "$cnt" "$body" >"$D07/runs/$s"
 }
 # setrun <sha> <id> <status> <conclusion> [created_at]
 setrun() { setruns "$1" "$(robj "$2" "$3" "$4" "${5:-2026-01-01T00:00:05Z}" "$1")"; }
