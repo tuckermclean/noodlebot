@@ -6,12 +6,16 @@ Usage: python3 -I check-spec-diff.py [--repo <dir>] [--allow <path>]... <from> <
 Judges `git diff --name-only --no-renames <from>...<to>` (a rename shows both names; a squash
 commit checks as `<sha>^ <sha>`). The spec files are the backticked paths on the `**Spec files:**`
 line of the "Building a node" section of AGENTS.md as it is at <from>, so a branch cannot widen its
-own list; a path ending in `/` is a folder. With no such line they are SPEC.md, docs/graph.yaml and
+own list; a path ending in `/` is a folder. The line must be one physical line. With no such line they are SPEC.md, docs/graph.yaml and
 nodes/. `--allow <path>` adds a path for one run.
 
-Prints the list used and where it came from, then one `NOT SPEC <path>` per changed path outside it.
-Exit 0: none outside; 1: one or more; 2: git failed (nothing on stdout, the error on stderr).
+Output, line by line: `spec files: <list>`; then `from: AGENTS.md at <from>` when the line was found, or
+`from: default (no **Spec files:** line in AGENTS.md at <from>)` when not (either may end `, plus
+--allow`); then one `NOT SPEC <path>` per changed path outside the list.
+Exit 0: none outside; 1: one or more; 2: git failed or any other error (nothing on stdout, the error
+on stderr). Paths that are not UTF-8 are kept byte for byte (surrogateescape).
 """
+import os
 import re
 import subprocess
 import sys
@@ -23,10 +27,14 @@ class GitFailure(Exception):
     pass
 
 
+def dec(b):
+    return b.decode("utf-8", errors="surrogateescape")
+
+
 def git(repo, *args, check=True):
-    p = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    p = subprocess.run(["git", "-C", repo, *args], capture_output=True)
     if check and p.returncode != 0:
-        raise GitFailure("git %s: %s" % (" ".join(args), p.stderr.strip()))
+        raise GitFailure("git %s: %s" % (" ".join(args), dec(p.stderr).strip()))
     return p
 
 
@@ -72,16 +80,17 @@ def main(argv):
         for ref in (frm, to):
             git(repo, "rev-parse", "--verify", "--quiet", ref + "^{commit}")
         diff = git(repo, "diff", "--name-only", "--no-renames", "-z", frm + "..." + to).stdout
+        diff = dec(diff)
         show = git(repo, "show", frm + ":AGENTS.md", check=False)
     except (GitFailure, OSError) as e:
         sys.stderr.write("check-spec-diff: %s\n" % e)
         return 2
-    paths = spec_line(show.stdout) if show.returncode == 0 else None
+    paths = spec_line(dec(show.stdout)) if show.returncode == 0 else None
     if paths:
-        source = "the **Spec files:** line of AGENTS.md at " + frm
+        source = "AGENTS.md at " + frm
         spec = paths
     else:
-        source = "the default list (no **Spec files:** line in AGENTS.md at %s)" % frm
+        source = "default (no **Spec files:** line in AGENTS.md at %s)" % frm
         spec = list(DEFAULT)
     spec = spec + allow
     if allow:
@@ -96,9 +105,15 @@ def main(argv):
             outside.append(p)
     out = ["spec files: " + " ".join(spec), "from: " + source]
     out += ["NOT SPEC " + p for p in outside]
-    sys.stdout.write("\n".join(out) + "\n")
+    sys.stdout.buffer.write(os.fsencode("\n".join(out) + "\n"))
+    sys.stdout.buffer.flush()
     return 1 if outside else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        rc = main(sys.argv[1:])
+    except Exception as e:  # never 1: the loop reads 1 as "out of scope"
+        sys.stderr.write("check-spec-diff: %s: %s\n" % (type(e).__name__, e))
+        rc = 2
+    sys.exit(rc)
