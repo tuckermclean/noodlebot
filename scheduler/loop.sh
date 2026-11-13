@@ -6,7 +6,7 @@
 # (/noodlebot:triage --update <N>; the same one slot as a triage); and one update session for each bot's
 # node/* PR that GitHub reports CONFLICTING (/noodlebot:node --update <N>; no slot, but it counts toward
 # SCHED_MAX, and its node's own session waits for it).
-# Each tick it also runs feedback.py: the owner's new comments and reviews on the bot's open PRs start one
+# Each tick it also reads the last finished run of feedback.py (which runs in the background, one at a time): the owner's new comments and reviews on the bot's open PRs start one
 # feedback session for the PR's unit (/noodlebot:node --feedback <N> for a node or follow-up PR, in the node's
 # worktree; /noodlebot:triage --feedback <N> for a spec PR, in the triage's slot), with the items in the unit's
 # FEEDBACK.md. Feedback sessions count toward SCHED_MAX.
@@ -1281,7 +1281,7 @@ print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 listed=0 fb_failed=0 open_limit=500 rels=()
+open='' merged='' tick_tok='' live=() throttled=0 listed=0 fb_failed=0 fb_pid='' open_limit=500 rels=()
 # tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
@@ -1423,15 +1423,21 @@ tick_run() {
 	fi
 
 	# Feedback: the owner's new comments and reviews on the bot's open PRs (feedback.py reads and records nothing until a
-	# session starts). A unit with a FEEDBACK.md has feedback work too (a restart, or the start after an answer). A failure
-	# of feedback.py is logged and the tick goes on.
-	local fo fn fbr fbot fk fid fdir
-	if fo=$(GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
-			--prs "$state/open-prs.tsv" 2>>"$state/report.log"); then fb_failed=0
-	else
-		# said once per run of failures (not note: that would break the idle loop's one-line-per-10-minutes rule)
-		[ "$fb_failed" = 1 ] || say "$saw; feedback.py failed (see report.log); carrying on"
-		fb_failed=1
+	# session starts). A unit with a FEEDBACK.md has feedback work too (a restart, or the start after an answer).
+	# feedback.py runs in the background (fb_launch, after the tick, one run at a time, never waited for): the tick reads
+	# only the output of a run that finished with exit 0 and was written whole (renamed into place), and reads it once.
+	# No run is in flight while the tick hands feedback over, so `mark` never races with a listing run. A failed or killed
+	# run is logged (once per streak) and changes nothing: nothing is handed over from it.
+	local fo='' fn fbr fbot fk fid fdir
+	if [ -n "$fb_pid" ] && { [ -e "$state/feedback.out" ] || [ -e "$state/feedback.fail" ]; }; then
+		wait "$fb_pid" 2>/dev/null; fb_pid=''
+		if [ -e "$state/feedback.out" ]; then fo=$(cat "$state/feedback.out"); rm -f "$state/feedback.out"; fb_failed=0
+		else
+			rm -f "$state/feedback.fail"
+			# said once per run of failures (not note: that would break the idle loop's one-line-per-10-minutes rule)
+			[ "$fb_failed" = 1 ] || say "$saw; feedback.py failed (see report.log); carrying on"
+			fb_failed=1
+		fi
 	fi
 	while read -r fn fbr; do [[ $fn =~ ^[0-9]+$ ]] && fbnew[$fn]=$fbr; done <<<"$fo"
 	# a pending FEEDBACK.md whose PR is no longer open (merged or closed) and with no session running is finished:
@@ -1571,10 +1577,31 @@ pause() {
 	done
 }
 
+# fb_launch: start feedback.py's listing run in the background (when none is in flight and the tick has a token). Its
+# stdout goes to a temp file renamed to feedback.out only when it exits 0; otherwise feedback.fail says it failed or was
+# killed (the timeout). fb_stop: kill the run (the wrapper and its timeout/python only, never a session) and clear its marks.
+rm -f "$state/feedback.out" "$state/feedback.out.tmp" "$state/feedback.fail"
+fb_launch() {
+	[ -z "$fb_pid" ] && [ -n "$tick_tok" ] || return 0
+	( GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
+		--prs "$state/open-prs.tsv" >"$state/feedback.out.tmp" 2>>"$state/report.log" &&
+		mv -f "$state/feedback.out.tmp" "$state/feedback.out" || { rm -f "$state/feedback.out.tmp"; : >"$state/feedback.fail"; } ) 9>&- &
+	fb_pid=$!
+}
+fb_stop() {
+	[ -n "$fb_pid" ] || return 0
+	local kids; kids=$(pgrep -P "$fb_pid" 2>/dev/null)
+	kill $fb_pid $kids 2>/dev/null; wait "$fb_pid" 2>/dev/null; fb_pid=''
+	rm -f "$state/feedback.out" "$state/feedback.out.tmp" "$state/feedback.fail"
+}
+trap fb_stop EXIT
+trap 'exit 143' TERM INT HUP
+
 while :; do
 	requests
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
+	fb_launch
 	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
 	report; rc=$?; tick_tok=''
 	publish
@@ -1582,7 +1609,7 @@ while :; do
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] &&
 		{ "$here/deploy.sh" --runtime-changed "$nb" "$start_head" 9>&-; [ $? != 1 ]; }; then
-		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
+		fb_stop; exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
 	fi
 	pause
 done
