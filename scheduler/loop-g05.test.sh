@@ -193,6 +193,8 @@ pscope() { flat "$2" | grep -oE 'SPEC-PR-SCOPE.*' | head -n1 | cut -c1-4500 | gr
 pclosed() { flat "$2" | grep -oE 'SPEC-PR-CLOSED.*' | head -n1 | cut -c1-2500 | grep -Eiq -- "$1"; }
 pabsent() { ! grep -qF -- "$1" "$2"; }                                         # pabsent <text> <file>
 pfrozen() { ! flat "$1" | grep -oE '[^.]*frozen test[^.]*\.' | grep -Ei 'spec (PR|branch|worktree)|spec change' | grep -viE 'not |never|no spec|node branch|instead|rather|outside' | grep -q .; }
+export LC_ALL=C   # the loops are already running; the long .{0,300} greps below are 15x faster in the C locale
+touch "$HOME/STOP-fu" "$HOME/STOP-cp"   # the prompts are rendered: the grep phase needs no more ticks
 # both <name> <function> <argument>: the check on the node session's prompt and on the follow-up session's
 both() { chk sf "$1 (node session)" "$2" "$3" "$pn"; chk fu "$1 (follow-up session)" "$2" "$3" "$pf"; }
 both "G05-AC-3: a spec PR changes only the repository's spec files" pg 'spec (PR|branch)[^.]{0,150}only[^.]{0,80}spec files'
@@ -222,6 +224,32 @@ both "G05-AC-7: ... and the node carries on" pscope 'carr(y|ies|ied) on'
 both "G05-AC-7: otherwise the session writes WAITING-PR again" pscope 'otherwise.{0,200}WAITING-PR again|WAITING-PR again'
 both "G05-AC-7: the removed paths are named in the brief for the resumed session" pscope 'brief.{0,300}(removed|taken out|restored|listed)|(removed|taken out|restored).{0,300}brief'
 both "G05-AC-7: ... which makes them test-first" pscope '(removed|taken out|restored|listed|approved changes).{0,300}test-first|test-first.{0,300}(removed|taken out|restored)'
+# S4 second pass: the pfrozen check above is given "x" as its argument and never reads the prompt; this one gets the prompt file.
+pfrozenp() { pfrozen "$2"; }
+both "G05-AC-3: (reads the prompt) the prompt never says that a frozen test change goes in a spec PR" pfrozenp x
+# Section-scoped checks: each looks only inside the part of the template the rule belongs to (the rendered prompt keeps the template's line structure).
+sect_chg() { awk '/^- SPEC CHANGES\./{on=1} on&&/^- GitHub:/{exit} on' "$1" | tr '\n' ' ' | tr -s ' '; }
+sect_am() { awk '/^- SMALL SPEC AMENDMENTS/{on=1;print;next} on&&/^- /{exit} on' "$1" | tr '\n' ' ' | tr -s ' '; }
+sect_scope() { awk '/^  - <ts>-SPEC-PR-SCOPE:/{on=1;print;next} on&&/^ *- /{exit} on' "$1" | tr '\n' ' ' | tr -s ' '; }
+sect_merge() { awk '/MERGE CONFLICTS:/{on=1;print;next} on&&/^- /{exit} on' "$1" | tr '\n' ' ' | tr -s ' '; }
+pchg() { sect_chg "$2" | grep -Eiq -- "$1"; }
+pam() { sect_am "$2" | grep -Eiq -- "$1"; }
+pscopep() { sect_scope "$2" | grep -Eiq -- "$1"; }
+pmerge() { sect_merge "$2" | grep -Eiq -- "$1"; }
+pown() { { sect_am "$2"; sect_chg "$2"; } | grep -Eiq -- "$1"; }
+both "G05-AC-3: (section found) SPEC CHANGES is a section of the prompt" pchg 'SPEC CHANGES'
+both "G05-AC-3: (section found) the SPEC-PR-SCOPE paragraph is a section of the prompt" pscopep 'SPEC-PR-SCOPE'
+both "G05-AC-3: SPEC CHANGES says a spec PR changes only the repository's spec files" pchg 'spec PR[^.]{0,40}only[^.]{0,60}spec files'
+both "G05-AC-3: SPEC CHANGES applies an approved frozen test line on the node branch, test-first" pchg 'frozen test.{0,300}node branch.{0,100}test-first'
+both "G05-AC-3: SPEC CHANGES applies an approval for a file outside Owns on the node branch, test-first" pchg 'outside.{0,60}Owns.{0,300}node branch.{0,100}test-first'
+both "G05-AC-2: adding a path to the node's own Owns is a small amendment (SMALL SPEC AMENDMENTS names Owns)" pam 'add(ed|ing)?[^.]{0,60}Owns|Owns[^.]{0,80}add(ed|ing)?'
+both "G05-AC-2: ... small amendment, with no spec PR" pown 'Owns.{0,200}(small|amendment|no (question|spec PR))|(small|amendment).{0,200}Owns'
+both "G05-AC-3: SPEC CHANGES runs the checker after the commit and before the push (commit, then check-spec-diff, then push)" pchg 'ommit.{0,500}check-spec-diff.{0,500}push'
+both "G05-AC-7: the SPEC-PR-SCOPE paragraph has the spec checker at PROBLEMS 0" pscopep 'PROBLEMS 0'
+both "G05-AC-7: the SPEC-PR-SCOPE paragraph checks out the spec branch in a worktree at origin/<branch>" pscopep 'worktree[^.]{0,80}origin/(<[a-z -]*branch>|[a-z<>-]*branch)|origin/(<[a-z -]*branch>|[a-z<>-]*branch)[^.]{0,80}worktree'
+both "G05-AC-7: the SPEC-PR-SCOPE paragraph: a checker that does not pass makes the session write QUESTION.md and end" pscopep '(exit 0|PROBLEMS 0).{0,500}QUESTION\.md|QUESTION\.md.{0,300}(exit 0|PROBLEMS 0)'
+both "G05-AC-3: MERGE CONFLICTS does not tie the stop to the **Spec files:** line alone (a repository without one has the checker's default list)" pmerge 'default|no \*\*Spec files|without a \*\*Spec files|has no|lacks|absent|missing|fall(s|back)|otherwise|else'
+chk fu "G05-AC-5: the follow-up header says a spec PR closed without merging or sent back can start the session" sh -c "awk '/^- /{exit} 1' '$pf' | tr '\n' ' ' | grep -Eiq 'closed without merging|sent back|not merged|SPEC-PR-(CLOSED|SCOPE)|spec PR[^.]{0,100}(closed|sent)'"
 touch "$HOME/STOP-fu"
 touch "$HOME/STOP-cp"
 for f in "$NOODLEBOT_DATA"/state/*/node/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
