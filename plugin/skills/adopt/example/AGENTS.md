@@ -19,6 +19,7 @@
 - **Tests and fixtures.** Tests are POSIX sh files `tests/test_<topic>.sh` that make their own files in
   a `mktemp -d` directory and remove it on exit. There are no other fixtures. Every option gets a
   test.
+- **Spec files:** `SPEC.md`, `docs/graph.yaml`, `nodes/` (a trailing slash marks a folder); a spec PR changes only these.
 - **Porting rules.** None.
 - **Constraints.** POSIX sh, runs under dash; no new runtime dependency beyond coreutils and awk;
   the default output of a text file never changes; errors to stderr and exit non-zero only on

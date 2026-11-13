@@ -2,7 +2,7 @@
 with --all, one line for every such node, in graph order.
 
     python3 -I ready.py --graph docs/graph.yaml --markers out/node \
-        [--merged ID]... [--open ID]... [--subjects FILE] [--merged-prs FILE] [--all]
+        [--merged ID]... [--open ID]... [--subjects FILE] [--merged-prs FILE] [--closed-prs FILE] [--all]
 
 A merged node with an answer to act on (or a FOLLOWUP marker) is printed with a third word, followup.
 A node is ready when it is not merged, every dep is merged, and its markers in <markers>/<ID>/
@@ -10,7 +10,9 @@ allow it:
 - FAILED holds it.
 - QUESTION.md holds it until the owner writes ANSWER.md next to it.
 - WAITING-PR (a bare PR number, written by a session that opened a spec PR) holds it until that
-  number is listed in --merged-prs (one merged PR number per line).
+  number is listed in --merged-prs (one merged PR number per line) or in --closed-prs (one number
+  per line of a PR closed without merging); a SPEC-PR-SCOPE file next to it (the loop found the PR
+  changing files outside the spec files) also releases it, whatever the PR's state.
 With no markers, a node with an open PR is not ready (it waits for the owner). An answered question
 or a merged WAITING-PR makes it ready even with its PR open, so the session can resume.
 A merged node is printed with a third word, "followup", when its markers say resume, or when only
@@ -40,7 +42,7 @@ def markers(d: str, merged_prs: set) -> str:
     if has("WAITING-PR"):
         with open(os.path.join(d, "WAITING-PR"), encoding="utf-8") as f:
             num = f.read().strip()
-        if not num.isdigit() or num not in merged_prs:
+        if not has("SPEC-PR-SCOPE") and (not num.isdigit() or num not in merged_prs):
             return "hold"
         resume = True
     if resume:
@@ -57,6 +59,7 @@ def main() -> int:
     ap.add_argument("--subjects")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--merged-prs")
+    ap.add_argument("--closed-prs")
     a = ap.parse_args()
 
     with open(a.graph, encoding="utf-8") as f:
@@ -73,6 +76,10 @@ def main() -> int:
     if a.merged_prs:
         with open(a.merged_prs, encoding="utf-8") as f:
             merged_prs = {line.strip() for line in f if line.strip()}
+
+    if a.closed_prs and os.path.exists(a.closed_prs):  # a missing file is an empty list
+        with open(a.closed_prs, encoding="utf-8") as f:
+            merged_prs |= {line.strip() for line in f if line.strip()}
 
     for n in nodes:
         nid = n["id"]
