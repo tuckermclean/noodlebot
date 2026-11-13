@@ -22,15 +22,15 @@ RUN apt-get update \
 
 # noodlebot: uid 1000 (the manifests' runAsUser). Its subordinate ids fit a 65536-id user namespace (1-999 and
 # 1001-65535 inside), so rootless podman works nested in an outer container that is itself rootless.
-# newuidmap and newgidmap carry file capabilities (not the setuid bit, as in quay.io/podman/stable): their euid stays
-# the caller's, the owner of the user namespace, so the kernel accepts the id map; CAP_SETUID/CAP_SETGID come from the
-# file, CAP_SETFCAP lets them map uid 0.
+# newuidmap and newgidmap carry file capabilities (not the setuid bit): their euid stays the caller's, the owner of the
+# user namespace, so the kernel accepts the id map; CAP_SETUID/CAP_SETGID come from the file. No CAP_SETFCAP: the kernel
+# asks for it only when an extent maps the parent's uid 0, which these subordinate ids exclude.
 RUN useradd -u 1000 -m -d /home/noodlebot -s /bin/bash noodlebot \
  && printf 'noodlebot:1:999\nnoodlebot:1001:64535\n' > /etc/subuid \
  && cp /etc/subuid /etc/subgid \
  && chmod 0755 /usr/bin/newuidmap /usr/bin/newgidmap \
- && setcap cap_setuid,cap_setfcap=ep /usr/bin/newuidmap \
- && setcap cap_setgid,cap_setfcap=ep /usr/bin/newgidmap \
+ && setcap cap_setuid=ep /usr/bin/newuidmap \
+ && setcap cap_setgid=ep /usr/bin/newgidmap \
  && install -d -o noodlebot -g noodlebot /home/noodlebot/.config /home/noodlebot/.local/share/containers
 
 # Nested rootless podman: no cgroup manager (the outer container's cgroup is not ours), the file events logger,

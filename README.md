@@ -96,15 +96,15 @@ would enter a local build: build from a fresh clone.
     default profile blocks the `mount` and `unshare` calls that creating a user namespace needs.
   - `apparmor=unconfined` (compose `security_opt`) and `appArmorProfile: Unconfined` (the container's `securityContext`):
     the same, for AppArmor hosts.
-  - `allowPrivilegeEscalation: true`: `newuidmap` and `newgidmap` have file capabilities (`cap_setuid`/`cap_setgid` and
-    `cap_setfcap`, as in `quay.io/podman/stable`; not the setuid bit), which is a privilege gain too. They map the user's
+  - `allowPrivilegeEscalation: true`: `newuidmap` and `newgidmap` have file capabilities (`cap_setuid` and
+    `cap_setgid`; not the setuid bit), which is a privilege gain too. They map the user's
     65536 subordinate ids (the same range as `quay.io/podman/stable`, so it also works when the outer container is
     itself rootless). In a pod with `hostUsers: false` this has not been tested: whether the runtime applies file
     capabilities there is not verified.
   - `systempaths=unconfined` (compose `security_opt`) and `procMount: Unmasked` (the container's `securityContext`):
     Docker and Kubernetes mask parts of `/proc` in the container, which would stop nested podman from mounting a
-    `/proc` of its own. The trade-off: `systempaths=unconfined` removes the masked paths and also the read-only paths
-    (`/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs`, `/proc/kcore`, `/sys/firmware`). Under
+    `/proc` of its own. The trade-off: `systempaths=unconfined` removes the masked and read-only paths
+    (such as `/proc/kcore`, `/sys/firmware`, `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs`). Under
     rootful Docker without userns-remap, root in the container is root on the host, so anything that gains root in the
     container could write host kernel settings. Rootless Docker or Podman, or userns-remap, limits that for compose; in
     the pod, `hostUsers: false` makes the container's root unprivileged on the node. Nested containers are not
@@ -114,15 +114,16 @@ would enter a local build: build from a fresh clone.
     API server silently drops the field), a runtime and a node kernel that support it.
     The image's `containers.conf` does not bind the outer `/proc` into nested containers: that would expose it to
     every nested container, whose root is uid 1000.
-  The image's `/etc/containers/containers.conf` has no cgroup manager, the file events logger and the container's
-  network namespace, so nested podman needs no `/dev/net/tun`.
-  Host requirements: Linux 5.14 or newer (the loop probes read the `ino:` line of `/proc/<pid>/fdinfo`, which older
-  kernels lack, so they would miss a running loop), unprivileged user namespaces allowed (on Ubuntu 24.04,
-  `sysctl kernel.apparmor_restrict_unprivileged_userns=0`), `/dev/fuse`, and a volume filesystem that supports the
-  overlay storage driver (not NFS).
-  The image workflow's run of `container/compose.yaml` is the recorded check.
+  - The image's `/etc/containers/containers.conf` has no cgroup manager, the file events logger and the container's
+    network namespace, so nested podman needs no `/dev/net/tun`.
+  - Host requirements: Linux 5.14 or newer (the loop probes read the `ino:` line of `/proc/<pid>/fdinfo`, which older
+    kernels lack, so they would miss a running loop), unprivileged user namespaces allowed (on Ubuntu 24.04,
+    `sysctl kernel.apparmor_restrict_unprivileged_userns=0`), `/dev/fuse`, and a volume filesystem that supports the
+    overlay storage driver (not NFS).
+  - The image workflow's run of `container/compose.yaml` is the recorded check.
 - **Pod Security.** The `Unconfined` seccomp and AppArmor profiles are not allowed below the `privileged` Pod Security
-  level: the `baseline` level rejects them, and `procMount: Unmasked`. Put the namespace at `pod-security.kubernetes.io/enforce: privileged`
+  level: the `baseline` level rejects those two profiles and `procMount: Unmasked`.
+  Put the namespace at `pod-security.kubernetes.io/enforce: privileged`
   (the pod itself is still not `privileged: true` and mounts no socket).
 - **Deploys and updates.** Code deploys still go through `scheduler/deploy.sh` (D01) inside the container: the checkout on the volume
   is tested, fast-forwarded and re-executed as on the machine. A new image (a new toolchain or Claude Code CLI) takes a
