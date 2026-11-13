@@ -181,5 +181,42 @@ done
 if [ -n "$line" ] && [ -z "$miss" ]; then ok "G05-AC-1: AGENTS.md's \"Building a node\" section has a **Spec files:** line naming SPEC.md, docs/graph.yaml, nodes/"
 else bad "G05-AC-1: AGENTS.md's \"Building a node\" section has a **Spec files:** line naming SPEC.md, docs/graph.yaml, nodes/ (line: [$line], missing:$miss)"; fi
 
+# ---- three-dot diff: a commit on main after the branch was cut is not the branch's change
+mkrepo three ""
+T="$d/three"
+br "$T" spec-only
+put "$T" SPEC.md changed; cm "$T"
+g "$T" checkout -q main
+put "$T" scripts/run.sh main-moved-on; cm "$T"
+run "$T" main spec-only
+expect G05-AC-1 "three-dot diff: a script changed on main after the branch was cut is not named (exit 0)" 0 ""
+if grep -q 'scripts/run.sh' "$d/err"; then bad "G05-AC-1: three-dot diff: no error output naming main's script"; fi
+
+# ---- this repository's Spec files line has exactly the three backticked items
+items=$(printf '%s\n' "$line" | grep -o '`[^`]*`' | tr '\n' ' ')
+if [ -n "$line" ] && [ "$items" = '`SPEC.md` `docs/graph.yaml` `nodes/` ' ]; then ok "G05-AC-1: AGENTS.md's Spec files line has exactly the backticked items SPEC.md, docs/graph.yaml, nodes/"
+else bad "G05-AC-1: AGENTS.md's Spec files line has exactly the backticked items SPEC.md, docs/graph.yaml, nodes/ (got: $items)"; fi
+
+# ---- a changed path that is not valid UTF-8
+mkrepo u8 ""
+U="$d/u8"
+br "$U" bad-outside
+badname=$(printf 'scripts/bad\377name.sh')
+if ! { printf 'x\n' >"$U/$badname"; } 2>/dev/null || [ ! -f "$U/$badname" ]; then
+	bad "G05-AC-1: non-UTF-8 path: the filesystem refused to create a file named with byte 0xff"
+else
+	cm "$U"
+	run "$U" main bad-outside
+	cnt=$(printf '%s\n' "$out" | LC_ALL=C grep -a -c '^NOT SPEC ')
+	if [ "$rc" = 1 ] && [ "$cnt" = 1 ] && ! grep -q Traceback "$d/err"; then ok "G05-AC-1: a non-UTF-8 path outside the spec files exits 1 with one NOT SPEC line, no traceback"
+	else bad "G05-AC-1: a non-UTF-8 path outside the spec files exits 1 with one NOT SPEC line, no traceback (exit $rc, NOT SPEC lines $cnt, stderr: $(head -c 300 "$d/err" | tail -n 1))"; fi
+	br "$U" bad-inside
+	mkdir -p "$U/nodes"; printf 'x\n' >"$U/nodes/$(printf 'bad\377name.md')"; cm "$U"
+	run "$U" main bad-inside
+	cnt=$(printf '%s\n' "$out" | LC_ALL=C grep -a -c '^NOT SPEC ')
+	if [ "$rc" = 0 ] && [ "$cnt" = 0 ] && ! grep -q Traceback "$d/err"; then ok "G05-AC-1: a non-UTF-8 path inside nodes/ exits 0"
+	else bad "G05-AC-1: a non-UTF-8 path inside nodes/ exits 0 (exit $rc, NOT SPEC lines $cnt, stderr: $(head -c 300 "$d/err" | tail -n 1))"; fi
+fi
+
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all check-spec-diff checks passed"
