@@ -53,9 +53,9 @@ qwait_n 8 2; wait_until 15 qev_ge 2
 # after the opening, in the starts and in the status logs (no other start event), and qb started it in the tick that
 # first read the opened throttle: that tick logs "throttle released" (qb held since the hold after t7), at or after the
 # opening's second, and B01's tick (its heartbeat, qhb) had begun by that line's second (a later tick begins at least
-# SCHED_TICK after the second in which the one before ended, assuming no pause() of qb ends early between the hold and
-# the opening: pause() returns at once when a session exits or a marker changes, and here t7's session lives on, the
-# records already exist and no marker of qb changes). No more than one of qb's ticks began (asked for the merged
+# SCHED_TICK after the second in which the one before ended, assuming qb's pause after the tick that logs "throttle
+# released" does not end early: loop.sh's pause() returns at once when one of qb's sessions exits or a marker of qb
+# changes (fingerprint()); qb runs no session, and after the opening the test changes no marker of qb). No more than one of qb's ticks began (asked for the merged
 # PRs, before it reads the throttle) between the opening and B01's start.
 qreleased() { grep '; throttle released' "$(qlog qb)" | awk '{ print $1 }' | while read -r t; do date -d "$t" +%s; done | awk -v a="${t_open%.*}" '$1 >= a { print; exit }'; }
 qsecond_soon() { local r h; r=$(qreleased) h=$(qhb B01); [ "$(sort -n "$q/starts.log" | sed -n 2p | awk '{ print $3 }')" = B01 ] && [ "$(qev '' | wc -l)" = 2 ] && awk -v a="$t_open" -v b="$(qt B01)" 'BEGIN { exit !(b - a >= 0) }' && [ "$(qtickt qb "$t_open" "$(qt B01)")" -le 1 ] && [ -n "$r" ] && [ -n "$h" ] && [ "$h" -le "$r" ]; }

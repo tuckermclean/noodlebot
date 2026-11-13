@@ -26,9 +26,10 @@ qok "S07-AC-4: the failed unit (A02) does not hold the queue: the next in the or
 qok "S07-AC-4: the failed start is logged" grep -q 'worktree for A02 failed' "$(qlog qa)"
 # "in the same tick" (the old bound of 1 s between the two lines was a tick of 1 s): A03 started after the failure, and the
 # tick that started A03 (its heartbeat, qhb) had begun by the second of the failure. A start in a later tick has a later
-# heartbeat, when no pause ends early between two ticks of qa here (loop.sh's pause() returns at once when a session exits
-# or a marker changes; in this phase A03's session lives until the phase ends and no marker is touched), so that a tick
-# begins at least SCHED_TICK (3 s) after the second in which the one before ended.
+# heartbeat, when no pause of qa ends early between the failure tick and any later tick that might start A03 (loop.sh's
+# pause() returns at once when one of qa's sessions exits or a marker of qa changes; qa runs no session before A03 starts
+# and the test touches no marker of qa in between), so that a tick begins at least SCHED_TICK (3 s) after the second in
+# which the one before ended.
 qok "S07-AC-4: the next unit starts in the same tick as the failure" sh -c "f=\$(grep -m1 'worktree for A02 failed' '$(qlog qa)' | awk '{print \$1}'); s=\$(grep -m1 '; started A03' '$(qlog qa)' | awk '{print \$1}'); h='$(qhb A03)'; [ -n \"\$f\" ] && [ -n \"\$s\" ] && [ -n \"\$h\" ] && d=\$((\$(date -d \$s +%s) - \$(date -d \$f +%s))) && [ \$d -ge 0 ] && [ \$(date -d \$f +%s) -ge \$h ]"
 qok "S07-AC-4: the failed unit still has its waiting record" test -e "$qd/state/qa/node/A02/waiting"
 git -C "$qd/repos/qa" worktree remove --force "$q/blocker"; git -C "$qd/repos/qa" branch -q -D node/A02-u-A02
