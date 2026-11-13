@@ -1623,8 +1623,6 @@ fb_stop() {
 	rm -f "$fb_pre".*
 }
 trap fb_stop EXIT
-# a signal ends the loop once the foreground command running at that moment ends (bash runs the trap after it): the exit trap then stops the run
-trap 'exit 143' TERM INT HUP
 
 while :; do
 	requests
