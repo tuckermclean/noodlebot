@@ -42,13 +42,13 @@ qsetup F "A03:L" "B01:L B04:L"
 qseed qa node/A03 300; qseed qb node/B01 100; qseed qb node/B04 100
 # qa takes no turn (tick 1: its heartbeat is old 3 s after it is killed); qb (tick 2) asks alone (see the fixture).
 # qa is killed once both loops have listed their units.
-qboth 1 2 SCHED_START_GAP=1 SCHED_STARVE=3600
+qboth 1 2 SCHED_START_GAP=4 SCHED_STARVE=3600
 qcompete A03 "B01 B04"
 { kill -KILL "${qp[qa]}"; wait "${qp[qa]}"; } 2>/dev/null
 qopen
 qwait_n 15 2; wait_until 15 qev_ge 2
 qok "S07-AC-4: a loop whose heartbeat is older than three ticks is left out: the live loop's units start" test "$(qseq)" = "B01 B04"
-qok "S07-AC-4: and the queue still spaces them by the gap (1 s)" qgap_n 2 0.6
+qok "S07-AC-4: and the queue still spaces them by the gap (4 s)" qgap_n 2 3.6
 qstop
 
 
