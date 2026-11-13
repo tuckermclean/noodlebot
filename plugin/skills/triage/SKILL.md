@@ -76,6 +76,9 @@ a new open decision. Interactive: ask. Unattended: follow the run's instructions
 - Run the spec checker until it reports no problems.
 - One commit, subject `Spec: <what changes>, for #<issue>`, body: the placement (1–4) and why, the
   alternatives you rejected, the nodes touched.
+- Before the push, run the checker against `origin/main`:
+  `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/main HEAD`. On exit 1 it names the
+  paths outside the spec files (`NOT SPEC <path>`): stop, and do not push.
 - Push the branch and open the PR (`gh pr create`). Body: the placement and reasoning, the new or
   changed criteria, `Refs #<issue>`. Remove the worktree.
 - Comment on the issue: the placement in one or two sentences and the PR link. For placement 1, the
