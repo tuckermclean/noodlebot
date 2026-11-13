@@ -7,7 +7,9 @@
 # R2: B01 has waited longer than SCHED_STARVE: it goes before the resume.
 qresetup R2
 qseed qa node/A02 200; qseed qb node/B01 100
-qboth 1 1 SCHED_START_GAP=4 SCHED_STARVE=60
+# tick 3: both loops stay live through a loaded tick (B01 goes before the resume only while qb is live at qa's turn)
+qboth 3 3 SCHED_START_GAP=4 SCHED_STARVE=60
+qcompete A02 B01
 qopen
 qwait_n 14 3; wait_until 5 qev_ge 2; wait_until 5 qres_logged
 qok "S07-AC-6: a fresh node past the starvation limit goes before the resume: A02, B01, then the resume" test "$(qseq)" = "A02 B01 A02.r"

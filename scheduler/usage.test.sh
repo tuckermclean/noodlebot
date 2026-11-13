@@ -68,6 +68,16 @@ for p in unset 0; do
 	run $now
 	if printf '%s' "$out" | grep -q '^hold: seven-day window rejected'; then pass "T03-AC-3: USAGE_7D_PACE=$p, a rejected 7-day window holds"; else fail "T03-AC-3: USAGE_7D_PACE=$p rejected 7-day: $out"; fi
 done
+# The weekly warning is not a hold: a 7-day window that is only allowed_warning leaves the throttle open
+# (pace hold off), and a 5-hour window that is allowed_warning still holds.
+reset
+ev7 "$tmp/s/a/node/X01/session.jsonl" 0.05 $r5 0.77 $r7 allowed_warning
+run $now
+if printf '%s' "$out" | grep -q '^open:.*7-day 77% at 57% of the week'; then pass "a 7-day window that is only allowed_warning is open: $out"; else fail "7-day allowed_warning: $out"; fi
+reset
+ev "$tmp/s/a/node/X01/session.jsonl" 0.05 $r5 0.30 $r7 allowed_warning
+run $now
+if printf '%s' "$out" | grep -q '^hold: five-hour window allowed_warning'; then pass "a 5-hour window that is allowed_warning still holds"; else fail "5-hour allowed_warning: $out"; fi
 USAGE_7D_PACE=1; export USAGE_7D_PACE
 reset
 ev7 "$tmp/s/a/node/X01/session.jsonl" 0.05 $r5 0.30 $r7 rejected

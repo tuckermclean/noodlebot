@@ -4,7 +4,8 @@
 # Runs every file given (also after one fails) with bash when its basename is loop.test.sh and with
 # sh otherwise, up to $TEST_JOBS at once (default: twice the number of CPUs, else 2). Each file's output is
 # captured and printed whole when the file ends, so outputs never interleave. After each file prints
-# "TIME <seconds> <file>", and "SLOW: <file> took <s>s, budget <n>s" when it took longer than
+# "TIME <seconds> <file>", then "FAILED <file>" when the file exited non-zero (deploy.sh reads these lines to rerun
+# the failed files alone), and "SLOW: <file> took <s>s, budget <n>s" when it took longer than
 # $TEST_FILE_BUDGET seconds (default 30). At the end prints "SLOW: total took <s>s, budget <n>s" when
 # the whole run took longer than $TEST_BUDGET seconds (default 180), and last "TOTAL <seconds>".
 # Exits non-zero when any file failed; with TEST_BUDGET_ENFORCE=1 also when a file or the total is
@@ -70,7 +71,7 @@ while [ "$shown" -lt "$n" ]; do
 		cat "$tmp/$i.out"
 		t=$(cat "$tmp/$i.time")
 		echo "TIME $t $f"
-		[ "$(cat "$tmp/$i.rc")" -eq 0 ] || failed=1
+		if [ "$(cat "$tmp/$i.rc")" -ne 0 ]; then failed=1; echo "FAILED $f"; fi
 		if over "$t" "$fbudget"; then echo "SLOW: $f took ${t}s, budget ${fbudget}s"; slow=1; fi
 		running=$(echo $running | tr ' ' '\n' | grep -vx "$i" | tr '\n' ' ')
 		shown=$((shown + 1))

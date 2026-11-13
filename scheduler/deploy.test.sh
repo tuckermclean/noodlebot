@@ -48,6 +48,7 @@ head_of() { full "$live" HEAD; }
 short() { printf %.7s "$1"; }
 runs() { grep -c "^$1\$" "$log"; }
 dep() { sh "$deploy" "$live" 2>&1; }
+status_of() { printf '%s\n' "$1" | grep -v '^make test failed for '; }
 prev_is() { [ "$(cat "$NOODLEBOT_DATA/deploy/previous" 2>/dev/null | xargs -r -n1 git -C "$live" rev-parse 2>/dev/null)" = "$1" ]; }
 
 c0=$(head_of)
@@ -78,8 +79,8 @@ m2=0; printf '%s\n' "$out" | grep -Eq "^not deployed: $(short "$c2")[0-9a-f]* \(
 ok "D01-AC-2 prints 'not deployed: <sha> (version <v>) fails make test'" '[ "$m2" = 1 ]'
 v2=$(ver "$c2")
 ok "V01-AC-4 the refused commit's version is tag-based, not a bare sha (guard)" 'case $v2 in v0.2.0-1-g*) true ;; *) false ;; esac'
-ok "V01-AC-4 the failing commit's line is 'not deployed: <sha> (version <describe of it>) fails make test'" '[ -n "$v2" ] && [ "$out" = "not deployed: $c2 (version $v2) fails make test" ]'
-ok "D01-AC-2 the failure is one line" '[ "$m2" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c .)" = 1 ]'
+ok "V01-AC-4 the failing commit's line is 'not deployed: <sha> (version <describe of it>) fails make test'" '[ -n "$v2" ] && [ "$(status_of "$out")" = "not deployed: $c2 (version $v2) fails make test" ]'
+ok "D01-AC-2 the failure is one line" '[ "$m2" = 1 ] && [ "$(status_of "$out" | grep -c .)" = 1 ]'
 ok "D01-AC-2 live checkout stays on the old commit" '[ "$m2" = 1 ] && [ "$(head_of)" = "$c1" ]'
 ok "D01-AC-2 make test ran for the failing commit" '[ "$(runs c2)" = 1 ]'
 out=$(dep)

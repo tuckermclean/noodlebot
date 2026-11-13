@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The machine-wide queue of session starts: one start per gap, in a fixed order (S07).
 
-  turn.py list|ask|giveback|took --root DATA --repo NAME [--tick S] [--gap S] [--starve S] [--now EPOCH] [KEY]
+  turn.py list|ask|giveback|took|place --root DATA --repo NAME [--tick S] [--gap S] [--starve S] [--now EPOCH] [KEY]
 
 Every loop of the machine keeps its waiting units in DATA/state/NAME/waiting.json and shares the start
 record DATA/state/starts.json. All reads and writes happen under an exclusive flock on
@@ -22,6 +22,14 @@ DATA/state/starts.lock, and files are replaced atomically, so two loops asking a
   took      KEY was started without a turn (a released node): record its start like a granted ask, whatever the
             gap and the order, so a giveback of KEY restores the previous record. No KEY is an error.
             A previous record more than the gap in the future is dropped, as ask does.
+
+  place     read-only: how far KEY is from a turn. KEY is looked up in this loop's list (--repo may be
+            OWNER/NAME; the part after the last "/" is the folder). Prints
+            "<N> ahead, waited <H>h<MM>m, gap passed|gap not passed", N being the units before KEY in the
+            order ask uses (live loops only, given-back units not counted), or "not waiting" when KEY is not in
+            this loop's live list (unless --kind K [--size S] is given: KEY is then placed as a unit of that
+            kind appended to the list with wait 0, in memory only), was given back (until the next list), or there is no state folder. It creates nothing and writes nothing (a shared flock on starts.lock when
+            that exists), so it works on a read-only state folder.
 
 Order: units that waited more than the starvation limit (--starve, SCHED_STARVE, 21600 s) first, the
 longest waiting first; then triage/update/followup/resumed; then fresh S, M, L (no Size counts as L);
@@ -185,6 +193,38 @@ def ask(state, repo, now, args):
     return "%s\t%s" % (u["key"], text)
 
 
+def place(state, repo, now, key, args, kind=None, size="-"):
+    try:
+        lists = live_lists(state, now)
+    except OSError:
+        return "not waiting"  # no state folder (read-only: nothing is created)
+    d = lists.get(repo)
+    if d is None or key in d.get("gaveback", []):
+        return "not waiting"  # a given-back key gets no turn from ask, so it is not waiting
+    if not any(u["key"] == key for u in d["units"]):
+        if kind is None:
+            return "not waiting"
+        # as if it were listed now: appended to this loop's list (in memory only), waited 0
+        d = dict(d, units=d["units"] + [{"key": key, "kind": kind, "size": size, "since": now}])
+        lists = dict(lists, **{repo: d})
+    gap = start_gap(lists, args)
+    starve = args.starve
+    if starve is None:
+        starve = env_num("SCHED_STARVE", 21600.0)
+    last = read_json(os.path.join(state, "starts.json"))
+    if not valid_start(last) or last["time"] > now + gap:
+        last = None  # no start yet, or a bad record as in ask
+    passed = last is None or now - last["time"] >= gap
+    queue = [r for r in order(lists, now, starve) if not r[3]]  # ask gives given-back units no turn
+    ahead = 0
+    for u, r, _, _ in queue:
+        if r == repo and u["key"] == key:
+            break
+        ahead += 1
+    wait = max(now - x["since"] for x in d["units"] if x["key"] == key)
+    return "%d ahead, waited %s, gap %s" % (ahead, hm(wait), "passed" if passed else "not passed")
+
+
 def took(state, repo, now, key, args):
     spath = os.path.join(state, "starts.json")
     last = read_json(spath)
@@ -220,7 +260,7 @@ def giveback(state, repo, key):
 
 def main():
     p = argparse.ArgumentParser(prog="turn.py")
-    p.add_argument("command", choices=("list", "ask", "giveback", "took"))
+    p.add_argument("command", choices=("list", "ask", "giveback", "took", "place"))
     p.add_argument("key", nargs="?")
     p.add_argument("--root", required=True)
     p.add_argument("--repo", required=True)
@@ -228,12 +268,31 @@ def main():
     p.add_argument("--gap", type=float)
     p.add_argument("--starve", type=float)
     p.add_argument("--now", type=float)
+    p.add_argument("--kind", choices=("triage", "update", "followup", "resumed", "fresh"))
+    p.add_argument("--size", choices=("S", "M", "L", "-"), default="-")
     # KEY may follow the options (`took --root D --repo R A1`);
     # an older parse_args (3.12.3) binds an empty KEY with COMMAND and rejects it
     args = p.parse_intermixed_args()
     if args.now is not None and not math.isfinite(args.now):
         p.error("--now must be finite")
     state = os.path.join(args.root, "state")
+    if args.command == "place":
+        if not args.key:
+            p.error("place needs a KEY")
+        lpath = os.path.join(state, "starts.lock")
+        try:
+            lock = open(lpath)  # only when it exists; never created
+        except OSError:
+            lock = None
+        try:
+            if lock:
+                fcntl.flock(lock, fcntl.LOCK_SH)
+            now = time.time() if args.now is None else args.now
+            print(place(state, args.repo.rsplit("/", 1)[-1], now, args.key, args, args.kind, args.size))
+        finally:
+            if lock:
+                lock.close()
+        return
     os.makedirs(os.path.join(state, args.repo), exist_ok=True)
     with open(os.path.join(state, "starts.lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

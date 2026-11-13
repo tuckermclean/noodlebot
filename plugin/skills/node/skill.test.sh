@@ -195,4 +195,46 @@ if g02e_sent "$g02e_t" 'answered/|answer' 'newest|latest|most recent' 'pair' 'de
 if g02e_sent "$g02e_t" 'older|earlier|previous' 'pair' 'context' 'not (an )?approv|no approv|never approv|not .*decision|not .*permit'; then ok "G02-AC-2 (review-fresh #3): the unattended update template says older pairs are context, not approval"; else bad "G02-AC-2 (review-fresh #3): the unattended update template does not say older pairs are context, not approval"; fi
 # finding 4: with --dry-run the whole-node fresh review posts nothing on the PR; its verdict goes into result.md
 if g02e_sent "$u" 'fresh review' '--dry-run' 'result\.md' 'verdict' 'not (be )?posted|not post|never posted|posts? nothing|nothing (is )?posted|instead of post|no comment'; then ok "G02-AC-4 (review-fresh #4): with --dry-run the fresh review's verdict goes into result.md and is not posted on the PR"; else bad "G02-AC-4 (review-fresh #4): no sentence says that with --dry-run the fresh review's verdict goes into result.md and is not posted on the PR"; fi
+
+# ---------- G05 slice 2: step 7 and step 6 state the spec-PR scope rule (G05-AC-2) ----------
+g05d="$tmp/G05"; mkdir -p "$g05d"
+# g05_win <file> <n> <ere>...: some window of <n> consecutive lines matches every ERE (case-insensitive, asterisks dropped).
+g05_win() {
+	g05_f=$1; g05_n=$2; shift 2
+	g05_pats=$(printf '%s\n' "$@")
+	awk -v n="$g05_n" -v pats="$g05_pats" '
+		BEGIN { k = split(pats, P, "\n") }
+		{ gsub(/\*/, ""); L[NR] = tolower($0) }
+		END {
+			for (i = 1; i <= NR; i++) {
+				w = ""; for (j = i; j < i + n && j <= NR; j++) w = w " " L[j]
+				good = 1; for (p = 1; p <= k; p++) if (w !~ P[p]) { good = 0; break }
+				if (good) exit 0
+			}
+			exit 1 }' "$g05_f"
+}
+# g05_sec <skill> <heading-regex> <out>: the lines from the first "## " heading matching the regex to the next "## " heading.
+g05_sec() { awk -v re="$2" '/^## / { if (on) exit; if (tolower($0) ~ re) on = 1 } on { print }' "$1" >"$3"; }
+g05_sec "$sk" '^## 7[.]' "$g05d/s7.md"
+g05_sec "$sk" '^## 6[.]' "$g05d/s6.md"
+cat "$g05d/s6.md" "$g05d/s7.md" >"$g05d/s67.md"
+g05c() { # g05c <label> <file> <n> <ere>...
+	g05_l=$1; g05_ff=$2; g05_nn=$3; shift 3
+	if g05_win "$g05_ff" "$g05_nn" "$@"; then ok "$g05_l"; else bad "$g05_l"; fi
+}
+if [ -s "$g05d/s7.md" ]; then ok "G05-AC-2: SKILL.md has a step 7 section"; else bad "G05-AC-2: SKILL.md has no '## 7.' section"; fi
+g05c "G05-AC-2: step 7 says a spec PR changes only the repository's spec files" "$g05d/s7.md" 3 'spec pr' 'only' 'spec files'
+g05c "G05-AC-2: step 7 says an approval of a frozen test line or of a file outside the node's Owns is recorded in the answer" "$g05d/s7.md" 6 'approv' 'frozen' 'outside' 'owns' 'record' 'answer'
+g05c "G05-AC-2: step 7 says that change is made on the node branch, test-first" "$g05d/s7.md" 6 'approv' 'node branch' 'test-first|test first|tests first'
+g05c "G05-AC-2: step 7 says adding a path to the node's own Owns is a small amendment" "$g05d/s7.md" 4 'add' 'path' 'node.s own[^.]*owns|own owns' 'small (spec )?amendment'
+g05c "G05-AC-2: step 7 names the checker check-spec-diff.py" "$g05d/s7.md" 40 'check-spec-diff[.]py'
+g05c "G05-AC-2: step 7 runs the checker against origin/main before a spec branch is pushed" "$g05d/s7.md" 6 'check-spec-diff' 'origin/main' 'before' 'push'
+g05c "G05-AC-2: step 7 stops when the checker exits 1" "$g05d/s7.md" 6 'check-spec-diff' 'exit(s)? (code )?1|exit 1|non-zero' 'stop'
+if grep -Eiq 'changes a frozen test still gets its own spec pr' "$g05d/s7.md" || tr -d '*\n' <"$g05d/s7.md" | tr -s ' ' | grep -Eiq 'frozen test[^.]*(still )?(gets|get|goes|go|needs|need)[^.]*(its own|a) spec pr'; then bad "G05-AC-2: step 7 still sends a frozen-test change to a spec PR"; else ok "G05-AC-2: step 7 no longer sends a frozen-test change to a spec PR"; fi
+g05c "G05-AC-2: the skill says files outside the spec files that a merged spec PR carried get rows in the evidence table naming that PR" "$g05d/s67.md" 8 'merged spec pr' 'outside' 'spec files' 'row' 'evidence table' 'nam'
+g05c "G05-AC-2: the skill gives those files to the fresh reviewer" "$g05d/s67.md" 8 'merged spec pr' 'fresh review'
+g05c "G05-AC-2: the skill runs the checker on the merge commit as <sha>^ <sha>" "$sk" 8 'merge commit' 'check-spec-diff' '\^'
+g05h=$(sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' "$sk" | grep -in -e themonolith -e monolith -e tuckermclean -e 'docs/migration' | head -n 3)
+if [ -z "$g05h" ]; then ok "G05-AC-2: SKILL.md names no repository (no themonolith, tuckermclean, docs/migration.tsv)"; else bad "G05-AC-2: SKILL.md names a repository: $g05h"; fi
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

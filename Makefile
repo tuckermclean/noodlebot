@@ -19,6 +19,8 @@ TESTS = \
 	scheduler/report-g03.test.sh \
 	scheduler/loop-g03-skills.test.sh \
 	scheduler/report-g02.test.sh \
+	scheduler/report-queue.test.sh \
+	scheduler/report-queue-answers.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
@@ -29,8 +31,12 @@ TESTS = \
 	scheduler/turn-record.test.sh \
 	scheduler/turn-lock.test.sh \
 	scheduler/turn-took.test.sh \
+	scheduler/turn-place.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	scheduler/deploy.test.sh \
+	scheduler/deploy-d04.test.sh \
+	scheduler/deploy-d07.test.sh \
+	scheduler/api-d07.test.sh \
 	plugin/hooks/guard.test.sh \
 	plugin/hooks/guard-git.test.sh \
 	plugin/hooks/guard-shell.test.sh \
@@ -52,6 +58,8 @@ TESTS = \
 	scheduler/loop-s01-takeover.test.sh \
 	scheduler/loop-s07-slots.test.sh \
 	scheduler/loop-g01.test.sh \
+	scheduler/loop-u03.test.sh \
+	scheduler/loop-u03-busy.test.sh \
 	scheduler/loop-s07.test.sh \
 	scheduler/loop-s06.test.sh \
 	scheduler/loop-s06-later.test.sh \
@@ -81,6 +89,7 @@ TESTS = \
 	scheduler/loop-s07-records.test.sh \
 	scheduler/loop-s04.test.sh \
 	scheduler/loop-d01.test.sh \
+	scheduler/loop-d04.test.sh \
 	scheduler/loop-l01.test.sh \
 	scheduler/loop-s04-more.test.sh \
 	scheduler/loop-s04-reset.test.sh \
@@ -108,6 +117,7 @@ TESTS = \
 	scheduler/loop-s04-ignored.test.sh \
 	scheduler/loop-p03.test.sh \
 	scheduler/loop-p03-ramp.test.sh \
+	scheduler/loop-g05.test.sh \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
@@ -125,6 +135,7 @@ TESTS = \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
 	plugin/skills/node/skill.test.sh \
+	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
