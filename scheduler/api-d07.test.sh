@@ -36,6 +36,10 @@ lastfailed 2026-11-09T12:02:00Z "$mt_line" "/v1/deploy's last_failed does not ta
 printf '2026-11-09T12:04:00Z %s\n' "$ci_line" >>"$sl"
 req GET /v1/deploy
 lastfailed 2026-11-09T12:04:00Z "$ci_line" "/v1/deploy's last_failed is the CI rejection again once it is the latest (after a make test line)"
+to_line="not deployed: $S4 (version v0.9.6-fixture) smoke check timed out or was killed 3 times"
+printf '2026-11-09T12:05:00Z %s\n' "$to_line" >>"$sl"
+req GET /v1/deploy
+lastfailed 2026-11-09T12:05:00Z "$to_line" "/v1/deploy's last_failed is a smoke-check timeout line when it is the latest 'not deployed:' line"
 get D07-AC-7 /v1/deploy deploy
 
 [ $fails = 0 ] || { echo "$fails failed"; exit 1; }

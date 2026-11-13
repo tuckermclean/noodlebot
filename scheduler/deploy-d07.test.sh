@@ -216,6 +216,28 @@ c1=$(head_w); setrun "$c1" 5003 completed success
 depe
 ok "D07-AC-4 a clean CI-passed commit is deployed after CI (the smoke check passed)" '[ "$(head_of)" = "$c1" ] && [ "$o" = "$(ci_line "$before" "$c1" 5003)" ] && [ "$(ncalls)" = "$n" ]'
 ok "D07-AC-4 a clean commit's smoke check leaves no scratch worktree behind and the live checkout no __pycache__" 'scratch_gone && [ -z "$(find "$live" -name __pycache__)" ]'
+# D07-AC-4: a .sh without a #! line is bash's (like testdata/lib/loop-*.sh); a #!/bin/sh one is checked with sh.
+printf '# Shared by x.test.sh (source it)\na=(x y)\na+=(z)\n' >"$tmp/bashlib.sh"
+ok "D07-AC-4 setup: the shebang-less fixture is valid bash and not valid dash" 'bash -n "$tmp/bashlib.sh" && ! dash -n "$tmp/bashlib.sh" 2>/dev/null'
+before=$(head_of); n=$(ncalls)
+cp "$tmp/bashlib.sh" "$tmp/work/scheduler/lib-d07.sh"
+mk bl1 scheduler/d07note.txt
+bl1=$(head_w); setrun "$bl1" 5101 completed success
+depe
+ok "D07-AC-4 a shebang-less scheduler/*.sh with bash-only syntax is checked with bash: deployed after CI, no make test" '[ "$(head_of)" = "$bl1" ] && [ "$o" = "$(ci_line "$before" "$bl1" 5101)" ] && [ "$(ncalls)" = "$n" ]'
+before=$(head_of)
+{ echo '#!/bin/sh'; sed 1d "$tmp/bashlib.sh"; } >"$tmp/work/scheduler/lib-d07.sh"
+mk bl2 scheduler/d07note.txt
+bl2=$(head_w); setrun "$bl2" 5102 completed success
+depe
+ok "D07-AC-4 a #!/bin/sh scheduler/*.sh with bash-only syntax is still rejected by the smoke check" 'smoke_ok "$bl2" scheduler/lib-d07.sh && [ "$(head_of)" = "$before" ] && in_rejected "$bl2" && [ "$(ncalls)" = "$n" ]'
+{ echo '#!/usr/bin/env bash'; sed 1d "$tmp/bashlib.sh"; } >"$tmp/work/scheduler/lib-d07.sh"
+mk bl3 scheduler/d07note.txt
+bl3=$(head_w); setrun "$bl3" 5103 completed success
+depe
+ok "D07-AC-4 a #!/usr/bin/env bash scheduler/*.sh with bash-only syntax is deployed after CI" '[ "$(head_of)" = "$bl3" ] && [ "$o" = "$(ci_line "$before" "$bl3" 5103)" ] && [ "$(ncalls)" = "$n" ]'
+ok "D07-AC-4 the bash checks leave no scratch worktree behind" 'scratch_gone'
+
 
 # D07-AC-5: a failing gh and a failing token script wait (exit 2), leave things as they were, and print no token.
 before=$(head_of)
