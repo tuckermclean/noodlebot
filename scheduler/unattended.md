@@ -14,9 +14,10 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   same before the final CI run: other nodes run in parallel and merge while you work.
   MERGE CONFLICTS: resolve them yourself, keeping both sides' intent (another node's merged work
   stays), unless a conflicted file is a frozen test or fixture (in the repository's test and fixture
-  paths, committed by an earlier RED commit or node) or a spec file (SPEC.md, nodes/, docs/graph.yaml,
-  docs/migration.tsv, docs/capabilities.md). For those, git merge --abort, write QUESTION.md and end
-  the run. After resolving, rerun the quick test gate and every red target of this node, and list
+  paths, committed by an earlier RED commit or node) or a spec file. The spec files are the paths the
+  checker check-spec-diff.py lists: those on the **Spec files:** line of the repository's AGENTS.md, or
+  its default list when AGENTS.md has no such line. For those, git merge --abort, write QUESTION.md and
+  end the run. After resolving, rerun the quick test gate and every red target of this node, and list
   each resolved file in the PR under Deviations.
 @RESUME-BEGIN@
 - RESUMING AFTER A STOP. This branch already has work (commits past origin/main: @COMMITS@), and the
@@ -42,6 +43,42 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   asked, <ts>-ANSWER.md is the owner's answer, <ts>-SPEC-PR holds the number of a spec PR the owner
   has merged. Read out/node/@ID@/ (brief, logs) and the commits on this branch too. Continue from
   where the last run stopped; do not redo slices that are already committed and reviewed.
+  - <ts>-SPEC-PR-CLOSED: the spec PR that WAITING-PR named (the number is in the file) was closed
+    without merging, so its spec changes did not land. Read the PR's comments on GitHub for why.
+    Carry out the approvals that need no spec change on the node branch, test-first (a frozen test
+    line, a file outside the node's Owns, a deviation to record). A spec change that is still needed
+    is a new question in QUESTION.md, not a reopened PR; end the run once you have written it.
+  - <ts>-SPEC-PR-SCOPE: the loop found that the open spec PR named by WAITING-PR changes files outside
+    the spec files, and sent the node back. The file holds `pr`, `branch`, `head` and one `path` line
+    for each such file. Act on this file only when it is the newest file in answered/ and the
+    brief does not record "<file name> handled" (an older one, or one so recorded, has been
+    handled; after a later fresh start the file is still the newest, so check the brief).
+    Check the spec branch out in a spec worktree at origin/<branch>:
+    git fetch origin && git worktree add -B <branch> @WT@-spec origin/<branch>
+    and confirm that HEAD there is the `head` line of the file, the PR's head before your restore
+    (if it is not, someone pushed since: remove the spec worktree, write QUESTION.md and end the
+    run). Make one new commit that restores the listed paths to their origin/main state:
+    git restore --staged --worktree --source=origin/main -- <the paths, quoted>
+    (git restore also removes a path that origin/main does not have). Use no amend, no rebase and
+    no force push. Then run the checker: python3 -I "$(dirname "@LOOP@")/../plugin/skills/node/check-spec-diff.py" origin/main HEAD
+    it must exit 0, and the repository's spec checker (its AGENTS.md names it) must report
+    PROBLEMS 0. If either does not, remove the spec worktree (git worktree remove @WT@-spec), write
+    QUESTION.md saying what it reports and end the run. Otherwise push the commit, and comment on
+    the PR (gh pr comment) naming the paths taken out and the `head` line commit that held them
+    (the comment may also name the new restoring commit). Record "<file name> handled" in the
+    brief. Then take one of two branches. No change left in the PR (git diff --quiet
+    origin/main...HEAD exits 0): close it (gh pr close), remove the spec worktree (git worktree
+    remove @WT@-spec), name the removed paths in the brief, and carry on with the node in this run,
+    making those changes on the node branch, test-first, as the approved changes they are; do not
+    end the run. Otherwise: write WAITING-PR again with the same PR number, remove the spec
+    worktree (git worktree remove @WT@-spec), name the removed paths in the brief and in the PR
+    body or comment (the resumed session makes those changes on the node branch, test-first, as
+    the approved changes they are), and end the run (nothing comes after it).
+  - Files outside the spec files that a merged spec PR of this node carried: for each <ts>-SPEC-PR, get
+    its merge commit (gh pr view <N> --json mergeCommit --jq .mergeCommit.oid) and run
+    python3 -I "$(dirname "@LOOP@")/../plugin/skills/node/check-spec-diff.py" <sha>^ <sha>. Each path it prints as
+    NOT SPEC gets a row in the criterion -> evidence table naming that PR, and the diffs go to the
+    fresh reviewer (/node step 6).
   - ANSWER.md is the owner's decision, written by the owner. An approval in it is the explicit owner
     approval /node asks for, including for changing a frozen test line. Quote the answer in the
     brief and in the PR (Deviations / open questions) wherever you act on it.
@@ -50,22 +87,31 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   - If the answer does not settle a blocking question, or contradicts itself, write a new
     QUESTION.md that says exactly what is still open, and end the run.
 - SMALL SPEC AMENDMENTS (the node skill's step 7: this node's spec only, every criterion's meaning
-  intact, such as a clearer Verify line or an added path) need no question and no spec PR: commit
+  intact, such as a clearer Verify line, or a path added to this node's own Owns) need no question and no spec PR: commit
   them on the node branch and list them in the PR under "Spec amendments".
-- SPEC CHANGES. When an answer approves any other change to SPEC.md, a node spec, docs/graph.yaml,
-  docs/migration.tsv or anything else the node skill's step 7 says is a spec change, do not put it
-  on the node branch. Instead:
+- SPEC CHANGES. A spec PR changes only the repository's spec files: the paths the checker
+  check-spec-diff.py lists, which are those in backticks on the **Spec files:** line of the "Building a
+  node" section of the repository's AGENTS.md (else its default list: SPEC.md, docs/graph.yaml and
+  nodes/). When an answer approves a change to those files (SPEC.md, a node spec, the graph, or
+  anything else the node skill's step 7 says is a spec change), do not put it on the node branch.
+  Instead:
   1. git worktree add -b spec/@ID@-<short-topic> @WT@-spec origin/main (pick a new topic name if
      the branch exists), and make exactly the approved change there.
-  2. The repository's spec checker must report PROBLEMS 0 (AGENTS.md names it: scripts/check-spec.py,
-     or .claude/skills/node/check-spec.py in older checkouts).
-  3. Commit (subject "Spec: ..."), push the branch, open the PR with gh pr create. The body says
-     what changes and quotes the question and the owner's answer it carries out.
-  4. Remove the spec worktree (git worktree remove @WT@-spec). Write only the PR number to
+  2. Commit it (subject "Spec: ..."). The checker compares commits, so run it only after the commit.
+  3. Before you push the branch, run in the spec worktree: python3 -I "$(dirname "@LOOP@")/../plugin/skills/node/check-spec-diff.py" origin/main HEAD
+     (before the push, not earlier). On exit 0 go on. On exit 1 it names each path outside the spec
+     files as NOT SPEC <path>: remove those
+     changes in a new commit and run it again, and stop if you cannot. On exit 2 stop. The
+     repository's spec checker must then report PROBLEMS 0 (AGENTS.md names it: scripts/check-spec.py,
+     or .claude/skills/node/check-spec.py in older checkouts). Only then push.
+  4. Push the branch and open the PR with gh pr create. The body says what changes and quotes the
+     question and the owner's answer it carries out.
+  5. Remove the spec worktree (git worktree remove @WT@-spec). Write only the PR number to
      @STATE@/node/@ID@/WAITING-PR, and end the run. The scheduler starts this node again after the
      owner merges that PR.
-  Approvals that need no spec change (a frozen test line, a deviation to record) apply straight away
-  on the node branch. If the answers include both, first open the spec PR and stop; do the rest after.
+  An approval of a frozen test line, or of a change to a file outside the node's Owns, is applied on
+  the node branch, test-first, never in a spec PR; so is a deviation to record. If the answers include
+  both a spec change and such approvals, first open the spec PR and stop; do the rest after.
 - GitHub: the gh CLI's stored account is suspended. Authenticate every gh call with the GitHub App:
   GH_TOKEN=$(~/.config/noodlebot/token @REPO@) gh ... --repo @REPO@
   Push with: GIT_TOKEN=$(~/.config/noodlebot/token @REPO@) git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' push -u origin HEAD

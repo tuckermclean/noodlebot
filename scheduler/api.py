@@ -655,7 +655,8 @@ def tail_lines(path, chunk=65536, cap=1 << 20, limit=32 << 20):
 
 def last_status_lines():
     """The latest 'deployed ' and 'not deployed: ' lines over every listed repository's status.log."""
-    found = {"deployed ": None, "not deployed: ": None}   # a failed test run: "... fails make test" or "... make test timed out or was killed N times"
+    # a failed deploy: "... fails make test", "... make test timed out or was killed N times", "... fails CI: ..." or "... fails the smoke check: ..."
+    found = {"deployed ": None, "not deployed: ": None}
     for repo in repo_list():
         path = os.path.join(root, "state", repo.split("/", 1)[1], "status.log")
         todo = set(found)
@@ -664,7 +665,8 @@ def last_status_lines():
                 break
             ts, _, text = raw.decode("utf-8", "replace").rstrip("\r").partition(" ")
             for k in list(todo):
-                if text.startswith(k) and (k != "not deployed: " or text.endswith(" fails make test") or "make test timed out or was killed" in text):
+                if text.startswith(k) and (k != "not deployed: " or text.endswith(" fails make test") or "make test timed out or was killed" in text or "smoke check timed out or was killed" in text
+                                                  or " fails CI: " in text or " fails the smoke check: " in text):
                     t = epoch(ts)
                     if t is not None:
                         todo.discard(k)

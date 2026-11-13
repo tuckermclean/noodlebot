@@ -33,6 +33,7 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
 - **Role agents:** `noodlebot-tester`, `noodlebot-implementer` and `noodlebot-reviewer`
   (`.claude/agents/`). No guard hook holds them to their roles yet (node R01): the orchestrator's
   checks of each handoff do (`git show --stat` of a RED commit touches only test paths, and so on).
+- **Spec files:** `SPEC.md`, `docs/graph.yaml`, `nodes/` (a trailing slash marks a folder); a spec PR changes only these, and plugin/skills/node/check-spec-diff.py checks a branch against them.
 - **Spec checker:** `python3 -I plugin/skills/node/check-regime.py` (PROBLEMS 0). **Decisions
   table:** SPEC §4.
 - **Tests:** `make test` is both the quick gate and the whole suite. Tests are the `*.test.sh` files

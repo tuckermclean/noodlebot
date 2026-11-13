@@ -33,6 +33,8 @@ TESTS = \
 	plugin/skills/node/check-regime.test.sh \
 	scheduler/deploy.test.sh \
 	scheduler/deploy-d04.test.sh \
+	scheduler/deploy-d07.test.sh \
+	scheduler/api-d07.test.sh \
 	plugin/hooks/guard.test.sh \
 	plugin/hooks/guard-git.test.sh \
 	plugin/hooks/guard-shell.test.sh \
@@ -99,6 +101,7 @@ TESTS = \
 	scheduler/loop-s04-ignored.test.sh \
 	scheduler/loop-p03.test.sh \
 	scheduler/loop-p03-ramp.test.sh \
+	scheduler/loop-g05.test.sh \
 	scheduler/loops.test.sh \
 	scheduler/loops-root.test.sh \
 	scheduler/loops-status.test.sh \
@@ -117,6 +120,7 @@ TESTS = \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
 	plugin/skills/node/skill.test.sh \
+	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	site/site.test.sh \

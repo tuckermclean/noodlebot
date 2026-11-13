@@ -1,5 +1,5 @@
 #!/bin/sh
-# deploy.sh <live checkout>        deploy origin/main into the live checkout if it passes make test
+# deploy.sh <live checkout>        deploy origin/main into the live checkout if it passes make test, or CI and the smoke check when deploy-ci is set
 # deploy.sh --rollback <live>      return the live checkout to the recorded previous commit
 # deploy.sh --runtime-changed <live checkout> <from> [<to>]   exit 0 if the range changes a runtime path, 1 if not, 2 if unknown
 #
@@ -35,19 +35,44 @@
 # tries, passed and plain-tries, and prints one line "retry requested: <sha> ...", or "nothing to retry" if it is
 # not rejected (if rejected cannot be updated the line says the retry could not be applied); the run
 # then goes on, so a retried origin/main head is tested again.
-# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed,plain-tries,test-failed.log,retry,rollback-request} (default
+# CI gate (D07): when the first line of $HOME/.config/noodlebot/deploy-ci, "<owner/name> <workflow file> <branch>", is
+# present, a runtime range never runs make test; the push runs of that workflow on that branch for the new origin/main sha are
+# read (gh api repos/<owner/name>/actions/workflows/<workflow>/runs, head_sha, event=push, branch; GH_TOKEN fresh from
+# $HOME/.config/noodlebot/token <owner/name> on each run, never printed; 30 s timeouts) and the newest run decides. Missing or
+# empty file: the gate is off and make test runs as above. A malformed line deploys nothing, runs no make test, prints one
+# stderr line "deploy-ci: <reason>" and exits 2. A non-runtime range is fast-forwarded without CI as above.
+#  - completed, success: the smoke check (below), then the deploy, with "deployed <old>..<new> (version <v>) after CI:
+#    <workflow> run <id> passed" (the pass is remembered in deploy/passed as after a make test pass);
+#  - completed, any other conclusion: rejected with one line "not deployed: <sha> (version <v>) fails CI: <workflow> run <id>
+#    <conclusion>", not tried again (deploy/retry puts it back to be read again);
+#  - queued, in progress or no run: nothing deployed or rejected, exit 2; the first wait for a sha prints the line "waiting for
+#    CI: <sha> (version <v>) <workflow>" and records the sha in deploy/waiting, every wait writes the stderr line "waiting for CI:
+#    <sha> <workflow> <queued|in_progress|no run>";
+#  - gh or the token script fails, times out or answers something unreadable: a wait whose stderr line names the failure
+#    ("deploy.sh: gh failed ...", "deploy.sh: token script failed ..."), no status line, nothing recorded.
+# Smoke check (D07): the CI-passed sha is checked out in a scratch worktree and, in the clean environment of make test under a
+# 60 s timeout, each tracked *.sh under scheduler/ and plugin/ is read with bash -n if its first line is a #! line naming bash,
+# sh -n if it is a #! line naming sh, and bash -n if it has no #! line, and each tracked *.py there is compiled with python3 -I, writing no bytecode. A file that fails rejects the sha with
+# "not deployed: <sha> (version <v>) fails the smoke check: <file>" and the checker's message on stderr; a smoke check that
+# times out or is killed is retried and counted as a timed-out make test is ("smoke check timed out or was killed <n> times").
+# A smoke check that fails without naming a file (the checker could not run) rejects nothing and is retried, with the stderr
+# line "deploy.sh: smoke check for <sha> could not run (status <n>); will retry".
+# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed,plain-tries,waiting,test-failed.log,retry,rollback-request} (default
 # ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock
 # (waited for up to 5 minutes, so a concurrent run finds nothing left to do; git commands that may
 # leave a background process run with it closed).
 # Nothing is written inside the live checkout. Exit:
 # 0 nothing to do, deployed, or rolled back;
 # 1 not deployed and recorded as rejected (fails make test, $max_tries failed fast-forwards, or timed
-#   out / killed $max_tries times);
+#   out / killed $max_tries times, fails CI, fails the smoke check, or the smoke check timed out / was
+#   killed $max_tries times);
 # 2 not rejected, retried next run: usage, not a git checkout, fetch or git failure, a live checkout
 #   that cannot fast-forward or has uncommitted changes, make test timed out or killed (fewer than
 #   $max_tries times), make could not run (status 125-127: timeout or make missing), a fast-forward
 #   that failed after make test passed (fewer than $max_tries times; the pass is remembered), a failed
-#   rollback (nothing recorded), or a TERM/INT (message on stderr).
+#   rollback (nothing recorded), waiting for CI (queued, in progress or no run), a gh or token script
+#   failure, a malformed deploy-ci, a smoke check that timed out or was killed (fewer than $max_tries
+#   times) or that could not run (no file named; nothing recorded), or a TERM/INT (message on stderr).
 # Runtime paths: a range that changes only the non-runtime paths (see is_runtime_path) is fast-forwarded without
 # make test (a failed plain fast-forward is counted in deploy/plain-tries and the sha rejected after $max_tries, as
 # a failed fast-forward after a pass is), with the line "deployed <old>..<new> (version <v>) without make test: no runtime change", and deploy/previous
@@ -132,6 +157,7 @@ do_deploy() {
 		return 2
 	fi
 	# A range that changes no runtime path is fast-forwarded without make test (a git failure falls through to the full deploy).
+	read_ci || return 2
 	runtime_changed "$live" "$old" "$new"
 	[ $? = 1 ] && { fast_forward_plain; return $?; }
 	# A sha whose make test already passed ("<sha> <failed fast-forwards>" in $sd/passed) only retries the fast-forward.
@@ -141,8 +167,173 @@ do_deploy() {
 	else
 		pn=
 	fi
-	[ -n "$pn" ] || { run_test || return $?; }
+	if [ -z "$pn" ]; then
+		if [ -n "$ci_on" ]; then ci_gate || return $?; else run_test || return $?; fi
+	fi
 	fast_forward
+}
+
+# read_ci: the deploy-ci configuration into ci_on, ci_repo, ci_wf, ci_branch; ci_on stays empty when the file is missing or
+# empty (gate off). Returns 2 (with one "deploy-ci:" stderr line) when the first line is malformed.
+read_ci() {
+	ci_on=; ci_repo=; ci_wf=; ci_branch=; ci_line=
+	[ -s "$HOME/.config/noodlebot/deploy-ci" ] || return 0
+	read -r ci_line <"$HOME/.config/noodlebot/deploy-ci" 2>/dev/null || [ -n "$ci_line" ] || {
+		echo "deploy-ci: cannot read $HOME/.config/noodlebot/deploy-ci" >&2
+		return 2
+	}
+	set -f; set -- $ci_line; set +f
+	[ $# -gt 0 ] || return 0
+	if [ $# -ne 3 ]; then
+		echo "deploy-ci: expected \"<owner/name> <workflow file> <branch>\", found $# field(s)" >&2
+		return 2
+	fi
+	case $1 in
+	*/*) ;;
+	*) echo "deploy-ci: the repository \"$1\" is not <owner/name>" >&2; return 2 ;;
+	esac
+	ci_on=1; ci_repo=$1; ci_wf=$2; ci_branch=$3
+}
+
+# ci_waiting <state>: the sha waits for CI; the status line only the first time, the stderr line every time. Returns 2.
+ci_waiting() {
+	echo "waiting for CI: $new $ci_wf $1" >&2
+	w=
+	[ -f "$sd/waiting" ] && read -r w <"$sd/waiting"
+	if [ "$w" != "$new" ]; then
+		echo "$new" >"$sd/waiting"
+		echo "waiting for CI: $new (version $(version "$new")) $ci_wf"
+	fi
+	return 2
+}
+
+# ci_read: the newest push run for $new into ci_status, ci_concl, ci_id ("none" status when no run); 0, or 1 with the failure
+# in ci_err (a wait without a status line).
+ci_read() {
+	ci_status=; ci_concl=; ci_id=; ci_err=
+	ci_tok=$(timeout 30 "$HOME/.config/noodlebot/token" "$ci_repo" 2>/dev/null 9>&-) || ci_err="token script failed or timed out for $ci_repo"
+	[ -n "$ci_err" ] || [ -n "$ci_tok" ] || ci_err="token script printed no token for $ci_repo"
+	[ -z "$ci_err" ] || return 1
+	ci_dir=$(mktemp -d) || { ci_err="mktemp failed"; return 1; }
+	GH_TOKEN=$ci_tok timeout 30 gh api -X GET "repos/$ci_repo/actions/workflows/$ci_wf/runs" \
+		-f "head_sha=$new" -f event=push -f "branch=$ci_branch" >"$ci_dir/out" 2>"$ci_dir/err" 9>&-
+	ci_rc=$?
+	ci_tok=
+	if [ "$ci_rc" != 0 ]; then
+		ci_err="gh failed or timed out (status $ci_rc): $(head -n 1 "$ci_dir/err" 2>/dev/null | cut -c1-200)"
+		rm -rf "$ci_dir"
+		return 1
+	fi
+	ci_res=$(python3 -I -c '
+import json, sys
+sha = sys.argv[1]
+runs = [r for r in json.load(sys.stdin)["workflow_runs"] if isinstance(r, dict) and r.get("head_sha", sha) == sha]
+if not runs:
+    print("none - -")
+else:
+    r = max(runs, key=lambda r: (str(r.get("created_at") or ""), int(r["id"])))
+    f = [str(r["status"]), str(r.get("conclusion") or "-"), str(int(r["id"]))]
+    if any(not x or any(c.isspace() for c in x) for x in f):
+        raise ValueError("bad run")
+    print(" ".join(f))
+' "$new" <"$ci_dir/out" 2>/dev/null 9>&-) || ci_err="gh gave an answer that does not parse"
+	rm -rf "$ci_dir"
+	[ -z "$ci_err" ] || return 1
+	set -- $ci_res
+	ci_status=$1; ci_concl=$2; ci_id=$3
+}
+
+# ci_gate: the CI gate for $new; 0 when CI passed it and the smoke check passed (remembered in $sd/passed), otherwise the
+# status do_deploy returns.
+ci_gate() {
+	if ! ci_read; then
+		echo "deploy.sh: $ci_err; waiting for CI of $new" >&2
+		return 2
+	fi
+	case $ci_status in
+	none) ci_waiting "no run"; return $? ;;
+	completed)
+		case $ci_concl in
+		success) ;;
+		-) echo "deploy.sh: gh gave a completed run without a conclusion; waiting for CI of $new" >&2; return 2 ;;
+		*)
+			rm -f "$sd/waiting"
+			reject "$new" "fails CI: $ci_wf run $ci_id $ci_concl"
+			return 1 ;;
+		esac ;;
+	*) ci_waiting "$ci_status"; return $? ;;
+	esac
+	smoke_check || return $?
+	rm -f "$sd/tries" "$sd/waiting"
+	pn=0
+	echo "$new $pn" >"$sd/passed"
+	flaky_note=" after CI: $ci_wf run $ci_id passed"
+}
+
+# smoke_check: the local check of $new (see the header) in a scratch worktree; 0 when it passed, otherwise the status
+# do_deploy returns.
+smoke_check() {
+	trap cleanup EXIT
+	trap '[ -n "${mpid:-}" ] && kill "$mpid" 2>/dev/null; cleanup; exit 2' INT TERM
+	scratch=$(mktemp -d) || die "mktemp failed"
+	if ! git -C "$live" worktree add -q --detach "$scratch/wt" "$new" >/dev/null 2>&1 9>&-; then
+		rm -rf "$scratch"
+		die "cannot create a scratch worktree for $new"
+	fi
+	(
+		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+		unset NOODLEBOT_DATA
+		PYTHONDONTWRITEBYTECODE=1; export PYTHONDONTWRITEBYTECODE
+		exec timeout 60 sh -c '
+			cd "$1" || exit 2
+			git -c core.quotePath=false ls-files -- scheduler plugin | while IFS= read -r f; do
+				case $f in
+				*.sh)
+					read -r first <"$f"
+					case $first in
+					"#!"*bash*) sh_n=bash ;;
+					"#!"*sh*) sh_n=sh ;;
+					*) sh_n=bash ;;
+					esac
+					"$sh_n" -n "$f" || { echo "$f" >&3; exit 1; } ;;
+				*.py)
+					python3 -I -c "import sys; compile(open(sys.argv[1], \"rb\").read(), sys.argv[1], \"exec\")" "$f" ||
+						{ echo "$f" >&3; exit 1; } ;;
+				esac
+			done
+		' smoke "$scratch/wt" 3>"$scratch/smoke.file" >/dev/null 2>"$scratch/smoke.err" 9>&-
+	) &
+	mpid=$!
+	wait "$mpid"; sm_rc=$?
+	mpid=
+	if [ "$sm_rc" = 124 ] || [ "$sm_rc" -gt 128 ]; then
+		cleanup
+		n=0
+		[ -f "$sd/tries" ] && read -r tsha tn <"$sd/tries" && [ "$tsha" = "$new" ] && n=$tn
+		case $n in ''|*[!0-9]*) n=0 ;; esac
+		n=$((n + 1))
+		if [ "$n" -ge "$max_tries" ]; then
+			rm -f "$sd/waiting"
+			reject "$new" "smoke check timed out or was killed $n times"
+			return 1
+		fi
+		echo "$new $n" >"$sd/tries"
+		echo "deploy.sh: smoke check for $new timed out or was killed (status $sm_rc, attempt $n of $max_tries); will retry" >&2
+		return 2
+	fi
+	if [ "$sm_rc" != 0 ]; then
+		sm_file=$(head -n 1 "$scratch/smoke.file" 2>/dev/null)
+		cat "$scratch/smoke.err" >&2 2>/dev/null
+		cleanup
+		if [ -z "$sm_file" ]; then
+			echo "deploy.sh: smoke check for $new could not run (status $sm_rc); will retry" >&2
+			return 2
+		fi
+		rm -f "$sd/waiting"
+		reject "$new" "fails the smoke check: $sm_file"
+		return 1
+	fi
+	cleanup
 }
 
 # run_make <log> [<files>]: make test in the scratch worktree, in a clean environment, output to <log>; with files it is the

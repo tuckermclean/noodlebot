@@ -85,7 +85,9 @@ Only after `ANSWER.md`. Order: the graph first, then the specs, so they agree.
   plugin's tester, implementer and reviewer, unless the repository has its own; the spec checker
   (`python3 -I <plugin dir>/skills/node/check-regime.py`, PROBLEMS 0); the test, lint and CI commands
   that exist; the form of a red target (a command that exits non-zero before and 0 after); the test and
-  fixture paths; porting rules or "none"; what CI evidence to record.
+  fixture paths; porting rules or "none"; what CI evidence to record; and a **Spec files:** line, one
+  physical line naming the repository's spec files as paths in backticks (folders with a trailing `/`),
+  normally `SPEC.md`, `docs/graph.yaml`, `nodes/`: a spec PR changes only these.
 - **The role guard's config** (`<plugin dir>/hooks/guard.py`: its docstring gives the file's location,
   its `DEFAULTS` the default globs, which treat `**/*.test.sh`, `**/tests/**`, `**/testdata/**`,
   `**/fixtures/**` etc. as tests) only if those defaults do not match the repository's test paths
@@ -112,6 +114,12 @@ fixing the drafts (not the checker). Also check the drafted `AGENTS.md` commands
 ## 5. The PR
 - One commit on `spec/adopt`, subject `Spec: adopt the repository into the graph regime`, body: what
   was drafted and the owner's answers it carries out.
+- Before the push, run the checker against origin/main (origin/<default branch> where that is not main):
+  `python3 -I <plugin dir>/skills/node/check-spec-diff.py --allow AGENTS.md --allow .noodlebot/roles.yaml origin/main HEAD`
+  (drop `--allow .noodlebot/roles.yaml` when section 3 drafted no such file). Both are outside the
+  default list: this PR is the one that sets up the regime files, and no **Spec files:** line exists at
+  origin/main yet. On exit 1 it names the other paths (`NOT SPEC <path>`): stop, and do not push. On
+  exit 2 (git failed) stop too.
 - Push the branch and open one PR (`gh pr create`). Body: what was drafted; which owner answers it
   carries out (by number); open decisions and their defaults; what to check first (scope, track
   order, sizes); `Refs #N` for the issues the nodes cover. Never merge, approve or push to main.

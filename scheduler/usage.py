@@ -9,7 +9,8 @@ DIR/usage.json. Within a window usage only grows, so the current reading of a wi
 utilization among the readings with the latest reset time; no timestamps are needed.
 
 It holds new sessions (running ones are never stopped) when:
-- a window's status is not "allowed";
+- a window's status is not "allowed", except a 7-day window that is only "allowed_warning" (the owner's
+  decision: the weekly warning does not hold new sessions; a rejected 7-day window still holds);
 - the 5-hour window is projected to pass USAGE_5H_LIMIT (default 0.90) by its reset, at the burn rate
   of the last 30 minutes (or of the whole window so far, with too few samples);
 - only with USAGE_7D_PACE=1 (off by default): the 7-day window is more than USAGE_7D_MARGIN (default 0.10)
@@ -91,6 +92,8 @@ def main():
 
     hold, why, proj = [], [], None
     for name, w in win.items():
+        if name == "seven_day" and w["status"] == "allowed_warning":
+            continue   # the weekly warning is not a hold (a rejected 7-day window still holds)
         if w["resetsAt"] > now and w["status"] != "allowed":
             hold.append("%s window %s" % (name.replace("_", "-"), w["status"]))
     if five and five["resetsAt"] > now:
