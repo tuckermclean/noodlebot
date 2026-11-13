@@ -18,6 +18,13 @@
 # only), and after $max_tries such attempts for the same sha it is recorded with one line "not
 # deployed: <sha> (version <v>) make test timed out or was killed <n> times". Nothing to do prints
 # nothing; every stdout line is one status event.
+# A failed make test (not a timeout, a signal or status 125-127) is read for the "FAILED <file>" lines scheduler/runtests.sh
+# prints; if it named files, they are rerun once, alone (make test TESTS="<files>" TEST_JOBS=1, same scratch worktree and
+# clean environment, same timeout). A rerun that passes deploys as a pass does, with "deployed <old>..<new> (version <v>)
+# after a flaky make test: <n> file(s) failed and passed alone" and the stderr line "flaky: <sha> <files> failed in make
+# test and passed alone; log in <path>"; a rerun that fails, or no file named, rejects as above, with the stderr line "make
+# test failed for <sha> in: <files> (or "no file named"); log in <path>". The output of both runs is kept, under a header
+# (sha, version, UTC time, rejected or flaky), in deploy/test-failed.log (a temporary file renamed over the last one).
 # --rollback resets to deploy/previous and, once the reset succeeded, records the commit it left as
 # rejected, so the rollback sticks, and prints "rolled back <cur>..<prev> (version <v>)".
 # A normal run first consumes, under the lock, the one-shot markers the API writes (both removed
@@ -25,10 +32,10 @@
 # exits 2 without deploying): deploy/rollback-request rolls back as --rollback does, its one status
 # line saying "(rollback requested)", or one line "nothing to roll back" without a rollback point or
 # when already at it; deploy/retry names a commit that is removed from rejected, with its counts in
-# tries and passed, and prints one line "retry requested: <sha> ...", or "nothing to retry" if it is
+# tries, passed and plain-tries, and prints one line "retry requested: <sha> ...", or "nothing to retry" if it is
 # not rejected (if rejected cannot be updated the line says the retry could not be applied); the run
 # then goes on, so a retried origin/main head is tested again.
-# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed,retry,rollback-request} (default
+# State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed,plain-tries,test-failed.log,retry,rollback-request} (default
 # ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock
 # (waited for up to 5 minutes, so a concurrent run finds nothing left to do; git commands that may
 # leave a background process run with it closed).
@@ -42,7 +49,8 @@
 #   that failed after make test passed (fewer than $max_tries times; the pass is remembered), a failed
 #   rollback (nothing recorded), or a TERM/INT (message on stderr).
 # Runtime paths: a range that changes only the non-runtime paths (see is_runtime_path) is fast-forwarded without
-# make test, with the line "deployed <old>..<new> (version <v>) without make test: no runtime change", and deploy/previous
+# make test (a failed plain fast-forward is counted in deploy/plain-tries and the sha rejected after $max_tries, as
+# a failed fast-forward after a pass is), with the line "deployed <old>..<new> (version <v>) without make test: no runtime change", and deploy/previous
 # stays as it is. Every other path is runtime, because a loop or session reads it from the live checkout or make test runs
 # it: scheduler/ (the loop, its helpers, the session templates and the test files make test runs), plugin/ (every session
 # loads the live checkout's plugin, --plugin-dir), site/ (the status site's front end and its tests in make test), the
@@ -137,6 +145,24 @@ do_deploy() {
 	fast_forward
 }
 
+# run_make <log> [<files>]: make test in the scratch worktree, in a clean environment, output to <log>; with files it is the
+# rerun (TESTS="<files>", TEST_JOBS=1). Returns make's status; mpid is the child, so a signal can stop it.
+run_make() {
+	(
+		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+		unset NOODLEBOT_DATA
+		if [ -n "${2:-}" ]; then
+			TEST_JOBS=1; export TEST_JOBS
+			exec timeout 600 make -C "$scratch/wt" test TESTS="$2" TEST_JOBS=1 >"$1" 2>&1 9>&-
+		fi
+		exec timeout 600 make -C "$scratch/wt" test >"$1" 2>&1 9>&-
+	) &
+	mpid=$!
+	wait "$mpid"; rm_rc=$?
+	mpid=
+	return "$rm_rc"
+}
+
 # run_test: make test for $new in a scratch worktree; 0 when it passed (remembered in $sd/passed),
 # otherwise the status do_deploy returns.
 run_test() {
@@ -148,16 +174,10 @@ run_test() {
 		die "cannot create a scratch worktree for $new"
 	fi
 	# make test runs in a clean environment: the loop's SCHED_*, USAGE_* and NOODLEBOT_DATA are not passed on.
-	(
-		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
-		unset NOODLEBOT_DATA
-		exec timeout 600 make -C "$scratch/wt" test >"$scratch/test.log" 2>&1 9>&-
-	) &
-	mpid=$!
-	wait "$mpid"; rc=$?
-	mpid=
-	cleanup
+	run_make "$scratch/test.log"
+	rc=$?
 	if [ "$rc" = 124 ] || [ "$rc" -gt 128 ]; then
+		cleanup
 		# Count attempts per sha ("<sha> <n>" in $sd/tries) so a hanging make test is not rerun forever.
 		n=0
 		[ -f "$sd/tries" ] && read -r tsha tn <"$sd/tries" && [ "$tsha" = "$new" ] && n=$tn
@@ -172,12 +192,37 @@ run_test() {
 		return 2
 	fi
 	if [ "$rc" -ge 125 ] && [ "$rc" -le 127 ]; then
+		cleanup
 		echo "deploy.sh: make test for $new could not run (status $rc: timeout or make missing); will retry" >&2
 		return 2
 	fi
+	flaky_note=
 	if [ "$rc" != 0 ]; then
-		reject "$new" "fails make test"
-		return 1
+		# Rerun the files the runner named once, alone; the pass of all of them makes the failure flaky.
+		files=$(sed -n 's/^FAILED //p' "$scratch/test.log" | awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//')
+		rerun_rc=1
+		if [ -n "$files" ]; then
+			run_make "$scratch/rerun.log" "$files"
+			rerun_rc=$?
+		fi
+		tf=$sd/test-failed.log
+		if [ "$rerun_rc" = 0 ]; then outcome=flaky; else outcome=rejected; fi
+		{
+			echo "make test failed for $new (version $(version "$new")) at $(date -u +%Y-%m-%dT%H:%M:%SZ): $outcome"
+			cat "$scratch/test.log"
+			[ -z "$files" ] || cat "$scratch/rerun.log"
+		} >"$tf.tmp" 2>/dev/null && mv -f "$tf.tmp" "$tf" 2>/dev/null || rm -f "$tf.tmp"
+		cleanup
+		if [ "$rerun_rc" != 0 ]; then
+			echo "make test failed for $new in: ${files:-no file named}; log in $tf" >&2
+			reject "$new" "fails make test"
+			return 1
+		fi
+		set -- $files
+		flaky_note=" after a flaky make test: $# file(s) failed and passed alone"
+		echo "flaky: $new $files failed in make test and passed alone; log in $tf" >&2
+	else
+		cleanup
 	fi
 	rm -f "$sd/tries"
 	pn=0
@@ -201,7 +246,7 @@ fast_forward() {
 	fi
 	rm -f "$sd/tries" "$sd/passed"
 	echo "$old" >"$sd/previous"
-	echo "deployed $old..$new (version $(version "$new"))"
+	echo "deployed $old..$new (version $(version "$new"))${flaky_note:-}"
 }
 
 # fast_forward_plain: move the live checkout to $new without make test; deploy/previous is left as it is.
