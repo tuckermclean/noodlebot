@@ -46,7 +46,7 @@
 #                            answered/ keeps released questions, spec PRs and finished FEEDBACK.md;
 #                            feedback/ (feedback.py's record per PR: N, N.md, N.next); FEEDBACK.md in a unit's folder holds the
 #                            feedback handed to its session and not yet answered; session.kind says "feedback" for such a session;
-#                            node/<ID>/detached names the branch the loop detached its idle worktree from for an update (start_node puts it back);
+#                            node/<ID>/detached names the branch the loop detached its idle worktree from for an update (start_node and a node's feedback put it back);
 #                            issue/<N>/ (a triage) and pr/<N>/ (an update of a spec PR or a node PR, or a spec-PR feedback: also from, done,
 #                            and node, the node ID, for a node PR's update) hold the same files; a node PR's question moves into its answered/
 #                            once the PR is no longer open (pr_gone)
@@ -743,10 +743,12 @@ start_update() {
 }
 
 # fb_blocked <unit dir> <PR>: feedback for the unit's PR must wait: its own session runs, or a session of pr/<PR>/
-# (an update of the same PR), or it has FAILED, WAITING-PR or a QUESTION.md without ANSWER.md.
+# (an update of the same PR), or it has FAILED, WAITING-PR or a QUESTION.md without ANSWER.md, or (a node's PR) its
+# node-PR update (pr/<PR>/node) asked a QUESTION.md that has no ANSWER.md yet.
 fb_blocked() {
 	[ -e "$1/session.pid" ] || [ -e "$state/pr/$2/session.pid" ] || [ -e "$1/FAILED" ] || [ -e "$1/WAITING-PR" ] ||
-		{ [ -e "$1/QUESTION.md" ] && [ ! -e "$1/ANSWER.md" ]; }
+		{ [ -e "$1/QUESTION.md" ] && [ ! -e "$1/ANSWER.md" ]; } ||
+		{ [ "$1" != "$state/pr/$2" ] && [ -e "$state/pr/$2/node" ] && [ -e "$state/pr/$2/QUESTION.md" ] && [ ! -e "$state/pr/$2/ANSWER.md" ]; }
 }
 
 # fbsay <name> <text>: a failure of start_feedback, said once per streak of the same failure of a unit (not note: that
@@ -795,12 +797,20 @@ start_feedback() {
 		save_leftover "$key" "$wt" "$d" "$saw" || return 1
 		# on the PR's branch, brought to origin/<branch>: unpushed commits that origin/<branch> has not got stay when it
 		# is only ahead; commits that diverged from it are kept under refs/noodlebot/leftover/ and the branch is reset
-		# a worktree free_branch detached (an update took the branch; node/<ID>/detached) must be at an ancestor of the
-		# branch: commits it lacks are not lost, the start is refused
+		# a worktree free_branch detached (an update took the branch; node/<ID>/detached) goes back on the branch: commits of
+		# its own that the branch lacks stay on it when the branch is behind them, else are kept under refs/noodlebot/leftover/
 		if [ "$(cat "$d/detached" 2>/dev/null)" = "$br" ] && ! git -C "$wt" symbolic-ref -q HEAD >/dev/null &&
 			git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
 			! git -C "$wt" merge-base --is-ancestor HEAD "refs/heads/$br" 2>/dev/null; then
-			fbsay "$name" "$saw; $name: its worktree is detached at commits $br lacks; feedback not started"; return 1
+			if git -C "$wt" merge-base --is-ancestor "refs/heads/$br" HEAD 2>/dev/null; then
+				git -C "$wt" checkout -q -B "$br" HEAD 2>/dev/null ||
+					{ fbsay "$name" "$saw; $name: putting its worktree back on $br failed; feedback not started"; return 1; }
+			else
+				local dref=refs/noodlebot/leftover/$key/$(date -u +%Y%m%dT%H%M%SZ)
+				git -C "$wt" update-ref "$dref" HEAD && git -C "$wt" checkout -q "$br" 2>/dev/null ||
+					{ fbsay "$name" "$saw; $name: putting its worktree back on $br failed; feedback not started"; return 1; }
+				say "$saw; $name: its worktree's commits were not on $br; kept at $dref"
+			fi
 		fi
 		{ [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$br" ] || git -C "$wt" checkout -q "$br"; } 2>/dev/null ||
 			{ fbsay "$name" "$saw; $name: checking out $br failed; feedback not started"; return 1; }
