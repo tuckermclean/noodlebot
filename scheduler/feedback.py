@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Find the owner's new feedback on the bot's open PRs, for the loop to hand to a session (G03).
 
-  feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE        print the PRs with new feedback
-  feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE mark N  advance PR N's record
+  feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE [--limit N]        print the PRs with new feedback
+  feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE [--limit N] mark N  advance PR N's record
 
 FILE is the loop's open-prs.tsv ("<number> <branch> <headOid> <is_bot> <mergeable>"); DIR is state/<name>; all
 GitHub access is `gh api --paginate` (every page), so GH_TOKEN must be set.
@@ -15,7 +15,8 @@ The record DIR/feedback/N holds the newest conversation, line and review ID hand
 feedback newer than it prints "<N> <branch>" on stdout and gets DIR/feedback/N.md (the FEEDBACK.md: PR, branch and
 per item kind, id, url, author, time, body, and for a line comment file, line, thread); `mark N` advances the record
 to the items of that file. The first run (no feedback/ folder) records every open bot PR's newest IDs and prints
-nothing; a PR seen later starts from an empty record. The record and file of a PR no longer open are removed.
+nothing; a PR seen later starts from an empty record. The record and file of a PR no longer open are removed, except when --limit N is given and FILE has N or more lines:
+the list may then be cut short by its own limit, so no record or file of a PR missing from it is removed (G06).
 A failing gh call is logged to stderr, prints nothing for that PR, leaves its record alone and makes the exit code 1.
 """
 import argparse
@@ -191,6 +192,7 @@ def main():
     ap.add_argument("--state", required=True)
     ap.add_argument("--owner", required=True)
     ap.add_argument("--prs", required=True)
+    ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("cmd", nargs="*")
     a = ap.parse_args()
     fdir = os.path.join(a.state, "feedback")
@@ -200,9 +202,11 @@ def main():
         mark(a.state, int(a.cmd[1]))
         return 0
     prs = []
+    nlines = 0
     try:
         with open(a.prs, encoding="utf-8") as f:
             for line in f:
+                nlines += 1
                 p = line.split()
                 if len(p) >= 4 and p[0].isdigit():
                     prs.append((int(p[0]), p[1], p[3] == "true"))
@@ -216,7 +220,7 @@ def main():
         fdir = os.path.join(a.state, "feedback.new")
         shutil.rmtree(fdir, ignore_errors=True)
         os.makedirs(fdir)
-    else:
+    elif not (a.limit > 0 and nlines >= a.limit):
         for name in os.listdir(fdir):
             if name.split(".")[0] not in open_nums:
                 try:

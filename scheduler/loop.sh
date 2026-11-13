@@ -824,7 +824,7 @@ start_feedback() {
 		local had=0; [ -s "$d/FEEDBACK.md" ] && cp -p "$d/FEEDBACK.md" "$d/FEEDBACK.md.old" && had=1
 		if { [ "$had" = 0 ] || { cat "$d/FEEDBACK.md"; echo; }; cat "$state/feedback/$n.md"; } >"$d/FEEDBACK.md.tmp" &&
 			mv -f "$d/FEEDBACK.md.tmp" "$d/FEEDBACK.md" &&
-			python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" --prs "$state/open-prs.tsv" mark "$n"; then
+			python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" --prs "$state/open-prs.tsv" --limit "$open_limit" mark "$n"; then
 			rm -f "$d/FEEDBACK.md.old"
 		else
 			rm -f "$d/FEEDBACK.md.tmp"
@@ -1464,8 +1464,10 @@ tick_run() {
 	fi
 	for fk2 in "${!fbcarry[@]}"; do fbnew[$fk2]=${fbcarry[$fk2]}; done
 	# a pending FEEDBACK.md whose PR is no longer open (merged or closed) and with no session running is finished:
-	# it moves into answered/ so that it blocks nothing and is not appended to later
+	# it moves into answered/ so that it blocks nothing and is not appended to later. Not while the list is as long
+	# as its --limit: it may be cut short and the PR still open (as pr_gone)
 	for fdir in "$state"/node/*/ "$state"/pr/*/; do
+		[ "$(wc -l <"$state/open-prs.tsv")" -lt "$open_limit" ] || break
 		fdir=${fdir%/}
 		[ -s "$fdir/FEEDBACK.md" ] && [ ! -e "$fdir/session.pid" ] || continue
 		fn=$(sed -n 's/^PR: //p' "$fdir/FEEDBACK.md" | tail -n1)
@@ -1612,7 +1614,7 @@ fb_launch() {
 	fb_n=$((fb_n + 1)); fb_pre=$state/feedback-run.$$.$fb_n
 	cp -f "$state/open-prs.tsv" "$fb_pre.prs" || { rm -f "$fb_pre".*; return 0; }
 	( GH_TOKEN=$1 timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
-		--prs "$fb_pre.prs" >"$fb_pre.tmp" 2>>"$state/report.log" &&
+		--limit "$open_limit" --prs "$fb_pre.prs" >"$fb_pre.tmp" 2>>"$state/report.log" &&
 		mv -f "$fb_pre.tmp" "$fb_pre.out" || rm -f "$fb_pre.tmp" ) 9>&- &
 	fb_pid=$!
 }
