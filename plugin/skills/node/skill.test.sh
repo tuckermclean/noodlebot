@@ -237,4 +237,15 @@ g05c "G05-AC-2: the skill runs the checker on the merge commit as <sha>^ <sha>" 
 g05h=$(sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' "$sk" | grep -in -e themonolith -e monolith -e tuckermclean -e 'docs/migration' | head -n 3)
 if [ -z "$g05h" ]; then ok "G05-AC-2: SKILL.md names no repository (no themonolith, tuckermclean, docs/migration.tsv)"; else bad "G05-AC-2: SKILL.md names a repository: $g05h"; fi
 
+# G06-AC-5: the feedback procedure (section 8) requires the resolution review for a merge of origin/main that had conflicts,
+# before any push, and on a second rejection pushes nothing and ends with QUESTION.md. Only section 8's own text counts
+# (the update procedure above it already says all of this).
+g06d="$tmp/G06"; mkdir -p "$g06d"
+g05_sec "$sk" '^## 8[.]' "$g06d/s8.md"
+if [ -s "$g06d/s8.md" ]; then ok "G06-AC-5: SKILL.md has a section 8 (the feedback procedure)"; else bad "G06-AC-5: SKILL.md has no '## 8.' section"; fi
+g05c "G06-AC-5: section 8 names the resolution review" "$g06d/s8.md" 40 'resolution review'
+g05c "G06-AC-5: section 8 requires the resolution review for a merge of origin/main that had conflicts" "$g06d/s8.md" 4 'resolution review' 'merge' 'origin/main' 'conflict'
+g05c "G06-AC-5: section 8 requires the resolution review before anything is pushed" "$g06d/s8.md" 5 'resolution review' 'before' 'push'
+g05c "G06-AC-5: section 8 says a second rejection pushes nothing and ends with QUESTION.md" "$g06d/s8.md" 4 'second' 'reject' 'push(es)? nothing|nothing is pushed|no push' 'question[.]md'
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

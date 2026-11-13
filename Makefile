@@ -113,6 +113,8 @@ TESTS = \
 	scheduler/loop-g02-review3.test.sh \
 	scheduler/loop-g02-gone.test.sh \
 	scheduler/loop-g02-gone2.test.sh \
+	scheduler/feedback-g06.test.sh \
+	scheduler/loop-g06-limit.test.sh \
 	scheduler/loop-s06-review.test.sh \
 	scheduler/loop-s02.test.sh \
 	scheduler/loop-v01.test.sh \
