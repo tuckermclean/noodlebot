@@ -22,7 +22,7 @@ After this node the scheduler paces itself against the plan's usage limits inste
 
 ## Gate
 - **T01-AC-1** — `usage.py` reports a window's current reading as the highest utilization among the readings with its latest reset, across every repository's session logs, ignoring older windows and malformed lines. *Verify:* `scheduler/usage.test.sh`.
-- **T01-AC-2** — It holds for a 5-hour window projected past its limit before the reset, a 7-day window ahead of pace by more than the margin, and a window whose status is not `allowed`; it is open once the burn slows, after a reset, and with no readings. *Verify:* `scheduler/usage.test.sh`.
+- **T01-AC-2** — It holds for a 5-hour window projected past its limit before the reset, a 7-day window ahead of pace by more than the margin, and a window whose status is not `allowed` (except a 7-day window that is only `allowed_warning`, by the owner's amendment of 2026-11-13); it is open once the burn slows, after a reset, and with no readings. *Verify:* `scheduler/usage.test.sh`.
 - **T01-AC-3** — While the throttle holds, ready nodes do not start; a fresh window releases it and they start; each change is one status-log event. *Verify:* `scheduler/loop.test.sh`.
 - **T01-AC-4** — A session stopped by the usage limit is reported as such and uses up no start. *Verify:* `scheduler/loop.test.sh`.
 - **T01-AC-5** — The status issue shows both windows and whether the throttle holds, with its reason. *Verify:* `scheduler/report.test.sh`.
