@@ -22,6 +22,7 @@ import re
 import sys
 import threading
 
+sys.dont_write_bytecode = True  # a deployed checkout gets no __pycache__ from the backends loaded here
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # (family op, capability it needs or None, arguments: name -> "str"|"int"|"list"|"bool", a trailing "!" = required)

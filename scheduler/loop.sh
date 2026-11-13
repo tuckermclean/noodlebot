@@ -232,30 +232,41 @@ ensure_labels() {
 }
 ensure_labels
 
-# pr_tsv <file> <state> <limit> <field>...: the forge's PR list as the loop's TSV (the file is emptied first, so a failed list leaves
-# it empty and report.py sees "unknown"). Each row is the line the forge gave (`line`), else built from the row's keys.
-pr_tsv() {
-	local out=$1 st=$2 lim=$3 f json a=()
-	shift 3
-	for f in "$@"; do a+=(--fields "$f"); done
-	: >"$out" || return 1
-	json=$(forge pr list --state "$st" --limit "$lim" "${a[@]}") || return 1
+# pr_tsvs <open limit>: the forge's merged, open and closed PR lists as the loop's TSVs, in one process (one token run, and the
+# three reads close together in time). Each file is emptied just before its list is read, so a failed list leaves it empty
+# (report.py then sees "unknown") and stops the rest; each row is the line the forge gave (`line`), else built from the row's keys.
+pr_tsvs() {
 	python3 -I -c '
-import json, sys
+import json, os, sys
+here, repo, state, open_limit = sys.argv[1:5]
+sys.path.insert(0, here)
+import forge
 def s(v):
     return "null" if v is None else str(v).lower() if isinstance(v, bool) else str(v)
-kind = sys.argv[1]
-for r in json.loads(sys.stdin.read()):
+def row(kind, r):
     if r.get("line") is not None:
-        print(r["line"]); continue
+        return r["line"]
     if kind == "merged":
         c = [r["number"], r["head"]]
     elif kind == "open":
         c = [r["number"], r["head"], r["head_sha"], (r.get("author") or {}).get("is_bot"), r["mergeable"]]
     else:
         c = [r["number"], r["head"], r["closed_at"], r["state"] == "merged"]
-    print(" ".join(s(v) for v in c))
-' "$st" <<<"$json" >"$out"
+    return " ".join(s(v) for v in c)
+try:
+    f = forge.open(repo)
+    for kind, limit, fields in (("merged", 500, ["number", "head"]),
+                                ("open", int(open_limit), ["number", "head", "head_sha", "author_is_bot", "mergeable"]),
+                                ("closed", 500, ["number", "head", "closed_at", "merged"])):
+        path = os.path.join(state, kind + "-prs.tsv")
+        open(path, "w").close()
+        rows = f.pr_list(state=kind, limit=limit, fields=fields)
+        with open(path, "w") as out:
+            out.write("".join(row(kind, r) + "\n" for r in rows))
+except Exception as e:
+    print("forge pr list: %s" % " ".join(str(e).split())[:300], file=sys.stderr)
+    sys.exit(1)
+' "$here" "$repo" "$state" "$1"
 }
 
 # alive <pid> <key>: the process exists and is that task's session, whose prompt ends in <key>
@@ -1401,21 +1412,21 @@ tick_run() {
 	tick_tok=''   # set once the forge answered (or failed other than by its token): the report and feedback run then
 	local ferr=$state/forge.err
 	[ "$(cat "$state/visibility" 2>/dev/null)" != unknown ] || vis_ask
-	# pipefail: a failed list must stop the tick, never read as "no PRs". The first list also finds out whether the token script works.
-	if pr_tsv "$state/merged-prs.tsv" merged 500 number head 2>"$ferr"; then tick_tok=1; fi
-	if [ -z "$tick_tok" ] && grep -q 'token script' "$ferr" 2>/dev/null; then
-		cat "$ferr" >>"$state/report.log"; note "no GitHub App token; nothing started"; return
-	fi
-	if [ -z "$tick_tok" ] || ! { pr_tsv "$state/open-prs.tsv" open "$open_limit" number head head_sha author_is_bot mergeable &&
-			cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" && open=$(ids <"$state/open-prs.txt") &&
-			pr_tsv "$state/closed-prs.tsv" closed 500 number head closed_at merged; } 2>>"$ferr"; then
+	# pipefail: a failed list must stop the tick, never read as "no PRs". The lists' process also finds out whether the token script works.
+	if ! pr_tsvs "$open_limit" 2>"$ferr"; then
+		if grep -q 'token script' "$ferr" 2>/dev/null; then
+			cat "$ferr" >>"$state/report.log"; note "no GitHub App token; nothing started"; return
+		fi
 		tick_tok=1; cat "$ferr" >&2; note "gh pr list failed; nothing started"; return
+	fi
+	tick_tok=1
+	if ! cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" || ! open=$(ids <"$state/open-prs.txt"); then
+		note "gh pr list failed; nothing started"; return
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
 	cut -d' ' -f1 "$state/merged-prs.tsv" >"$state/merged-prs.txt"
 	awk '$4 == "false" { print $1 }' "$state/closed-prs.tsv" >"$state/closed-unmerged-prs.txt"
 	local saw="open=[${open% }] merged-prs=[${merged% }]" id name triaging='' p
-	tok=''
 
 	# Running sessions: recorded in pid files, so this works after a restart too.
 	live=()
