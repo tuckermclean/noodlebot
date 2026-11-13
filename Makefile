@@ -116,6 +116,7 @@ TESTS = \
 	plugin/skills/adopt/adopt.test.sh \
 	plugin/skills/triage/nodes.test.sh \
 	plugin/skills/node/skill.test.sh \
+	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	site/site.test.sh \
