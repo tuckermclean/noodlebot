@@ -9,7 +9,8 @@ qsetup H "A02:S A03:L" "B01:S"
 if [ -f "$qnb/scheduler/turn.py" ]; then cp "$qnb/scheduler/turn.py" "$q/turn.real.py"; else : >"$q/turn.real.py"; fi
 printf '#!/usr/bin/env python3\nimport sys\nsys.stderr.write("fake turn.py failure\\n")\nsys.exit(1)\n' >"$q/turn.fake.py"
 swap_turn() { cp "$1" "$qnb/scheduler/turn.py.new" && mv "$qnb/scheduler/turn.py.new" "$qnb/scheduler/turn.py"; }
-qloop qa 1 SCHED_START_GAP=1 SCHED_STARVE=3600
+# tick 2: a loop asking alone stays live through a loaded tick (see the fixture)
+qloop qa 2 SCHED_START_GAP=1 SCHED_STARVE=3600
 qwait 8 qhave A02
 swap_turn "$q/turn.fake.py"
 qticks 4
@@ -25,8 +26,10 @@ qstop
 # -- Phase L1: a loop whose tick ends before the queue (gh fails) while its heartbeat stays fresh must not hold the other loop
 qsetup L1 "A03:L" "B01:L"; qghx
 qseed qa node/A03 300; qseed qb node/B01 100
-qboth 1 1 SCHED_START_GAP=1 SCHED_STARVE=3600
-qwait 5 test -e "$qd/state/qa/waiting.json"; touch "$q/ghfail.qa"
+# tick 2: qb asks alone and stays live through a loaded tick; qa's heartbeat stays fresh (6 s) while its ticks end early,
+# so its list is left out only because it is taken away (see the fixture)
+qboth 2 2 SCHED_START_GAP=1 SCHED_STARVE=3600
+qcompete A03 B01; touch "$q/ghfail.qa"
 # qa's ticks end early and its old waiting list is taken away (the old fixed sleep of 2.5 s let that happen)
 qa_listless() { grep -q 'gh pr list failed' "$(qlog qa)" && [ ! -e "$qd/state/qa/waiting.json" ]; }
 qwait 8 qa_listless
