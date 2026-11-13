@@ -37,6 +37,12 @@ Each run:
      `noodlebot-unit`. It is recorded in the unit's state folder (node/<ID>/issue, issue/<N>/issue). What was
      posted per unit is in report.json, so a failed post is retried on the next run and nothing is posted twice;
      the first run after this was added posts nothing for events, questions or FAILED from before;
+     An issue the owner labelled (issues.json, written by the loop each tick, also while the throttle holds) with no triage
+     started or done (status.log) gets one "queued for triage" milestone (recorded in report.json "queued"), and a node whose
+     WAITING-PR is in merged-prs.txt (no longer in "Waiting on you") one "spec PR #N merged; <clause>" milestone on its home
+     issue. The clause says when the unit starts, from usage.json (the throttle's hold and reason), the repository's
+     waiting.json and `turn.py place` (units ahead in the start queue; which triage or update a queued triage waits behind);
+     when turn.py place fails it is "it starts at its turn", with one line on stderr per run;
   6. posts PR milestones on a node's home issue, each once: the PR opened, the CI result per head commit (once all
      its check runs completed), each `Fresh review (<verdict>)` PR comment's verdict, merged or closed without
      merging (from the loop's merged-prs.tsv / closed-prs.tsv), a triage ended done (with its spec PR);
@@ -277,14 +283,128 @@ def start_info(state, node):
         return None
 
 
-def answered_text(state, node):
-    """The clause for an answered node: when it starts, or what it waits for, or nothing about timing."""
-    info = start_info(state, node)
-    if info is None:
-        return "the answer is recorded"
-    if info[0] == "ready":
-        return "a follow-up starts within seconds" if info[1] else "resumes within seconds"
-    return "answered, but " + info[1]
+def throttle(state):
+    """(holding, reason) from usage.py's file in the parent of the state folder; (False, "") when it cannot be read."""
+    try:
+        u = json.load(open(os.path.join(os.path.dirname(state), "usage.json")))
+        return bool(u.get("hold")), str(u.get("reason") or "no reason given")
+    except (OSError, ValueError, AttributeError):
+        return False, ""
+
+
+def place(a, key, kind=None):
+    """The number of units ahead of key in the start queue (turn.py place; with kind, as if key joined the queue as a unit
+    of that kind), or None for "not waiting"; raises ValueError when turn.py cannot tell (logged once per run, one line)."""
+    if getattr(a, "place_logged", False):  # it failed once in this run: not asked again
+        raise ValueError("turn.py place failed earlier in this run")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(a.state)))
+    cmd = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "turn.py"), "place", key,
+           "--root", root, "--repo", os.path.basename(os.path.abspath(a.state))]
+    if kind:
+        cmd += ["--kind", kind]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        out = r.stdout.strip()
+        if r.returncode != 0:
+            raise ValueError("exit %d: %s" % (r.returncode, (r.stderr.strip() or out)[:200]))
+        if out == "not waiting":
+            return None
+        m = re.match(r"(\d+) ahead, waited ", out)
+        if not m:
+            raise ValueError("unparseable output: %s" % out[:100])
+        return int(m.group(1))
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        a.place_logged = True
+        print("report.py: turn.py place %s failed, no timing is promised: %s" % (key, e), file=sys.stderr)
+        raise ValueError(str(e))
+
+
+def behind(a, key=None, running=True, listed=True):
+    """What a triage that is not in the start queue waits behind: the triage or update of the repository that runs (other
+    than key; running), else the first that waits in waiting.json (listed), as its text, or None."""
+    run = [t for t, _, _ in sessions(a.state) if t != key and (t.startswith("#") or (t.startswith("PR #") and not pr_node(a.state, t)))]
+    wait = []
+    try:
+        for u in json.load(open(os.path.join(a.state, "waiting.json"))).get("units") or []:
+            k = u.get("key") if isinstance(u, dict) else None
+            if isinstance(k, str) and re.match(r"^(#\d+|PR#\d+)$", k) and k != key:
+                wait.append(k.replace("PR#", "PR #"))
+    except (OSError, ValueError, AttributeError):
+        pass
+    for t in (run if running else []) + (wait if listed else []):
+        return "the %s of %s" % ("triage" if t.startswith("#") else "update", t)
+    return None
+
+
+def start_clause(a, key, node=None, queued=False, answered=False):
+    """When the unit starts, from usage.json (the throttle), the repository's waiting.json and turn.py place: what it waits
+    for, never a promise it cannot keep. node: an ID whose start ready.py must name; queued: a triage waiting for its start;
+    answered: the unit's answer was just recorded (a node, or a triage #N)."""
+    hold, reason = throttle(a.state)
+    parts = ["the throttle holds new sessions (%s)" % reason] if hold else []
+    on = os.path.exists(os.path.join(a.state, "waiting.json"))
+    kind = None  # joins the queue as this kind when it is not listed yet
+    if answered and key.startswith("#"):
+        b = behind(a, key, listed=False)  # a triage or update of the repository runs: it waits behind it
+        if b:
+            return ", ".join(parts + ["it waits behind " + b])
+        kind = "triage"
+    elif answered:
+        info = start_info(a.state, key)
+        if info is None:
+            return "the answer is recorded"
+        if info[0] != "ready":
+            return "answered, but " + info[1]
+        kind = "followup" if info[1] else "resumed"
+    elif node:
+        kind = "resumed"
+    ahead, known = None, True
+    if on:
+        try:
+            ahead = place(a, key)
+            if ahead is None and key.startswith("#") and answered:
+                b = behind(a, key, running=False)  # not in the queue: another triage or update waits ahead of it
+                if b:
+                    return ", ".join(parts + ["it waits behind " + b])
+            if ahead is None and kind:
+                ahead = place(a, key, kind)
+        except ValueError:
+            known = False
+    if not known or (answered and on and ahead is None):
+        return ", ".join(parts + ["it starts at its turn"])
+    if ahead:
+        parts.append("%d unit%s ahead in the start queue" % (ahead, "" if ahead == 1 else "s"))
+    if answered:
+        if not hold and not ahead:
+            return "a follow-up starts within seconds" if kind == "followup" else "resumes within seconds"
+    elif queued:
+        if not on or ahead is None:  # not in the queue: it may wait behind another triage or update
+            b = behind(a)
+            if b:
+                parts.append("it waits behind " + b)
+            elif not hold:
+                parts.append("it starts at its turn")
+        elif ahead == 0 and not hold:
+            parts.append("first in the start queue")
+    elif node and not hold and not ahead:
+        if on and ahead is None:
+            return "it starts at its turn"   # not in the queue (yet): no timing promise
+        info = start_info(a.state, node)
+        if info is None:
+            return "it starts at its turn"
+        if info[0] == "ready":
+            return "a follow-up starts within seconds" if info[1] else "resumes within seconds"
+        return info[1]
+    return ", ".join(parts)
+
+
+def spec_merged(state, n):
+    """The spec PR number of node n's WAITING-PR when merged-prs.txt lists it, else None."""
+    try:
+        pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
+    except OSError:
+        return None
+    return pr if pr and pr in read_lines(os.path.join(state, "merged-prs.txt")) else None
 
 
 def waiting(state):
@@ -441,14 +561,14 @@ def waiting_items(a, sts, prs, rs):
                 why = fh.readline().strip() or "no reason given"
             items.append("- **%s FAILED**: %s. To retry, delete `%s`.%s" % (n, why, path, unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and has(state, n, "ANSWER.md"):
-            items.append("- %s: %s.%s" % (n, answered_text(state, n) if n in nodes(state) and not n.startswith(("#", "PR #")) else "answered",
+            items.append("- %s: %s.%s" % (n, start_clause(a, n, answered=True) if not n.startswith("PR #") else "answered",
                                          unit_ref(a, n)))
         elif has(state, n, "QUESTION.md") and not n.startswith("#") and is_merged(state, n):
             items.append("- **%s's PR is merged; its question is still open, and an answer starts a follow-up** "
                          "(%s).%s" % (n, question_link(a, rs, n), unit_ref(a, n)))
         elif has(state, n, "QUESTION.md"):
             items.append("- **%s asks a question** (%s).%s" % (n, question_link(a, rs, n), unit_ref(a, n)))
-        elif has(state, n, "WAITING-PR"):
+        elif has(state, n, "WAITING-PR") and not spec_merged(state, n):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
             items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after.%s" % (n, pr, unit_ref(a, n)))
     for n, pr in sorted(prs.items()):
@@ -1084,6 +1204,49 @@ def post_failed(a, rs):
             a.errors.append(str(e))
 
 
+def post_queued(a, rs):
+    """One "queued for triage" milestone on each issue the owner labelled that has no triage started or done (issues.json,
+    status.log) and none posted yet (rs["queued"]); the issue has no state folder yet, so it is posted directly."""
+    try:
+        listed = json.load(open(os.path.join(a.state, "issues.json"))).get("issues") or []
+    except (OSError, ValueError, AttributeError):
+        return
+    log = "\n".join(read_lines(os.path.join(a.state, "status.log")))
+    done = rs.setdefault("queued", [])
+    for i in listed:
+        n = i.get("number") if isinstance(i, dict) else None
+        if not isinstance(n, int) or i.get("labelled") is not True or n in done:
+            continue
+        if re.search(r"started triage of #%d |triage of #%d done" % (n, n), log):
+            continue
+        try:
+            what = start_clause(a, "#%d" % n, queued=True)
+            # one already on the issue (report.json lost, or a post whose record failed): recorded, not posted again
+            if any((c.get("body") or "").startswith("**Stage:** queued for triage") for c in
+                   gh("GET", "repos/%s/issues/%d/comments?per_page=100" % (a.repo, n)) or []):
+                done.append(n)
+                a.save()
+                continue
+            comment(a, n, "**Stage:** queued for triage\n\nThe triage is queued: %s." % what)
+            done.append(n)
+            a.save()
+        except Exception as e:
+            a.errors.append(str(e))
+
+
+def post_spec_merged(a, rs):
+    """One "spec PR #N merged; <start clause>" milestone on the home issue of each node whose WAITING-PR is merged."""
+    for n in nodes(a.state):
+        pr = None if not NODE.match(n) else spec_merged(a.state, n)
+        key = "specpr:%s" % pr
+        if not pr or key in rs.setdefault("units", {}).get(n, {}).get("done", []):
+            continue
+        try:
+            milestone(a, rs, n, key, "spec PR #%s merged; %s" % (pr, start_clause(a, n, node=n)))
+        except Exception as e:
+            a.errors.append(str(e))
+
+
 def record_answer(a, rs, node, c, text):
     """Write the node's ANSWER.md from the owner's comment and queue the answer-received milestone; returns the
     clause saying what the answer waits for (None for a triage)."""
@@ -1093,7 +1256,7 @@ def record_answer(a, rs, node, c, text):
                 (node, a.owner, c["created_at"], c["html_url"], text))
     os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
     a.answered = True
-    what = None if node.startswith("#") or node.startswith("PR #") else answered_text(a.state, node)
+    what = None if node.startswith("PR #") else start_clause(a, node, answered=True)
     queue(a, rs, node, "answer:%s" % c["id"], "answer received" + (", " + what if what else ""),
           "The owner's answer was recorded: %s" % c["html_url"])
     flush(a, rs)
@@ -1227,7 +1390,7 @@ def take_answers(a, rs, issue):
                      "more than one node is waiting (%s)" % ", ".join(open_q), open_q[0] if open_q else "B03"))
             continue
         what = record_answer(a, rs, node, c, text)
-        if node.startswith("#"):
+        if what is None:
             comment(a, issue, "Recorded as %s's ANSWER.md." % node)
         else:
             comment(a, issue, "Recorded as %s's ANSWER.md; %s." % (node, (node + " " + what) if what == "resumes within seconds" else what))
@@ -1591,7 +1754,11 @@ def main():
     p.add_argument("--version", default="")
     p.add_argument("--signature", default="")
     p.add_argument("--site", default="")
+    p.add_argument("--clause", metavar="KEY", help="print the clause for the answered unit KEY (read-only; status.sh) and exit")
     a = p.parse_args()
+    if a.clause:
+        print(start_clause(a, a.clause, answered=True))
+        return
     a.answered = False
     a.owner = a.owner or a.repo.split("/")[0]
     a.worktrees = a.worktrees or os.path.join(
@@ -1678,6 +1845,8 @@ def main():
         collect_starts(a, rs)
         flush(a, rs)
         post_failed(a, rs)
+        post_queued(a, rs)
+        post_spec_merged(a, rs)
         if merges_unknown(a):  # logged once per spell; the run still succeeds
             if not rs.get("merges_unknown"):
                 print("report.py: merged-prs.tsv is empty although merges are known (its gh pr list failed?): no merged "

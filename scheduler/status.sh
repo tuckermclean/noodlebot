@@ -78,13 +78,17 @@ for d in "$state"/node/*/ "$state"/issue/*/; do
 		found=1; echo "   $id FAILED: $(head1 "$d/FAILED")"
 		echo "      to retry: rm $d/FAILED"
 	elif [ -e "$d/QUESTION.md" ] && [ -e "$d/ANSWER.md" ]; then
-		found=1; echo "   $id answered: restarts at the next tick"
+		found=1
+		clause=$(python3 -I "$nb/scheduler/report.py" --repo "$repo" --state "$state" --clause "$id" 2>/dev/null | head -n 1)
+		echo "   $id answered: ${clause:-restarts at the next tick}"
 	elif [ -e "$d/QUESTION.md" ]; then
 		found=1; echo "   $id QUESTION: $(head1 "$d/QUESTION.md")"
 		echo "      read it: less $d/QUESTION.md"
 		echo "      answer:  write $d/ANSWER.md (it restarts at the next tick)"
 	elif [ -e "$d/WAITING-PR" ]; then
-		found=1; echo "   $id waits for you to merge spec PR #$(cat "$d/WAITING-PR"); restarts at the tick after"
+		pr=$(cat "$d/WAITING-PR")
+		if grep -qxF -- "$pr" "$state/merged-prs.txt" 2>/dev/null; then found=1; echo "   $id spec PR #$pr merged; waits for its turn"
+		else found=1; echo "   $id waits for you to merge spec PR #$pr; restarts at the tick after"; fi
 	fi
 done
 [ $found = 0 ] && echo "   nothing"

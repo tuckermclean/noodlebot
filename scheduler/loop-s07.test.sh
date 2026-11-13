@@ -9,7 +9,9 @@
 qsetup A "A02:M A03:L" "B01:S B04:L"
 echo '[{"number": 7}]' >"$q/issues.qa.json"
 qseed qa issue/7 100; qseed qa node/A02 100; qseed qa node/A03 300; qseed qb node/B01 100; qseed qb node/B04 100
-qboth 1 1 SCHED_START_GAP=2 SCHED_STARVE=3600
+# tick 3: both loops stay live through a loaded tick (see the fixture); the gap (2 s) the checks name is SCHED_START_GAP
+qboth 3 3 SCHED_START_GAP=2 SCHED_STARVE=3600
+qcompete "#7 A02 A03" "B01 B04"
 qopen
 qrun_until 30 5
 qok "S07-AC-1: five ready units, throttle open: exactly five sessions start, none twice" test "$(qn)" = 5 -a "$(sort "$q/starts.log" | awk '{ print $3 }' | sort -u | wc -l)" = 5

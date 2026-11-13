@@ -24,8 +24,9 @@
 # state/<name>/{node,issue,pr}/<key>/waiting) and, with the throttle open, asks for a turn. SCHED_START_GAP
 # and SCHED_STARVE are read by turn.py from the environment.
 # Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
-# a failing one is one status line); when the checkout's HEAD moved, the loop execs the new loop.sh
-# (same pid, same arguments) and takes over its running sessions like a restart. deploy.sh's stderr
+# a failing one is one status line); when the checkout's HEAD moved and deploy.sh --runtime-changed says
+# a runtime path changed (or the check failed), the loop execs the new loop.sh (same pid, same arguments) and takes over
+# its running sessions like a restart; a non-runtime move keeps the running loop. deploy.sh's stderr
 # goes to state/<name>/deploy.log; its state and lock are $NOODLEBOT_DATA/deploy/ (the loop passes its runtime root).
 # Layout under $NOODLEBOT_DATA (default ~/.local/share/noodlebot; never inside a Git working tree, else exit 2):
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
@@ -1217,9 +1218,11 @@ tick_run() {
 
 	# Issues the owner labelled `noodlebot`: one triage at a time, alongside the nodes.
 	local n inext_failed=0
-	if [ -z "$triaging" ] && ! full; then
+	# While the throttle holds, the labelled issues are still listed (issues.json stays current for the report's queued
+	# milestone); nothing starts because of it.
+	if { [ -z "$triaging" ] && ! full; } || [ "$throttled" = 1 ]; then
 		if n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
-			if [ -z "$n" ]; then :
+			if [ -z "$n" ] || full || [ -n "$triaging" ]; then :
 			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
 			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
 		else inext_failed=1; fi
@@ -1350,7 +1353,8 @@ while :; do
 	publish
 	[ $rc = 3 ] && continue
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
-	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ]; then
+	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] &&
+		{ "$here/deploy.sh" --runtime-changed "$nb" "$start_head" 9>&-; [ $? != 1 ]; }; then
 		exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
 	fi
 	pause
