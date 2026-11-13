@@ -755,6 +755,8 @@ fbsay() { [ "${fb_said[$1]:-}" = "${2#*; }" ] || { say "$2"; fb_said[$1]=${2#*; 
 # unit (/noodlebot:node --feedback <PR> in the node's worktree, /noodlebot:triage --feedback <PR> in worktrees/<name>/pr-<PR>,
 # in the triage's slot). Nothing is handed over (the PR's feedback is not appended and its record not advanced) unless
 # the session starts; a unit that already has a FEEDBACK.md (a restart, or the start after an answer) keeps it as it is.
+# A node's branch may be held by a leftover update worktree (pr-<N>): free_branch detaches it, as for start_node, before
+# anything is handed over, and node/<ID>/detached is removed once the node's worktree is back on the branch.
 # fbnew (set by tick_run) says which PRs have new feedback this tick.
 start_feedback() {
 	local t=$1 key=$2 n=$3 br=$4 saw=$5 d wt name cmd released list u ni pn=''
@@ -764,6 +766,8 @@ start_feedback() {
 	fb_blocked "$d" "$n" && return 1
 	[ "$t" = node ] || [ -z "$triaging" ] || return 1
 	[ -r "$here/unattended-feedback.md" ] || { fbsay "$name" "$saw; $name: no unattended-feedback.md; feedback not started"; return 1; }
+	# a leftover update worktree (pr-<N>) may still have the node's branch: freed first (as start_node does), so a failure hands nothing over
+	[ "$t" != node ] || free_branch "$br" "$wt" "$saw; $name" 'pr-*' || return 1
 	released=$(sh "$here/release-markers.sh" "$d") || { fbsay "$name" "$saw; releasing $name's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $name: $(echo "$released" | paste -sd';')"; fi
 	# new items are handed over below and start the count again; a restart (pending FEEDBACK.md) keeps its 2-starts limit
@@ -778,8 +782,16 @@ start_feedback() {
 		save_leftover "$key" "$wt" "$d" "$saw" || return 1
 		# on the PR's branch, brought to origin/<branch>: unpushed commits that origin/<branch> has not got stay when it
 		# is only ahead; commits that diverged from it are kept under refs/noodlebot/leftover/ and the branch is reset
+		# a worktree free_branch detached (an update took the branch; node/<ID>/detached) must be at an ancestor of the
+		# branch: commits it lacks are not lost, the start is refused
+		if [ "$(cat "$d/detached" 2>/dev/null)" = "$br" ] && ! git -C "$wt" symbolic-ref -q HEAD >/dev/null &&
+			git -C "$clone" rev-parse -q --verify "refs/heads/$br" >/dev/null &&
+			! git -C "$wt" merge-base --is-ancestor HEAD "refs/heads/$br" 2>/dev/null; then
+			fbsay "$name" "$saw; $name: its worktree is detached at commits $br lacks; feedback not started"; return 1
+		fi
 		{ [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$br" ] || git -C "$wt" checkout -q "$br"; } 2>/dev/null ||
 			{ fbsay "$name" "$saw; $name: checking out $br failed; feedback not started"; return 1; }
+		rm -f "$d/detached"
 		if ! { git -C "$wt" merge-base --is-ancestor "origin/$br" HEAD || git -C "$wt" merge -q --ff-only "origin/$br"; } 2>/dev/null; then
 			local lref=refs/noodlebot/leftover/$key/$(date -u +%Y%m%dT%H%M%SZ)
 			git -C "$wt" update-ref "$lref" HEAD && git -C "$wt" reset -q --hard "origin/$br" 2>/dev/null ||
