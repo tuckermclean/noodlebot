@@ -99,5 +99,33 @@ done
 hit=$(printf '%s\n' 'use /noodlebot:node <ID> and .noodlebot/roles.yaml' | sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' | grep -in -e tuckermclean/ -e noodlebot | head -n 3)
 if [ -z "$hit" ]; then ok "A01-AC-1/2: relaxed filter lets the skill and config names through"; else bad "A01-AC-1/2: relaxed filter rejects the skill/config names: $hit"; fi
 
+# ---------- G05 slice 2: adopt runs the spec checker before its push; its AGENTS.md draft has a Spec files line (G05-AC-4) ----------
+g05d="$tmp/G05"; mkdir -p "$g05d"
+# g05_win <file> <n> <ere>...: some window of <n> consecutive lines matches every ERE (case-insensitive, asterisks dropped).
+g05_win() {
+	g05_f=$1; g05_n=$2; shift 2
+	g05_pats=$(printf '%s\n' "$@")
+	awk -v n="$g05_n" -v pats="$g05_pats" '
+		BEGIN { k = split(pats, P, "\n") }
+		{ gsub(/\*/, ""); L[NR] = tolower($0) }
+		END {
+			for (i = 1; i <= NR; i++) {
+				w = ""; for (j = i; j < i + n && j <= NR; j++) w = w " " L[j]
+				good = 1; for (p = 1; p <= k; p++) if (w !~ P[p]) { good = 0; break }
+				if (good) exit 0
+			}
+			exit 1 }' "$g05_f"
+}
+# g05_sec <skill> <heading-regex> <out>: the lines from the first "## " heading matching the regex to the next "## " heading.
+g05_sec() { awk -v re="$2" '/^## / { if (on) exit; if (tolower($0) ~ re) on = 1 } on { print }' "$1" >"$3"; }
+if [ "$have" -eq 1 ]; then
+	if g05_win "$f" 6 'check-spec-diff' 'origin/main' 'before' 'push'; then ok "G05-AC-4: adopt runs check-spec-diff.py against origin/main before its push"; else bad "G05-AC-4: adopt does not run check-spec-diff.py against origin/main before its push"; fi
+	if g05_win "$f" 6 'check-spec-diff' '--allow agents[.]md'; then ok "G05-AC-4: adopt runs the checker with --allow AGENTS.md"; else bad "G05-AC-4: adopt does not run the checker with --allow AGENTS.md"; fi
+	if g05_win "$f" 6 'check-spec-diff' 'exit(s)? (code )?1|exit 1|non-zero' 'stop'; then ok "G05-AC-4: adopt stops when the checker exits 1"; else bad "G05-AC-4: adopt does not stop when the checker exits 1"; fi
+	if g05_win "$f" 40 'building a node' 'spec files:'; then ok "G05-AC-4: the Building a node section adopt drafts has a Spec files: line"; else bad "G05-AC-4: adopt's drafting instructions for Building a node give no Spec files: line"; fi
+else
+	bad "G05-AC-4: adopt checks cannot run: no SKILL.md"
+fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
