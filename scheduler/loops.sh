@@ -61,6 +61,11 @@ if [ ${#repos[@]} -eq 0 ]; then
 	echo "no repositories listed in $list"
 	exit 0
 fi
+# NESTED_PIDNS=0 only in the initial pid namespace, which the kernel names pid:[4026531836] (readlink of
+# /proc/self/ns/pid; NSpid in /proc/self/status would show one pid under a /proc mounted in the
+# namespace); 1 in any other or when unknown. Computed once.
+NESTED_PIDNS=1
+[ "$(readlink /proc/self/ns/pid 2>/dev/null)" = "pid:[4026531836]" ] && NESTED_PIDNS=0
 
 # held <lockfile>: some process holds a lock on the file, as /proc/locks shows it (a line
 # "N: FLOCK ADVISORY WRITE <pid> <major>:<minor>:<inode> ...", major and minor in hex; lines with
@@ -93,6 +98,9 @@ held() {
 	# No line in /proc/locks (in a pid namespace of its own it does not list the locks): only now look
 	# at the lock lines in /proc/<pid>/fdinfo/<fd>, and only in the fds whose "ino:" is the file's
 	# (one grep over all of them). The holder is the pid of the matching path, never the one on the line.
+	# Skipped in the initial pid namespace, whose /proc/locks lists every lock (the scan could find
+	# nothing, and costs seconds with thousands of fds), unless NOODLEBOT_PROC_LOCKS is set (tests).
+	[ -n "${NOODLEBOT_PROC_LOCKS:-}" ] || [ "$NESTED_PIDNS" = 1 ] || return 1
 	local fi p
 	while read -r fi; do
 		p=${fi#/proc/}; p=${p%%/*}
