@@ -27,7 +27,7 @@ RUN useradd -u 1000 -m -d /home/noodlebot -s /bin/bash noodlebot \
  && printf 'noodlebot:1:999\nnoodlebot:1001:64535\n' > /etc/subuid \
  && cp /etc/subuid /etc/subgid \
  && chmod 4755 /usr/bin/newuidmap /usr/bin/newgidmap \
- && install -d -o noodlebot -g noodlebot /home/noodlebot/.local/share/containers
+ && install -d -o noodlebot -g noodlebot /home/noodlebot/.config /home/noodlebot/.local/share/containers
 
 # Nested rootless podman: no cgroup manager (the outer container's cgroup is not ours), the file events logger,
 # the host network namespace of the outer container (no /dev/net/tun needed), fuse-overlayfs as the storage driver.

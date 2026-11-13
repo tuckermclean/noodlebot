@@ -19,5 +19,7 @@ services:
       - label=disable
       - seccomp=unconfined
       - apparmor=unconfined
+      # Unmasks /proc in this container, so nested podman can mount a /proc of its own.
+      - systempaths=unconfined
 volumes:
   noodlebot-home:

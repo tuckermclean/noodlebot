@@ -83,8 +83,10 @@ would enter a local build: build from a fresh clone.
 - **One replica per runtime root.** The StatefulSet has `replicas: 1` and the volume is the runtime root
   (`~/.local/share/noodlebot`) with the live checkout: one replica takes it, and two schedulers, or the container and
   the machine's own loops, on the same `repos` start every session twice. Never scale it up.
-  The runtime root must stay on the home volume, never on the image's overlay filesystem: `loops.sh` and the API read
-  whether a loop runs from `/proc/locks`, which shows an overlay file under another device and inode than `stat`.
+  The runtime root stays on the home volume, which is also where the image's `~/.config` (owned by `noodlebot`, empty
+  but for the read-only config folder mounted below it) lives: a fresh named volume starts with that folder from the
+  image, and a new PVC starts empty, so the StatefulSet's `home-config` init container (uid 1000, not privileged, the
+  same image) creates `~/.config` on it first.
 - **Nested rootless podman.** Sessions run `podman` as `noodlebot`, with no container-runtime socket mounted and
   without `--privileged`. For that the compose file and the manifests carry these settings:
   - `/dev/fuse` (compose `devices`): the storage driver is fuse-overlayfs. Kubernetes has no device field: the cluster
@@ -100,10 +102,13 @@ would enter a local build: build from a fresh clone.
   network namespace, so nested podman needs no `/dev/net/tun`.
   Host requirements: unprivileged user namespaces allowed (on Ubuntu 24.04, `sysctl kernel.apparmor_restrict_unprivileged_userns=0`),
   `/dev/fuse`, and a volume filesystem that supports the overlay storage driver (not NFS).
-  Docker and Kubernetes also mask parts of `/proc` in the container, which would stop nested podman from mounting a
-  `/proc` of its own. The image's `containers.conf` sets `volumes = ["/proc:/proc"]`, which binds the container's `/proc`
-  into each nested container instead, so neither the compose file nor the pod needs `systempaths=unconfined` or
-  `procMount: Unmasked`.
+  - `systempaths=unconfined` (compose `security_opt`) and `procMount: Unmasked` (the container's `securityContext`):
+    Docker and Kubernetes mask parts of `/proc` in the container, which would stop nested podman from mounting a
+    `/proc` of its own. The trade-off: the outer container's `/proc` is unmasked. `procMount: Unmasked` needs
+    `hostUsers: false` (the pod's own user namespace), so the cluster must support user namespaces for pods (a
+    Kubernetes version with the `UserNamespacesSupport` feature, a runtime and a node kernel that support it).
+    The image's `containers.conf` does not bind the outer `/proc` into nested containers: that would expose it to
+    every nested container, whose root is uid 1000.
   The image workflow's run of `container/compose.yaml` is the recorded check.
 - **Pod Security.** The `Unconfined` seccomp and AppArmor profiles are not allowed below the `privileged` Pod Security
   level: the `baseline` level rejects them. Put the namespace at `pod-security.kubernetes.io/enforce: privileged`

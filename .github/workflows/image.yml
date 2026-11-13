@@ -72,9 +72,7 @@ jobs:
           '
       - name: "D06-AC-1: make test inside the image"
         # The clone and the tests' scratch folders (TMPDIR) sit on a volume, as production state sits on the home
-        # volume: loops.sh held() matches a lock by device and inode against /proc/locks, and on the container's
-        # overlay root filesystem /proc/locks shows the upper layer's device and inode, which stat does not, so no
-        # lock would ever match there.
+        # volume.
         run: |
           docker run --rm --entrypoint bash -v nbtest-home:/home/noodlebot -e TMPDIR=/home/noodlebot/tmp \
             -e SITE_TESTS=required -e TEST_BUDGET_ENFORCE=1 -e TEST_FILE_BUDGET=60 -e TEST_BUDGET=360 \

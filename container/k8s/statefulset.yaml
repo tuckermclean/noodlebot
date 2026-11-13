@@ -18,6 +18,8 @@ spec:
     spec:
       # Longer than loops.sh stop's 300 s wait.
       terminationGracePeriodSeconds: 330
+      # User namespace for the pod: procMount Unmasked below needs it (Kubernetes with user namespace support).
+      hostUsers: false
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
@@ -25,6 +27,20 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: Unconfined
+      initContainers:
+        # A new volume starts empty: ~/.config must exist and belong to noodlebot before the config Secret is
+        # mounted below it (the mount would otherwise create it owned by root).
+        - name: home-config
+          image: ghcr.io/owner/name:latest
+          command: [mkdir, -p, /home/noodlebot/.config]
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            privileged: false
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: home
+              mountPath: /home/noodlebot
       containers:
         - name: noodlebot
           image: ghcr.io/owner/name:latest
@@ -34,6 +50,8 @@ spec:
             allowPrivilegeEscalation: true
             appArmorProfile:
               type: Unconfined
+            # Unmasks /proc, so nested podman can mount a /proc of its own; needs hostUsers: false above.
+            procMount: Unmasked
           volumeMounts:
             - name: home
               mountPath: /home/noodlebot
