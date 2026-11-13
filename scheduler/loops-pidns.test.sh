@@ -264,5 +264,45 @@ else
 	pass "D06-AC-11:pidns: unshare --user --map-root-user --pid --fork --mount-proc is refused here; the namespace case is skipped (the cases above cover each probe)"
 fi
 
+echo "# D06-AC-11: stop signals the server found by its /proc/<pid> path when the lock's owner pid is another process"
+scenario stowner
+# an API server whose lock was taken by a short-lived `flock` command on an fd the server keeps open: the pid
+# on the lock line is the dead flock command's, only the /proc/<pid>/fdinfo path names the server.
+cat >"$nb/scheduler/api.py" <<'EOT'
+#!/usr/bin/env python3
+import os, signal, subprocess, sys, time
+here = os.path.dirname(os.path.abspath(__file__))
+def log(s):
+    with open(os.path.join(here, "api.log"), "a") as h:
+        h.write(s + "\n")
+lk = open(os.path.join(os.environ["NOODLEBOT_DATA"], "api.lock"), "w")
+fd = lk.fileno()
+if subprocess.run(["flock", "-n", str(fd)], pass_fds=(fd,)).returncode != 0:
+    log("lockfail")
+    sys.exit(1)
+log("start pid=%d" % os.getpid())
+def stop(*a):
+    log("term")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+while True:
+    time.sleep(0.1)
+EOT
+export NOODLEBOT_PROC_LOCKS=$EMPTY LOOPS_STOP_WAIT=20
+setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+setsid python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
+wait_file 10 "$data/state/alpha/loop.pid"
+wait_line 10 '^start pid=' "$nb/scheduler/api.log"
+apid2=$(sed -n 's/^start pid=//p' "$nb/scheduler/api.log")
+loops status
+ok "D06-AC-11:stop-owner:status-sees-api-server-running" has '^api: server running' "$sc/out"
+loops stop
+ok "D06-AC-11:stop-owner:rc-0" rc_is 0
+ok "D06-AC-11:stop-owner:api-server-got-TERM" has '^term$' "$nb/scheduler/api.log"
+no "D06-AC-11:stop-owner:no-refusal-message" has 'not the API server|not signalled' "$sc/out"
+ok "D06-AC-11:stop-owner:api-server-stopped" has '^api: server stopped' "$sc/out"
+ok "D06-AC-11:stop-owner:api-server-process-gone" sh -c "! kill -0 '${apid2:-0}' 2>/dev/null"
+unset NOODLEBOT_PROC_LOCKS LOOPS_STOP_WAIT
+
 [ "$fails" = 0 ] || { echo "$fails FAILED"; exit 1; }
 echo "all passed"
