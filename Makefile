@@ -29,6 +29,7 @@ TESTS = \
 	scheduler/turn-took.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	scheduler/deploy.test.sh \
+	scheduler/deploy-d04.test.sh \
 	plugin/hooks/guard.test.sh \
 	plugin/hooks/guard-git.test.sh \
 	plugin/hooks/guard-shell.test.sh \
@@ -65,6 +66,7 @@ TESTS = \
 	scheduler/loop-s07-records.test.sh \
 	scheduler/loop-s04.test.sh \
 	scheduler/loop-d01.test.sh \
+	scheduler/loop-d04.test.sh \
 	scheduler/loop-l01.test.sh \
 	scheduler/loop-s04-more.test.sh \
 	scheduler/loop-s04-reset.test.sh \
