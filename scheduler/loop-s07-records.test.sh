@@ -22,6 +22,11 @@ qloop qb 3 $QENV; qwait 8 qfirst qb
 qcompete "#7 A02 A03" "#9 B01 B04"
 qopen
 qwait 12 qhave t7; qhold
+# the gap (6 s) is longer than a tick (3 s) now: wait until each loop has begun a tick after t7's start + the gap (its ask
+# at the end of that tick comes after the gap, with the throttle holding), then a tick more so that ask has been made
+qpast_gap() { local l t; t=$(qt t7 | awk -F. '{ print $1 + 6 }'); for l in qa qb; do [ "$(cat "$qd/state/$l/heartbeat" 2>/dev/null || echo 0)" -gt "$t" ] || return 1; done; }
+qwait 8 qpast_gap
+qticks 1 qa qb
 qticks 3 qa qb
 qok "S07-AC-1: the throttle holding from the second turn: only the first unit started" test "$(qseq)" = "t7"
 qrecs() { local f; for f in qa/node/A02 qa/node/A03 qb/node/B01 qb/node/B04 qb/issue/9; do [ -e "$qd/state/$f/waiting" ] || return 1; done; }
@@ -48,7 +53,9 @@ qwait_n 8 2; wait_until 15 qev_ge 2
 # after the opening, in the starts and in the status logs (no other start event), and qb started it in the tick that
 # first read the opened throttle: that tick logs "throttle released" (qb held since the hold after t7), at or after the
 # opening's second, and B01's tick (its heartbeat, qhb) had begun by that line's second (a later tick begins at least
-# SCHED_TICK after the second in which the one before ended). No more than one of qb's ticks began (asked for the merged
+# SCHED_TICK after the second in which the one before ended, assuming no pause() of qb ends early between the hold and
+# the opening: pause() returns at once when a session exits or a marker changes, and here t7's session lives on, the
+# records already exist and no marker of qb changes). No more than one of qb's ticks began (asked for the merged
 # PRs, before it reads the throttle) between the opening and B01's start.
 qreleased() { grep '; throttle released' "$(qlog qb)" | awk '{ print $1 }' | while read -r t; do date -d "$t" +%s; done | awk -v a="${t_open%.*}" '$1 >= a { print; exit }'; }
 qsecond_soon() { local r h; r=$(qreleased) h=$(qhb B01); [ "$(sort -n "$q/starts.log" | sed -n 2p | awk '{ print $3 }')" = B01 ] && [ "$(qev '' | wc -l)" = 2 ] && awk -v a="$t_open" -v b="$(qt B01)" 'BEGIN { exit !(b - a >= 0) }' && [ "$(qtickt qb "$t_open" "$(qt B01)")" -le 1 ] && [ -n "$r" ] && [ -n "$h" ] && [ "$h" -le "$r" ]; }
