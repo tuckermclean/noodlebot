@@ -65,20 +65,25 @@ back for changing files outside the spec files (see RESUMING below). Nobody can 
     is a new question in QUESTION.md, not a reopened PR; end the run once you have written it.
   - <ts>-SPEC-PR-SCOPE: the loop found that the open spec PR named by WAITING-PR changes files outside
     the spec files, and sent the node back. The file holds `pr`, `branch`, `head` and one `path` line
-    for each such file. Check the spec branch out in a spec worktree at origin/<branch>:
+    for each such file. Act on this file only when it is the newest file in answered/ (an older
+    one has been handled). Check the spec branch out in a spec worktree at origin/<branch>:
     git fetch origin && git worktree add -B <branch> @WT@-spec origin/<branch>
-    and confirm that HEAD there is the `head` line of the file (if it is not, someone pushed since:
-    write QUESTION.md and end the run). Make one new commit that restores the listed paths to their
-    origin/main state: git restore --staged --worktree --source=origin/main -- <the paths, quoted>,
-    and git rm a path that origin/main does not have. Use no amend, no rebase and no force push.
-    Then run the checker: python3 -I "$(dirname "@LOOP@")/../plugin/skills/node/check-spec-diff.py" origin/main HEAD
-    it must exit 0, and the repository's spec checker must report PROBLEMS 0. If either does not,
-    write QUESTION.md saying what it reports and end the run. Otherwise push the commit, and comment on
-    the PR (gh pr comment) naming the paths taken out and the commit that held them. If no change is
-    left in the PR, close it (gh pr close) and the node carries on. Otherwise write WAITING-PR again
-    with the same PR number and end the run. Remove the spec worktree (git worktree remove @WT@-spec)
-    in both cases. Name the removed paths in the brief and in the PR body or comment: the resumed
-    session makes those changes on the node branch, test-first, as the approved changes they are.
+    and confirm that HEAD there is the `head` line of the file, the PR's head before your restore
+    (if it is not, someone pushed since: remove the spec worktree, write QUESTION.md and end the
+    run). Make one new commit that restores the listed paths to their origin/main state:
+    git restore --staged --worktree --source=origin/main -- <the paths, quoted>
+    (git restore also removes a path that origin/main does not have). Use no amend, no rebase and
+    no force push. Then run the checker: python3 -I "$(dirname "@LOOP@")/../plugin/skills/node/check-spec-diff.py" origin/main HEAD
+    it must exit 0, and the repository's spec checker (its AGENTS.md names it) must report
+    PROBLEMS 0. If either does not, remove the spec worktree (git worktree remove @WT@-spec), write
+    QUESTION.md saying what it reports and end the run. Otherwise push the commit, and comment on
+    the PR (gh pr comment) naming the paths taken out and the `head` line commit that held them
+    (the comment may also name the new restoring commit). If no change is left in the PR
+    (git diff --quiet origin/main...HEAD exits 0), close it (gh pr close) and the node carries on.
+    Otherwise write WAITING-PR again with the same PR number. Before you end the run, remove the
+    spec worktree (git worktree remove @WT@-spec) and name the removed paths in the brief and in
+    the PR body or comment: the resumed session makes those changes on the node branch,
+    test-first, as the approved changes they are. Then end the run (nothing comes after it).
   - Files outside the spec files that a merged spec PR of this node carried: for each <ts>-SPEC-PR, get
     its merge commit (gh pr view <N> --json mergeCommit --jq .mergeCommit.oid) and run
     python3 -I "$(dirname "@LOOP@")/../plugin/skills/node/check-spec-diff.py" <sha>^ <sha>. Each path it prints as
