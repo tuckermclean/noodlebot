@@ -55,6 +55,8 @@
 # sh -n if it is a #! line naming sh, and bash -n if it has no #! line, and each tracked *.py there is compiled with python3 -I, writing no bytecode. A file that fails rejects the sha with
 # "not deployed: <sha> (version <v>) fails the smoke check: <file>" and the checker's message on stderr; a smoke check that
 # times out or is killed is retried and counted as a timed-out make test is ("smoke check timed out or was killed <n> times").
+# A smoke check that fails without naming a file (the checker could not run) rejects nothing and is retried, with the stderr
+# line "deploy.sh: smoke check for <sha> could not run (status <n>); will retry".
 # State: $NOODLEBOT_DATA/deploy/{previous,rejected,tries,passed,plain-tries,waiting,test-failed.log,retry,rollback-request} (default
 # ~/.local/share/noodlebot; relative made absolute against $PWD); lock $NOODLEBOT_DATA/deploy/lock
 # (waited for up to 5 minutes, so a concurrent run finds nothing left to do; git commands that may
@@ -70,7 +72,7 @@
 #   that failed after make test passed (fewer than $max_tries times; the pass is remembered), a failed
 #   rollback (nothing recorded), waiting for CI (queued, in progress or no run), a gh or token script
 #   failure, a malformed deploy-ci, a smoke check that timed out or was killed (fewer than $max_tries
-#   times), or a TERM/INT (message on stderr).
+#   times) or that could not run (no file named; nothing recorded), or a TERM/INT (message on stderr).
 # Runtime paths: a range that changes only the non-runtime paths (see is_runtime_path) is fast-forwarded without
 # make test (a failed plain fast-forward is counted in deploy/plain-tries and the sha rejected after $max_tries, as
 # a failed fast-forward after a pass is), with the line "deployed <old>..<new> (version <v>) without make test: no runtime change", and deploy/previous
