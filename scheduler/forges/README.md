@@ -14,8 +14,9 @@ refuses an operation whose capability is off before the backend is called.
 
 Credentials (GitHub): a `GH_TOKEN` in the caller's environment is used as given; else the token script named by
 `NOODLEBOT_FORGE_TOKEN_SCRIPT` runs once per process and repository (`<script> <owner/name>`), the token kept in memory;
-else no token (`gh` uses its own login). The token reaches `gh` and `git` only through the child's environment, never an
-argument, output, log, file or Git configuration.
+else no token (`gh` uses its own login). A failing token script is not run again in that process either: every later
+call for the repository fails with the same error. The token reaches `gh` and `git` only through the child's
+environment, never an argument, output, log, file or Git configuration.
 
 ## Inventory
 
@@ -108,7 +109,17 @@ fields below are the arguments (not result keys: callers read the guaranteed key
 - `state=closed`, `fields=[number, head, closed_at, merged]`: `gh pr list --state closed --json
   number,headRefName,closedAt,mergedAt -q ...` (loop.sh). `merged` is a field of this form only; it gives `state`.
 - `state=open`, `fields=[number, title]`: `gh pr list --state open --json number,title,author -q ...` (status.sh).
+  status.sh's display form: it leaves out dependabot's PRs and its `title` is cut at 90 characters.
 - The fields of a form match as a set (their order does not matter); the argv of a form is fixed.
+- The four forms above read gh's `-q` output a line at a time as the shell does, and never refuse a line: only a
+  non-zero gh exit fails the call. Every line is a row (in gh's order, none dropped), and each row also has `line`,
+  the line exactly as gh printed it (without its newline), so a caller can write the loop's `merged-prs.tsv`,
+  `open-prs.tsv` and `closed-prs.tsv` byte for byte (each row's `line` and a newline). The other keys split the line
+  as `cut -d' '` does (one space separates fields): a missing or empty field is `null`; a line without a space is
+  the `head` (`cut -d' ' -f2` passes it whole) with `number` `null`; a `number` that is not digits is `null`;
+  `author_is_bot` and `merged` are `true` or `false` only for those words, else `null` (the loop counts a PR closed
+  unmerged only on `false`); a closed row's `state` is `merged`, `closed` or `null` by `merged`. A status line that
+  does not start with `#` (after spaces) has `number` `null` and the line, trimmed, as `title`.
 - other `fields` without `author` (nodes.py): `gh pr list --json` of the matching gh fields, no `-q`.
 - no `fields`, or `author` among them (report.py): `gh api -X GET repos/R/pulls?state=S&per_page=100` (further pages
   `&page=P`); `author_association` gives `is_owner`. `merged` and `closed` map to REST `closed`; `merged` keeps the pulls

@@ -2,8 +2,9 @@
 
 Credentials: a GH_TOKEN the caller put in the environment is used as given; else the token script named by
 $NOODLEBOT_FORGE_TOKEN_SCRIPT runs once per process and repository (`<script> <owner/name>`) and its token is kept in
-memory; else no token and `gh` uses its own login. The token reaches `gh` and `git` only through the child's environment:
-never an argument, never output, a log, a file or Git configuration.
+memory (its failure too: later calls fail alike without rerunning it); else no token and `gh` uses its own login. The
+token reaches `gh` and `git` only through the child's environment: never an argument, never output, a log, a file or
+Git configuration.
 
 The argv of each `gh` call is the form the scheduler's call sites used before the interface (see forges/README.md); a few
 operations choose between forms by their arguments:
@@ -24,6 +25,7 @@ from urllib.parse import quote
 import forge
 
 _TOKENS = {}  # repository -> token (kept in this process's memory only)
+_TOKEN_FAILED = {}  # repository -> why its token script failed (it is not run again in this process)
 _TOKEN_LOCK = threading.Lock()  # the script runs at most once per repository, also under threads
 TIMEOUT = 60
 PATCH_TIMEOUT = 120  # the gist PATCH of a site publish (site.py's own)
@@ -38,24 +40,30 @@ def web_url(repo, kind, ref=None):
 
 
 def _token(repo):
-    """(token, from the script): the caller's GH_TOKEN as given (None: leave the environment alone), else the script's."""
+    """(token, from the script): the caller's GH_TOKEN as given (None: leave the environment alone), else the script's.
+    The script runs at most once per process and repository: its token is kept, and so is its failure (every later
+    call raises the same ForgeError without running it again)."""
     if os.environ.get("GH_TOKEN"):
         return None
     script = os.environ.get("NOODLEBOT_FORGE_TOKEN_SCRIPT")
     with _TOKEN_LOCK:
         if repo in _TOKENS:
             return _TOKENS[repo]
+        if repo in _TOKEN_FAILED:
+            raise forge.ForgeError(_TOKEN_FAILED[repo])
         if not script:
             return None
         try:
             r = subprocess.run([script, repo], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+            why = None if r.returncode == 0 else "token script failed for %s (exit %d)" % (repo, r.returncode)
         except (OSError, subprocess.SubprocessError) as e:
-            raise forge.ForgeError("token script failed for %s: %s" % (repo, type(e).__name__))
-        if r.returncode != 0:
-            raise forge.ForgeError("token script failed for %s (exit %d)" % (repo, r.returncode))
-        tok = r.stdout.strip()
-        if not tok:
-            raise forge.ForgeError("token script printed no token for %s" % repo)
+            r, why = None, "token script failed for %s: %s" % (repo, type(e).__name__)
+        tok = r.stdout.strip() if why is None else ""
+        if why is None and not tok:
+            why = "token script printed no token for %s" % repo
+        if why is not None:
+            _TOKEN_FAILED[repo] = why
+            raise forge.ForgeError(why)
         _TOKENS[repo] = tok
         return tok
 
@@ -112,29 +120,65 @@ _PR_JSON = {"number": ["number"], "title": ["title"], "body": ["body"], "state":
             "head_sha": ["headRefOid"], "base": ["baseRefName"], "mergeable": ["mergeable"],
             "created_at": ["createdAt"], "merged_at": ["mergedAt"], "closed_at": ["closedAt"], "url": ["url"]}
 _PR_KEYS = set(_PR_JSON) | {"author"}
-# The loop's, status.sh's forms: (state, fields) -> (--json fields, -q expression, line pattern, converters). The
-# conversions give the pr keys of the fields; "author_is_bot" and "merged" are fields of these forms only.
+# The loop's, status.sh's forms: (state, fields) -> (--json fields, -q expression, line parser). A line parser reads
+# one line of the -q output as the shell read it (no line is unreadable: only a non-zero gh exit fails the call) and
+# gives the pr keys of the form's fields plus "line", the line as gh printed it. "author_is_bot" and "merged" are fields
+# of these forms only.
+def _int(v):
+    return int(v) if v and re.fullmatch(r"[0-9]+", v) else None
+
+
+def _bool(v):
+    return {"true": True, "false": False}.get(v)
+
+
+def _cut(ln, n):
+    """The first n fields of a line as `cut -d' ' -fK` gives them (one space separates; a missing or empty field is
+    None). A line without a space is its head: `cut -d' ' -f2` passes it whole, and its number is None."""
+    if " " not in ln:
+        return [None, ln or None] + [None] * (n - 2)
+    f = [x or None for x in ln.split(" ")[:n]]
+    return f + [None] * (n - len(f))
+
+
+def _merged_line(ln):
+    n, head = _cut(ln, 2)
+    return {"number": _int(n), "head": head, "line": ln}
+
+
+def _open_line(ln):
+    n, head, sha, bot, mergeable = _cut(ln, 5)
+    bot = _bool(bot)
+    return {"number": _int(n), "head": head, "head_sha": sha, "author_is_bot": bot,
+            "author": {"login": None, "is_bot": bot is True, "is_owner": False}, "mergeable": mergeable, "line": ln}
+
+
+def _closed_line(ln):
+    n, head, closed_at, merged = _cut(ln, 4)
+    merged = _bool(merged)
+    return {"number": _int(n), "head": head, "closed_at": closed_at, "merged": merged,
+            "state": {True: "merged", False: "closed"}.get(merged), "line": ln}
+
+
+def _status_line(ln):
+    m = re.match(r"\s*#(\S*) ?(.*)", ln, re.S)
+    return {"number": _int(m[1]) if m else None, "title": m[2] if m else ln.strip(), "line": ln}
+
+
 _PR_LINES = {
     ("merged", ("number", "head")): (
-        "number,headRefName", '.[] | "\\(.number) \\(.headRefName)"', re.compile(r"(\d+) (\S+)$"),
-        lambda m: {"number": int(m[1]), "head": m[2]}),
+        "number,headRefName", '.[] | "\\(.number) \\(.headRefName)"', _merged_line),
     ("open", ("number", "head", "head_sha", "author_is_bot", "mergeable")): (
         "number,headRefName,headRefOid,author,mergeable",
-        '.[] | "\\(.number) \\(.headRefName) \\(.headRefOid) \\(.author.is_bot) \\(.mergeable)"',
-        re.compile(r"(\d+) (\S+) (\S+) (true|false) (\S+)$"),
-        lambda m: {"number": int(m[1]), "head": m[2], "head_sha": m[3], "author_is_bot": m[4] == "true",
-                   "author": {"login": None, "is_bot": m[4] == "true", "is_owner": False}, "mergeable": m[5]}),
+        '.[] | "\\(.number) \\(.headRefName) \\(.headRefOid) \\(.author.is_bot) \\(.mergeable)"', _open_line),
     ("closed", ("number", "head", "closed_at", "merged")): (
         "number,headRefName,closedAt,mergedAt",
-        '.[] | "\\(.number) \\(.headRefName) \\(.closedAt) \\(.mergedAt != null)"',
-        re.compile(r"(\d+) (\S+) (\S+) (true|false)$"),
-        lambda m: {"number": int(m[1]), "head": m[2], "closed_at": m[3], "merged": m[4] == "true",
-                   "state": "merged" if m[4] == "true" else "closed"}),
-    # status.sh: the open PRs but dependabot's, a line each ("   #N title"; the title cut at 90 characters)
+        '.[] | "\\(.number) \\(.headRefName) \\(.closedAt) \\(.mergedAt != null)"', _closed_line),
+    # status.sh's display form: the open PRs but dependabot's, a line each ("   #N title"; the title cut at 90
+    # characters by the jq expression)
     ("open", ("number", "title")): (
         "number,title,author",
-        '.[] | select(.author.login | test("dependabot") | not) | "   #\\(.number) \\(.title[0:90])"',
-        re.compile(r"\s*#(\d+) (.*)$"), lambda m: {"number": int(m[1]), "title": m[2]}),
+        '.[] | select(.author.login | test("dependabot") | not) | "   #\\(.number) \\(.title[0:90])"', _status_line),
 }
 
 
@@ -255,15 +299,12 @@ class Backend:
         base = ["pr", "list", "--repo", self.repo, "--state", state] + lim
         form = _pr_form(state, keys) if keys else None
         if form:
-            jsonf, jq, pat, conv = form
+            jsonf, jq, parse_line = form
             out = self._gh(base + ["--json", jsonf, "-q", jq], None, "gh pr list --state " + state)
-            rows = []
-            for ln in out.splitlines():
-                m = pat.match(ln)
-                if not m:
-                    raise forge.ForgeError("gh pr list --state %s: an unreadable line" % state)
-                rows.append(conv(m))
-            return rows
+            lines = out.split("\n")
+            if lines[-1] == "":
+                lines.pop()  # the newline that ends the last line
+            return [parse_line(ln) for ln in lines]
         if keys and "author" not in keys:
             # nodes.py's forms: `gh pr list --json` with fields gh knows (authorAssociation is not one of them)
             names = []
