@@ -4,6 +4,7 @@
 Python:  import forge; f = forge.open("owner/name")  (or "github:owner/name", "fake:<state folder>"; no argument reads
          $NOODLEBOT_FORGE_REPO); f.<family>_<op>(**kwargs), e.g. f.issue_list(label="noodlebot", state="open").
 CLI:     python3 -I forge.py [--repo SPEC] <family> <op> [--opt value ...]   prints the result as one JSON document.
+         forge.py remote-commit-link URL SHA   a commit's web link from an origin remote's URL (exit 1: none).
          forge.py ops   the operations as JSON;   forge.py [--repo SPEC] caps   the forge's capabilities as JSON.
 Exit codes: 0 done; 1 a call failed (one line on stderr, nothing on stdout, never an empty result); 2 usage error or
 unknown forge; 3 the forge lacks a capability the operation needs (stderr: `forge <name> lacks <capability>`).
@@ -162,6 +163,22 @@ def web_url(spec, kind, ref=None):
     return open(spec).repo_url(kind=kind, ref=ref)
 
 
+def repo_of_remote(url):
+    """The repository spec of an origin remote URL, for a caller that has no NOODLEBOT_FORGE_REPO (nodes.py): a GitHub
+    remote gives owner/name; any other remote (a local path) gives its last two path components, which no forge call
+    will find (the call fails and the caller says so), None when it has fewer."""
+    repo = _load("github").repo_of_remote(url)
+    if repo:
+        return repo
+    parts = [x for x in re.sub(r"\.git/?$", "", (url or "").strip()).replace(":", "/").split("/") if x]
+    return "/".join(parts[-2:]) if len(parts) >= 2 and re.fullmatch(r"[\w.-]+", parts[-1]) and re.fullmatch(r"[\w.-]+", parts[-2]) else None
+
+
+def commit_link(url, sha):
+    """The web link of a commit from the origin remote's URL, or None when no backend knows the URL (no forge call)."""
+    return _load("github").commit_link(url, sha)
+
+
 # ---- CLI -------------------------------------------------------------------------------------------------------
 class _Usage(Exception):
     pass
@@ -228,6 +245,12 @@ def main(argv):
         if len(argv) < 2:
             return _fail(2, "--repo needs a value")
         repo, argv = argv[1], argv[2:]
+    if len(argv) == 3 and argv[0] == "remote-commit-link":  # remote-commit-link URL SHA: version.sh's signature link
+        link = commit_link(argv[1], argv[2])
+        if link is None:
+            return _fail(1, "no commit link for %s" % argv[1])
+        print(json.dumps(link))
+        return 0
     if argv == ["ops"]:
         print(json.dumps(OPERATIONS))
         return 0

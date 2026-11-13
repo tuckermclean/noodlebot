@@ -12,6 +12,9 @@ here=$(cd "$(dirname "$0")" && pwd -P)   # before the cd: $0 may be relative
 plugin=$(cd "$here/../plugin" && pwd -P)
 cd "$wt" || { echo 2 >"$dir/session.rc"; exit 2; }
 unset ANTHROPIC_API_KEY GH_TOKEN GITHUB_TOKEN
+# the forge the session reaches (G04): the repository, the forge CLI and the token script (never a token: GH_TOKEN stays unset)
+[ -z "${NOODLEBOT_FORGE_REPO:-}" ] || export NOODLEBOT_FORGE_REPO
+export NOODLEBOT_FORGE="$here/forge.py" NOODLEBOT_FORGE_TOKEN_SCRIPT="${NOODLEBOT_FORGE_TOKEN_SCRIPT:-$HOME/.config/noodlebot/token}"
 [ -z "${NOODLEBOT_VERSION:-}" ] || export NOODLEBOT_VERSION
 # the harness backend (harness.py, SCHED_HARNESS) runs the session, keeps its credential and writes events.jsonl: its
 # first stage becomes the agent CLI (a direct child of this script, the process the loop signals), the second one

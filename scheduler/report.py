@@ -3,7 +3,7 @@
 
   report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN] [--site URL]
 
-Run by loop.sh after each tick with GH_TOKEN set; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all GitHub access through `gh api`.
+Run by loop.sh after each tick; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all forge access through forge.py (the token script, or a GH_TOKEN in the environment).
 Each run:
   1. finds today's log issue, "noodlebot log <local date>" labelled `noodlebot-status` (creating the label and
      issue, linking the previous day's, if there is none, e.g. after the owner closed it), and remembers it in
@@ -72,23 +72,13 @@ from datetime import datetime, timedelta, timezone
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import harness   # the one interface to the agent harness (S08)
+import forge   # the one interface to the code forge (G04)
 
 LABEL = "noodlebot-status"
 EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
 NODE = re.compile(r"^[A-Z][0-9][0-9]$")
 UNIT_LABEL = "noodlebot-unit"
 MAX_COMMENT = 60000
-
-
-def gh(method, path, body=None):
-    cmd = ["gh", "api", "-X", method, path]
-    if body is not None:
-        cmd += ["--input", "-"]
-    r = subprocess.run(cmd, input=json.dumps(body) if body is not None else None,
-                       capture_output=True, text=True, timeout=60)
-    if r.returncode != 0:
-        raise RuntimeError("gh api %s %s failed: %s" % (method, path, (r.stderr or r.stdout).strip()[:300]))
-    return json.loads(r.stdout) if r.stdout.strip() else None
 
 
 def now():
@@ -670,9 +660,9 @@ LOG_TITLE = re.compile(r"^noodlebot log (\d{4}-\d\d-\d\d)$")
 
 def log_issues(a, state):
     """[(date, number)] of the issues labelled `noodlebot-status` whose title is a day's log title, newest date first."""
-    found = gh("GET", "repos/%s/issues?labels=%s&state=%s&per_page=100" % (a.repo, LABEL, state)) or []
-    out = [(LOG_TITLE.match(i.get("title") or "").group(1), i["number"]) for i in found
-           if "pull_request" not in i and LOG_TITLE.match(i.get("title") or "")]
+    found = a.forge.issue_list(label=LABEL, state=state)
+    out = [(LOG_TITLE.match(i["title"]).group(1), i["number"]) for i in found
+           if not i["is_pr"] and LOG_TITLE.match(i["title"])]
     return sorted(out, reverse=True)
 
 
@@ -684,42 +674,40 @@ def find_issue(a, rs):
     n = rs.get("issue")
     if n and log.get("date") == today and log.get("issue") == n:
         try:
-            st = gh("GET", "repos/%s/issues/%s" % (a.repo, n)).get("state")
+            st = a.forge.issue_view(number=n)["state"]
             if st == "open":
                 return n, False
             if st == "closed" and (rs.get("roll") or {}).get("old") != n:  # the owner closed today's issue: a new one, linked from it
                 park_link(rs)
                 rs["roll"] = {"old": n, "date": today, "summary": True, "closed": True}
                 a.save()
-        except RuntimeError:
+        except forge.ForgeError:
             pass
     roll = rs.get("roll") or {}
     prev = roll.get("old") or next((num for d, num in log_issues(a, "all") if d < today), None)
-    for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []:
-        if "pull_request" not in i and i.get("title") == "noodlebot log " + today:
+    for i in a.forge.issue_list(label=LABEL, state="open"):
+        if not i["is_pr"] and i["title"] == "noodlebot log " + today:
             if log.get("date") == today and log.get("issue") == i["number"]:
                 rs["issue"] = i["number"]  # the one we recorded (its read failed): keep its overview state
                 a.save()
                 return i["number"], False
             rs["log"], rs["issue"] = {"date": today, "issue": i["number"], "prev": prev, "overview": True}, i["number"]
-            adopt(a, rs, i["number"], i.get("node_id"), False)
+            adopt(a, rs, i["number"], False)
             a.save()  # found, not opened by us: no overview
             return i["number"], True
     try:
-        gh("POST", "repos/%s/labels" % a.repo, {"name": LABEL, "color": "5319e7",
-                                              "description": "Kept up to date by the noodlebot scheduler"})
-    except RuntimeError as e:
-        if "already_exists" not in str(e) and "422" not in str(e):
-            raise
-    issue = gh("POST", "repos/%s/issues" % a.repo, {"title": "noodlebot log " + today, "labels": [LABEL],
-                                                  "body": "Starting up..." + ("\n\nPrevious day's log: #%s" % prev if prev else "")})
+        a.forge.label_ensure(name=LABEL, color="5319e7", description="Kept up to date by the noodlebot scheduler")
+    except forge.ForgeError:
+        raise  # an existing label is no failure: label ensure says so itself
+    issue = a.forge.issue_create(title="noodlebot log " + today, labels=[LABEL],
+                                 body="Starting up..." + ("\n\nPrevious day's log: #%s" % prev if prev else ""))
     rs["log"], rs["issue"] = {"date": today, "issue": issue["number"], "prev": prev, "overview": False}, issue["number"]
-    adopt(a, rs, issue["number"], issue.get("node_id"), True)
+    adopt(a, rs, issue["number"], True)
     a.save()
     return issue["number"], True
 
 
-def adopt(a, rs, number, node_id, pin):
+def adopt(a, rs, number, pin):
     """A new log issue is today's: queue its pin (when opened by us) and the unpin of the one it replaces, and note it in
     the rollover's record. Saved by the caller, with rs["log"]."""
     roll = rs.get("roll")
@@ -728,7 +716,7 @@ def adopt(a, rs, number, node_id, pin):
         roll["new"] = number
         pins.append({"op": "unpin", "number": roll["old"]})  # before the pin: GitHub allows three
     if pin:
-        pins.append({"op": "pin", "number": number, "node_id": node_id})
+        pins.append({"op": "pin", "number": number})
 
 
 def run_pins(a, rs):
@@ -737,9 +725,7 @@ def run_pins(a, rs):
     left = []
     for p in rs.get("pins") or []:
         try:
-            node_id = p.get("node_id") or gh("GET", "repos/%s/issues/%s" % (a.repo, p["number"]))["node_id"]
-            gh("POST", "graphql", {"query": "mutation($id:ID!){%sIssue(input:{issueId:$id}){issue{number}}}" % p["op"],
-                                   "variables": {"id": node_id}})
+            (a.forge.issue_pin if p["op"] == "pin" else a.forge.issue_unpin)(number=p["number"])
         except Exception as e:
             print("report.py: %s of #%s failed: %s" % (p["op"], p["number"], e), file=sys.stderr)
             if re.search(r"HTTP 5\d\d|timed out|Timeout", str(e)) and p.get("tries", 0) < 2:
@@ -776,7 +762,7 @@ def roll_steps(a, rs, roll):
         try:
             comment(a, roll["old"], "\n".join(["## End-of-day summary, %s" % roll["date"], ""] +
                                               summary_lines(a, rs, roll["date"], "The day") + [""]))
-        except RuntimeError as e:
+        except forge.ForgeError as e:
             if not gone(e):
                 raise
             print("report.py: issue #%s is gone; no summary on it" % roll["old"], file=sys.stderr)
@@ -784,8 +770,8 @@ def roll_steps(a, rs, roll):
         a.save()
     if not roll.get("closed"):
         try:
-            gh("PATCH", "repos/%s/issues/%s" % (a.repo, roll["old"]), {"state": "closed", "state_reason": "completed"})
-        except RuntimeError as e:
+            a.forge.issue_close(number=roll["old"])
+        except forge.ForgeError as e:
             if not gone(e):
                 raise
             print("report.py: issue #%s is gone; not closed" % roll["old"], file=sys.stderr)
@@ -809,7 +795,7 @@ def park_link(rs):
 def put_link(a, old, new):
     try:
         comment(a, old, "Next log issue: #%s" % new)
-    except RuntimeError as e:
+    except forge.ForgeError as e:
         if not gone(e):
             raise
         print("report.py: issue #%s is gone; no link on it" % old, file=sys.stderr)
@@ -841,9 +827,9 @@ def close_old_status(a, rs, log_issue):
     """Close each open `noodlebot-status` issue that is not a log issue (the old sticky one), once, with one comment linking
     today's log issue; the owner's answers on it are taken while its question is open (take_old_answers)."""
     old = rs.setdefault("old_status", {})
-    for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, LABEL)) or []:
+    for i in a.forge.issue_list(label=LABEL, state="open"):
         n = i["number"]
-        if "pull_request" in i or LOG_TITLE.match(i.get("title") or "") or n == log_issue:
+        if i["is_pr"] or LOG_TITLE.match(i["title"]) or n == log_issue:
             continue
         try:
             st = old.setdefault(str(n), {})
@@ -854,7 +840,7 @@ def close_old_status(a, rs, log_issue):
                 st.update({"commented": True, "cursor": c.get("id") or 0, "since": c.get("created_at") or ""})
                 a.save()
             if not st.get("closed"):
-                gh("PATCH", "repos/%s/issues/%s" % (a.repo, n), {"state": "closed", "state_reason": "completed"})
+                a.forge.issue_close(number=n)
                 st["closed"] = True
                 rs.setdefault("pins", []).append({"op": "unpin", "number": n})
                 a.save()
@@ -889,15 +875,18 @@ def take_old_answers(a, rs):
                     a.errors.append(str(e))
 
 
+def from_owner(a, c):
+    """True for a comment by the owner (not a bot), as the forge says who is the owner."""
+    return not c["author"]["is_bot"] and c["author"]["login"] == a.owner and c["author"]["is_owner"]
+
+
 def take_old_comments(a, rs, num, st):
-    comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
-                  (a.repo, num, "&since=" + st["since"] if st.get("since") else "")) or []
+    comments = a.forge.issue_comments(number=int(num), **({"since": st["since"]} if st.get("since") else {}))
     for c in sorted(comments, key=lambda c: c["id"]):
         if c["id"] <= st["cursor"]:
             continue
-        user = c.get("user") or {}
-        text = c.get("body") or ""
-        if user.get("type") != "Bot" and user.get("login") == a.owner and c.get("author_association") == "OWNER":
+        text = c["body"]
+        if from_owner(a, c):
             m = ID_PREFIX.match(text)
             node = m.group(1) if m else None
             q = os.path.join(tdir(a.state, node), "QUESTION.md") if node and node in nodes(a.state) else None
@@ -910,7 +899,7 @@ def take_old_comments(a, rs, num, st):
                 comment(a, num, "Not recorded as an answer: this issue is closed, and %s. Answer on the unit's issue "
                         "or on the log issue (#%s)." % ("no reply starting with a unit's ID" if not node else
                         "%s has no question asked here that is still open" % node, rs.get("issue")))
-        st["cursor"], st["since"] = c["id"], c.get("created_at", "")
+        st["cursor"], st["since"] = c["id"], c["created_at"] or ""
         a.save()
 
 
@@ -1016,7 +1005,7 @@ def comment(a, issue, text):
     if len(text) > room:
         text = text[:room] + "\n\n(cut here: too long for one comment)"
     text = signed(a, text)
-    return gh("POST", "repos/%s/issues/%s/comments" % (a.repo, issue), {"body": text}) or {}
+    return a.forge.issue_comment(number=int(issue), body=text)
 
 
 def spec_info(a, node):
@@ -1058,24 +1047,22 @@ def home_issue(a, rs, task):
             if not getattr(a, "unit_label", False):
                 a.unit_label = True
                 try:
-                    gh("POST", "repos/%s/labels" % a.repo, {"name": UNIT_LABEL, "color": "0e8a16",
-                                                          "description": "A unit of noodlebot work, while it is built"})
-                except RuntimeError:
+                    a.forge.label_ensure(name=UNIT_LABEL, color="0e8a16", description="A unit of noodlebot work, while it is built")
+                except forge.ForgeError:
                     pass  # exists already, or labels.py ensures it
             spec = "`nodes/%s-%s.md`" % (task, name) if name else "its spec"
             n = None  # a POST that failed after GitHub created the issue must not lead to a second one
-            for i in gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=100" % (a.repo, UNIT_LABEL)) or []:
-                names = [l.get("name") if isinstance(l, dict) else l for l in i.get("labels") or []]
-                if i.get("title") == title and UNIT_LABEL in names and "pull_request" not in i:
+            for i in a.forge.issue_list(label=UNIT_LABEL, state="open"):
+                if i["title"] == title and UNIT_LABEL in i["labels"] and not i["is_pr"]:
                     n = i["number"]
                     break
             if n is None:
-                n = gh("POST", "repos/%s/issues" % a.repo, {
-                    "title": title, "labels": [UNIT_LABEL],
-                    "body": signed(a, "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
-                                      "result). Its spec is %s on the main branch. The loop closes this issue once "
-                                      "the node is merged." % (task, spec) +
-                                 ("\n\n" + site_line(a, task) if site_base(a) else ""))})["number"]
+                n = a.forge.issue_create(
+                    title=title, labels=[UNIT_LABEL],
+                    body=signed(a, "Home of node %s: the scheduler loop posts its milestones here (start, questions, PR, CI, "
+                                   "result). Its spec is %s on the main branch. The loop closes this issue once "
+                                   "the node is merged." % (task, spec) +
+                                ("\n\n" + site_line(a, task) if site_base(a) else "")))["number"]
     os.makedirs(os.path.dirname(f), exist_ok=True)
     with open(f + ".tmp", "w") as fh:
         fh.write("%d\n" % n)
@@ -1110,7 +1097,7 @@ def milestone(a, rs, task, key, stage, body=""):
     if c.get("created_at") and not u.get("first_at"):
         u["first_at"] = c["created_at"]
     if key.startswith("question:"):  # where the owner's answer on the unit's issue is taken from
-        u["qc"] = {"key": key, "id": c.get("id"), "url": c.get("html_url"), "at": c.get("created_at")}
+        u["qc"] = {"key": key, "id": c.get("id"), "url": c.get("url"), "at": c.get("created_at")}
     done.append(key)
     a.save()
 
@@ -1189,7 +1176,7 @@ def collect_starts(a, rs):
                 end = line_off - off
                 break
             pr = next((p for p in getattr(a, "pulls", []) if re.match(r"spec/triage-%s-" % d.group(1)[1:],
-                                                                      (p.get("head") or {}).get("ref") or "")), None)
+                                                                      p.get("head") or "")), None)
             queue(a, rs, d.group(1), "done:%d" % line_off, "triage done",
                   "The triage ended done." + (" Its spec PR: %s" % pr_link(pr) if pr else ""))
             continue
@@ -1251,8 +1238,8 @@ def post_queued(a, rs):
         try:
             what = start_clause(a, "#%d" % n, queued=True)
             # one already on the issue (report.json lost, or a post whose record failed): recorded, not posted again
-            if any((c.get("body") or "").startswith("**Stage:** queued for triage") for c in
-                   gh("GET", "repos/%s/issues/%d/comments?per_page=100" % (a.repo, n)) or []):
+            if any(c["body"].startswith("**Stage:** queued for triage") for c in
+                   a.forge.issue_comments(number=n)):
                 done.append(n)
                 a.save()
                 continue
@@ -1282,12 +1269,12 @@ def record_answer(a, rs, node, c, text):
     d = tdir(a.state, node)
     with open(os.path.join(d, "ANSWER.md.tmp"), "w") as f:
         f.write("# Answer to %s's QUESTION.md\n\nThe owner's answer, posted by %s on GitHub at %s: %s\n\n%s\n" %
-                (node, a.owner, c["created_at"], c["html_url"], text))
+                (node, a.owner, c["created_at"], c["url"], text))
     os.replace(os.path.join(d, "ANSWER.md.tmp"), os.path.join(d, "ANSWER.md"))
     a.answered = True
     what = None if node.startswith("PR #") else start_clause(a, node, answered=True)
     queue(a, rs, node, "answer:%s" % c["id"], "answer received" + (", " + what if what else ""),
-          "The owner's answer was recorded: %s" % c["html_url"])
+          "The owner's answer was recorded: %s" % c["url"])
     flush(a, rs)
     return what
 
@@ -1346,10 +1333,10 @@ def take_home_answers(a, rs, status_issue):
         st = seen.get(str(issue))
         for rid in list((st or {}).get("react", [])):  # a failed +1 is retried even when the unit is finished
             try:
-                gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, rid), {"content": "+1"})
+                a.forge.issue_react(comment=int(rid))
                 st["react"].remove(rid)
                 a.save()
-            except RuntimeError as e:
+            except forge.ForgeError as e:
                 a.errors.append(str(e))
         tasks = [t for t in tasks if not finished(a, t)]
         if issue == status_issue or not tasks:
@@ -1358,8 +1345,7 @@ def take_home_answers(a, rs, status_issue):
         floor = min([units[t]["first_at"] for t in tasks if units.get(t, {}).get("first_at")] or [""])
         try:
             since = (st or {}).get("since") or floor
-            comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
-                          (a.repo, issue, "&since=" + since if since else "")) or []
+            comments = a.forge.issue_comments(number=int(issue), **({"since": since} if since else {}))
             if st is None:
                 st = seen[str(issue)] = {"id": 0}
                 if not floor:  # nothing of ours was posted there yet: do not replay
@@ -1369,10 +1355,8 @@ def take_home_answers(a, rs, status_issue):
             for c in sorted(comments, key=lambda c: c["id"]):
                 if c["id"] <= st["id"]:
                     continue
-                user = c.get("user") or {}
-                text = c.get("body") or ""
-                if (user.get("type") != "Bot" and user.get("login") == a.owner and c.get("author_association") == "OWNER"
-                        and c.get("created_at", "") > floor):
+                text = c["body"]
+                if from_owner(a, c) and (c["created_at"] or "") > floor:
                     pending = [t for t in tasks if t in waiting(a.state)]
                     opened = [t for t in pending if (units.get(t, {}).get("qc") or {}).get("key") ==
                               "question:" + mtime_key(os.path.join(tdir(a.state, t), "QUESTION.md"))]
@@ -1396,11 +1380,11 @@ def take_home_answers(a, rs, status_issue):
                         node = m.group(1) if m and m.group(1) in cands else cands[0]
                         record_answer(a, rs, node, c, text)
                         try:
-                            gh("POST", "repos/%s/issues/comments/%s/reactions" % (a.repo, c["id"]), {"content": "+1"})
-                        except RuntimeError as e:
+                            a.forge.issue_react(comment=c["id"])
+                        except forge.ForgeError as e:
                             a.errors.append(str(e))
                             st.setdefault("react", []).append(c["id"])  # retried on the next run
-                st["id"], st["since"] = c["id"], c.get("created_at", "")
+                st["id"], st["since"] = c["id"], c["created_at"] or ""
                 a.save()
         except Exception as e:  # retried on the next run, from this comment on
             a.errors.append(str(e))
@@ -1408,16 +1392,14 @@ def take_home_answers(a, rs, status_issue):
 
 def take_answers(a, rs, issue):
     seen = rs.get("comment_id", 0)
-    comments = gh("GET", "repos/%s/issues/%s/comments?per_page=100%s" %
-                  (a.repo, issue, "&since=" + rs["comment_since"] if rs.get("comment_since") else "")) or []
+    comments = a.forge.issue_comments(number=int(issue), **({"since": rs["comment_since"]} if rs.get("comment_since") else {}))
     for c in sorted(comments, key=lambda c: c["id"]):
         if c["id"] <= seen:
             continue
         rs["comment_id"], rs["comment_since"] = c["id"], c["created_at"]
-        user = c.get("user") or {}
-        if user.get("type") == "Bot" or user.get("login") != a.owner or c.get("author_association") != "OWNER":
+        if not from_owner(a, c):
             continue
-        text = c.get("body") or ""
+        text = c["body"]
         open_q = waiting(a.state)
         m = ID_PREFIX.match(text)
         node = (m.group(1) if m.group(1) in open_q else None) if m else (open_q[0] if len(open_q) == 1 else None)
@@ -1492,7 +1474,7 @@ def post_questions(a, rs, issue):
 
 
 def pr_link(pr):
-    return pr.get("html_url") or "#%s" % pr.get("number")
+    return pr.get("url") or "#%s" % pr.get("number")
 
 
 def tsv(a, name):
@@ -1589,11 +1571,11 @@ def closing_candidates(a, rs):
 
 def reopen(a, rs, issue):
     """Make a unit's home issue open for its new question (closed by the loop, or by someone else)."""
-    cur = gh("GET", "repos/%s/issues/%s" % (a.repo, issue))
-    if cur.get("pull_request"):  # never reopen a PR: a closed PR home is skipped
+    cur = a.forge.issue_view(number=int(issue))
+    if cur["is_pr"]:  # never reopen a PR: a closed PR home is skipped
         return
-    if cur.get("state") == "closed":
-        gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "open"})
+    if cur["state"] == "closed":
+        a.forge.issue_reopen(number=int(issue))
     if (rs.get("closed") or {}).pop(str(issue), None) is not None:
         a.save()
 
@@ -1625,7 +1607,7 @@ def close_issues(a, rs):
             continue
         resolvers = {k for k, iss in res.items() if issue in iss} | {t for t in homed.get(issue, []) if NODE.match(t)}
         try:
-            if not c.get("commented") and gh("GET", "repos/%s/issues/%s" % (a.repo, issue)).get("state") == "closed":
+            if not c.get("commented") and a.forge.issue_view(number=int(issue))["state"] == "closed":
                 closed[str(issue)] = {"closed": True, "by_other": True}  # closed by someone already: left as they closed it
                 a.save()
                 continue
@@ -1635,7 +1617,7 @@ def close_issues(a, rs):
                 comment(a, issue, "**Stage:** merged, closing this issue\n\nMerged: %s. Closing this issue." % what)
                 c = closed[str(issue)] = {"commented": True}
                 a.save()
-            gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"state": "closed", "state_reason": "completed"})
+            a.forge.issue_close(number=int(issue))
             c["closed"] = True
             a.save()
         except Exception as e:
@@ -1698,35 +1680,28 @@ def post_prs(a, rs, pulls):
 
     def node_prs():
         for pr in pulls:
-            m = re.match(r"node/([A-Z][0-9][0-9])-", (pr.get("head") or {}).get("ref") or "")
+            m = re.match(r"node/([A-Z][0-9][0-9])-", pr.get("head") or "")
             if m and pr.get("number"):
                 yield m.group(1), pr
 
     def comments_of(pr, every=False):
         """The PR's comments since the cursor (every page on the seed run), in order."""
         since = (rs.get("pr_since") or {}).get(str(pr["number"]))
-        out, page = [], 1
-        while True:
-            got = gh("GET", "repos/%s/issues/%s/comments?per_page=100&page=%d%s" %
-                     (a.repo, pr["number"], page, "&since=" + since if since else "")) or []
-            out += got
-            if not every or len(got) < 100 or page >= 50:
-                break
-            page += 1
+        out = a.forge.issue_comments(number=pr["number"], **({"since": since} if since else {}))  # every page
         return sorted(out, key=lambda c: c["id"])
 
     def verdict(c):  # a quoted line ("> Fresh review (...)") is not a verdict
-        m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c.get("body") or "")
+        m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c["body"])
         return m and m.group(1)
 
     if not rs.get("pr_seed"):  # the open PRs already there
         try:
             for t, pr in node_prs():
-                keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head"]["sha"]] if (pr.get("head") or {}).get("sha") else [])
+                keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head_sha"]] if pr.get("head_sha") else [])
                 cs = comments_of(pr, True)
                 keys += ["review:%s" % c["id"] for c in cs if verdict(c)]
                 if cs:
-                    rs.setdefault("pr_since", {})[str(pr["number"])] = max(c.get("created_at", "") for c in cs)
+                    rs.setdefault("pr_since", {})[str(pr["number"])] = max(c["created_at"] or "" for c in cs)
                 done_of(t).extend(k for k in keys if k not in done_of(t))
             rs["pr_seed"] = True
         except Exception as e:
@@ -1750,10 +1725,10 @@ def post_prs(a, rs, pulls):
             continue
         n = pr["number"]
         post(t, "pr:%s" % n, "PR #%s open, final review running" % n, "The pull request: %s" % pr_link(pr))
-        sha = (pr.get("head") or {}).get("sha")
+        sha = pr.get("head_sha")
         if sha and "ci:" + sha not in done_of(t) and sha not in rs.get("ci_off", []):
             try:
-                runs = (gh("GET", "repos/%s/commits/%s/check-runs?per_page=100" % (a.repo, sha)) or {}).get("check_runs") or []
+                runs = a.forge.commit_checks(sha=sha)
                 if runs and all(r.get("status") == "completed" for r in runs):
                     bad = [r.get("name") or "?" for r in runs if r.get("conclusion") not in ("success", "neutral", "skipped")]
                     if bad:
@@ -1772,10 +1747,10 @@ def post_prs(a, rs, pulls):
                 v = verdict(c)
                 if v:
                     post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, v),
-                         "Verdict: %s%s" % (v, " (%s)" % c["html_url"] if c.get("html_url") else ""))
+                         "Verdict: %s%s" % (v, " (%s)" % c["url"] if c.get("url") else ""))
                     if "review:%s" % c["id"] not in done_of(t):
                         break  # its post failed: read from this comment again next run
-                rs.setdefault("pr_since", {})[str(n)] = c.get("created_at", "")
+                rs.setdefault("pr_since", {})[str(n)] = c["created_at"] or ""
         except Exception as e:
             a.errors.append(str(e))
     for t, key, kind, n in pr_events(a, rs):
@@ -1837,8 +1812,9 @@ def main():
         rs["qissue"] = {n: rs["issue"] for n in rs.get("questions") or {}} if rs.get("issue") else {}
     a.rs = rs
     a.pulls, pulls_err, a.pulls_ok = [], None, True
+    a.forge = forge.open(a.repo)
     try:
-        a.pulls = gh("GET", "repos/%s/pulls?state=open&per_page=100" % a.repo) or []
+        a.pulls = a.forge.pr_list(state="open")
     except Exception as e:  # raised after the work below, as before
         pulls_err, a.pulls_ok = e, False
     keep = (now() - timedelta(days=4)).strftime("%Y-%m-%d")
@@ -1862,7 +1838,7 @@ def main():
         rs["issue"] = issue
         rs.pop("body_hash", None)
         if "comment_id" not in rs:  # first run ever: do not replay old comments
-            old = gh("GET", "repos/%s/issues/%s/comments?per_page=100" % (a.repo, issue)) or []
+            old = a.forge.issue_comments(number=int(issue))
             rs["comment_id"] = max([c["id"] for c in old] or [0])
         save()
     for step in (finish_roll, run_pins):
@@ -1876,7 +1852,7 @@ def main():
         a.errors.append(str(e))
     prs = {}
     for pr in a.pulls:
-        m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"]["ref"])
+        m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"] or "")
         if m:
             prs[m.group(1)] = pr["number"]
     try:
@@ -1917,7 +1893,7 @@ def main():
     body = signed(a, body)
     h = hashlib.sha256(re.sub(r"_Updated .*?_", "", body).encode()).hexdigest()
     if h != rs.get("body_hash") or time.time() - rs.get("body_time", 0) >= 900:
-        gh("PATCH", "repos/%s/issues/%s" % (a.repo, issue), {"body": body})
+        a.forge.issue_edit(number=int(issue), body=body)
         rs["body_hash"], rs["body_time"] = h, time.time()
         save()
     return 3 if a.answered else (1 if a.errors else 0)

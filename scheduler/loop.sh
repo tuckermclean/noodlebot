@@ -66,8 +66,9 @@
 # https:// address with no whitespace, ( ) < > or ", the loop publishes the site (the condition above) and state/<name>/visibility
 # is public. Then report.py gets --site <address without the trailing /> and the session prompts render their @SITE@ line;
 # otherwise report.py gets no --site and the line is removed. An invalid address is one status line, `status site links off: <reason>`.
-# Reads ~/.config/noodlebot/token (GitHub App token for gh) and ~/.config/noodlebot/oauth-token
-# (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only).
+# Reads ~/.config/noodlebot/oauth-token
+# (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only). Every forge call goes through forge.py (G04), which
+# runs the token script ~/.config/noodlebot/token (named by NOODLEBOT_FORGE_TOKEN_SCRIPT, exported below) once per process; the loop holds no token.
 set -u -o pipefail
 repo=${1:-tuckermclean/themonolith}
 case $repo in */*) ;; *) echo "loop.sh: the argument is owner/name, not $repo" >&2; exit 2 ;; esac
@@ -79,6 +80,8 @@ clone=$root/repos/${repo#*/}
 wtroot=$root/worktrees/${repo#*/}
 state=$root/state/${repo#*/}
 oauth=$HOME/.config/noodlebot/oauth-token
+unset GH_TOKEN   # the forge's credential is the token script's (a caller's GH_TOKEN is used as given); only site.py publish gets one, per call
+export NOODLEBOT_FORGE_REPO=$repo NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token
 log=$state/status.log
 tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note=''
 # The runtime root must not lie inside a Git working tree (sessions would load its CLAUDE.md and
@@ -120,7 +123,10 @@ match_tpl=$(python3 -I -B "$nb/scheduler/harness.py" match-pattern '@UNIT@' 2>/d
 has_cap() { [[ $caps == *" $1 "* ]]; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
-[ -d "$clone/.git" ] || git clone -q "https://github.com/$repo" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
+# forge <args>: one forge.py call (a JSON document on stdout); fj <args>: a call whose answer is one JSON string, unquoted
+forge() { python3 -I "$here/forge.py" --repo "$repo" "$@"; }
+fj() { forge "$@" | sed -e 's/^"//' -e 's/"$//'; }
+[ -d "$clone/.git" ] || git clone -q "$(fj repo clone-url)" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
 
 # The loop's version and signature, once per start (a deploy's re-exec is a new start). Without
 # version.sh in the checkout, or if it fails, "unknown"; never a reason to stop.
@@ -205,25 +211,52 @@ install_hook
 
 # The label step, once per loop start (never on a tick): the labels the bot relies on exist in the
 # repository. A failure is logged and the loop goes on.
-# vis_ask <token>: record whether the repository is public, private or unknown in state/visibility.
+# vis_ask: record whether the repository is public, private or unknown in state/visibility.
 vis_ask() {
 	local v
-	case $(GH_TOKEN=$1 gh api "repos/$repo" --jq .private 2>>"$state/report.log") in
-	true) v=private ;; false) v=public ;; *) v=unknown ;;
+	case $(fj repo visibility 2>>"$state/report.log") in
+	private) v=private ;; public) v=public ;; *) v=unknown ;;
 	esac
 	echo "$v" >"$state/visibility.tmp" && mv -f "$state/visibility.tmp" "$state/visibility"
 }
 ensure_labels() {
-	local tok out
-	tok=$(~/.config/noodlebot/token "$repo" 2>>"$state/report.log") || { echo unknown >"$state/visibility"; say "label step: no GitHub App token; labels not checked"; return; }
-	vis_ask "$tok"
-	if out=$(GH_TOKEN=$tok python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
+	local out
+	# the token script must work (its token is not kept: each forge process runs it itself)
+	"$NOODLEBOT_FORGE_TOKEN_SCRIPT" "$repo" >/dev/null 2>>"$state/report.log" || { echo unknown >"$state/visibility"; say "label step: no GitHub App token; labels not checked"; return; }
+	vis_ask
+	if out=$(python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
 		[ -z "$out" ] || say "label step: $(echo "$out" | sed 's/^created label //' | paste -sd' ' | sed 's/^/created labels: /')"
 	else
 		say "label step failed (see report.log); carrying on"
 	fi
 }
 ensure_labels
+
+# pr_tsv <file> <state> <limit> <field>...: the forge's PR list as the loop's TSV (the file is emptied first, so a failed list leaves
+# it empty and report.py sees "unknown"). Each row is the line the forge gave (`line`), else built from the row's keys.
+pr_tsv() {
+	local out=$1 st=$2 lim=$3 f json a=()
+	shift 3
+	for f in "$@"; do a+=(--fields "$f"); done
+	: >"$out" || return 1
+	json=$(forge pr list --state "$st" --limit "$lim" "${a[@]}") || return 1
+	python3 -I -c '
+import json, sys
+def s(v):
+    return "null" if v is None else str(v).lower() if isinstance(v, bool) else str(v)
+kind = sys.argv[1]
+for r in json.loads(sys.stdin.read()):
+    if r.get("line") is not None:
+        print(r["line"]); continue
+    if kind == "merged":
+        c = [r["number"], r["head"]]
+    elif kind == "open":
+        c = [r["number"], r["head"], r["head_sha"], (r.get("author") or {}).get("is_bot"), r["mergeable"]]
+    else:
+        c = [r["number"], r["head"], r["closed_at"], r["state"] == "merged"]
+    print(" ".join(s(v) for v in c))
+' "$st" <<<"$json" >"$out"
+}
 
 # alive <pid> <key>: the process exists and is that task's session, whose prompt ends in <key>
 # (a node ID or an issue number), or is a node feedback prompt on node/<key>; guards against pid reuse.
@@ -408,7 +441,7 @@ triage_ended() {
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
 		git -C "$clone" worktree remove --force "$wtroot/issue-$n" 2>/dev/null
-		if GH_TOKEN=$tick_tok python3 -I "$here/issues.py" done --repo "$repo" --number "$n" 2>>"$state/report.log"; then
+		if python3 -I "$here/issues.py" done --repo "$repo" --number "$n" 2>>"$state/report.log"; then
 			say "$saw; triage of #$n done (rc 0); its label is now noodlebot-triaged"
 		else
 			echo "$(date -u +%FT%TZ) triage done, but swapping the label failed (report.log); remove the noodlebot label, then delete this file" >"$d/FAILED"
@@ -969,7 +1002,7 @@ report() {
 	[ "${SCHED_REPORT:-1}" = 1 ] || return 0
 	[ -n "$tick_tok" ] || return 0   # the tick had no token or did not reach GitHub
 	site_links
-	GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
+	timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
 		--version "$version" --signature "$signature" ${site_addr:+--site "$site_addr"} \
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
@@ -1365,21 +1398,18 @@ tick_run() {
 	# agents from it, so a stale checkout would offer them stale ones.
 	git -C "$clone" merge -q --ff-only origin/main 2>/dev/null || git -C "$clone" checkout -q --detach origin/main 2>/dev/null ||
 		note "the clone's checkout could not follow origin/main"
-	local tok
-	tick_tok=''
-	tok=$(~/.config/noodlebot/token "$repo") || { note "no GitHub App token; nothing started"; return; }
-	tick_tok=$tok
-	[ "$(cat "$state/visibility" 2>/dev/null)" != unknown ] || vis_ask "$tok"
-	# pipefail: a failed gh must stop the tick, never read as "no PRs".
-	if ! GH_TOKEN=$tok gh pr list --repo $repo --state merged --limit 500 --json number,headRefName \
-			-q '.[] | "\(.number) \(.headRefName)"' >"$state/merged-prs.tsv" ||
-		! GH_TOKEN=$tok gh pr list --repo $repo --state open --limit "$open_limit" --json number,headRefName,headRefOid,author,mergeable \
-			-q '.[] | "\(.number) \(.headRefName) \(.headRefOid) \(.author.is_bot) \(.mergeable)"' >"$state/open-prs.tsv" ||
-		! cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" ||
-		! open=$(ids <"$state/open-prs.txt") ||
-		! GH_TOKEN=$tok gh pr list --repo $repo --state closed --limit 500 --json number,headRefName,closedAt,mergedAt \
-			-q '.[] | "\(.number) \(.headRefName) \(.closedAt) \(.mergedAt != null)"' >"$state/closed-prs.tsv"; then
-		note "gh pr list failed; nothing started"; return
+	tick_tok=''   # set once the forge answered (or failed other than by its token): the report and feedback run then
+	local ferr=$state/forge.err
+	[ "$(cat "$state/visibility" 2>/dev/null)" != unknown ] || vis_ask
+	# pipefail: a failed list must stop the tick, never read as "no PRs". The first list also finds out whether the token script works.
+	if pr_tsv "$state/merged-prs.tsv" merged 500 number head 2>"$ferr"; then tick_tok=1; fi
+	if [ -z "$tick_tok" ] && grep -q 'token script' "$ferr" 2>/dev/null; then
+		cat "$ferr" >>"$state/report.log"; note "no GitHub App token; nothing started"; return
+	fi
+	if [ -z "$tick_tok" ] || ! { pr_tsv "$state/open-prs.tsv" open "$open_limit" number head head_sha author_is_bot mergeable &&
+			cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" && open=$(ids <"$state/open-prs.txt") &&
+			pr_tsv "$state/closed-prs.tsv" closed 500 number head closed_at merged; } 2>>"$ferr"; then
+		tick_tok=1; cat "$ferr" >&2; note "gh pr list failed; nothing started"; return
 	fi
 	merged=$(cut -d' ' -f2 "$state/merged-prs.tsv" | ids)
 	cut -d' ' -f1 "$state/merged-prs.tsv" >"$state/merged-prs.txt"
@@ -1424,7 +1454,7 @@ tick_run() {
 	# While the throttle holds, the labelled issues are still listed (issues.json stays current for the report's queued
 	# milestone); nothing starts because of it.
 	if { [ -z "$triaging" ] && ! full; } || [ "$throttled" = 1 ]; then
-		if n=$(GH_TOKEN=$tick_tok python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
+		if n=$(python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
 			if [ -z "$n" ] || full || [ -n "$triaging" ]; then :
 			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
 			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
@@ -1612,7 +1642,7 @@ pause() {
 	done
 }
 
-# fb_launch <token>: start feedback.py's listing run in the background (when none is in flight), on its own copy of the
+# fb_launch <flag>: (non-empty: the tick reached the forge) start feedback.py's listing run in the background (when none is in flight), on its own copy of the
 # tick's open-PR list. Its files are per run ($state/feedback-run.<loop pid>.<n>.*): stdout goes to a temp file renamed to .out
 # only when it exits 0, so a finished run without .out failed or was killed (the timeout). Files of an orphan of an earlier
 # loop have other names, are removed at start-up and never read. fb_stop: kill the run (the wrapper and its timeout/python
@@ -1623,7 +1653,7 @@ fb_launch() {
 	[ -z "$fb_pid" ] && [ "$fb_ok" = 1 ] && [ -n "$1" ] || return 0
 	fb_n=$((fb_n + 1)); fb_pre=$state/feedback-run.$$.$fb_n
 	cp -f "$state/open-prs.tsv" "$fb_pre.prs" || { rm -f "$fb_pre".*; return 0; }
-	( GH_TOKEN=$1 timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
+	( timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
 		--limit "$open_limit" --prs "$fb_pre.prs" >"$fb_pre.tmp" 2>>"$state/report.log" &&
 		mv -f "$fb_pre.tmp" "$fb_pre.out" || rm -f "$fb_pre.tmp" ) 9>&- &
 	fb_pid=$!

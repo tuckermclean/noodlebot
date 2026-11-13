@@ -3,6 +3,7 @@
 #   watch -n 10 -c ~/gitrepos/noodlebot/scheduler/status.sh [owner/name]
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P)
+here=$nb/scheduler
 repo=${1:-tuckermclean/themonolith}
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
 case $root in /*) ;; *) root=$PWD/$root ;; esac
@@ -19,7 +20,7 @@ fi
 hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
 if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi
 iss=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue"])' "$state/report.json" 2>/dev/null)
-[ -n "$iss" ] && echo "on GitHub: https://github.com/$repo/issues/$iss (reply there to answer a question)"
+[ -n "$iss" ] && echo "on GitHub: $(python3 -I "$here/forge.py" --repo "$repo" repo url --kind issue --ref "$iss" 2>/dev/null | tr -d '"') (reply there to answer a question)"
 [ "$state/report.log" -nt "$state/report.json" ] && echo "status issue: FAILING: $(tail -n 1 "$state/report.log" | cut -c1-140)"
 python3 -I -c '
 import json, sys, time
@@ -94,6 +95,9 @@ done
 [ $found = 0 ] && echo "   nothing"
 
 echo "-- open PRs:"
-GH_TOKEN=$(~/.config/noodlebot/token "$repo" 2>/dev/null) gh pr list --repo $repo --state open \
-	--json number,title,author -q '.[] | select(.author.login | test("dependabot") | not) | "   #\(.number) \(.title[0:90])"' 2>/dev/null ||
+# the forge's open-PR display form (a row's `line` is "   #N title"; dependabot's PRs left out); a failure, token script included, is "(gh unavailable)"
+prs=$(NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token python3 -I "$here/forge.py" --repo "$repo" pr list --state open \
+	--fields number --fields title 2>/dev/null) &&
+	python3 -I -c 'import json, sys
+for r in json.loads(sys.argv[1]): print(r["line"])' "$prs" 2>/dev/null ||
 	echo "   (gh unavailable)"

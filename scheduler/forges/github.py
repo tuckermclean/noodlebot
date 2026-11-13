@@ -39,6 +39,20 @@ def web_url(repo, kind, ref=None):
     return "https://github.com/" + repo + (tail % (ref,) if kind != "repo" else "")
 
 
+def commit_link(url, sha):
+    """The web link of a commit from an origin remote URL (https://github.com/o/n[.git], ssh://git@github.com/o/n,
+    git@github.com:o/n), or None when the URL is no GitHub remote of exactly owner/name (version.sh's signature link)."""
+    path = repo_of_remote(url)
+    return web_url(path, "commit", sha) if path and sha else None
+
+
+def repo_of_remote(url):
+    """owner/name of a GitHub origin remote URL (the forms of commit_link), else None."""
+    m = re.match(r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(.*)$", url or "", re.S)
+    path = m and (m[1][:-4] if m[1].endswith(".git") else m[1])
+    return path if path and re.fullmatch(r"[^/]+/[^/]+", path) else None
+
+
 def _token(repo):
     """(token, from the script): the caller's GH_TOKEN as given (None: leave the environment alone), else the script's.
     The script runs at most once per process and repository: its token is kept, and so is its failure (every later
