@@ -75,7 +75,7 @@ If the merge had conflicts, run the resolution review (below) on it before you c
 
 Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` needs a token with workflow permission; use the credential your run provides, transiently, or ask the owner to push the branch.
 
-**Files a merged spec PR carried.** When the `answered/` of the state directory the run names has merged spec PRs (`<ts>-SPEC-PR`), run the checker on each PR's merge commit: `python3 -I <plugin dir>/skills/node/check-spec-diff.py <sha>^ <sha>`. Every file outside the spec files that it prints as `NOT SPEC <path>` gets a row in the criterion → evidence table, naming the spec PR. The whole-node fresh reviewer gets those diffs too: it reviews them as part of the node.
+**Files a merged spec PR carried.** When the `answered/` of the state directory the run names has merged spec PRs (`<ts>-SPEC-PR`), run the checker on each PR's merge commit (`gh pr view <N> --json mergeCommit --jq .mergeCommit.oid`): `python3 -I <plugin dir>/skills/node/check-spec-diff.py <sha>^ <sha>`. Every file outside the spec files that it prints as `NOT SPEC <path>` gets a row in the criterion → evidence table, naming the spec PR. The whole-node fresh reviewer gets those diffs too: it reviews them as part of the node.
 
 Open the PR with `gh pr create`. The body has:
 - what the node delivers, in two or three sentences;
@@ -84,7 +84,7 @@ Open the PR with `gh pr create`. The body has:
 - the criterion → evidence table: criterion, test or command, where it ran (CI URL, or local for quick checks), result;
 - the RED → GREEN → review SHAs for each slice;
 - **Spec amendments** (step 7), each with its commit and reason, or "none";
-- files that a merged spec PR of this node carried outside the spec files (below), or "none";
+- files that a merged spec PR of this node carried outside the spec files (above), or "none";
 - deviations and open questions.
 
 **Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL, the evidence table and the diffs of any merged spec PR's files outside the spec files (above). It has seen none of the slice reviews. Post its verdict and findings on the PR with `gh pr comment <N> --body-file <file>`, headed `Fresh review (<verdict>)`. This is a comment, never an approval. On `request_changes`, give the findings to a new implementer (the slice retry budget applies), push, then run a new reviewer and post a new comment. On `test_spec_conflict`, go to step 7.
