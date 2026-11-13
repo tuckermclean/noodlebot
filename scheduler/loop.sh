@@ -1157,9 +1157,10 @@ tick() {
 # (the session was sent back for this PR already) is a FAILED. A repository without a **Spec files:** line gets one
 # log line only. No gh call; git runs only for a new head. A missing checker or an error is a note; retried next tick.
 spec_scope() {
-	local w d id n head chk=$here/../plugin/skills/node/check-spec-diff.py out rc paths
+	local w d id n head chk=$here/../plugin/skills/node/check-spec-diff.py out rc paths plist
 	for w in "$state"/node/*/WAITING-PR; do
 		[ -e "$w" ] || continue
+		[ "$w" -ot "$state/open-prs.tsv" ] || continue   # written after this tick's list: its head may be stale; next tick
 		d=$(dirname "$w"); id=$(basename "$d")
 		[ -e "$d/session.pid" ] || [ -e "$d/SPEC-PR-SCOPE" ] || [ -e "$d/FAILED" ] && continue
 		n=$(cat "$w" 2>/dev/null); [[ $n =~ ^[0-9]+$ ]] || continue
@@ -1172,13 +1173,14 @@ spec_scope() {
 		0) echo "$n $head" >"$d/SPEC-PR-CHECKED" ;;
 		1)
 			paths=$(printf '%s\n' "$out" | sed -n 's/^NOT SPEC //p')
+			plist=$(printf '%s\n' "$paths" | paste -sd' ')
 			if printf '%s\n' "$out" | sed -n 2p | grep -q '^from: default'; then
 				echo "$n $head" >"$d/SPEC-PR-CHECKED"
-				say "$id: spec PR #$n changes files outside the default spec files ($(echo $paths)), but the repository's AGENTS.md names no spec files (no **Spec files:** line); not sent back"
+				say "$id: spec PR #$n changes files outside the default spec files ($plist), but the repository's AGENTS.md names no spec files (no **Spec files:** line); not sent back"
 			elif grep -lxF "pr $n" "$d"/answered/*-SPEC-PR-SCOPE >/dev/null 2>&1; then
-				echo "$n $head" >"$d/SPEC-PR-CHECKED"
-				echo "spec PR #$n still changes files outside the spec files after it was sent back: $(echo $paths)" >"$d/FAILED"
-				say "$id: spec PR #$n still changes files outside the spec files after it was sent back: $(echo $paths); FAILED"
+				rm -f "$d/SPEC-PR-CHECKED"   # deleting FAILED checks the head again
+				echo "$(date -u +%FT%TZ) spec PR #$n still changes files outside the spec files after it was sent back: $plist; fix the PR, then delete this file to check it again" >"$d/FAILED"
+				say "$id: spec PR #$n still changes files outside the spec files after it was sent back: $plist; FAILED"
 			else
 				{ echo "pr $n"; echo "branch $(awk -v n="$n" '$1 == n { print $2; exit }' "$state/open-prs.tsv")"; echo "head $head"
 					printf '%s\n' "$paths" | sed 's/^/path /'; } >"$d/SPEC-PR-SCOPE" && echo "$n $head" >"$d/SPEC-PR-CHECKED"
