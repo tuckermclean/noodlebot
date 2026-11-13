@@ -217,4 +217,29 @@ if [ -n "$g02b_rn" ] && ! printf '%s\n' "$g02c_pre" | grep -Eqi 'push'; then ok 
 # ---------- G02 slice 3d (review3c finding 3): checks that only tighten the AC-5 check above ----------
 g02d_pv=$(printf '%s\n' "$g02b_rt" | sed 's/\. /.\n/g' | grep -F 'resolution review (')
 if printf '%s\n' "$g02d_pv" | grep -Eq 'posted on the pr|gh pr comment'; then ok "G02-AC-5: the sentence with 'Resolution review (' says the verdict is posted on the PR"; else bad "G02-AC-5: the sentence with 'Resolution review (' ('${g02d_pv:-none}') must say the verdict is posted on the PR"; fi
+
+# ---------- G05 slice 2: triage section 3 runs the spec checker before its push (G05-AC-4) ----------
+g05d="$tmp/G05"; mkdir -p "$g05d"
+# g05_win <file> <n> <ere>...: some window of <n> consecutive lines matches every ERE (case-insensitive, asterisks dropped).
+g05_win() {
+	g05_f=$1; g05_n=$2; shift 2
+	g05_pats=$(printf '%s\n' "$@")
+	awk -v n="$g05_n" -v pats="$g05_pats" '
+		BEGIN { k = split(pats, P, "\n") }
+		{ gsub(/\*/, ""); L[NR] = tolower($0) }
+		END {
+			for (i = 1; i <= NR; i++) {
+				w = ""; for (j = i; j < i + n && j <= NR; j++) w = w " " L[j]
+				good = 1; for (p = 1; p <= k; p++) if (w !~ P[p]) { good = 0; break }
+				if (good) exit 0
+			}
+			exit 1 }' "$g05_f"
+}
+# g05_sec <skill> <heading-regex> <out>: the lines from the first "## " heading matching the regex to the next "## " heading.
+g05_sec() { awk -v re="$2" '/^## / { if (on) exit; if (tolower($0) ~ re) on = 1 } on { print }' "$1" >"$3"; }
+g05_sec "$src/SKILL.md" '^## 3[.]' "$g05d/s3.md"
+if [ -s "$g05d/s3.md" ]; then ok "G05-AC-4: triage SKILL.md has a section 3"; else bad "G05-AC-4: triage SKILL.md has no '## 3.' section"; fi
+if g05_win "$g05d/s3.md" 6 'check-spec-diff' 'origin/main' 'before' 'push'; then ok "G05-AC-4: triage section 3 runs check-spec-diff.py against origin/main before it pushes"; else bad "G05-AC-4: triage section 3 does not run check-spec-diff.py against origin/main before the push"; fi
+if g05_win "$g05d/s3.md" 6 'check-spec-diff' 'exit(s)? (code )?1|exit 1|non-zero' 'stop'; then ok "G05-AC-4: triage section 3 stops when the checker exits 1"; else bad "G05-AC-4: triage section 3 does not stop when the checker exits 1"; fi
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
