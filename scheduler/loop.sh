@@ -773,6 +773,16 @@ start_feedback() {
 	[ "$t" != node ] || free_branch "$br" "$wt" "$saw; $name" 'pr-*' || return 1
 	released=$(sh "$here/release-markers.sh" "$d") || { fbsay "$name" "$saw; releasing $name's markers failed"; return 1; }
 	if [ -n "$released" ]; then set_starts "$d" 0; say "$saw; $name: $(echo "$released" | paste -sd';')"; fi
+	# A hand-over is due: no run is in flight while it happens (the run is stopped, which is not waiting on it, and a killed run
+	# hands nothing over), and N.md and N.next are put back from the copies made when the whole run was read, so a run killed
+	# between writing the two (or an orphan's write) cannot leave a FEEDBACK.md that `mark` does not record.
+	if [ -n "${fbnew[$n]:-}" ]; then
+		fb_stop
+		if [ -s "$state/feedback-carry/$n.md" ] && [ -s "$state/feedback-carry/$n.next" ]; then
+			cp -f "$state/feedback-carry/$n.next" "$state/feedback/$n.next" && cp -f "$state/feedback-carry/$n.md" "$state/feedback/$n.md" ||
+				{ fbsay "$name" "$saw; $name: restoring the feedback of PR #$n failed; not started"; return 1; }
+		else unset "fbnew[$n]"; fi
+	fi
 	# new items are handed over below and start the count again; a restart (pending FEEDBACK.md) keeps its 2-starts limit
 	if [ -z "${fbnew[$n]:-}" ] || [ ! -s "$state/feedback/$n.md" ]; then
 		[ "$(starts_of "$d")" -lt 2 ] || { fbsay "$name" "$saw; $name has feedback but has used 2 starts; not started"; return 1; }
@@ -821,6 +831,7 @@ start_feedback() {
 			if [ "$had" = 1 ]; then mv -f "$d/FEEDBACK.md.old" "$d/FEEDBACK.md"; else rm -f "$d/FEEDBACK.md"; fi
 			fbsay "$name" "$saw; $name: handing over the feedback of PR #$n failed; not started"; return 1
 		fi
+		unset "fbcarry[$n]" "fbnew[$n]"; rm -f "$state/feedback-carry/$n.md" "$state/feedback-carry/$n.next"
 		set_starts "$d" 0
 	fi
 	[ -s "$d/FEEDBACK.md" ] || { fbsay "$name" "$saw; $name: no FEEDBACK.md; feedback not started"; return 1; }
@@ -1281,7 +1292,7 @@ print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 listed=0 fb_failed=0 fb_pid='' open_limit=500 rels=()
+open='' merged='' tick_tok='' live=() throttled=0 listed=0 fb_failed=0 fb_pid='' fb_pre='' fb_n=0 fb_ok=0 open_limit=500 rels=()
 # tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
@@ -1330,6 +1341,7 @@ spec_scope() {
 }
 
 tick_run() {
+	fb_ok=0
 	date +%s >"$state/heartbeat.tmp" && mv "$state/heartbeat.tmp" "$state/heartbeat"
 	# RELEASE markers: taken (and removed) now, so they go also when the tick ends early; see the ready loop
 	rels=()
@@ -1424,22 +1436,33 @@ tick_run() {
 
 	# Feedback: the owner's new comments and reviews on the bot's open PRs (feedback.py reads and records nothing until a
 	# session starts). A unit with a FEEDBACK.md has feedback work too (a restart, or the start after an answer).
-	# feedback.py runs in the background (fb_launch, after the tick, one run at a time, never waited for): the tick reads
-	# only the output of a run that finished with exit 0 and was written whole (renamed into place), and reads it once.
-	# No run is in flight while the tick hands feedback over, so `mark` never races with a listing run. A failed or killed
-	# run is logged (once per streak) and changes nothing: nothing is handed over from it.
-	local fo='' fn fbr fbot fk fid fdir
-	if [ -n "$fb_pid" ] && { [ -e "$state/feedback.out" ] || [ -e "$state/feedback.fail" ]; }; then
+	# feedback.py runs in the background (fb_launch, once per loop iteration after `report`, only after a tick that got this
+	# far, i.e. with a good open-PR list, and on its own copy of that list; one run at a time, never waited for). The tick reads
+	# only a run that has finished (its process is gone) with its output renamed into place (exit 0), and reads it once. That
+	# whole result replaces fbcarry, the PRs with new feedback not yet handed over: a unit keeps being wanted (fbnew) every tick,
+	# also while a later run is in flight, until its feedback is handed over (start_feedback, which first stops any run in
+	# flight and puts back the PR's N.md/N.next from the copy made here) or a newer whole result replaces it. An answer recorded
+	# by `report` drops the run and the carry. A failed or killed run is logged (once per streak), hands nothing over and
+	# advances no record.
+	local fo='' fn fbr fbot fk fid fdir fk2
+	fb_ok=1
+	if [ -n "$fb_pid" ] && ! kill -0 "$fb_pid" 2>/dev/null; then
 		wait "$fb_pid" 2>/dev/null; fb_pid=''
-		if [ -e "$state/feedback.out" ]; then fo=$(cat "$state/feedback.out"); rm -f "$state/feedback.out"; fb_failed=0
+		if [ -e "$fb_pre.out" ]; then
+			fo=$(cat "$fb_pre.out"); fb_failed=0
+			fbcarry=(); rm -rf "$state/feedback-carry"; mkdir -p "$state/feedback-carry"
+			while read -r fn fbr; do
+				[[ $fn =~ ^[0-9]+$ ]] || continue
+				cp -f "$state/feedback/$fn.md" "$state/feedback/$fn.next" "$state/feedback-carry/" 2>/dev/null && fbcarry[$fn]=$fbr
+			done <<<"$fo"
 		else
-			rm -f "$state/feedback.fail"
 			# said once per run of failures (not note: that would break the idle loop's one-line-per-10-minutes rule)
 			[ "$fb_failed" = 1 ] || say "$saw; feedback.py failed (see report.log); carrying on"
 			fb_failed=1
 		fi
+		rm -f "$fb_pre".*
 	fi
-	while read -r fn fbr; do [[ $fn =~ ^[0-9]+$ ]] && fbnew[$fn]=$fbr; done <<<"$fo"
+	for fk2 in "${!fbcarry[@]}"; do fbnew[$fk2]=${fbcarry[$fk2]}; done
 	# a pending FEEDBACK.md whose PR is no longer open (merged or closed) and with no session running is finished:
 	# it moves into answered/ so that it blocks nothing and is not appended to later
 	for fdir in "$state"/node/*/ "$state"/pr/*/; do
@@ -1577,35 +1600,45 @@ pause() {
 	done
 }
 
-# fb_launch: start feedback.py's listing run in the background (when none is in flight and the tick has a token). Its
-# stdout goes to a temp file renamed to feedback.out only when it exits 0; otherwise feedback.fail says it failed or was
-# killed (the timeout). fb_stop: kill the run (the wrapper and its timeout/python only, never a session) and clear its marks.
-rm -f "$state/feedback.out" "$state/feedback.out.tmp" "$state/feedback.fail"
+# fb_launch <token>: start feedback.py's listing run in the background (when none is in flight), on its own copy of the
+# tick's open-PR list. Its files are per run ($state/feedback-run.<loop pid>.<n>.*): stdout goes to a temp file renamed to .out
+# only when it exits 0, so a finished run without .out failed or was killed (the timeout). Files of an orphan of an earlier
+# loop have other names, are removed at start-up and never read. fb_stop: kill the run (the wrapper and its timeout/python
+# only, never a session), reap it and clear its files.
+declare -A fbcarry=()   # PRs with new feedback from the last whole run, not yet handed over (PR -> branch)
+rm -rf "$state"/feedback-run.* "$state/feedback-carry"
 fb_launch() {
-	[ -z "$fb_pid" ] && [ -n "$tick_tok" ] || return 0
-	( GH_TOKEN=$tick_tok timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
-		--prs "$state/open-prs.tsv" >"$state/feedback.out.tmp" 2>>"$state/report.log" &&
-		mv -f "$state/feedback.out.tmp" "$state/feedback.out" || { rm -f "$state/feedback.out.tmp"; : >"$state/feedback.fail"; } ) 9>&- &
+	[ -z "$fb_pid" ] && [ "$fb_ok" = 1 ] && [ -n "$1" ] || return 0
+	fb_n=$((fb_n + 1)); fb_pre=$state/feedback-run.$$.$fb_n
+	cp -f "$state/open-prs.tsv" "$fb_pre.prs" || { rm -f "$fb_pre".*; return 0; }
+	( GH_TOKEN=$1 timeout 120 python3 -I "$here/feedback.py" --repo "$repo" --state "$state" --owner "${repo%%/*}" \
+		--prs "$fb_pre.prs" >"$fb_pre.tmp" 2>>"$state/report.log" &&
+		mv -f "$fb_pre.tmp" "$fb_pre.out" || rm -f "$fb_pre.tmp" ) 9>&- &
 	fb_pid=$!
 }
 fb_stop() {
 	[ -n "$fb_pid" ] || return 0
 	local kids; kids=$(pgrep -P "$fb_pid" 2>/dev/null)
 	kill $fb_pid $kids 2>/dev/null; wait "$fb_pid" 2>/dev/null; fb_pid=''
-	rm -f "$state/feedback.out" "$state/feedback.out.tmp" "$state/feedback.fail"
+	rm -f "$fb_pre".*
 }
 trap fb_stop EXIT
+# a signal ends the loop once the foreground command running at that moment ends (bash runs the trap after it): the exit trap then stops the run
 trap 'exit 143' TERM INT HUP
 
 while :; do
 	requests
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
-	fb_launch
 	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
+	ftok=$tick_tok
 	report; rc=$?; tick_tok=''
+	if [ $rc = 3 ]; then   # an answer was recorded: a listing made before it existed is never handed over
+		fb_stop; fbcarry=(); rm -rf "$state/feedback-carry"
+		publish; continue
+	fi
+	[ "$fb_ok" = 1 ] && fb_launch "$ftok"; ftok=''
 	publish
-	[ $rc = 3 ] && continue
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] &&
 		{ "$here/deploy.sh" --runtime-changed "$nb" "$start_head" 9>&-; [ $? != 1 ]; }; then
