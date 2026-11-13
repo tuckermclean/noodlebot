@@ -515,9 +515,11 @@ class Backend:
 
     # --- checks, CI, site, push ---
     def commit_checks(self, sha):
-        got = self._api("GET", self._r("/commits/%s/check-runs?per_page=100" % sha)) or {}
+        got = self._api("GET", self._r("/commits/%s/check-runs?per_page=100" % sha))
+        if not isinstance(got, dict) or not isinstance(got.get("check_runs"), list):
+            raise forge.ForgeError("the answer for the checks of %s does not parse: no check_runs list" % sha)
         return [{"name": o.get("name"), "status": o.get("status"), "conclusion": o.get("conclusion")}
-                for o in got.get("check_runs") or []]
+                for o in got["check_runs"]]
 
     def ci_runs(self, workflow, sha, branch=None, event=None):
         extra = ["-f", "head_sha=" + sha]
@@ -525,10 +527,12 @@ class Backend:
             extra += ["-f", "event=" + event]
         if branch:
             extra += ["-f", "branch=" + branch]
-        got = self._api("GET", self._r("/actions/workflows/%s/runs" % workflow), None, extra) or {}
+        got = self._api("GET", self._r("/actions/workflows/%s/runs" % workflow), None, extra)
+        if not isinstance(got, dict) or not isinstance(got.get("workflow_runs"), list):
+            raise forge.ForgeError("the answer for the runs of %s does not parse: no workflow_runs list" % workflow)
         return [{"id": o["id"], "status": o.get("status"), "conclusion": o.get("conclusion"),
                  "head_sha": o.get("head_sha"), "created_at": o.get("created_at")}
-                for o in got.get("workflow_runs") or [] if isinstance(o, dict)]
+                for o in got["workflow_runs"] if isinstance(o, dict)]
 
     def site_publish(self, target, input):
         self._gh(["api", "-X", "PATCH", "gists/" + target, "--input", input], None, "gh api -X PATCH gists",

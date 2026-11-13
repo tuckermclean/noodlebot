@@ -697,8 +697,9 @@ def find_issue(a, rs):
             return i["number"], True
     try:
         a.forge.label_ensure(name=LABEL, color="5319e7", description="Kept up to date by the noodlebot scheduler")
-    except forge.ForgeError:
-        raise  # an existing label is no failure: label ensure says so itself
+    except forge.ForgeError as e:
+        if e.status != 422:  # an existing label (422) is no failure
+            raise
     issue = a.forge.issue_create(title="noodlebot log " + today, labels=[LABEL],
                                  body="Starting up..." + ("\n\nPrevious day's log: #%s" % prev if prev else ""))
     rs["log"], rs["issue"] = {"date": today, "issue": issue["number"], "prev": prev, "overview": False}, issue["number"]

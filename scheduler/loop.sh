@@ -212,18 +212,21 @@ install_hook
 # The label step, once per loop start (never on a tick): the labels the bot relies on exist in the
 # repository. A failure is logged and the loop goes on.
 # vis_ask: record whether the repository is public, private or unknown in state/visibility.
+# The token script is not probed on its own: its failure is read from the stderr of the first forge process ("token script").
 vis_ask() {
-	local v
-	case $(fj repo visibility 2>>"$state/report.log") in
+	local v ve
+	ve=$(mktemp) || ve=/dev/null
+	case $(fj repo visibility 2>"$ve") in
 	private) v=private ;; public) v=public ;; *) v=unknown ;;
 	esac
+	cat "$ve" >>"$state/report.log" 2>/dev/null
 	echo "$v" >"$state/visibility.tmp" && mv -f "$state/visibility.tmp" "$state/visibility"
+	[ "$ve" = /dev/null ] || { grep -q 'token script' "$ve" 2>/dev/null && v=notoken; rm -f "$ve"; }
+	[ "$v" != notoken ]
 }
 ensure_labels() {
 	local out
-	# the token script must work (its token is not kept: each forge process runs it itself)
-	"$NOODLEBOT_FORGE_TOKEN_SCRIPT" "$repo" >/dev/null 2>>"$state/report.log" || { echo unknown >"$state/visibility"; say "label step: no GitHub App token; labels not checked"; return; }
-	vis_ask
+	vis_ask || { say "label step: no GitHub App token; labels not checked"; return; }
 	if out=$(python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
 		[ -z "$out" ] || say "label step: $(echo "$out" | sed 's/^created label //' | paste -sd' ' | sed 's/^/created labels: /')"
 	else
@@ -1012,7 +1015,7 @@ cleanup_merged() {
 # failures go to report.log only: the scheduler never depends on it.
 report() {
 	[ "${SCHED_REPORT:-1}" = 1 ] || return 0
-	[ -n "$tick_tok" ] || return 0   # the tick had no token or did not reach GitHub
+	[ -n "$tick_forge" ] || return 0   # the tick had no token or did not reach GitHub
 	site_links
 	timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
 		--version "$version" --signature "$signature" ${site_addr:+--site "$site_addr"} \
@@ -1347,7 +1350,7 @@ print(" ".join((c + " " + t).split()))' "$f" 2>/dev/null) && [ -n "$out" ]; then
 }
 
 # live: "<pid> <key>" for every running session (a node ID, or an issue number for a triage).
-open='' merged='' tick_tok='' live=() throttled=0 listed=0 fb_failed=0 fb_pid='' fb_pre='' fb_n=0 fb_ok=0 open_limit=500 rels=()
+open='' merged='' tick_forge='' live=() throttled=0 listed=0 fb_failed=0 fb_pid='' fb_pre='' fb_n=0 fb_ok=0 open_limit=500 rels=()
 # tick: one pass (tick_run). A pass that ends before queue_round listed its units (a failed fetch, token, gh
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
@@ -1410,7 +1413,7 @@ tick_run() {
 	# agents from it, so a stale checkout would offer them stale ones.
 	git -C "$clone" merge -q --ff-only origin/main 2>/dev/null || git -C "$clone" checkout -q --detach origin/main 2>/dev/null ||
 		note "the clone's checkout could not follow origin/main"
-	tick_tok=''   # set once the forge answered (or failed other than by its token): the report and feedback run then
+	tick_forge=''   # set once the forge answered (or failed other than by its token): the report and feedback run then
 	local ferr=$state/forge.err
 	[ "$(cat "$state/visibility" 2>/dev/null)" != unknown ] || vis_ask
 	# pipefail: a failed list must stop the tick, never read as "no PRs". The lists' process also finds out whether the token script works.
@@ -1418,9 +1421,9 @@ tick_run() {
 		if grep -q 'token script' "$ferr" 2>/dev/null; then
 			cat "$ferr" >>"$state/report.log"; note "no GitHub App token; nothing started"; return
 		fi
-		tick_tok=1; cat "$ferr" >&2; note "gh pr list failed; nothing started"; return
+		tick_forge=1; cat "$ferr" >&2; note "gh pr list failed; nothing started"; return
 	fi
-	tick_tok=1
+	tick_forge=1
 	if ! cut -d' ' -f2 "$state/open-prs.tsv" >"$state/open-prs.txt" || ! open=$(ids <"$state/open-prs.txt"); then
 		note "gh pr list failed; nothing started"; return
 	fi
@@ -1683,13 +1686,13 @@ while :; do
 	[ -e ~/STOP ] || [ -e ~/STOP-"${repo#*/}" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
-	ftok=$tick_tok
-	report; rc=$?; tick_tok=''
+	fforge=$tick_forge
+	report; rc=$?; tick_forge=''
 	if [ $rc = 3 ]; then   # an answer was recorded: a listing made before it existed is never handed over
 		fb_stop; fbcarry=(); rm -rf "$state/feedback-carry"
 		publish; continue
 	fi
-	[ "$fb_ok" = 1 ] && fb_launch "$ftok"; ftok=''
+	[ "$fb_ok" = 1 ] && fb_launch "$fforge"; fforge=''
 	publish
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] &&

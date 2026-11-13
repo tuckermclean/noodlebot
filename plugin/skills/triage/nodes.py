@@ -26,6 +26,7 @@ import yaml
 def open_forge():
     """The forge of $NOODLEBOT_FORGE_REPO, else of `origin`; ValueError when none can be opened (callers say "unknown")."""
     here = os.path.dirname(os.path.realpath(__file__))
+    sys.dont_write_bytecode = True  # the checkout the forge module lives in gets no __pycache__
     forge_py = os.environ.get("NOODLEBOT_FORGE")  # the session's forge CLI: its folder holds the module
     sys.path.insert(0, os.path.dirname(forge_py) if forge_py else os.path.join(here, "..", "..", "..", "scheduler"))
     try:

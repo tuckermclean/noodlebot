@@ -154,6 +154,6 @@ TESTS = \
 	container/container.test.sh
 
 test:
-	sh scheduler/runtests.sh $(TESTS)
+	env -u NOODLEBOT_FORGE -u NOODLEBOT_FORGE_REPO -u NOODLEBOT_FORGE_TOKEN_SCRIPT sh scheduler/runtests.sh $(TESTS)
 
 .PHONY: test

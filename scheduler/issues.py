@@ -86,7 +86,11 @@ def main():
             print(first)
     else:
         f = forge.open(a.repo)
-        f.label_ensure(name=DONE, color="c5def5", description="Triaged by the noodlebot (see its comment)")
+        try:
+            f.label_ensure(name=DONE, color="c5def5", description="Triaged by the noodlebot (see its comment)")
+        except forge.ForgeError as e:
+            if e.status != 422:  # an existing label (422) is no failure
+                raise
         f.label_add(number=a.number, name=DONE)
         try:
             f.label_remove(number=a.number, name=LABEL)

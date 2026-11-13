@@ -13,7 +13,6 @@ Backends are classes `Backend(path)` with methods named <family>_<op> (`-` -> `_
 `fake` is scheduler/testdata/forge/fake.py. The capability rule lives here: an operation whose capability the backend lacks
 raises CapabilityOff before the backend is called. The operations and result shapes are documented in forges/README.md.
 """
-import argparse
 import builtins
 import importlib.util
 import json
@@ -185,12 +184,13 @@ class _Usage(Exception):
     pass
 
 
-class _Parser(argparse.ArgumentParser):
-    def error(self, message):
-        raise _Usage(message)
-
-
 def _op_parser(op):
+    import argparse   # only the CLI parses arguments: a library user (every tick's python process) does not pay for it
+
+    class _Parser(argparse.ArgumentParser):
+        def error(self, message):
+            raise _Usage(message)
+
     p = _Parser(prog="forge.py " + op, add_help=False, allow_abbrev=False)
     for name, kind in _ARGS[op].items():
         flag = "--" + name.replace("_", "-")

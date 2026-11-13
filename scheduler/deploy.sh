@@ -38,7 +38,7 @@
 # CI gate (D07): when the first line of $HOME/.config/noodlebot/deploy-ci, "<owner/name> <workflow file> <branch>", is
 # present, a runtime range never runs make test; the push runs of that workflow on that branch for the new origin/main sha are
 # read (forge.py ci runs: the workflow's runs for head_sha, event=push, branch; the token from
-# $HOME/.config/noodlebot/token <owner/name> on each run, never printed; a 30 s timeout) and the newest run decides. Missing or
+# $HOME/.config/noodlebot/token <owner/name> on each run, never printed; a 60 s timeout) and the newest run decides. Missing or
 # empty file: the gate is off and make test runs as above. A malformed line deploys nothing, runs no make test, prints one
 # stderr line "deploy-ci: <reason>" and exits 2. A non-runtime range is fast-forwarded without CI as above.
 #  - completed, success: the smoke check (below), then the deploy, with "deployed <old>..<new> (version <v>) after CI:
@@ -214,12 +214,14 @@ ci_waiting() {
 ci_read() {
 	ci_status=; ci_concl=; ci_id=; ci_err=
 	ci_dir=$(mktemp -d) || { ci_err="mktemp failed"; return 1; }
-	# the forge's ci runs (its GitHub backend runs the token script once; no token is held here), bounded by 30 s
-	NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 30 python3 -I "$forge_py" --repo "$ci_repo" ci runs \
+	# the forge's ci runs (its GitHub backend runs the token script once; no token is held here), bounded by 60 s (the token script's own limit
+	# is 30 s, so its timeout is reported by the CLI before this one fires); always the token script, never a caller's GH_TOKEN
+	env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 60 python3 -I "$forge_py" --repo "$ci_repo" ci runs \
 		--workflow "$ci_wf" --sha "$new" --event push --branch "$ci_branch" >"$ci_dir/out" 2>"$ci_dir/err" 9>&-
 	ci_rc=$?
 	if [ "$ci_rc" != 0 ]; then
 		if grep -q 'token script' "$ci_dir/err" 2>/dev/null; then ci_err="token script failed or timed out for $ci_repo"
+		elif grep -q 'does not parse' "$ci_dir/err" 2>/dev/null; then ci_err="gh gave an answer that does not parse"
 		else ci_err="gh failed or timed out (status $ci_rc): $(head -n 1 "$ci_dir/err" 2>/dev/null | cut -c1-200)"; fi
 		rm -rf "$ci_dir"
 		return 1
@@ -282,7 +284,7 @@ smoke_check() {
 	fi
 	(
 		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
-		unset NOODLEBOT_DATA
+		unset NOODLEBOT_DATA NOODLEBOT_FORGE NOODLEBOT_FORGE_REPO NOODLEBOT_FORGE_TOKEN_SCRIPT
 		PYTHONDONTWRITEBYTECODE=1; export PYTHONDONTWRITEBYTECODE
 		exec timeout 60 sh -c '
 			cd "$1" || exit 2
@@ -341,7 +343,7 @@ smoke_check() {
 run_make() {
 	(
 		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
-		unset NOODLEBOT_DATA
+		unset NOODLEBOT_DATA NOODLEBOT_FORGE NOODLEBOT_FORGE_REPO NOODLEBOT_FORGE_TOKEN_SCRIPT
 		if [ -n "${2:-}" ]; then
 			TEST_JOBS=1; export TEST_JOBS
 			exec timeout 600 make -C "$scratch/wt" test TESTS="$2" TEST_JOBS=1 >"$1" 2>&1 9>&-
