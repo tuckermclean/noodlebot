@@ -128,7 +128,7 @@ _PARTS = {
     "prlines": (),
     "review": ("pr_comments", "pr_reviews", "pr_line_comments", "pr_reply", "pr_resolve_thread", "_paginate"),
     "issue": ("issue_list", "issue_view", "issue_comments", "issue_create", "issue_edit", "issue_comment", "issue_close",
-              "issue_reopen", "issue_pin", "issue_unpin", "issue_events", "issue_react", "_pin", "label_list",
+              "issue_reopen", "issue_pin", "issue_unpin", "issue_events", "issue_react", "_pin", "_seen", "label_list",
               "label_ensure", "label_add", "label_remove", "_labels", "commit_checks"),
     "misc": ("ci_runs", "site_publish", "branch_push"),
 }

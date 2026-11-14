@@ -1,9 +1,20 @@
-"""Part of the GitHub backend (forges/github.py): issues, labels and a commit's check runs (report.py, issues.py, labels.py).
+"""Part of the GitHub backend (forges/github.py): issues, labels and a commit's check runs (report.py, issues.py,
+labels.py).
 
 Not a module of its own: github.py compiles this file into its own namespace the first time a call needs one of these
 operations (so a process compiles only the families it uses), and the functions named in _register at the end become
 methods of its Backend. Everything github.py defines is in scope here; `gh` itself is run only by github.py's _run.
 """
+
+_NODE_IDS = {}  # (repository, issue number) -> the node id of an issue this process has read (for pin and unpin)
+
+
+def _seen(self, o):
+    """An issue object as read; its node id is kept, so a pin of an issue this process listed, viewed or created needs
+    no second read of it (main's report.py took the node id from the issue it had)."""
+    if isinstance(o, dict) and o.get("node_id") and isinstance(o.get("number"), int):
+        _NODE_IDS[(self.repo, o["number"])] = o["node_id"]
+    return o
 
 
 def issue_list(self, label, state="open", oldest_first=False):
@@ -12,7 +23,7 @@ def issue_list(self, label, state="open", oldest_first=False):
     head = "issues?labels=%s&state=%s" % (quote(label, safe="-_.,"), state)
     if oldest_first:
         got = self._api("GET", self._r("/" + head + "&per_page=50&sort=created&direction=asc")) or []
-        return [_issue(o) for o in got]
+        return [_issue(self._seen(o)) for o in got]
     out, page = [], 1
     while page <= 50:
         got = self._api("GET", self._r("/%s&per_page=100%s" % (head, "&page=%d" % page if page > 1 else ""))) or []
@@ -20,11 +31,11 @@ def issue_list(self, label, state="open", oldest_first=False):
         if len(got) < 100:
             break
         page += 1
-    return [_issue(o) for o in out]
+    return [_issue(self._seen(o)) for o in out]
 
 
 def issue_view(self, number):
-    return _issue(self._obj("GET", self._r("/issues/%d" % int(number))))
+    return _issue(self._seen(self._obj("GET", self._r("/issues/%d" % int(number)))))
 
 
 def issue_comments(self, number, since=None):
@@ -41,7 +52,7 @@ def issue_comments(self, number, since=None):
 
 
 def issue_create(self, title, body, labels=None):
-    return _issue(self._obj("POST", self._r("/issues"), self._set(title=title, body=body, labels=labels)))
+    return _issue(self._seen(self._obj("POST", self._r("/issues"), self._set(title=title, body=body, labels=labels))))
 
 
 def issue_edit(self, number, title=None, body=None):
@@ -62,7 +73,8 @@ def issue_reopen(self, number):
 
 
 def _pin(self, number, op):
-    node = (self._api("GET", self._r("/issues/%d" % int(number))) or {}).get("node_id")
+    node = _NODE_IDS.get((self.repo, int(number))) or \
+        (self._api("GET", self._r("/issues/%d" % int(number))) or {}).get("node_id")
     if not node:
         raise forge.ForgeError("issue %s: no node id in the answer" % number)
     self._graphql("mutation($id:ID!){%sIssue(input:{issueId:$id}){issue{number}}}" % op, node)
@@ -142,5 +154,5 @@ def commit_checks(self, sha):
 
 
 _register(issue_list, issue_view, issue_comments, issue_create, issue_edit, issue_comment, issue_close, issue_reopen,
-          _pin, issue_pin, issue_unpin, issue_events, issue_react, _labels, label_list, label_ensure, label_add, label_remove,
-          commit_checks)
+          _pin, _seen, issue_pin, issue_unpin, issue_events, issue_react, _labels, label_list, label_ensure, label_add,
+          label_remove, commit_checks)

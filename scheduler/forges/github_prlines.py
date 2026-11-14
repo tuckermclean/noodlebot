@@ -1,4 +1,5 @@
-"""Part of the GitHub backend (forges/github.py): the `gh pr list ... -q` line forms of the loop and status.sh, and their line parsers.
+"""Part of the GitHub backend (forges/github.py): the `gh pr list ... -q` line forms of the loop and status.sh, and
+their line parsers.
 
 Not a module of its own: github.py compiles this file into its own namespace the first time a call needs one of these
 operations (so a process compiles only the families it uses), and the functions named in _register at the end become

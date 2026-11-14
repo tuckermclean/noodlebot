@@ -1,4 +1,5 @@
-"""Part of the GitHub backend (forges/github.py): a workflow's runs for a commit, the site's publishing, a branch's push.
+"""Part of the GitHub backend (forges/github.py): a workflow's runs for a commit, the site's publishing, a branch's
+push.
 
 Not a module of its own: github.py compiles this file into its own namespace the first time a call needs one of these
 operations (so a process compiles only the families it uses), and the functions named in _register at the end become
