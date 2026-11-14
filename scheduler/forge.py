@@ -259,6 +259,19 @@ def main(argv):
         if argv == ["caps"]:
             print(json.dumps(sorted(open(repo).capabilities)))
             return 0
+        if argv == ["runtime"]:  # loop.sh: <runtime name> TAB <owner> of the repository
+            fname, path = parse(repo if repo is not None else os.environ.get("NOODLEBOT_FORGE_REPO"))
+            if fname == "github":
+                owner, _, rname = path.partition("/")
+            else:
+                rname, owner = os.path.basename(path.rstrip("/")), ""
+                try:
+                    with builtins.open(os.path.join(path, "forge.json"), encoding="utf-8") as f:
+                        owner = str(json.load(f).get("owner") or "")
+                except (OSError, ValueError, AttributeError):
+                    pass
+            print("%s\t%s" % (rname, owner))
+            return 0
         if len(argv) < 2 or "%s %s" % (argv[0], argv[1]) not in _ARGS:
             raise _Usage("usage: forge.py [--repo SPEC] <family> <op> [--opt value ...] | ops | caps")
         op = "%s %s" % (argv[0], argv[1])
