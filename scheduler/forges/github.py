@@ -20,7 +20,6 @@ import re
 import subprocess
 import sys
 import threading
-from urllib.parse import quote
 
 import forge
 
@@ -30,6 +29,11 @@ _TOKEN_LOCK = threading.Lock()  # the script runs at most once per repository, a
 TIMEOUT = 60
 PATCH_TIMEOUT = 120  # the gist PATCH of a site publish (site.py's own)
 CAPABILITIES = frozenset(forge.CAPABILITIES)
+
+
+def quote(s, safe=""):
+    from urllib.parse import quote as q   # imported when first needed: most calls never build a quoted path
+    return q(s, safe=safe)
 
 
 def web_url(repo, kind, ref=None):

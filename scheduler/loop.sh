@@ -230,16 +230,15 @@ install_hook
 # vis_ask: record whether the repository is public, private or unknown in state/visibility.
 # The token script is not probed on its own: its failure is read from the stderr of the first forge process ("token script").
 vis_ask() {
-	local v ve
+	local v out rc
 	forge_has visibility || { echo unknown >"$state/visibility.tmp" && mv -f "$state/visibility.tmp" "$state/visibility"; return 0; }
-	ve=$(mktemp) || ve=/dev/null
-	case $(fj repo visibility 2>"$ve") in
-	private) v=private ;; public) v=public ;; *) v=unknown ;;
+	out=$(forge repo visibility 2>&1); rc=$?   # one process, no temp file: stdout is the JSON string, a failure's one stderr line goes to report.log
+	case $rc:$out in
+	0:'"private"') v=private ;; 0:'"public"') v=public ;; *) v=unknown ;;
 	esac
-	cat "$ve" >>"$state/report.log" 2>/dev/null
+	[ "$rc" = 0 ] || [ -z "$out" ] || echo "$out" >>"$state/report.log" 2>/dev/null
 	echo "$v" >"$state/visibility.tmp" && mv -f "$state/visibility.tmp" "$state/visibility"
-	[ "$ve" = /dev/null ] || { grep -q 'token script' "$ve" 2>/dev/null && v=notoken; rm -f "$ve"; }
-	[ "$v" != notoken ]
+	[[ $out != *'token script'* ]]
 }
 ensure_labels() {
 	local out
@@ -257,7 +256,7 @@ ensure_labels
 # (report.py then sees "unknown") and stops the rest; each row is the line the forge gave (`line`), else built from the row's keys.
 pr_tsvs() {
 	python3 -I -c '
-import json, os, sys
+import json, os, sys, threading
 here, repo, state, open_limit = sys.argv[1:5]
 sys.dont_write_bytecode = True   # the checkout gets no __pycache__
 sys.path.insert(0, here)
@@ -276,12 +275,25 @@ def row(kind, r):
     return " ".join(s(v) for v in c)
 try:
     f = forge.open(repo)
-    for kind, limit, fields in (("merged", 500, ["number", "head"]),
-                                ("open", int(open_limit), ["number", "head", "head_sha", "author_is_bot", "mergeable"]),
-                                ("closed", 500, ["number", "head", "closed_at", "merged"])):
+    lists = (("merged", 500, ["number", "head"]),
+             ("open", int(open_limit), ["number", "head", "head_sha", "author_is_bot", "mergeable"]),
+             ("closed", 500, ["number", "head", "closed_at", "merged"]))
+    got = [None] * len(lists)
+    def ask(i):   # the three lists are asked for at once (they wait on the network); the files are written in order below
+        try:
+            got[i] = f.pr_list(state=lists[i][0], limit=lists[i][1], fields=lists[i][2])
+        except Exception as e:
+            got[i] = e
+    ts = [threading.Thread(target=ask, args=(i,)) for i in range(len(lists))]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    for (kind, limit, fields), rows in zip(lists, got):
         path = os.path.join(state, kind + "-prs.tsv")
         open(path, "w").close()
-        rows = f.pr_list(state=kind, limit=limit, fields=fields)
+        if isinstance(rows, Exception):
+            raise rows
         with open(path, "w") as out:
             out.write("".join(row(kind, r) + "\n" for r in rows))
 except Exception as e:

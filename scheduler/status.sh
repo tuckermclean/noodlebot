@@ -7,7 +7,9 @@ here=$nb/scheduler
 repo=${1:-tuckermclean/themonolith}
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
 case $root in /*) ;; *) root=$PWD/$root ;; esac
-rt=$(python3 -I "$here/forge.py" --repo "$repo" runtime 2>/dev/null | cut -f1); rt=${rt:-${repo#*/}}   # the runtime name, as loop.sh
+# the runtime name, as loop.sh: owner/name needs no process (forge.py's `runtime` gives the same); another forge's spec asks forge.py
+ghrepo='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+if [[ $repo =~ $ghrepo ]]; then rt=${repo#*/}; else rt=$(python3 -I "$here/forge.py" --repo "$repo" runtime 2>/dev/null | cut -f1); rt=${rt:-${repo#*/}}; fi
 state=$root/state/$rt
 wtroot=$root/worktrees/$rt
 
@@ -97,8 +99,10 @@ done
 
 echo "-- open PRs:"
 # the forge's open-PR display form (a row's `line` is "   #N title"; dependabot's PRs left out); a failure, token script included, is "(gh unavailable)"
-prs=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I "$here/forge.py" --repo "$repo" pr list --state open \
-	--fields number --fields title 2>/dev/null) &&
-	python3 -I -c 'import json, sys
-for r in json.loads(sys.argv[1]): print(r["line"])' "$prs" 2>/dev/null ||
+prs=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I -c 'import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import forge
+print("\n".join(r["line"] for r in forge.open(sys.argv[2]).pr_list(state="open", fields=["number", "title"])))' "$here" "$repo" 2>/dev/null) &&
+	{ [ -z "$prs" ] || echo "$prs"; } ||
 	echo "   (gh unavailable)"

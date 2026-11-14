@@ -115,9 +115,18 @@ def _load(name):
 
 
 def _load_file(name):
+    """Compile a backend once per machine, not once per process: its bytecode is cached under the user's cache folder
+    (never inside the checkout: a deployed checkout gets no __pycache__)."""
     spec = importlib.util.spec_from_file_location("forge_backend_" + name, BACKENDS[name])
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    keep = sys.pycache_prefix, sys.dont_write_bytecode
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    if keep[0] is None and os.path.isabs(cache):
+        sys.pycache_prefix, sys.dont_write_bytecode = os.path.join(cache, "noodlebot", "pycache"), False
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.pycache_prefix, sys.dont_write_bytecode = keep
     return mod
 
 
@@ -206,6 +215,8 @@ def _op_parser(op):
 
 
 def _kwargs(op, argv):
+    if not _ARGS[op] and not argv:
+        return {}   # no options to parse: argparse is not loaded
     ns = vars(_op_parser(op).parse_args(argv))
     kw = {}
     for name, kind in _ARGS[op].items():
