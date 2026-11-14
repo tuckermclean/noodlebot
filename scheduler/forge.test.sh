@@ -236,6 +236,27 @@ ok "G04-AC-4: nodes.py uses the CLI's JSON (open #7, merged #3)" sh -c 'grep -q 
 npy bad G04_CLI_FAIL=1
 ok "G04-AC-4: nodes.py with the CLI failing: state ? for every node, the unknown message, exit 1" sh -c 'test "$(cat "$1/np/bad.rc")" = 1 && grep -q "^A01 .* ? " "$1/np/bad.out" && grep -q "unknown" "$1/np/bad.out" && test -s "$1/np/bad.log"' sh "$G"
 
+# forge-cli.sh with neither GH_TOKEN, NOODLEBOT_FORGE_TOKEN_SCRIPT nor an executable ~/.config/noodlebot/token: no token
+# script is named, the call runs with no token (gh uses its own login) and succeeds (G04-AC-3, change 2's order)
+mkdir -p "$G/home-notoken/.config/noodlebot"
+cred wrapnone HOME="$G/home-notoken" -- sh "$fcli" --repo acme/widgets label list
+ok "G04-AC-3: forge-cli.sh with no token script anywhere (no variable, no ~/.config/noodlebot/token) exits 0" test "$(cat "$G/wrapnone.rc")" = 0
+ok "G04-AC-3: forge-cli.sh with no token script anywhere runs gh with no token" test "$(calls_tokens | sort -u)" = none
+printf '#!/bin/sh\necho should-not-run >&2\nexit 1\n' >"$G/home-notoken/.config/noodlebot/token"
+cred wrapnx HOME="$G/home-notoken" -- sh "$fcli" --repo acme/widgets label list
+ok "G04-AC-3: forge-cli.sh with a non-executable ~/.config/noodlebot/token runs gh with no token and exits 0" test "$(cat "$G/wrapnx.rc")" = 0 -a "$(calls_tokens | sort -u)" = none
+
+# nodes.py over $NOODLEBOT_FORGE with no $NOODLEBOT_FORGE_REPO: the repository is origin's, passed as --repo
+# (the CLI's folder holds forge.py, which nodes.py reads repo_of_remote from)
+mkdir -p "$G/np/cli2"
+cp "$G/np/cli/forge-cli.sh" "$G/np/cli2/forge-cli.sh"
+cp "$src/forge.py" "$G/np/cli2/forge.py"
+[ ! -d "$src/forges" ] || cp -R "$src/forges" "$G/np/cli2/forges"
+"$real_git" -C "$G/np/repo" remote add origin git@github.com:someone/thing.git
+( cd "$G/np/repo" && env -u NOODLEBOT_FORGE_REPO NOODLEBOT_FORGE="$G/np/cli2/forge-cli.sh" G04_CLI_LOG="$G/np/origin.log" \
+	G04_PRS="$G/np/prs.json" python3 -I "$src/../plugin/skills/triage/nodes.py" >"$G/np/origin.out" 2>"$G/np/origin.err" )
+ok "G04-AC-4: nodes.py with no NOODLEBOT_FORGE_REPO passes origin's repository: argv has --repo someone/thing and pr list" sh -c 'test -f "$1" && grep -q -e "--repo someone/thing" "$1" && grep -q "pr list" "$1"' sh "$G/np/origin.log"
+
 if [ "$fails" -ne 0 ]; then
 	echo "forge tests: $fails failed"
 	exit 1
