@@ -308,6 +308,76 @@ ck "S08-AC-3: cut line then resume: the rebuild holds both start events (2)" sh 
 ck "S08-AC-3: cut line then resume: the rebuilt events.jsonl equals the live one (whole file)" cmp "$tmp/live-cut/events.jsonl" "$tmp/rb-cut/events.jsonl"
 ck "S08-AC-3: cut line then resume: the resumed result is in the live events" grep -q '"cost": *5.5' "$tmp/live-cut/events.jsonl"
 
+echo "== S09-AC-2: the small-model, no-tools, one-turn start (Claude Code over the fake claude, and the fake harness)"
+# THE CONTRACT (S09 slice 1; brief "Harness (slice 1)"). The capability is NOT in capabilities() (its lists are pinned above).
+#   harness.small_start(state_dir, prompt) -> int     one small-model, no-tools, one-turn session in the foreground: the raw
+#       stream goes to stdout (the caller redirects it to <state_dir>/session.jsonl), events to <state_dir>/events.jsonl as
+#       start() does; returns the session's exit code
+#   harness.small_capable() -> bool                   true when the backend has the operation
+#   harness.py small-start <state-dir> <prompt-file>  exit code = the session's (the file's text is the prompt)
+#   harness.py small                                  exit 0 and the small model's name on stdout when capable; exit 1 when not
+#   Claude Code: claude -p <prompt> --model haiku --tools "" --max-turns 1 (and --strict-mcp-config, --disable-slash-commands,
+#       stream-json, --verbose); no --plugin-dir, no --permission-mode, no --resume; the credential as start() has it.
+#   Fake: replays FAKE_HARNESS_SMALL_SCRIPT (else FAKE_HARNESS_SCRIPT) with exit code FAKE_HARNESS_SMALL_RC (default 0), and logs
+#       a line "small <state_dir> <prompt or its first line>" to FAKE_HARNESS_LOG; FAKE_HARNESS_SMALL=0: not capable (default: capable).
+s9=$tmp/S09; mkdir -p "$s9/wt" "$s9/home/.config/noodlebot" "$s9/bin"
+unset FAKE_HARNESS_SMALL FAKE_HARNESS_SMALL_SCRIPT FAKE_HARNESS_SMALL_RC FAKE_HARNESS_LOG FAKE_CLAUDE_REC FAKE_CLAUDE_STREAM \
+	FAKE_CLAUDE_STDERR FAKE_CLAUDE_RC
+printf '%s\n' "$tok" >"$s9/home/.config/noodlebot/oauth-token"
+ln -s "$src/testdata/lib/fake-claude.sh" "$s9/bin/claude"
+printf '%s\n' "Decide what each item is. ITEM-MARK-S09" "second line" >"$s9/prompt.md"
+# small9 <backend> <state dir> <exit code> [env...]: harness.py small-start as the pickup run runs it (stdout to session.jsonl)
+small9() {
+	b=$1 d=$2 rc=$3; shift 3; mkdir -p "$d"
+	env HOME="$s9/home" PATH="$s9/bin:$PATH" ${b:+SCHED_HARNESS=$b} FAKE_CLAUDE_REC="$s9/rec" FAKE_CLAUDE_STREAM="$fx/normal.jsonl" \
+		FAKE_CLAUDE_RC="$rc" GH_TOKEN=ghx ANTHROPIC_API_KEY=ak "$@" \
+		timeout -k 1 10 python3 -I "$src/harness.py" small-start "$d" "$s9/prompt.md" >>"$d/session.jsonl" 2>>"$d/session.stderr"
+	SMALL_RC=$?
+}
+# opt <argv file> <flag>: the argument after the flag (one argument per line; an empty one is an empty line)
+opt() { awk -v f="$2" 'NR > 1 && p { print; exit } $0 == f { p = 1 }' "$1"; }
+
+small9 "" "$s9/cc" 3
+awk '/^--- call/ { i++; next } i == 1' "$s9/rec/argv" >"$s9/cc.argv" 2>/dev/null
+ck "S09-AC-2: Claude Code small-start exits with claude's exit code" test "$SMALL_RC" = 3
+ck "S09-AC-2: Claude Code small-start calls claude -p with the prompt file's text" sh -c "
+	grep -qx -- '-p' '$s9/cc.argv' && grep -qxF -- 'Decide what each item is. ITEM-MARK-S09' '$s9/cc.argv' && grep -qx -- 'stream-json' '$s9/cc.argv'"
+ck "S09-AC-2: Claude Code small-start names the small model (--model haiku)" sh -c "[ \"\$(awk 'NR > 1 && p { print; exit } \$0 == \"--model\" { p = 1 }' '$s9/cc.argv')\" = haiku ]"
+ck "S09-AC-2: Claude Code small-start allows no tool (--tools followed by an empty argument)" sh -c "[ \"\$(grep -c '^--tools\$' '$s9/cc.argv')\" = 1 ] && [ -z \"\$(awk 'NR > 1 && p { print; exit } \$0 == \"--tools\" { p = 1 }' '$s9/cc.argv')\" ] && awk '\$0 == \"--tools\" { getline; if (\$0 == \"\") ok = 1 } END { exit !ok }' '$s9/cc.argv'"
+ck "S09-AC-2: Claude Code small-start is one turn (--max-turns 1)" sh -c "[ \"\$(awk 'NR > 1 && p { print; exit } \$0 == \"--max-turns\" { p = 1 }' '$s9/cc.argv')\" = 1 ]"
+ck "S09-AC-2: Claude Code small-start has no plugin, no permission mode, no resume, no system prompt file" sh -c "
+	! grep -qxE -- '--plugin-dir|--permission-mode|--resume|--dangerously-skip-permissions|--allowedTools|--allowed-tools' '$s9/cc.argv'"
+ck "S09-AC-2: Claude Code small-start: the raw stream is on stdout (session.jsonl is the claude stream)" cmp "$s9/cc/session.jsonl" "$fx/normal.jsonl"
+ck "S09-AC-2: Claude Code small-start: events.jsonl holds the stream's events" sub "$fx/normal.events" "$s9/cc/events.jsonl"
+ck "S09-AC-2: Claude Code small-start: the credential reached claude, the forge and API tokens did not" sh -c "
+	grep -qx 'CLAUDE_CODE_OAUTH_TOKEN=$tok' '$s9/rec/env' && ! grep -E '^(GH_TOKEN|ANTHROPIC_API_KEY)=.' '$s9/rec/env'"
+for p in "$s9/cc/events.jsonl" "$s9/cc/session.jsonl" "$s9/cc/session.stderr" "$s9/rec/argv"; do
+	ck "S09-AC-2: the credential is not in $(basename "$p") (small-start, Claude Code)" nolines "$tok" "$p"
+done
+ck "S09-AC-2: harness.py small (Claude Code) exits 0 and names the small model (haiku)" sh -c "[ \"\$(HOME='$s9/home' python3 -I '$src/harness.py' small 2>/dev/null)\" != '' ] && HOME='$s9/home' python3 -I '$src/harness.py' small 2>/dev/null | grep -qi haiku"
+ck "S09-AC-2: the small-model start is not a capability of capabilities() (Claude Code)" sh -c "[ \"$(caps)\" = bg-wait,resume,usage ]"
+
+# fake harness
+fl=$s9/fake.log
+small9 fake "$s9/fk" 9 FAKE_HARNESS_LOG="$fl" FAKE_HARNESS_SMALL_SCRIPT="$fx/resumed-1.events" FAKE_HARNESS_SMALL_RC=2 FAKE_HARNESS_SCRIPT="$fx/normal.events"
+ck "S09-AC-2: fake small-start exits with FAKE_HARNESS_SMALL_RC" test "$SMALL_RC" = 2
+ck "S09-AC-2: fake small-start replays FAKE_HARNESS_SMALL_SCRIPT (not FAKE_HARNESS_SCRIPT) into events.jsonl" sub "$fx/resumed-1.events" "$s9/fk/events.jsonl"
+ck "S09-AC-2: fake small-start logs a small line with the state dir" grep -q "^small $s9/fk " "$fl"
+small9 fake "$s9/fk2" 9 FAKE_HARNESS_LOG="$fl" FAKE_HARNESS_SCRIPT="$fx/resumed-1.events" FAKE_HARNESS_RC=5
+ck "S09-AC-2: fake small-start without a small script falls back to FAKE_HARNESS_SCRIPT" sub "$fx/resumed-1.events" "$s9/fk2/events.jsonl"
+ck "S09-AC-2: fake small-start exit code defaults to 0 (not FAKE_HARNESS_RC)" test "$SMALL_RC" = 0
+ck "S09-AC-2: fake small-start is not a start: no start line in the log for these calls" sh -c "! grep -q '^start ' '$fl' && [ \"\$(grep -c '^small ' '$fl')\" = 2 ]"
+ck "S09-AC-2: fake small-start logs the prompt (its first line or the file)" grep -qE "^small $s9/fk (.*Decide what each item is|.*prompt\.md)" "$fl"
+smallcap() { env "$@" HOME="$s9/home" python3 -I "$src/harness.py" small >"$s9/small.out" 2>&1; echo $?; }
+ck "S09-AC-2: harness.py small (fake, default) is capable (exit 0)" sh -c "[ \"$(smallcap SCHED_HARNESS=fake)\" = 0 ]"
+ck "S09-AC-2: harness.py small (fake, FAKE_HARNESS_SMALL=0) is not capable (exit 1)" sh -c "[ \"$(smallcap SCHED_HARNESS=fake FAKE_HARNESS_SMALL=0)\" = 1 ]"
+ck "S09-AC-2: harness.py small (fake, FAKE_HARNESS_SMALL=1) is capable (exit 0)" sh -c "[ \"$(smallcap SCHED_HARNESS=fake FAKE_HARNESS_SMALL=1)\" = 0 ]"
+ck "S09-AC-2: capabilities (fake with FAKE_HARNESS_SMALL=0) are still bg-wait,resume,usage" sh -c "[ \"$(caps SCHED_HARNESS=fake FAKE_HARNESS_SMALL=0)\" = bg-wait,resume,usage ]"
+pycap() { env "$@" HOME="$s9/home" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.small_capable())' "$src" 2>/dev/null; }
+ck "S09-AC-2: harness.small_capable() is True for Claude Code and the default fake, False for FAKE_HARNESS_SMALL=0" sh -c "
+	[ \"$(pycap SCHED_HARNESS=claude-code)\" = True ] && [ \"$(pycap SCHED_HARNESS=fake)\" = True ] && [ \"$(pycap SCHED_HARNESS=fake FAKE_HARNESS_SMALL=0)\" = False ]"
+ck "S09-AC-2: harness.small_start is a function of harness.py" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; sys.exit(0 if callable(getattr(harness, "small_start", None)) else 1)' "$src"
+
 echo
 [ "$fails" = 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1

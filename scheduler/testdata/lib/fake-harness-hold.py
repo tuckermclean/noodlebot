@@ -65,3 +65,9 @@ def resume(worktree, state_dir, session_id, prompt):
     rc = real.resume(worktree, state_dir, session_id, prompt)
     _question(state_dir)
     return rc
+
+# S09: the small-model start and its capability, when the real fake has them
+if hasattr(real, "small_start"):
+    small_start = real.small_start
+if hasattr(real, "small_capable"):
+    small_capable = real.small_capable
