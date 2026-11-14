@@ -32,6 +32,7 @@ def branch_push(self, path, branch):
     helper = '!f() { echo username=x-access-token; echo "password=$NOODLEBOT_PUSH_TOKEN"; }; f'
     cmd = ["git", "-C", path]
     env, tok = self._env()
+    env = dict(os.environ if env is None else env)
     env.pop("GH_TOKEN", None)  # git gets the token only as the variable its credential helper reads
     if tok:
         env["NOODLEBOT_PUSH_TOKEN"] = tok
