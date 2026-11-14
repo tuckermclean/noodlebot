@@ -8,7 +8,8 @@ is `testdata/forge/fake.py` (a folder of JSON files). A forge is named `owner/na
 `fake:<state folder>`; any other `<x>:...` is an unknown forge (exit 2).
 
 Python: `f = forge.open(spec)`, then `f.<family>_<op>(**kwargs)`. CLI: `python3 -I scheduler/forge.py [--repo SPEC]
-<family> <op> [--opt value ...]` prints one JSON document. Exit 1: the call failed (one line on stderr, nothing on
+<family> <op> [--opt value ...]` prints one JSON document (the CLI's code is `forges/cli.py`, compiled into forge.py when
+it runs: a process that uses only the Python interface does not compile it). Exit 1: the call failed (one line on stderr, nothing on
 stdout, never an empty result); 2: usage error or unknown forge; 3: the forge lacks a capability
 (`forge <name> lacks <capability>`). Capabilities: `visibility` (repo visibility), `pin` (issue pin, issue unpin),
 `resolve_threads` (pr resolve-thread), `site` (site publish); every other operation is always available, and the core
