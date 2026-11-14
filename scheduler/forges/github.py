@@ -33,8 +33,15 @@ PATCH_TIMEOUT = 120  # the gist PATCH of a site publish (site.py's own)
 CAPABILITIES = frozenset(forge.CAPABILITIES)
 
 
+_URL_SAFE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-~")  # urllib.parse's always-safe
+
+
 def quote(s, safe=""):
-    from urllib.parse import quote as q   # imported when first needed: most calls never build a quoted path
+    """urllib.parse.quote(s, safe=safe). A string of safe characters only (a label name) is the quoted form itself, as
+    quote gives it, without importing urllib.parse (with its ipaddress, a large share of a report.py run's start-up)."""
+    if type(s) is str and type(safe) is str and safe.isascii() and all(c in _URL_SAFE or c in safe for c in s):
+        return s
+    from urllib.parse import quote as q   # imported when first needed: most calls never quote a character
     return q(s, safe=safe)
 
 
@@ -175,11 +182,14 @@ class Backend:
 
     # --- plumbing ---
     def _env(self):
-        env = dict(os.environ)
+        """(the child's environment, whichever token the child gets, for scrubbing its error text). Without a token of
+        the script's the environment is None: the child inherits this process's own (no copy per call)."""
         tok = _token(self.repo)
-        if tok:
-            env["GH_TOKEN"] = tok
-        return env, env.get("GH_TOKEN")  # whichever token the child gets, for scrubbing its error text
+        if not tok:
+            return None, os.environ.get("GH_TOKEN")
+        env = dict(os.environ)
+        env["GH_TOKEN"] = tok
+        return env, tok
 
     def _scrub(self, text, tok):
         text = " ".join((text or "").split())
