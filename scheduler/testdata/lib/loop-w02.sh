@@ -10,6 +10,7 @@ mkdir -p "$nbw/scheduler" "$nbw/plugin" "$W02/bin"
 cp "$src"/loop.sh "$src"/ready.py "$src"/release-markers.sh "$src"/run-session.sh "$src"/unattended.md \
 	"$src"/issues.py "$src"/unattended-triage.md "$src"/status.sh "$src"/usage.py "$nbw/scheduler/"
 [ -f "$src/harness.py" ] && { mkdir -p "$nbw/scheduler/harnesses"; cp "$src/harness.py" "$nbw/scheduler/"; cp "$src"/harnesses/*.py "$nbw/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$nbw/scheduler/forges"; cp "$src/forge.py" "$nbw/scheduler/"; cp "$src"/forges/*.py "$nbw/scheduler/forges/"; }
 [ -f "$src/labels.py" ] && cp "$src/labels.py" "$nbw/scheduler/"
 [ -f "$src/site-schema.json" ] && cp "$src/site-schema.json" "$nbw/scheduler/"
 [ -f "$src/site.py" ] && cp "$src/site.py" "$nbw/scheduler/site-real.py"

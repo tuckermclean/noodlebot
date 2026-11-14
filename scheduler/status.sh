@@ -3,23 +3,49 @@
 #   watch -n 10 -c ~/gitrepos/noodlebot/scheduler/status.sh [owner/name]
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P)
+here=$nb/scheduler
 repo=${1:-tuckermclean/themonolith}
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
 case $root in /*) ;; *) root=$PWD/$root ;; esac
-state=$root/state/${repo#*/}
-wtroot=$root/worktrees/${repo#*/}
+# the runtime name, as loop.sh: owner/name needs no process (forge.py's `runtime` gives the same); another forge's spec asks forge.py
+ghrepo='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+if [[ $repo =~ $ghrepo ]]; then rt=${repo#*/}; else rt=$(python3 -I "$here/forge.py" --repo "$repo" runtime 2>/dev/null | cut -f1); rt=${rt:-${repo#*/}}; fi
+state=$root/state/$rt
+wtroot=$root/worktrees/$rt
 
 echo "== $(date '+%F %T %Z')"
 if ! flock -n "$state/loop.lock" true 2>/dev/null; then echo "loop:    running; stop with: touch ~/STOP"
-else echo "loop:    NOT running; start with: tmux new -d -s sched-${repo#*/} $nb/scheduler/loop.sh $repo"; fi
+else echo "loop:    NOT running; start with: tmux new -d -s sched-$rt $nb/scheduler/loop.sh $repo"; fi
 if ! flock -n "$state/loop.lock" true 2>/dev/null; then
 	v=$(cat "$state/version" 2>/dev/null); [ -n "$v" ] && echo "version: $v"
 fi
 [ -e ~/STOP ] && echo "         ~/STOP exists: the loop exits within seconds"
 hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
 if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi
-iss=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue"])' "$state/report.json" 2>/dev/null)
-[ -n "$iss" ] && echo "on GitHub: https://github.com/$repo/issues/$iss (reply there to answer a question)"
+# One forge process for the status issue's web link (its number from report.json) and the open PRs shown at the end: its
+# first line is "-" (no status issue) or "+<link>", then the forge's open-PR display form (a row's `line` is "   #N title";
+# dependabot's PRs left out); it exits non-zero when the list failed (the token script included): "(gh unavailable)".
+# It runs with -S, as the loop's forge processes: it needs only the standard library.
+fout=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I -S -c 'import json, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+try:
+    iss = str(json.load(open(sys.argv[3]))["issue"]).rstrip("\n")
+except Exception:
+    iss = ""
+import forge
+link = ""
+if iss:
+    try:
+        link = json.dumps(forge.web_url(sys.argv[2], "issue", iss)).replace("\"", "")
+    except Exception:
+        pass
+print("+" + link if iss else "-", flush=True)
+print("\n".join(r["line"] for r in forge.open(sys.argv[2]).pr_list(state="open", fields=["number", "title"])))' "$here" "$repo" "$state/report.json" 2>/dev/null)
+frc=$?
+fhead=${fout%%$'\n'*}
+case $fout in *$'\n'*) prs=${fout#*$'\n'} ;; *) prs= ;; esac
+[ "${fhead:0:1}" = + ] && echo "on GitHub: ${fhead#+} (reply there to answer a question)"
 [ "$state/report.log" -nt "$state/report.json" ] && echo "status issue: FAILING: $(tail -n 1 "$state/report.log" | cut -c1-140)"
 python3 -I -c '
 import json, sys, time
@@ -94,6 +120,7 @@ done
 [ $found = 0 ] && echo "   nothing"
 
 echo "-- open PRs:"
-GH_TOKEN=$(~/.config/noodlebot/token "$repo" 2>/dev/null) gh pr list --repo $repo --state open \
-	--json number,title,author -q '.[] | select(.author.login | test("dependabot") | not) | "   #\(.number) \(.title[0:90])"' 2>/dev/null ||
+# the open PRs the forge process above listed
+[ "$frc" = 0 ] &&
+	{ [ -z "$prs" ] || echo "$prs"; } ||
 	echo "   (gh unavailable)"

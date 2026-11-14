@@ -1,0 +1,52 @@
+[
+ {
+  "workflow": "ci.yml",
+  "branch": "main",
+  "event": "push",
+  "id": 9001,
+  "status": "completed",
+  "conclusion": "failure",
+  "head_sha": "c0ffee0000000000000000000000000000000000",
+  "created_at": "2026-05-03T10:00:00Z"
+ },
+ {
+  "workflow": "ci.yml",
+  "branch": "main",
+  "event": "push",
+  "id": 9002,
+  "status": "completed",
+  "conclusion": "success",
+  "head_sha": "c0ffee0000000000000000000000000000000000",
+  "created_at": "2026-05-03T11:00:00Z"
+ },
+ {
+  "workflow": "ci.yml",
+  "branch": "main",
+  "event": "push",
+  "id": 9003,
+  "status": "queued",
+  "conclusion": null,
+  "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+  "created_at": "2026-05-03T12:00:00Z"
+ },
+ {
+  "workflow": "ci.yml",
+  "branch": "feat/two",
+  "event": "pull_request",
+  "id": 9004,
+  "status": "completed",
+  "conclusion": "success",
+  "head_sha": "c0ffee0000000000000000000000000000000000",
+  "created_at": "2026-05-03T13:00:00Z"
+ },
+ {
+  "workflow": "other.yml",
+  "branch": "main",
+  "event": "push",
+  "id": 9005,
+  "status": "completed",
+  "conclusion": "success",
+  "head_sha": "c0ffee0000000000000000000000000000000000",
+  "created_at": "2026-05-03T14:00:00Z"
+ }
+]

@@ -47,6 +47,7 @@ setup() {
 	mkdir -p "$HOME/.config/noodlebot" "$nb/scheduler"
 	[ -e "$src/loops.sh" ] && cp "$src/loops.sh" "$nb/scheduler/"
 	[ -f "$src/harness.py" ] && { mkdir -p "$nb/scheduler/harnesses"; cp "$src/harness.py" "$nb/scheduler/"; cp "$src"/harnesses/*.py "$nb/scheduler/harnesses/"; }
+	[ -f "$src/forge.py" ] && { mkdir -p "$nb/scheduler/forges"; cp "$src/forge.py" "$nb/scheduler/"; cp "$src"/forges/*.py "$nb/scheduler/forges/"; }
 	[ "${2:-}" = nolist ] || printf 'o/alpha\no/beta\n' >"$HOME/.config/noodlebot/repos"
 	cat >"$nb/scheduler/loop.sh" <<'EOT'
 #!/bin/sh

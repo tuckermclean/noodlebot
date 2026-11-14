@@ -50,6 +50,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
 sys.path.insert(0, HERE)
 import harness   # the one interface to the agent harness (S08)
+import forge   # the one interface to the code forge (G04)
 URL = re.compile(r"https?://[^\s<>\"')\]]+")
 PATH = re.compile(r"(?<![\w.~-])/[\w.@+-]+(?:/[\w.@+-]*)+")
 TOKEN = re.compile(r"(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|sk-ant-)[\w-]*")
@@ -359,7 +360,7 @@ def repo_file(root, repo, running, hold, home):
             home_issue = (read(os.path.join(d, "issue"), 200) or "").split()
             num = int(home_issue[0]) if home_issue and home_issue[0].isdigit() else status_issue
             if num is not None:
-                o["url"] = "https://github.com/%s/%s/issues/%d" % (owner, name, num)
+                o["url"] = forge.web_url(repo, "issue", num)
         elif has("QUESTION.md"):
             o["state"] = "answered"
         elif has("WAITING-PR") and (read(os.path.join(d, "WAITING-PR"), 32) or "").strip() not in merged_prs:
@@ -496,7 +497,7 @@ def triage(root, repo):
         elif has("QUESTION.md"):
             state = "answered"
         w = (read(os.path.join(d, "WAITING-PR"), 32) or "").strip()
-        out.append({"repo": repo, "number": n, "url": "https://github.com/%s/%s/issues/%d" % (owner, name, n),
+        out.append({"repo": repo, "number": n, "url": forge.web_url(repo, "issue", n),
                     "state": state, "text": txt, "spec_pr": int(w) if w.isdigit() else None})
     return out
 
@@ -609,21 +610,21 @@ def build(a):
 
 # ---- publish
 
-def gh_patch(gist, body_path):
-    """One PATCH of the gist; None on a 2xx answer, else the one line to log (never the response body)."""
-    cmd = ["gh", "api", "-X", "PATCH", "gists/" + gist, "--input", body_path]
+def forge_patch(a, gist, body_path):
+    """One publish of the gist through the forge; None on success, else the one line to log (never the response body)."""
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, timeout=120)
-    except (OSError, subprocess.SubprocessError) as e:
+        spec = os.environ.get("NOODLEBOT_FORGE_REPO") or read_repos(a.repos)[0]
+        forge.open(spec).site_publish(target=gist, input=body_path)
+    except forge.ForgeError as e:
+        if e.status == 404:
+            return "publish failed (404): gist %s not found or not writable with this token" % gist
+        if e.status:
+            return "publish failed (HTTP %s)" % e.status
+        m = re.search(r"\(exit (\d+)\)", str(e))
+        return "publish failed (no answer: %s)" % ("exit " + m.group(1) if m else str(e).rsplit(": ", 1)[-1][:60])
+    except (IndexError, ValueError) as e:  # no repository to name the forge by, or an unknown forge
         return "publish failed (no answer: %s)" % type(e).__name__
-    if r.returncode == 0:
-        return None
-    m = re.search(r"\bHTTP (\d{3})\b", r.stderr)
-    if m and m.group(1) == "404":
-        return "publish failed (404): gist %s not found or not writable with this token" % gist
-    if m:
-        return "publish failed (HTTP %s)" % m.group(1)
-    return "publish failed (no answer: exit %d)" % r.returncode
+    return None
 
 
 def publish(a):
@@ -683,7 +684,7 @@ def publish(a):
     try:
         with open(body, "w", encoding="utf-8") as f:
             json.dump({"files": send}, f, ensure_ascii=False)
-        err = gh_patch(a.gist, body)
+        err = forge_patch(a, a.gist, body)
     except OSError as e:
         err = "publish failed (no answer: cannot write the request)"
     finally:

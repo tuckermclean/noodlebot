@@ -5,7 +5,7 @@
   feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE [--limit N] mark N  advance PR N's record
 
 FILE is the loop's open-prs.tsv ("<number> <branch> <headOid> <is_bot> <mergeable>"); DIR is state/<name>; all
-GitHub access is `gh api --paginate` (every page), so GH_TOKEN must be set.
+forge access is through forge.py (every page of each list; its token script, or a GH_TOKEN in the environment).
 For each open bot PR on node/<ID>-... or spec/* it reads the conversation comments, the line comments and the
 reviews. Feedback is an item by the owner (login, association OWNER, not a bot): a conversation comment, a line
 comment, a CHANGES_REQUESTED review, a COMMENTED review with a body; not an approval, an empty review, a comment
@@ -26,8 +26,11 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import forge   # the one interface to the code forge (G04)
 
 KINDS = ("conversation", "line", "review")
 THUMBS = {"\U0001F44D", ":+1:", "+1"}
@@ -42,21 +45,6 @@ def write_atomic(path, text):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, path)
-
-
-def gh_list(path):
-    """Every item of a paginated list: gh prints one JSON array per page."""
-    p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
-    if p.returncode != 0:
-        raise RuntimeError("gh api %s failed (rc %d): %s" % (path, p.returncode, p.stderr.strip()))
-    dec, text, i, items = json.JSONDecoder(), p.stdout, 0, []
-    while True:
-        while i < len(text) and text[i].isspace():
-            i += 1
-        if i >= len(text):
-            return items
-        val, i = dec.raw_decode(text, i)
-        items.extend(val if isinstance(val, list) else [val])
 
 
 def read_record(state, n):
@@ -107,18 +95,17 @@ def answer_text(udir):
 
 
 def is_owner(item, owner):
-    u = item.get("user") or {}
-    return u.get("login") == owner and item.get("author_association") == "OWNER" and u.get("type") != "Bot"
+    u = item["author"]
+    return u["login"] == owner and u["is_owner"] and not u["is_bot"]
 
 
 def only_thumbs(body):
     return (body or "").strip().replace("️", "") in THUMBS
 
 
-def fetch_pr(pool, repo, n):
+def fetch_pr(pool, f, n):
     """Start the three reads of PR n on the pool: the futures of its conversation comments, line comments, reviews."""
-    return [pool.submit(gh_list, "repos/%s/%s/%d/%s" % (repo, base, n, what))
-            for base, what in (("issues", "comments"), ("pulls", "comments"), ("pulls", "reviews"))]
+    return [pool.submit(read, number=n) for read in (f.pr_comments, f.pr_line_comments, f.pr_reviews)]
 
 
 def read_pr(futures):
@@ -133,17 +120,17 @@ def read_pr(futures):
     byid = {c["id"]: c for c in line}
     items = []
     for c in conv:
-        items.append({"kind": "conversation", "raw": c, "time": c.get("created_at", "")})
+        items.append({"kind": "conversation", "raw": c, "time": c["created_at"] or ""})
     for c in line:
         root, seen = c, set()
-        while root.get("in_reply_to_id") in byid and root["id"] not in seen:
+        while root["in_reply_to"] in byid and root["id"] not in seen:
             seen.add(root["id"])
-            root = byid[root["in_reply_to_id"]]
-        items.append({"kind": "line", "raw": c, "time": c.get("created_at", ""), "file": c.get("path", ""),
-                      "line": c.get("line") or c.get("original_line") or "", "thread": root["id"]})
+            root = byid[root["in_reply_to"]]
+        items.append({"kind": "line", "raw": c, "time": c["created_at"] or "", "file": c["path"] or "",
+                      "line": c["line"] or "", "thread": root["id"]})
     for r in rev:
-        if r.get("state") == "CHANGES_REQUESTED" or (r.get("state") == "COMMENTED" and (r.get("body") or "").strip()):
-            items.append({"kind": "review", "raw": r, "time": r.get("submitted_at", "")})
+        if r["state"] == "CHANGES_REQUESTED" or (r["state"] == "COMMENTED" and r["body"].strip()):
+            items.append({"kind": "review", "raw": r, "time": r["submitted_at"] or ""})
     return items, newest
 
 
@@ -151,9 +138,9 @@ def new_items(items, rec, owner, answers):
     out = []
     for it in items:
         c = it["raw"]
-        if c["id"] <= rec[it["kind"]] or not is_owner(c, owner) or only_thumbs(c.get("body")):
+        if c["id"] <= rec[it["kind"]] or not is_owner(c, owner) or only_thumbs(c["body"]):
             continue
-        if it["kind"] != "review" and c.get("html_url") and c["html_url"] in answers:
+        if it["kind"] != "review" and c["url"] and c["url"] in answers:
             continue
         out.append(it)
     return out
@@ -163,12 +150,12 @@ def feedback_md(n, branch, items):
     out = ["# Feedback", "", "PR: %d" % n, "Branch: %s" % branch, ""]
     for it in items:
         c = it["raw"]
-        out += ["kind: " + it["kind"], "id: %d" % c["id"], "url: " + c.get("html_url", ""),
-                "author: " + (c.get("user") or {}).get("login", ""), "time: " + it["time"]]
+        out += ["kind: " + it["kind"], "id: %d" % c["id"], "url: " + (c["url"] or ""),
+                "author: " + (c["author"]["login"] or ""), "time: " + it["time"]]
         if it["kind"] == "line":
             out += ["file: %s" % it["file"], "line: %s" % it["line"], "thread: %d" % it["thread"]]
         # continuation lines are indented, so no line of a body looks like an item's field
-        out += ["body: " + "\n  ".join((c.get("body") or "").strip().splitlines()), ""]
+        out += ["body: " + "\n  ".join(c["body"].strip().splitlines()), ""]
     return "\n".join(out)
 
 
@@ -235,7 +222,8 @@ def main():
             todo.append((n, branch, udir))
     # the reads of all PRs run at once (a small pool); the results are used in file order
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=4) if todo else None
-    fetched = {n: fetch_pr(pool, a.repo, n) for n, _, _ in todo}
+    fg = forge.open(a.repo) if todo else None   # opened once, shared by the pool's threads
+    fetched = {n: fetch_pr(pool, fg, n) for n, _, _ in todo}
     for n, branch, udir in todo:
         try:
             items, newest = read_pr(fetched[n])

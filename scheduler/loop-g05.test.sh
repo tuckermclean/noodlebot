@@ -66,6 +66,7 @@ loop5() { # <repo> <mode> [SCHED_MAX]
 }
 cp_scheduler "$nb/scheduler"
 [ -f "$src/harness.py" ] && { mkdir -p "$nb/scheduler/harnesses"; cp "$src"/harnesses/*.py "$nb/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$nb/scheduler/forges"; cp "$src/forge.py" "$nb/scheduler/"; cp "$src"/forges/*.py "$nb/scheduler/forges/"; }
 mkdir -p "$nb/plugin/skills/node"; cp "$src/../plugin/skills/node/check-spec-diff.py" "$nb/plugin/skills/node/"
 
 sl() { echo "$NOODLEBOT_DATA/state/$1/status.log"; }

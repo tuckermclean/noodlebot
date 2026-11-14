@@ -16,6 +16,7 @@ git init -q -b main "$tmp/nbwork"
 mkdir -p "$tmp/nbwork/scheduler" "$tmp/nbwork/plugin"
 for f in "${nbsrc[@]}"; do cp "$src/$f" "$tmp/nbwork/scheduler/" 2>/dev/null; done
 [ -f "$src/harness.py" ] && { mkdir -p "$tmp/nbwork/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nbwork/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nbwork/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/nbwork/scheduler/forges"; cp "$src/forge.py" "$tmp/nbwork/scheduler/"; cp "$src"/forges/*.py "$tmp/nbwork/scheduler/forges/"; }
 chmod +x "$tmp/nbwork"/scheduler/*.sh
 touch "$tmp/nbwork/plugin/.keep"
 cp "$src/version.sh" "$tmp/nbwork/scheduler/" 2>/dev/null; chmod +x "$tmp/nbwork"/scheduler/version.sh 2>/dev/null

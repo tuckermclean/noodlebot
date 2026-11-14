@@ -37,8 +37,8 @@
 # then goes on, so a retried origin/main head is tested again.
 # CI gate (D07): when the first line of $HOME/.config/noodlebot/deploy-ci, "<owner/name> <workflow file> <branch>", is
 # present, a runtime range never runs make test; the push runs of that workflow on that branch for the new origin/main sha are
-# read (gh api repos/<owner/name>/actions/workflows/<workflow>/runs, head_sha, event=push, branch; GH_TOKEN fresh from
-# $HOME/.config/noodlebot/token <owner/name> on each run, never printed; 30 s timeouts) and the newest run decides. Missing or
+# read (forge.py ci runs: the workflow's runs for head_sha, event=push, branch; the token from
+# $HOME/.config/noodlebot/token <owner/name> on each run, never printed; a 60 s timeout) and the newest run decides. Missing or
 # empty file: the gate is off and make test runs as above. A malformed line deploys nothing, runs no make test, prints one
 # stderr line "deploy-ci: <reason>" and exits 2. A non-runtime range is fast-forwarded without CI as above.
 #  - completed, success: the smoke check (below), then the deploy, with "deployed <old>..<new> (version <v>) after CI:
@@ -88,6 +88,8 @@
 die() { echo "deploy.sh: $*" >&2; exit 2; }
 
 max_tries=3
+# the forge CLI (G04) next to this script, found now: the checkout it lives in changes under a running deploy
+forge_py=$(cd "$(dirname "$0")" && pwd -P)/forge.py
 
 # version <sha>: the version of a commit, git describe --tags --always; "unknown" when that fails.
 version() {
@@ -211,23 +213,23 @@ ci_waiting() {
 # in ci_err (a wait without a status line).
 ci_read() {
 	ci_status=; ci_concl=; ci_id=; ci_err=
-	ci_tok=$(timeout 30 "$HOME/.config/noodlebot/token" "$ci_repo" 2>/dev/null 9>&-) || ci_err="token script failed or timed out for $ci_repo"
-	[ -n "$ci_err" ] || [ -n "$ci_tok" ] || ci_err="token script printed no token for $ci_repo"
-	[ -z "$ci_err" ] || return 1
 	ci_dir=$(mktemp -d) || { ci_err="mktemp failed"; return 1; }
-	GH_TOKEN=$ci_tok timeout 30 gh api -X GET "repos/$ci_repo/actions/workflows/$ci_wf/runs" \
-		-f "head_sha=$new" -f event=push -f "branch=$ci_branch" >"$ci_dir/out" 2>"$ci_dir/err" 9>&-
+	# the forge's ci runs (its GitHub backend runs the token script once; no token is held here), bounded by 60 s (the token script's own limit
+	# is 30 s, so its timeout is reported by the CLI before this one fires); always the token script, never a caller's GH_TOKEN
+	env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" timeout 60 python3 -I "$forge_py" --repo "$ci_repo" ci runs \
+		--workflow "$ci_wf" --sha "$new" --event push --branch "$ci_branch" >"$ci_dir/out" 2>"$ci_dir/err" 9>&-
 	ci_rc=$?
-	ci_tok=
 	if [ "$ci_rc" != 0 ]; then
-		ci_err="gh failed or timed out (status $ci_rc): $(head -n 1 "$ci_dir/err" 2>/dev/null | cut -c1-200)"
+		if grep -q 'token script' "$ci_dir/err" 2>/dev/null; then ci_err="token script failed or timed out for $ci_repo"
+		elif grep -q 'does not parse' "$ci_dir/err" 2>/dev/null; then ci_err="gh gave an answer that does not parse"
+		else ci_err="gh failed or timed out (status $ci_rc): $(head -n 1 "$ci_dir/err" 2>/dev/null | cut -c1-200)"; fi
 		rm -rf "$ci_dir"
 		return 1
 	fi
 	ci_res=$(python3 -I -c '
 import json, sys
 sha = sys.argv[1]
-runs = [r for r in json.load(sys.stdin)["workflow_runs"] if isinstance(r, dict) and r.get("head_sha", sha) == sha]
+runs = [r for r in json.load(sys.stdin) if isinstance(r, dict) and r.get("head_sha") in (None, sha)]
 if not runs:
     print("none - -")
 else:
@@ -282,7 +284,7 @@ smoke_check() {
 	fi
 	(
 		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
-		unset NOODLEBOT_DATA
+		unset NOODLEBOT_DATA NOODLEBOT_FORGE NOODLEBOT_FORGE_REPO NOODLEBOT_FORGE_TOKEN_SCRIPT
 		PYTHONDONTWRITEBYTECODE=1; export PYTHONDONTWRITEBYTECODE
 		exec timeout 60 sh -c '
 			cd "$1" || exit 2
@@ -341,7 +343,7 @@ smoke_check() {
 run_make() {
 	(
 		for v in $(env | sed -n 's/^\(\(SCHED\|USAGE\)_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
-		unset NOODLEBOT_DATA
+		unset NOODLEBOT_DATA NOODLEBOT_FORGE NOODLEBOT_FORGE_REPO NOODLEBOT_FORGE_TOKEN_SCRIPT
 		if [ -n "${2:-}" ]; then
 			TEST_JOBS=1; export TEST_JOBS
 			exec timeout 600 make -C "$scratch/wt" test TESTS="$2" TEST_JOBS=1 >"$1" 2>&1 9>&-

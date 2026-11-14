@@ -1,0 +1,74 @@
+[
+ {
+  "number": 4,
+  "title": "Old idea",
+  "body": "Dropped.",
+  "state": "closed",
+  "head": "old/idea",
+  "head_sha": "4444444444444444444444444444444444444444",
+  "base": "main",
+  "author": {
+   "login": "ada",
+   "is_bot": false,
+   "is_owner": false
+  },
+  "mergeable": "UNKNOWN",
+  "created_at": "2026-04-01T10:00:00Z",
+  "merged_at": null,
+  "closed_at": "2026-04-02T10:00:00Z"
+ },
+ {
+  "number": 5,
+  "title": "G04 forge",
+  "body": "Resolves #1",
+  "state": "open",
+  "head": "node/G04-forge",
+  "head_sha": "5555555555555555555555555555555555555555",
+  "base": "main",
+  "author": {
+   "login": "noodlebot[bot]",
+   "is_bot": true,
+   "is_owner": false
+  },
+  "mergeable": "MERGEABLE",
+  "created_at": "2026-05-01T10:00:00Z",
+  "merged_at": null,
+  "closed_at": null
+ },
+ {
+  "number": 6,
+  "title": "Two",
+  "body": "Second.",
+  "state": "open",
+  "head": "feat/two",
+  "head_sha": "6666666666666666666666666666666666666666",
+  "base": "main",
+  "author": {
+   "login": "ada",
+   "is_bot": false,
+   "is_owner": false
+  },
+  "mergeable": "CONFLICTING",
+  "created_at": "2026-05-02T10:00:00Z",
+  "merged_at": null,
+  "closed_at": null
+ },
+ {
+  "number": 7,
+  "title": "G03 feedback",
+  "body": "Done.",
+  "state": "merged",
+  "head": "node/G03-feedback",
+  "head_sha": "7777777777777777777777777777777777777777",
+  "base": "main",
+  "author": {
+   "login": "noodlebot[bot]",
+   "is_bot": true,
+   "is_owner": false
+  },
+  "mergeable": "UNKNOWN",
+  "created_at": "2026-04-20T10:00:00Z",
+  "merged_at": "2026-05-02T09:00:00Z",
+  "closed_at": "2026-05-02T09:00:00Z"
+ }
+]

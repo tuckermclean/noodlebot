@@ -88,6 +88,9 @@ TESTS = \
 	scheduler/loop-g03-limit.test.sh \
 	scheduler/loop-g03-fail.test.sh \
 	scheduler/loop-g03-starts.test.sh \
+	scheduler/loop-g04-args.test.sh \
+	scheduler/loop-g04-e2e.test.sh \
+	scheduler/loop-g04-cap.test.sh \
 	scheduler/loop-g06-branch.test.sh \
 	scheduler/loop-g06-branch2.test.sh \
 	scheduler/loop-g06-question.test.sh \
@@ -147,12 +150,13 @@ TESTS = \
 	scheduler/site.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
+	scheduler/forge.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
 	container/entrypoint.test.sh \
 	container/container.test.sh
 
 test:
-	sh scheduler/runtests.sh $(TESTS)
+	env -u NOODLEBOT_FORGE -u NOODLEBOT_FORGE_REPO -u NOODLEBOT_FORGE_TOKEN_SCRIPT sh scheduler/runtests.sh $(TESTS)
 
 .PHONY: test

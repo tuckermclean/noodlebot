@@ -5,8 +5,11 @@
 
 State comes from the node branches' PRs (`node/<ID>-<name>`): merged, open #N, or none; a squash commit
 subject "<ID> <name>: ..." on HEAD also counts as merged (run it on a fresh checkout of main). --grep lists,
-for each term, the nodes whose spec mentions it (case-insensitive), most mentions first. Needs `gh`
-authenticated for the repository; without it the state column is "?".
+for each term, the nodes whose spec mentions it (case-insensitive), most mentions first. The PR list comes from the
+forge interface: in a session, $NOODLEBOT_FORGE (the wrapper scheduler/forge-cli.sh, which holds the token script) is run
+as a CLI (`pr list`, JSON on stdout); without it the checkout's own scheduler/forge.py is imported. The repository is
+$NOODLEBOT_FORGE_REPO (a session has it), else the one `origin` names; if the forge cannot be reached (the CLI exits
+non-zero) the state column is "?".
 Also lists the open PRs whose head branch starts with spec/ (their docs/graph.yaml is read from
 origin/<branch>, so fetch first): the IDs each adds that main lacks, with its PR number; one `next free:`
 line holding, for every letter in use, the number after the highest ID on main, in those PRs and in this graph (`next free: S05 T02`); and
@@ -22,6 +25,70 @@ import json, os, re, subprocess, sys
 import yaml
 
 
+def import_forge(folder):
+    sys.dont_write_bytecode = True  # the checkout the forge module lives in gets no __pycache__
+    sys.path.insert(0, folder)
+    try:
+        import forge
+    except ImportError:
+        raise ValueError("the forge module is not found")
+    finally:
+        sys.path.pop(0)
+    return forge
+
+
+def open_forge():
+    """The forge of $NOODLEBOT_FORGE_REPO, else of `origin`; ValueError when none can be opened (callers say "unknown")."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    forge = import_forge(os.path.join(here, "..", "..", "..", "scheduler"))  # this checkout's own scheduler/
+    spec = os.environ.get("NOODLEBOT_FORGE_REPO")
+    if not spec:
+        r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+        spec = forge.repo_of_remote(r.stdout.strip()) if r.returncode == 0 else None
+    if not spec:
+        raise ValueError("no repository: no $NOODLEBOT_FORGE_REPO and no origin")
+    try:
+        return forge.open(spec), forge
+    except forge.UnknownForge as e:
+        raise ValueError(str(e))
+
+
+def list_prs(**kw):
+    """The forge's pr list; a failed call is a ValueError, as the callers treat every unreadable list."""
+    cli = os.environ.get("NOODLEBOT_FORGE")
+    if cli:
+        return cli_prs(cli, **kw)
+    f, forge = open_forge()
+    try:
+        return f.pr_list(**kw)
+    except forge.ForgeError as e:
+        raise ValueError(str(e))
+
+
+def cli_prs(cli, state, limit, fields):
+    """`pr list` through the session's forge CLI; the repository is $NOODLEBOT_FORGE_REPO (the CLI reads it), else origin's."""
+    argv = [cli]
+    if not os.environ.get("NOODLEBOT_FORGE_REPO"):
+        try:
+            forge = import_forge(os.path.dirname(os.path.realpath(cli)))
+            r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+            spec = forge.repo_of_remote(r.stdout.strip()) if r.returncode == 0 else None
+        except (ValueError, OSError):
+            spec = None
+        if spec:
+            argv += ["--repo", spec]
+    argv += ["pr", "list", "--state", state, "--limit", str(limit)]
+    for f in fields:
+        argv += ["--fields", f]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise ValueError("forge CLI failed (%d): %s" % (r.returncode, r.stderr.strip()[:200]))
+        return json.loads(r.stdout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ValueError(str(e))
+
+
 def graph_pairs(text):
     return [(n["id"], n["name"]) for n in (yaml.safe_load(text) or {}).get("nodes", [])]
 
@@ -33,7 +100,7 @@ def graph_names(text):
 def pr_graph(p):
     """A spec PR's graph text: origin/<branch>, else (fork head) the PR's head ref fetched."""
     try:
-        return git_show("origin/%s:docs/graph.yaml" % p["headRefName"])
+        return git_show("origin/%s:docs/graph.yaml" % p["head"])
     except ValueError:
         r = subprocess.run(["git", "fetch", "-q", "origin", "pull/%d/head" % p["number"]],
                            capture_output=True, text=True, timeout=120)
@@ -59,12 +126,9 @@ def spec_pr_report(work):
             mainpairs = graph_pairs(git_show("origin/main:docs/graph.yaml"))
         mainnames = dict(mainpairs)
         work = dict(workpairs)
-        r = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", "1000", "--json",
-                            "number,headRefName"], capture_output=True, text=True, timeout=60)
-        if r.returncode:
-            raise ValueError("gh pr list failed")
-        prs = sorted((p for p in json.loads(r.stdout)
-                      if p["headRefName"].startswith("spec/") and p["headRefName"] != branch),
+        listed = list_prs(state="open", limit=1000, fields=["number", "head"])
+        prs = sorted((p for p in listed
+                      if (p["head"] or "").startswith("spec/") and p["head"] != branch),
                      key=lambda p: p["number"])
         added = []  # (pr number, id, name)
         allids = set(mainnames) | set(work)
@@ -108,14 +172,12 @@ def main():
     nodes = g["nodes"]
     state = {}
     try:
-        r = subprocess.run(["gh", "pr", "list", "--state", "all", "--limit", "1000", "--json",
-                            "number,state,headRefName"], capture_output=True, text=True, timeout=60)
-        for pr in sorted(json.loads(r.stdout), key=lambda p: p["number"]):
-            m = re.match(r"node/([A-Z][0-9][0-9])-", pr["headRefName"])
+        for pr in sorted(list_prs(state="all", limit=1000, fields=["number", "state", "head"]), key=lambda p: p["number"]):
+            m = re.match(r"node/([A-Z][0-9][0-9])-", pr["head"] or "")
             if m and not state.get(m.group(1), "").startswith("merged"):
-                if pr["state"] == "MERGED":
+                if pr["state"] == "merged":
                     state[m.group(1)] = "merged #%d" % pr["number"]
-                elif pr["state"] == "OPEN":
+                elif pr["state"] == "open":
                     state[m.group(1)] = "open #%d" % pr["number"]
     except (OSError, ValueError, subprocess.TimeoutExpired):
         state = None

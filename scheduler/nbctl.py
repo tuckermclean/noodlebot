@@ -19,6 +19,11 @@ import sys
 import time
 import urllib.parse
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+# the forge interface (G04) is imported where its pure web_url is used (no forge call, no program run): a command that
+# shows no link does not compile it
+
 VERSION = 1
 RECONNECT = 2   # seconds between connections of `events`
 
@@ -230,7 +235,8 @@ def cmd_status_repo(sock, repo):
     hb = r.get("heartbeat_age")
     print("last GitHub check: %s" % ("never" if hb is None else age(hb) + " ago"))
     if r.get("status_issue") is not None:
-        print("on GitHub: https://github.com/%s/issues/%s (reply there to answer a question)" % (repo, r["status_issue"]))
+        import forge
+        print("on GitHub: %s (reply there to answer a question)" % forge.web_url(repo, "issue", r["status_issue"]))
     print("usage:   " + throttle_line(t))
 
     live = [s for s in sessions if s.get("alive")]

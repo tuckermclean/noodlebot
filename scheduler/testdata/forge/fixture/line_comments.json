@@ -1,0 +1,46 @@
+{
+ "5": [
+  {
+   "id": 401,
+   "body": "rename",
+   "author": {
+    "login": "acme",
+    "is_bot": false,
+    "is_owner": true
+   },
+   "path": "scheduler/forge.py",
+   "line": 12,
+   "in_reply_to": null,
+   "created_at": "2026-05-01T13:01:00Z",
+   "outdated": false
+  },
+  {
+   "id": 402,
+   "body": "done",
+   "author": {
+    "login": "noodlebot[bot]",
+    "is_bot": true,
+    "is_owner": false
+   },
+   "path": "scheduler/forge.py",
+   "line": 12,
+   "in_reply_to": 401,
+   "created_at": "2026-05-01T13:30:00Z",
+   "outdated": false
+  },
+  {
+   "id": 403,
+   "body": "stale",
+   "author": {
+    "login": "acme",
+    "is_bot": false,
+    "is_owner": true
+   },
+   "path": "scheduler/loop.sh",
+   "line": 9,
+   "in_reply_to": null,
+   "created_at": "2026-05-01T13:02:00Z",
+   "outdated": true
+  }
+ ]
+}

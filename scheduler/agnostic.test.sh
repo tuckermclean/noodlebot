@@ -246,5 +246,146 @@ done
 printf 'claude -p\n' | plant plugin/skills/p.sh
 expect plugin/skills/p.sh 1 "claude command under plugin/ (outside plugin/hooks/)"
 
+# ---- G04-AC-5 (change 4): the forge rules. Core names no forge: no 'gh' command and no github.com URL outside comments,
+# *.test.sh, scheduler/testdata/ and scheduler/forges/github.py (the GitHub backend). Comments are the same as S08's
+# above: scan2.py is S08's scanner functions (sh_lines, py_lines, copied from scan.py) with the forge rules.
+{
+	cat <<'PY'
+import io, re, sys, tokenize
+
+root = sys.argv[1]
+EXEMPT_PREFIX = ("scheduler/testdata/",)
+EXEMPT_FILE = ("scheduler/forges/github.py",)
+URL = re.compile(r"github\.com")
+PRE = r"(?:(?:exec|setsid|nohup|command\s+-v|command|which|env|sudo|time|then|do|else|if|elif|while|until|!)\s+|timeout\s+\S+\s+|\w+=(?:\$\((?:[^()]|\([^()]*\))*\)|\"[^\"]*\"|'[^']*'|\S*)\s+)*"
+SH_GH = re.compile(r"(?:^\s*\(?|[|;&`]|\$\()\s*" + PRE + r"gh(?=\s|$|[;|&)`])")
+PY_GH = re.compile(r"(?:^|[\[(,])\s*[\"']gh[\"']\s*[,\])]")
+PY
+	sed -n '/^HEREDOC = /,/^bad = 0$/p' "$tmp/scan.py" | sed '$d'
+	cat <<'PY'
+bad = 0
+for rel in sys.stdin.read().split("\n"):
+    if not rel or not rel.endswith((".sh", ".py")) or not rel.startswith(("scheduler/", "plugin/")):
+        continue
+    if rel.endswith(".test.sh") or rel.startswith(EXEMPT_PREFIX) or rel in EXEMPT_FILE:
+        continue
+    try:
+        text = open(root + "/" + rel, encoding="utf-8").read()
+        rows = ((no, code, cmd) for no, code, cmd in sh_lines(text)) if rel.endswith(".sh") \
+            else ((no, code, None) for no, code in py_lines(text))
+        for no, code, cmd in rows:
+            hits = []
+            if cmd is not None and SH_GH.search(cmd):
+                hits.append("gh command")
+            if cmd is None and PY_GH.search(code):
+                hits.append("gh command (argument list)")
+            if URL.search(code):
+                hits.append("github.com URL")
+            for h in hits:
+                print("%s:%d: %s: %s" % (rel, no, h, code.strip()[:100]))
+                bad += 1
+    except (OSError, SyntaxError, tokenize.TokenError, UnicodeDecodeError) as e:
+        print("%s:0: cannot scan: %s" % (rel, e))
+        bad += 1
+sys.exit(1 if bad else 0)
+PY
+} >"$tmp/scan2.py"
+scan() { python3 -I "$tmp/scan2.py" "$1"; }
+
+out=$(cd "$root" && git ls-files scheduler plugin | scan "$root"); rc=$?
+if [ $rc = 0 ]; then pass "G04-AC-5: the core check passes on the tree (no gh command, no github.com URL in core)"
+else fail "G04-AC-5: the core check finds forge forms in the tree (file:line):
+$out"; fi
+
+# Scratch folders named G04 inside the tmp (the S08 copy $sc stays as it is; the forge plants go in their own copy).
+G04=$tmp/G04
+sc=$G04/sc
+mkdir -p "$sc"
+(cd "$root" && git ls-files scheduler plugin | grep -E '\.(sh|py)$' | tar -cf - -T -) | tar -xf - -C "$sc"
+g_expect() {
+	printf "%s\n" "$1" | scan "$sc" >"$G04/o" 2>&1
+	if grep -q "^$1:$2: " "$G04/o"; then pass "G04-AC-5: a planted $3 fails, naming $1:$2"; else fail "G04-AC-5: planted $3 not named at $1:$2 (got: $(cat "$G04/o"))"; fi
+}
+g_quiet() {
+	if printf '%s\n' "$1" | scan "$sc" >"$G04/o" 2>&1; then pass "G04-AC-5: $2 passes"; else fail "G04-AC-5: $2 was flagged: $(cat "$G04/o")"; fi
+}
+for d in scheduler plugin/skills; do
+	b=$(echo "$d" | tr / _)
+	plant "$d/g04.sh" <<'EOF2'
+#!/bin/sh
+gh api repos/o/n
+echo x | gh api y
+echo a; gh pr list
+true && gh pr list
+x=$(gh api z)
+y=`gh api z`
+GH_TOKEN=t gh api z
+timeout 30 gh api z
+curl https://github.com/o/n/issues/1
+if ! GH_TOKEN=x gh pr list; then :; fi
+while gh pr list; do :; done
+GH_TOKEN=$(tok "$repo" 2>/dev/null) gh pr list
+GH_TOKEN="a b" gh pr list
+GH_TOKEN='a b' gh pr list
+EOF2
+	n=1
+	for what in "gh command at line start" "gh command after a pipe" "gh command after ;" "gh command after &&" 'gh command in $(' \
+		"gh command in backquotes" "gh command behind VAR=x" "gh command behind timeout N" "github.com URL" \
+		"gh command behind if ! VAR=x" "gh command behind while" 'gh command behind VAR=$(cmd "arg" 2>/dev/null)' \
+		'gh command behind VAR="a b"' "gh command behind VAR='a b'"; do
+		n=$((n + 1)); g_expect "$d/g04.sh" $n "$d .sh $what"
+	done
+	plant "$d/g04.py" <<'EOF2'
+import subprocess
+subprocess.run(["gh", "api", "x"])
+subprocess.run(['gh', "api"])
+subprocess.run(
+    "gh",
+    "api")
+url = "https://github.com/o/n/issues/1"
+EOF2
+	set -- 2 3 5 7
+	i=0
+	for what in "gh in an argument list (double quotes)" "gh in an argument list (single quotes)" "gh on its own line in an argument list" "github.com URL"; do
+		i=$((i + 1)); ln=$(eval "echo \${$i}")
+		g_expect "$d/g04.py" "$ln" "$d .py $what"
+	done
+done
+
+# Mentions in comments and docstrings pass; the GitHub backend and the exempt places are not scanned; look-alikes pass.
+plant scheduler/g04ok.sh <<'EOF2'
+#!/bin/sh
+# gh api repos/o/n and https://github.com/o/n in a comment
+echo hi # gh pr list, github.com
+echo "the gh CLI" "ghost"
+gh_list() { echo "$gh $1"; }
+x=$gh; y=ghost
+if [ -n "$gh" ]; then x=$(echo ghost); fi
+z=$(echo "a b") echo ghost
+cat <<'TXT'
+# gh api in a heredoc comment line
+TXT
+EOF2
+g_quiet scheduler/g04ok.sh "a .sh with gh and github.com in comments, 'ghost', gh_list, \$gh and 'the gh CLI'"
+plant scheduler/g04ok.py <<'EOF2'
+"""Module docstring: the gh CLI, ["gh", "api"], https://github.com/o/n."""
+import re
+def gh_list(x):
+    """Docstring over
+    two lines: gh api, github.com."""
+    # ["gh", "api"], github.com
+    y = "a"  # trailing: gh pr list, github.com
+    z = "the gh CLI and ghost"
+    w = re.compile(r"gh[spou]_[A-Za-z0-9]+")
+    return y, z, w, x == "ghost"
+EOF2
+g_quiet scheduler/g04ok.py "a .py with gh and github.com in comments and docstrings, 'ghost', gh_list, the token regex and 'the gh CLI'"
+for rel in scheduler/forges/github.py scheduler/testdata/g04.sh scheduler/testdata/g04.py scheduler/g04.test.sh; do
+	case $rel in *.py) printf 'x = ["gh", "api", "https://github.com/o/n"]\n' | plant "$rel" ;;
+	*) printf 'gh api https://github.com/o/n\n' | plant "$rel" ;; esac
+	g_quiet "$rel" "a gh call and a github.com URL in the exempt $rel"
+done
+rm -rf "$G04"
+
 [ "$fails" = 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"

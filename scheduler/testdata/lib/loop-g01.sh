@@ -20,6 +20,7 @@ data6=$(cd "$tmp/data6" && pwd -P)
 GD_STATE=$data6/state/up; export GD_STATE
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/nb6/scheduler/" ;; esac; done
 [ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb6/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb6/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb6/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/nb6/scheduler/forges"; cp "$src/forge.py" "$tmp/nb6/scheduler/"; cp "$src"/forges/*.py "$tmp/nb6/scheduler/forges/"; }
 cp -R "$src/../plugin/." "$tmp/nb6/plugin/" 2>/dev/null
 g6() { git -C "$tmp/work6" -c user.name=t -c user.email=t@t "$@"; }
 git init -q -b main "$tmp/work6"; mkdir -p "$tmp/work6/docs"

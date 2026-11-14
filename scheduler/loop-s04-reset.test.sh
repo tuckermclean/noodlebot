@@ -17,6 +17,7 @@ st45=$data45/state/s45 wt45=$data45/worktrees/s45
 S45_STATE=$st45; export S45_STATE
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/nb45/scheduler/" ;; esac; done
 [ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb45/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb45/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb45/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/nb45/scheduler/forges"; cp "$src/forge.py" "$tmp/nb45/scheduler/"; cp "$src"/forges/*.py "$tmp/nb45/scheduler/forges/"; }
 git init -q -b main "$tmp/work45"; mkdir -p "$tmp/work45/docs"
 { echo 'nodes:'; for i in 1 2; do echo "  - {id: K0$i, name: n$i, deps: []}"; done; } >"$tmp/work45/docs/graph.yaml"
 printf 'base\n' >"$tmp/work45/f.txt"; printf 'out/\n' >"$tmp/work45/.gitignore"
