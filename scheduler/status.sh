@@ -22,8 +22,29 @@ fi
 [ -e ~/STOP ] && echo "         ~/STOP exists: the loop exits within seconds"
 hb=$(cat "$state/heartbeat" 2>/dev/null || echo 0)
 if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub check: $(( $(date +%s) - hb ))s ago"; fi
-iss=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue"])' "$state/report.json" 2>/dev/null)
-[ -n "$iss" ] && echo "on GitHub: $(python3 -I "$here/forge.py" --repo "$repo" repo url --kind issue --ref "$iss" 2>/dev/null | tr -d '"') (reply there to answer a question)"
+# One forge process for the status issue's web link (its number from report.json) and the open PRs shown at the end: its
+# first line is "-" (no status issue) or "+<link>", then the forge's open-PR display form (a row's `line` is "   #N title";
+# dependabot's PRs left out); it exits non-zero when the list failed (the token script included): "(gh unavailable)".
+fout=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I -c 'import json, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+try:
+    iss = str(json.load(open(sys.argv[3]))["issue"]).rstrip("\n")
+except Exception:
+    iss = ""
+import forge
+link = ""
+if iss:
+    try:
+        link = json.dumps(forge.web_url(sys.argv[2], "issue", iss)).replace("\"", "")
+    except Exception:
+        pass
+print("+" + link if iss else "-", flush=True)
+print("\n".join(r["line"] for r in forge.open(sys.argv[2]).pr_list(state="open", fields=["number", "title"])))' "$here" "$repo" "$state/report.json" 2>/dev/null)
+frc=$?
+fhead=${fout%%$'\n'*}
+case $fout in *$'\n'*) prs=${fout#*$'\n'} ;; *) prs= ;; esac
+[ "${fhead:0:1}" = + ] && echo "on GitHub: ${fhead#+} (reply there to answer a question)"
 [ "$state/report.log" -nt "$state/report.json" ] && echo "status issue: FAILING: $(tail -n 1 "$state/report.log" | cut -c1-140)"
 python3 -I -c '
 import json, sys, time
@@ -98,11 +119,7 @@ done
 [ $found = 0 ] && echo "   nothing"
 
 echo "-- open PRs:"
-# the forge's open-PR display form (a row's `line` is "   #N title"; dependabot's PRs left out); a failure, token script included, is "(gh unavailable)"
-prs=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I -c 'import sys
-sys.dont_write_bytecode = True
-sys.path.insert(0, sys.argv[1])
-import forge
-print("\n".join(r["line"] for r in forge.open(sys.argv[2]).pr_list(state="open", fields=["number", "title"])))' "$here" "$repo" 2>/dev/null) &&
+# the open PRs the forge process above listed
+[ "$frc" = 0 ] &&
 	{ [ -z "$prs" ] || echo "$prs"; } ||
 	echo "   (gh unavailable)"
