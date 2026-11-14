@@ -74,7 +74,16 @@ def _load_forge():
     return mod
 
 
-forge = _load_forge()
+_forge, _forge_lock = None, threading.Lock()
+
+
+def web_url(repo, kind, ref):
+    """forge.web_url, the forge interface loaded the first time a link is made (a request that makes none never loads it)."""
+    global _forge
+    with _forge_lock:
+        if _forge is None:
+            _forge = _load_forge()
+    return _forge.web_url(repo, kind, ref)
 CHECKOUT = os.path.dirname(HERE)
 SCHEMAS = os.path.join(HERE, "api-schema", "v1")
 VERSION = 1
@@ -433,7 +442,7 @@ def nodes_of(repo):
             if not (num and num.isdigit()) and isinstance(status_issue, int) and not isinstance(status_issue, bool):
                 num = str(status_issue)
             if num and num.isdigit():
-                n["issue_url"] = forge.web_url(repo, "issue", num)
+                n["issue_url"] = web_url(repo, "issue", num)
         elif has("QUESTION.md"):
             n["state"] = "answered"
         elif wp and wp.isdigit() and wp not in merged_prs:   # a merged spec PR lets ready.py resume the node
@@ -741,7 +750,7 @@ def r_issues(m, req):
             elif has("QUESTION.md") and not has("ANSWER.md"):
                 state = "question"
                 question = first_line(os.path.join(d, "QUESTION.md"))
-                issue_url = forge.web_url(m.group(1), "issue", n)
+                issue_url = web_url(m.group(1), "issue", n)
             elif session_alive(d, str(n)):
                 state = "running"
             elif has("QUESTION.md") and has("ANSWER.md"):
