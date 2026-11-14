@@ -348,6 +348,12 @@ ck "S09-AC-2: Claude Code small-start is one turn (--max-turns 1)" sh -c "[ \"\$
 ck "S09-AC-2: Claude Code small-start has no plugin, no permission mode, no resume, no system prompt file" sh -c "
 	! grep -qxE -- '--plugin-dir|--permission-mode|--resume|--dangerously-skip-permissions|--allowedTools|--allowed-tools' '$s9/cc.argv'"
 ck "S09-AC-2: Claude Code small-start: the raw stream is on stdout (session.jsonl is the claude stream)" cmp "$s9/cc/session.jsonl" "$fx/normal.jsonl"
+for f in --strict-mcp-config --disable-slash-commands; do
+	ck "S09-AC-2: Claude Code small-start holds $f exactly once" sh -c "[ \"\$(grep -cx -- '$f' '$s9/cc.argv')\" = 1 ]"
+done
+for f in --mcp-config --append-system-prompt --system-prompt --plugin-dir --permission-mode; do
+	ck "S09-AC-2: Claude Code small-start holds no $f" sh -c "! grep -qx -- '$f' '$s9/cc.argv'"
+done
 ck "S09-AC-2: Claude Code small-start: events.jsonl holds the stream's events" sub "$fx/normal.events" "$s9/cc/events.jsonl"
 ck "S09-AC-2: Claude Code small-start: the credential reached claude, the forge and API tokens did not" sh -c "
 	grep -qx 'CLAUDE_CODE_OAUTH_TOKEN=$tok' '$s9/rec/env' && ! grep -E '^(GH_TOKEN|ANTHROPIC_API_KEY)=.' '$s9/rec/env'"
