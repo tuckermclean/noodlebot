@@ -7,12 +7,13 @@ here=$nb/scheduler
 repo=${1:-tuckermclean/themonolith}
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
 case $root in /*) ;; *) root=$PWD/$root ;; esac
-state=$root/state/${repo#*/}
-wtroot=$root/worktrees/${repo#*/}
+rt=$(python3 -I "$here/forge.py" --repo "$repo" runtime 2>/dev/null | cut -f1); rt=${rt:-${repo#*/}}   # the runtime name, as loop.sh
+state=$root/state/$rt
+wtroot=$root/worktrees/$rt
 
 echo "== $(date '+%F %T %Z')"
 if ! flock -n "$state/loop.lock" true 2>/dev/null; then echo "loop:    running; stop with: touch ~/STOP"
-else echo "loop:    NOT running; start with: tmux new -d -s sched-${repo#*/} $nb/scheduler/loop.sh $repo"; fi
+else echo "loop:    NOT running; start with: tmux new -d -s sched-$rt $nb/scheduler/loop.sh $repo"; fi
 if ! flock -n "$state/loop.lock" true 2>/dev/null; then
 	v=$(cat "$state/version" 2>/dev/null); [ -n "$v" ] && echo "version: $v"
 fi

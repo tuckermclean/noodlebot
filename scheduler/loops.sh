@@ -58,7 +58,9 @@ if [ -r "$list" ]; then
 			echo "loops.sh: ignoring '$line' in $list: not owner/name" >&2
 			continue
 		fi
-		case " ${repos[*]-} " in *" $line "*) continue ;; esac
+		# o/n and github:o/n are one repository: the second spelling is dropped
+		dup=0; for r in ${repos[@]+"${repos[@]}"}; do [ "${r#github:}" != "${line#github:}" ] || dup=1; done
+		[ $dup = 0 ] || continue
 		repos+=("$line")
 	done <"$list"
 fi

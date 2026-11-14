@@ -78,12 +78,14 @@ here=$nb/scheduler
 if ! names=$(python3 -I "$here/forge.py" --repo "$repo" runtime 2>&1); then
 	echo "loop.sh: $(echo "$names" | head -n1 | sed 's/^forge\.py: //')" >&2; exit 2
 fi
-name=${names%%$'\t'*} owner=${names#*$'\t'}
+rtname=${names%%$'\t'*} names=${names#*$'\t'}
+owner=${names%%$'\t'*} canon=${names#*$'\t'}   # canon: owner/name for GitHub (both spellings), the spec itself for fake:
+spec=$repo repo=$canon   # spec: as typed (the start line, the restart)
 root=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
 case $root in /*) ;; *) root=$PWD/$root ;; esac
-clone=$root/repos/$name
-wtroot=$root/worktrees/$name
-state=$root/state/$name
+clone=$root/repos/$rtname
+wtroot=$root/worktrees/$rtname
+state=$root/state/$rtname
 oauth=$HOME/.config/noodlebot/oauth-token
 unset GH_TOKEN   # the forge's credential is the token script's (a caller's GH_TOKEN is used as given); only site.py publish gets one, per call
 export NOODLEBOT_FORGE_REPO=$repo NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token
@@ -140,7 +142,7 @@ version=$(sh "$here/version.sh" "$nb" 2>/dev/null) || version=
 signature=$(sh "$here/version.sh" --signature "$nb" 2>/dev/null) || signature=
 [ -n "$signature" ] || signature="— n00dl3b0t unknown"
 { echo "$version" >"$state/version.tmp" && mv "$state/version.tmp" "$state/version"; } 2>/dev/null || say "could not write $state/version"
-say "loop started for $repo, version $version"
+say "loop started for $spec, version $version"
 [ "$caps_failed" = 0 ] || say "could not read the harness's capabilities; assuming all"
 has_cap usage || say "harness $hname lacks usage: throttle off"
 # The forge's capabilities, once per start: each one core uses and the forge lacks is one status line, and its feature is off.
@@ -148,7 +150,7 @@ has_cap usage || say "harness $hname lacks usage: throttle off"
 fcaps=$(forge caps 2>/dev/null | tr -d '[]"' | tr ',' ' ') && [ -n "$fcaps" ] || fcaps='visibility pin resolve_threads site'
 fcaps=" $(echo $fcaps) "
 forge_has() { [[ $fcaps == *" $1 "* ]]; }
-fname=${repo%%:*}; [ "$fname" != "$repo" ] || fname=github
+fname=${spec%%:*}; [ "$fname" != "$spec" ] || fname=github
 for fc in "site:site publishing" "pin:pinning" "resolve_threads:resolving threads" "visibility:visibility record"; do
 	forge_has "${fc%%:*}" || say "forge $fname lacks ${fc%%:*}: ${fc#*:} off"
 done
@@ -229,7 +231,7 @@ install_hook
 # The token script is not probed on its own: its failure is read from the stderr of the first forge process ("token script").
 vis_ask() {
 	local v ve
-	forge_has visibility || { echo unknown >"$state/visibility"; return 0; }
+	forge_has visibility || { echo unknown >"$state/visibility.tmp" && mv -f "$state/visibility.tmp" "$state/visibility"; return 0; }
 	ve=$(mktemp) || ve=/dev/null
 	case $(fj repo visibility 2>"$ve") in
 	private) v=private ;; public) v=public ;; *) v=unknown ;;
@@ -1032,7 +1034,7 @@ report() {
 	[ "${SCHED_REPORT:-1}" = 1 ] || return 0
 	[ -n "$tick_forge" ] || return 0   # the tick had no token or did not reach GitHub
 	site_links
-	timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --worktrees "$wtroot" \
+	timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --owner "$owner" --worktrees "$wtroot" \
 		--version "$version" --signature "$signature" ${site_addr:+--site "$site_addr"} \
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
 }
@@ -1312,7 +1314,7 @@ start_turn() {
 # open, ask for a turn and start that unit; a failed start gives the turn back and the next unit is asked for.
 # A failing turn.py is logged and starts nothing.
 queue_round() {
-	local saw=$1 f d out key tries=0 targs=(--root "$root" --repo "$name") keep=()
+	local saw=$1 f d out key tries=0 targs=(--root "$root" --repo "$rtname") keep=()
 	for d in "${wdir[@]}"; do keep+=("$d"); done
 	for f in "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting; do
 		# a failed issues.py next says nothing about the issues: their records stay
@@ -1485,7 +1487,7 @@ tick_run() {
 	# While the throttle holds, the labelled issues are still listed (issues.json stays current for the report's queued
 	# milestone); nothing starts because of it.
 	if { [ -z "$triaging" ] && ! full; } || [ "$throttled" = 1 ]; then
-		if n=$(python3 -I "$here/issues.py" next --repo "$repo" --state "$state" 2>>"$state/report.log"); then
+		if n=$(python3 -I "$here/issues.py" next --repo "$repo" --state "$state" --owner "$owner" 2>>"$state/report.log"); then
 			if [ -z "$n" ] || full || [ -n "$triaging" ]; then :
 			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
 			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi
@@ -1608,13 +1610,13 @@ tick_run() {
 			if [ "$took_failed" = 1 ]; then
 				want_node "$id" "$name" "$kind"
 				say "$saw; $id: RELEASE found, but an earlier turn.py took failed; nothing more started, it keeps waiting"
-			elif ! out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "$name" 2>&1); then
+			elif ! out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "$rtname" 2>&1); then
 				took_failed=1; want_node "$id" "$name" "$kind"
 				say "$saw; $id: RELEASE found, but turn.py took failed ($(echo "$out" | tr '\n' ' ')); not started, it keeps waiting"
 			elif start_node "$id" "$name" "$saw" "$kind"; then
 				say "$saw; $id: released past the throttle"; rm -f "$state/node/$id/waiting"
 			else
-				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "$name" >/dev/null 2>&1 || { took_failed=1; note "$saw; turn.py giveback failed; nothing more started"; }
+				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "$rtname" >/dev/null 2>&1 || { took_failed=1; note "$saw; turn.py giveback failed; nothing more started"; }
 				want_node "$id" "$name" "$kind"
 				say "$saw; $id: RELEASE found, but it did not start (see above)"
 			fi
@@ -1667,7 +1669,7 @@ pause() {
 	fp=$(fingerprint) end=$(($(date +%s) + tick_s))
 	while [ "$(date +%s)" -lt "$end" ]; do
 		sleep "$poll_s"
-		{ [ -e ~/STOP ] || [ -e ~/STOP-"$name" ]; } && return
+		{ [ -e ~/STOP ] || [ -e ~/STOP-"$rtname" ]; } && return
 		for e in "${live[@]}"; do alive "${e%% *}" "${e#* }" || return; done
 		[ "$(fingerprint)" != "$fp" ] && return
 	done
@@ -1699,7 +1701,7 @@ trap fb_stop EXIT
 
 while :; do
 	requests
-	[ -e ~/STOP ] || [ -e ~/STOP-"$name" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
+	[ -e ~/STOP ] || [ -e ~/STOP-"$rtname" ] && { say "found ~/STOP; loop exits (sessions keep running: ${live[*]:-none})"; exit 0; }
 	tick
 	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
 	fforge=$tick_forge
@@ -1713,7 +1715,7 @@ while :; do
 	deploy   # after the tick body, so one tick never mixes the old loop with new helpers
 	if [ -n "$start_head" ] && [ "$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null)" != "$start_head" ] &&
 		{ "$here/deploy.sh" --runtime-changed "$nb" "$start_head" 9>&-; [ $? != 1 ]; }; then
-		fb_stop; exec bash "$here/loop.sh" "$repo" 9>&-   # 9>&-: the new process takes the lock itself
+		fb_stop; exec bash "$here/loop.sh" "$spec" 9>&-   # 9>&-: the new process takes the lock itself
 	fi
 	pause
 done

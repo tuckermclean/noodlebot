@@ -725,6 +725,8 @@ def run_pins(a, rs):
     or timeout is tried again on the next run (twice at most). Nothing else depends on it."""
     left = []
     for p in rs.get("pins") or []:
+        if not a.forge.has("pin"):  # the forge cannot pin: nothing to try, nothing to log per issue
+            continue
         try:
             (a.forge.issue_pin if p["op"] == "pin" else a.forge.issue_unpin)(number=p["number"])
         except Exception as e:
