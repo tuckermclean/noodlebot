@@ -76,7 +76,7 @@ here=$nb/scheduler
 # The argument is [<forge>:]<path> (forge.py parses it: owner/name = github:owner/name, fake:<state folder>); the runtime
 # name (state/<name>, repos/<name>, worktrees/<name>, STOP-<name>) and the repository owner come from it, before any folder is made.
 # The same process gives the forge's capabilities and the clone URL (read below; one process per start, not three).
-if ! names=$(python3 -I "$here/forge.py" --repo "$repo" runtime 2>&1); then
+if ! names=$(python3 -I -S "$here/forge.py" --repo "$repo" runtime 2>&1); then
 	echo "loop.sh: $(echo "$names" | head -n1 | sed 's/^forge\.py: //')" >&2; exit 2
 fi
 rtname=${names%%$'\t'*} names=${names#*$'\t'}
@@ -133,8 +133,9 @@ match_tpl=$(python3 -I -B "$nb/scheduler/harness.py" match-pattern '@UNIT@' 2>/d
 has_cap() { [[ $caps == *" $1 "* ]]; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
-# forge <args>: one forge.py call (a JSON document on stdout)
-forge() { python3 -I "$here/forge.py" --repo "$repo" "$@"; }
+# forge <args>: one forge.py call (a JSON document on stdout). The loop's forge processes run with -S: the forge needs only
+# the standard library, and Python's start-up then skips the site-packages scan.
+forge() { python3 -I -S "$here/forge.py" --repo "$repo" "$@"; }
 [ -d "$clone/.git" ] || git clone -q "$clone_url" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
 
 # The loop's version and signature, once per start (a deploy's re-exec is a new start). Without
@@ -261,7 +262,7 @@ ensure_labels
 # visibility capability): the same `forge.py repo visibility` call, asked alongside the lists, the same state/visibility
 # and report.log line, written before the lists' files.
 pr_tsvs() {
-	python3 -I -c '
+	python3 -I -S -c '
 import io, json, os, sys, threading
 here, repo, state, open_limit, want_vis = sys.argv[1:6]
 sys.dont_write_bytecode = True   # the checkout gets no __pycache__
