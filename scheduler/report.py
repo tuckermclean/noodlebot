@@ -72,7 +72,7 @@ from datetime import datetime, timedelta, timezone
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import harness   # the one interface to the agent harness (S08)
-import forge   # the one interface to the code forge (G04)
+forge = None   # the one interface to the code forge (G04): imported by main() once it needs the forge (--clause does not)
 
 LABEL = "noodlebot-status"
 EVENT = re.compile(r"started |ended |done |released |merged |wrote FAILED|stopped session |found ~/STOP|throttle |usage limit")
@@ -1815,6 +1815,8 @@ def main():
         rs["qissue"] = {n: rs["issue"] for n in rs.get("questions") or {}} if rs.get("issue") else {}
     a.rs = rs
     a.pulls, pulls_err, a.pulls_ok = [], None, True
+    global forge
+    import forge
     a.forge = forge.open(a.repo)
     try:
         a.pulls = a.forge.pr_list(state="open")
