@@ -60,4 +60,29 @@ ok "G04-AC-6: github:acme/widgets: a node session's NOODLEBOT_FORGE_REPO is acme
 ok "G04-AC-6: github:acme/widgets: the node prompt (unattended.md) has no 'github:' (@REPO@ is acme/widgets)" sh -c "[ -s '$st/node/A01/unattended.md' ] && ! grep -q 'github:' '$st/node/A01/unattended.md' && grep -q 'acme/widgets' '$st/node/A01/unattended.md'"
 ok "G04-AC-6: github:acme/widgets: the site-repos file holds acme/widgets" test "$(cat "$st/site-repos" 2>/dev/null)" = acme/widgets
 ok "G04-AC-6: github:acme/widgets: no forge call carries 'github:' in its argv" sh -c "[ -s '$G04/ghstate/calls.jsonl' ] && ! grep -q 'github:' '$G04/ghstate/calls.jsonl'"
+# --- S4-Q2: the token script fails (the loop's NOODLEBOT_FORGE_TOKEN_SCRIPT exits non-zero): the tick notes "no GitHub App
+# token; nothing started" and leaves merged-prs.tsv, open-prs.tsv and closed-prs.tsv in state/widgets byte-identical.
+g04_cleanup; rm -rf "$g04data/state/widgets/node" "$g04data/worktrees/widgets"; git -C "$g04data/repos/widgets" worktree prune
+cp "$HOME/.config/noodlebot/token" "$G04/token.ok"
+printf '#!/bin/sh\necho "token: refused" >&2\nexit 3\n' >"$HOME/.config/noodlebot/token"; chmod +x "$HOME/.config/noodlebot/token"
+st=$g04data/state/widgets
+printf '41 node/M01-merged-one\n42 node/M02-merged-two\n' >"$st/merged-prs.tsv"
+printf '43 node/O01-open-one 0123456789abcdef0123456789abcdef01234567 true MERGEABLE\n' >"$st/open-prs.tsv"
+printf '44 node/C01-closed-one 2026-06-01T12:00:00Z false\n45 node/C02-closed-two 2026-06-02T12:00:00Z true\n' >"$st/closed-prs.tsv"
+for k in merged open closed; do cp "$st/$k-prs.tsv" "$G04/before.$k-prs.tsv"; done
+rm -f "$st/heartbeat"
+n_tok() { local n; n=$(grep -cF 'no GitHub App token; nothing started' "$st/status.log" 2>/dev/null); echo "${n:-0}"; }
+tok0=$(n_tok)
+tok_noted() { [ "$(n_tok)" -gt "$tok0" ]; }
+g04_run acme/widgets widgets
+tq=0
+if wait_until 20 g04_ticking "$st" && wait_until 10 tok_noted; then tq=1; fi
+wait_ticks 2 "$st"
+g04_stop
+cp "$G04/token.ok" "$HOME/.config/noodlebot/token"
+ok "S4-Q2: a failing token script: the tick notes 'no GitHub App token; nothing started'" test "$tq" = 1
+for k in merged open closed; do   # without that tick, an untouched file proves nothing: the checks fail with it
+	c="S4-Q2: a failing token script: state/widgets/$k-prs.tsv is byte-identical to what it held before the tick"
+	if [ "$tq" = 1 ]; then ok "$c" cmp -s "$G04/before.$k-prs.tsv" "$st/$k-prs.tsv"; else fail "$c (no tick met the failing token script)"; fi
+done
 loop_end
