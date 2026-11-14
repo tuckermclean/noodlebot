@@ -13,13 +13,13 @@ Backends are classes `Backend(path)` with methods named <family>_<op> (`-` -> `_
 `fake` is scheduler/testdata/forge/fake.py. The capability rule lives here: an operation whose capability the backend lacks
 raises CapabilityOff before the backend is called. The operations and result shapes are documented in forges/README.md.
 """
+import _thread
 import builtins
-import importlib.util
 import json
 import os
 import re
 import sys
-import threading
+import types
 
 sys.dont_write_bytecode = True  # a deployed checkout gets no __pycache__ from the backends loaded here
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -104,7 +104,7 @@ def parse(spec):
 
 
 _LOADED = {}  # the backend modules, loaded once per process (the GitHub backend keeps its token cache in its module)
-_LOAD_LOCK = threading.Lock()  # threads opening a forge at once share one module (one token cache, one token lock)
+_LOAD_LOCK = _thread.allocate_lock()  # threads opening a forge at once share one module (one token cache, one token lock)
 
 
 def _load(name):
@@ -114,10 +114,14 @@ def _load(name):
         return _LOADED[name]
 
 
-def _load_file(name):
-    spec = importlib.util.spec_from_file_location("forge_backend_" + name, BACKENDS[name])
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+def _load_file(name, path=None):
+    """A backend's module from its source file, compiled here (no bytecode is written; importlib's loader is not needed)."""
+    path = path or BACKENDS[name]
+    mod = types.ModuleType("forge_backend_" + name)
+    mod.__file__ = path
+    with builtins.open(path, encoding="utf-8") as f:
+        code = compile(f.read(), path, "exec")
+    exec(code, mod.__dict__)
     return mod
 
 

@@ -2,8 +2,10 @@
 
 `scheduler/forge.py` is the one interface the scheduler's core uses to reach the code forge (G04). A backend is a class
 `Backend(path)` with a method per operation, named `<family>_<op>` with `-` as `_`; GitHub's is `forges/github.py`
-(the `gh` CLI), the fake forge's is `testdata/forge/fake.py` (a folder of JSON files). A forge is named `owner/name` or
-`github:owner/name` (GitHub) or `fake:<state folder>`; any other `<x>:...` is an unknown forge (exit 2).
+(the `gh` CLI; its operations are in the parts `forges/github_<part>.py`, each compiled into github.py the first time a
+process calls one of its operations, so a process compiles only what it uses: no bytecode is written), the fake forge's
+is `testdata/forge/fake.py` (a folder of JSON files). A forge is named `owner/name` or `github:owner/name` (GitHub) or
+`fake:<state folder>`; any other `<x>:...` is an unknown forge (exit 2).
 
 Python: `f = forge.open(spec)`, then `f.<family>_<op>(**kwargs)`. CLI: `python3 -I scheduler/forge.py [--repo SPEC]
 <family> <op> [--opt value ...]` prints one JSON document. Exit 1: the call failed (one line on stderr, nothing on
