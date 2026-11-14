@@ -176,6 +176,66 @@ else
 	fails=$((fails + 1))
 fi
 
+# --- the session wrapper (G04-AC-3, G04-AC-4): forge-cli.sh, run-session.sh's environment, nodes.py over $NOODLEBOT_FORGE -
+# HOME's token script is a counting fake (under $G/home, scratch: the real token script is never run)
+mkdir -p "$G/home/.config/noodlebot"
+printf '#!/bin/sh\nexec sh "%s" "$@"\n' "$ts" >"$G/home/.config/noodlebot/token"
+chmod +x "$G/home/.config/noodlebot/token"
+fcli=$src/forge-cli.sh
+ok "G04-AC-3: scheduler/forge-cli.sh exists and is executable" test -f "$fcli" -a -x "$fcli"
+cred wref NOODLEBOT_FORGE_TOKEN_SCRIPT="$ts" -- python3 -I "$src/forge.py" --repo acme/widgets label list
+cred wrap -- sh "$fcli" --repo acme/widgets label list
+ok "G04-AC-3: forge-cli.sh with no GH_TOKEN and no token script variable runs HOME's token script once; gh sees its token" test "$(cat "$G/wrap.rc")" = 0 -a "$(wc -l <"$G/count")" = 1 -a "$(calls_tokens | sort -u)" = "$TOK"
+ok "G04-AC-3: forge-cli.sh's stdout and exit code are forge.py's" sh -c 'test -s "$1/wref.out" && cmp -s "$1/wref.out" "$1/wrap.out" && test "$(cat "$1/wref.rc")" = "$(cat "$1/wrap.rc")"' sh "$G"
+ok "G04-AC-3: the token is in no output of forge-cli.sh" quiet "$TOK" wrap
+cred wrapbad -- sh "$fcli" --repo gitlab:foo/bar caps
+ok "G04-AC-3: forge-cli.sh on an unknown forge exits 2 with nothing on stdout (as forge.py)" test -x "$fcli" -a "$(cat "$G/wrapbad.rc")" = 2 -a ! -s "$G/wrapbad.out" -a -s "$G/wrapbad.err"
+cred wrapset NOODLEBOT_FORGE_TOKEN_SCRIPT="$ts" TOKEN_VALUE=ghs_G04other -- sh "$fcli" --repo acme/widgets label list
+ok "G04-AC-3: forge-cli.sh with NOODLEBOT_FORGE_TOKEN_SCRIPT set uses that script, not HOME's" test "$(cat "$G/wrapset.rc")" = 0 -a "$(calls_tokens | sort -u)" = ghs_G04other
+cred wrapgh GH_TOKEN=caller-token-G04 -- sh "$fcli" --repo acme/widgets label list
+ok "G04-AC-3: forge-cli.sh with GH_TOKEN set uses it as given and runs no token script" test "$(cat "$G/wrapgh.rc")" = 0 -a "$(wc -l <"$G/count")" = 0 -a "$(calls_tokens | sort -u)" = caller-token-G04
+ok "G04-AC-3: the caller's token is in no output of forge-cli.sh" quiet caller-token-G04 wrapgh
+
+# run-session.sh: the session's environment (a fake claude dumps it; the loop's variables are in the environment)
+mkdir -p "$G/sess/bin" "$G/sess/wt" "$G/sess/state"
+printf '#!/bin/sh\nenv >"%s/sess/env"\nexit 0\n' "$G" >"$G/sess/bin/claude"
+chmod +x "$G/sess/bin/claude"
+echo "the system prompt" >"$G/sess/state/unattended.md"
+printf 'oauth-G04\n' >"$G/home/.config/noodlebot/oauth-token"
+env -u GH_TOKEN PATH="$G/sess/bin:$PATH" NOODLEBOT_FORGE_TOKEN_SCRIPT=/nonexistent/G04-token NOODLEBOT_FORGE_REPO=acme/widgets \
+	GH_TOKEN=ghx timeout -k 1 10 bash "$src/run-session.sh" "$G/sess/wt" "$G/sess/state" "/node B03" >"$G/sess/out" 2>"$G/sess/err"
+ok "G04-AC-4: (precondition) run-session.sh started the session (the fake claude ran)" test -s "$G/sess/env"
+ok "G04-AC-4: the session's NOODLEBOT_FORGE is the absolute path of scheduler/forge-cli.sh" grep -qxF "NOODLEBOT_FORGE=$src/forge-cli.sh" "$G/sess/env"
+ok "G04-AC-4: the session's NOODLEBOT_FORGE_REPO is passed through" grep -qxF "NOODLEBOT_FORGE_REPO=acme/widgets" "$G/sess/env"
+ok "G04-AC-4: the session has no NOODLEBOT_FORGE_TOKEN_SCRIPT" sh -c '[ -s "$1" ] && ! grep -q "^NOODLEBOT_FORGE_TOKEN_SCRIPT=" "$1"' sh "$G/sess/env"
+ok "G04-AC-4: the session has no GH_TOKEN" sh -c '[ -s "$1" ] && ! grep -q "^GH_TOKEN=" "$1"' sh "$G/sess/env"
+
+# nodes.py over $NOODLEBOT_FORGE: a recording fake CLI in a folder without forge.py
+mkdir -p "$G/np/cli" "$G/np/repo/docs" "$G/np/repo/nodes"
+cat >"$G/np/cli/forge-cli.sh" <<'EOF2'
+#!/bin/sh
+# records its argv (one call per line); prints $G04_PRS (JSON) or exits non-zero while $G04_CLI_FAIL is set
+echo "$*" >>"$G04_CLI_LOG"
+[ -z "${G04_CLI_FAIL:-}" ] || { echo "forge: boom" >&2; exit 1; }
+cat "$G04_PRS"
+EOF2
+chmod +x "$G/np/cli/forge-cli.sh"
+printf '[{"number": 7, "state": "open", "head": "node/A01-first"}, {"number": 3, "state": "merged", "head": "node/A02-second"}]\n' >"$G/np/prs.json"
+printf 'template: {headings: [Purpose]}\nnodes:\n  - {id: A01, track: now, name: first, deps: [], summary: "x"}\n  - {id: A02, track: now, name: second, deps: [], summary: "x"}\n' >"$G/np/repo/docs/graph.yaml"
+for n in A01-first A02-second; do printf '# %s\n\n**Owns:** x\n' "$n" >"$G/np/repo/nodes/$n.md"; done
+"$real_git" init -q -b main "$G/np/repo"
+npy() { # npy <name> [env assignments]: nodes.py in the scratch repository, the fake CLI as $NOODLEBOT_FORGE
+	_n=$1; shift
+	( cd "$G/np/repo" && env -u NOODLEBOT_FORGE_REPO PATH="$G/gh/bin:$PATH" NOODLEBOT_FORGE="$G/np/cli/forge-cli.sh" G04_CLI_LOG="$G/np/$_n.log" \
+		G04_PRS="$G/np/prs.json" "$@" python3 -I "$src/../plugin/skills/triage/nodes.py" >"$G/np/$_n.out" 2>"$G/np/$_n.err" )
+	echo $? >"$G/np/$_n.rc"
+}
+npy ok
+ok "G04-AC-4: nodes.py with NOODLEBOT_FORGE runs that CLI for its PR list (argv has pr list)" sh -c 'test -f "$1" && grep -q "pr list" "$1"' sh "$G/np/ok.log"
+ok "G04-AC-4: nodes.py uses the CLI's JSON (open #7, merged #3)" sh -c 'grep -q "^A01 .*open #7" "$1" && grep -q "^A02 .*merged #3" "$1"' sh "$G/np/ok.out"
+npy bad G04_CLI_FAIL=1
+ok "G04-AC-4: nodes.py with the CLI failing: state ? for every node, the unknown message, exit 1" sh -c 'test "$(cat "$1/np/bad.rc")" = 1 && grep -q "^A01 .* ? " "$1/np/bad.out" && grep -q "unknown" "$1/np/bad.out" && test -s "$1/np/bad.log"' sh "$G"
+
 if [ "$fails" -ne 0 ]; then
 	echo "forge tests: $fails failed"
 	exit 1
