@@ -37,4 +37,27 @@ for spec in gitlab:acme/widgets; do
 	ok "G04-AC-6: $spec: the message names the forge (gitlab)" grep -q 'gitlab' "$G04/unknown.err"
 	ok "G04-AC-6: $spec: no state, repos or worktrees folder is made" sh -c "[ ! -e '$data2/state' ] && [ ! -e '$data2/repos' ] && [ ! -e '$data2/worktrees' ]"
 done
+# --- change 5: github:acme/widgets means acme/widgets wherever the repository reaches a helper or a session
+# (a node session's prompt and environment, the site-repos file, the helpers' --repo); no `github:` anywhere in them.
+g04_cleanup; rm -rf "$g04data/state/widgets/node" "$g04data/worktrees/widgets" "$G04/ghstate/calls.jsonl"; git -C "$g04data/repos/widgets" worktree prune
+echo gistid >"$HOME/.config/noodlebot/gist"; printf 'fake-gist-token' >"$HOME/.config/noodlebot/gist-token"; chmod 600 "$HOME/.config/noodlebot/gist-token"
+cat >"$G04/bin/claude" <<'EOF2'
+#!/bin/sh
+id=${2##* }
+echo "$id" >>"$G04_DIR/runs.$id"
+printf '%s\n' "$NOODLEBOT_FORGE_REPO" >"$G04_DIR/session.forge-repo"
+mkdir -p "out/node/$id" && echo brief >"out/node/$id/brief.md"
+while :; do sleep 0.2; done
+EOF2
+rm -f "$g04data/state/widgets/heartbeat" "$g04data/state/widgets/site-repos"
+g04_run github:acme/widgets widgets
+st=$g04data/state/widgets
+ok_wait() { [ -s "$G04/session.forge-repo" ] && [ -s "$st/node/A01/unattended.md" ] && [ -s "$st/site-repos" ]; }
+wait_until 20 ok_wait
+wait_ticks 2 "$st"
+g04_stop
+ok "G04-AC-6: github:acme/widgets: a node session's NOODLEBOT_FORGE_REPO is acme/widgets" test "$(cat "$G04/session.forge-repo" 2>/dev/null)" = acme/widgets
+ok "G04-AC-6: github:acme/widgets: the node prompt (unattended.md) has no 'github:' (@REPO@ is acme/widgets)" sh -c "[ -s '$st/node/A01/unattended.md' ] && ! grep -q 'github:' '$st/node/A01/unattended.md' && grep -q 'acme/widgets' '$st/node/A01/unattended.md'"
+ok "G04-AC-6: github:acme/widgets: the site-repos file holds acme/widgets" test "$(cat "$st/site-repos" 2>/dev/null)" = acme/widgets
+ok "G04-AC-6: github:acme/widgets: no forge call carries 'github:' in its argv" sh -c "[ -s '$G04/ghstate/calls.jsonl' ] && ! grep -q 'github:' '$G04/ghstate/calls.jsonl'"
 loop_end
