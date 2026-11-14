@@ -19,6 +19,7 @@ dp3=$tmp/data-p3; mkdir -p "$P3" "$tmp/bin-p3" "$tmp/nb-p3/scheduler" "$tmp/nb-p
 st3=$dp3/state/pthree; P3_STATE=$st3; export P3_STATE
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/nb-p3/scheduler/" ;; esac; done
 [ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb-p3/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb-p3/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb-p3/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/nb-p3/scheduler/forges"; cp "$src/forge.py" "$tmp/nb-p3/scheduler/"; cp "$src"/forges/*.py "$tmp/nb-p3/scheduler/forges/"; }
 git init -q -b main "$tmp/work-p3"; mkdir -p "$tmp/work-p3/docs"
 printf 'nodes:\n  - {id: R0, name: r0, deps: []}\n  - {id: R1, name: r1, deps: []}\n  - {id: R2, name: r2, deps: [R0]}\n  - {id: R3, name: r3, deps: []}\n  - {id: R4, name: r4, deps: []}\n  - {id: R5, name: r5, deps: []}\n' >"$tmp/work-p3/docs/graph.yaml"
 git -C "$tmp/work-p3" add -A && git -C "$tmp/work-p3" -c user.name=t -c user.email=t@t commit -q -m init

@@ -62,6 +62,19 @@ def _load_harness():
 
 
 harness = _load_harness()
+
+
+def _load_forge():
+    """scheduler/forge.py, the forge interface (G04), loaded like the harness; only its pure web_url is used here: no forge
+    call, nothing written. It is registered as `forge`, as its GitHub backend imports it by that name."""
+    spec = importlib.util.spec_from_file_location("forge", os.path.join(HERE, "forge.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["forge"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+forge = _load_forge()
 CHECKOUT = os.path.dirname(HERE)
 SCHEMAS = os.path.join(HERE, "api-schema", "v1")
 VERSION = 1
@@ -420,7 +433,7 @@ def nodes_of(repo):
             if not (num and num.isdigit()) and isinstance(status_issue, int) and not isinstance(status_issue, bool):
                 num = str(status_issue)
             if num and num.isdigit():
-                n["issue_url"] = "https://github.com/%s/%s/issues/%s" % (owner, name, num)
+                n["issue_url"] = forge.web_url(repo, "issue", num)
         elif has("QUESTION.md"):
             n["state"] = "answered"
         elif wp and wp.isdigit() and wp not in merged_prs:   # a merged spec PR lets ready.py resume the node
@@ -728,7 +741,7 @@ def r_issues(m, req):
             elif has("QUESTION.md") and not has("ANSWER.md"):
                 state = "question"
                 question = first_line(os.path.join(d, "QUESTION.md"))
-                issue_url = "https://github.com/%s/issues/%d" % (m.group(1), n)
+                issue_url = forge.web_url(m.group(1), "issue", n)
             elif session_alive(d, str(n)):
                 state = "running"
             elif has("QUESTION.md") and has("ANSWER.md"):

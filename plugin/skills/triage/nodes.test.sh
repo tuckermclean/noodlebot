@@ -20,6 +20,8 @@ GH
 chmod +x "$tmp/bin/gh"
 export PATH="$tmp/bin:$PATH" GH_FAIL="$tmp/gh-fail" GH_PRS="$tmp/prs.json"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# a session exports the forge CLI and its repository: nodes.py must use the gh fake above, not the real token script
+unset NOODLEBOT_FORGE NOODLEBOT_FORGE_REPO NOODLEBOT_FORGE_TOKEN_SCRIPT
 
 row() { printf '  - {id: %s, track: now, name: %s, deps: [], summary: "x"}\n' "$1" "$2"; }
 # graph <file> <id:name>...

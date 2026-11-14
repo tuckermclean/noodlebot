@@ -14,6 +14,7 @@ st8=$data8/state/s4b
 S04B_STATE=$st8; export S04B_STATE
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/nb8/scheduler/" ;; esac; done
 [ -f "$src/harness.py" ] && { mkdir -p "$tmp/nb8/scheduler/harnesses"; cp "$src/harness.py" "$tmp/nb8/scheduler/"; cp "$src"/harnesses/*.py "$tmp/nb8/scheduler/harnesses/"; }
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/nb8/scheduler/forges"; cp "$src/forge.py" "$tmp/nb8/scheduler/"; cp "$src"/forges/*.py "$tmp/nb8/scheduler/forges/"; }
 git init -q -b main "$tmp/work8"; mkdir -p "$tmp/work8/docs"
 echo 'nodes:
   - {id: F01, name: n1, deps: []}' >"$tmp/work8/docs/graph.yaml"

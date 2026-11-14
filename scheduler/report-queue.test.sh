@@ -213,6 +213,7 @@ ok "U03-AC-4: and its home issue gets no 'spec PR #7 merged' milestone" test "$(
 mkdir -p "$tmp/sched-fail/harnesses"
 for f in "$src"/*; do case $f in *.test.sh) ;; *) [ -f "$f" ] && cp "$f" "$tmp/sched-fail/" ;; esac; done
 cp "$src"/harnesses/*.py "$tmp/sched-fail/harnesses/" 2>/dev/null
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/sched-fail/forges"; cp "$src/forge.py" "$tmp/sched-fail/"; cp "$src"/forges/*.py "$tmp/sched-fail/forges/"; }
 cat >"$tmp/sched-fail/turn.py" <<EOF
 #!/usr/bin/env python3
 import sys
@@ -311,6 +312,7 @@ QSRC=
 mkdir -p "$tmp/sched-count/harnesses"
 cp "$tmp"/sched-fail/*.* "$tmp/sched-count/" 2>/dev/null
 cp "$tmp"/sched-fail/harnesses/*.py "$tmp/sched-count/harnesses/" 2>/dev/null
+[ -f "$src/forge.py" ] && { mkdir -p "$tmp/sched-count/forges"; cp "$src/forge.py" "$tmp/sched-count/"; cp "$src"/forges/*.py "$tmp/sched-count/forges/"; }
 cat >"$tmp/sched-count/turn.py" <<EOF2
 #!/usr/bin/env python3
 import sys

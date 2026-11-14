@@ -38,6 +38,8 @@ usage() { echo "usage: loops.sh start|stop|status" >&2; exit 2; }
 cmd=$1
 case $cmd in start | stop | status) ;; *) usage ;; esac
 
+# rtname <spec>: the runtime name: the last component of the path of [<forge>:]<path>.
+rtname() { local p=${1#*:}; [ "$p" != "$1" ] || p=$1; p=${p%/}; echo "${p##*/}"; }
 repos=()
 if [ -r "$list" ]; then
 	while IFS= read -r line || [ -n "$line" ]; do
@@ -45,6 +47,9 @@ if [ -r "$list" ]; then
 		line=$(echo "$line" | tr -d '[:space:]')
 		[ -n "$line" ] || continue
 		case $line in
+		fake:/?*) bad=0 ;;
+		github:*) case ${line#github:} in */*/* | /* | */ | */*/ | "") bad=1 ;; */*) bad=0 ;; *) bad=1 ;; esac ;;
+		*:*) bad=1 ;;
 		*/*/* | /* | */) bad=1 ;;
 		*/*) bad=0 ;;
 		*) bad=1 ;;
@@ -53,7 +58,9 @@ if [ -r "$list" ]; then
 			echo "loops.sh: ignoring '$line' in $list: not owner/name" >&2
 			continue
 		fi
-		case " ${repos[*]-} " in *" $line "*) continue ;; esac
+		# o/n and github:o/n are one repository: the second spelling is dropped
+		dup=0; for r in ${repos[@]+"${repos[@]}"}; do [ "${r#github:}" != "${line#github:}" ] || dup=1; done
+		[ $dup = 0 ] || continue
 		repos+=("$line")
 	done <"$list"
 fi
@@ -123,7 +130,7 @@ start)
 	if [ "$(resolved "$nb/state")" != "$(resolved "$root/state")" ]; then
 		old=0
 		for repo in "${repos[@]}"; do
-			name=${repo#*/}
+			name=$(rtname "$repo")
 			if held "$nb/state/$name/loop.lock"; then
 				echo "$repo: a loop from before the runtime move holds $nb/state/$name/loop.lock; stop it (touch ~/STOP), run $nb/scheduler/move-runtime.sh $nb, then start again." >&2
 				old=1
@@ -135,7 +142,7 @@ start)
 	for v in $(compgen -v | grep -E '^(USAGE|SCHED)_[A-Za-z0-9_]*$'); do pass+=("$v=${!v}"); done
 	launched=()
 	for repo in "${repos[@]}"; do
-		name=${repo#*/}
+		name=$(rtname "$repo")
 		if running "$name"; then
 			echo "$repo: loop already running"
 			[ -e "$HOME/STOP-$name" ] && echo "$repo: note: $HOME/STOP-$name exists; the running loop will stop"
@@ -174,7 +181,7 @@ start)
 		fi
 	fi
 	for repo in ${launched[@]+"${launched[@]}"}; do
-		name=${repo#*/}
+		name=$(rtname "$repo")
 		while ! running "$name" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
 		if ! running "$name"; then
 			echo "$repo: loop did not take its lock within ${start_wait}s; run $nb/scheduler/loop.sh $repo directly or see $root/state/$name/status.log" >&2
@@ -184,7 +191,7 @@ start)
 stop)
 	waiting=()
 	for repo in "${repos[@]}"; do
-		name=${repo#*/}
+		name=$(rtname "$repo")
 		if running "$name"; then
 			touch "$HOME/STOP-$name"
 			echo "$repo: stopping (waiting for the loop to exit)"
@@ -195,7 +202,7 @@ stop)
 	done
 	deadline=$((SECONDS + wait_s))
 	for repo in ${waiting[@]+"${waiting[@]}"}; do
-		name=${repo#*/}
+		name=$(rtname "$repo")
 		while running "$name" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
 		if running "$name"; then
 			echo "$repo: loop still running after ${wait_s}s; left $HOME/STOP-$name in place" >&2
@@ -230,7 +237,7 @@ stop)
 	fi ;;
 status)
 	for repo in "${repos[@]}"; do
-		name=${repo#*/}
+		name=$(rtname "$repo")
 		state=$root/state/$name
 		if running "$name"; then
 			loop="loop running"

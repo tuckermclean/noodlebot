@@ -7,28 +7,23 @@
 `next` skips an issue unless the repository owner added the label (checked in the issue's events,
 so a collaborator, a template or a workflow cannot hand work to the bot), and skips one whose
 $NOODLEBOT_DATA/state/<repo>/issue/<N>/ holds FAILED or an unanswered QUESTION.md.
-`next` also writes every non-PR issue it read to <state>/issues.json (number, title, whether the owner labelled it; a held issue is written with "labelled": null, gh is not asked about it). GH_TOKEN must be set; stdlib only.
+`next` also writes every non-PR issue it read to <state>/issues.json (number, title, whether the owner labelled it; a held issue is written with "labelled": null, gh is not asked about it). The forge is reached through forge.py (the token script named by $NOODLEBOT_FORGE_TOKEN_SCRIPT, or a GH_TOKEN in the environment); stdlib only.
 """
-import argparse, json, os, subprocess, sys, tempfile, time
+import argparse, json, os, sys, tempfile, time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import forge   # the one interface to the code forge (G04)
 
 LABEL, DONE = "noodlebot", "noodlebot-triaged"
 
 
-def gh(method, path, body=None):
-    cmd = ["gh", "api", "-X", method, path] + (["--input", "-"] if body is not None else [])
-    r = subprocess.run(cmd, input=json.dumps(body) if body is not None else None,
-                       capture_output=True, text=True, timeout=60)
-    if r.returncode != 0:
-        raise RuntimeError("gh api %s %s failed: %s" % (method, path, (r.stderr or r.stdout).strip()[:300]))
-    return json.loads(r.stdout) if r.stdout.strip() else None
-
-
-def labelled_by(repo, n):
+def labelled_by(f, n):
     """Login of whoever last added LABEL to issue n, or None."""
     who = None
-    for e in gh("GET", "repos/%s/issues/%s/events?per_page=100" % (repo, n)) or []:
-        if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == LABEL:
-            who = (e.get("actor") or {}).get("login")
+    for e in f.issue_events(number=n):
+        if e["event"] == "labeled" and e["label"] == LABEL:
+            who = e["actor"]
     return who
 
 
@@ -66,22 +61,23 @@ def main():
     a = p.parse_args()
     owner = a.owner or a.repo.split("/")[0]
     if a.cmd == "next":
-        issues = gh("GET", "repos/%s/issues?labels=%s&state=open&per_page=50&sort=created&direction=asc" % (a.repo, LABEL)) or []
+        f = forge.open(a.repo)
+        issues = f.issue_list(label=LABEL, state="open", oldest_first=True)
         first, seen = None, []
         for i in issues:
-            if "pull_request" in i:
+            if i["is_pr"]:
                 continue
             if held(a.state, i["number"]):
-                seen.append({"number": i["number"], "title": i.get("title"), "labelled": None})   # not asked: it is not a candidate
+                seen.append({"number": i["number"], "title": i["title"], "labelled": None})   # not asked: it is not a candidate
                 continue
             try:
-                lab = labelled_by(a.repo, i["number"]) == owner
-            except RuntimeError as e:
+                lab = labelled_by(f, i["number"]) == owner
+            except forge.ForgeError as e:
                 if first is None:
                     raise
                 print("issues.py: %s" % e, file=sys.stderr)   # after the issue to print: only the cache loses this entry
                 continue
-            seen.append({"number": i["number"], "title": i.get("title"), "labelled": lab})
+            seen.append({"number": i["number"], "title": i["title"], "labelled": lab})
             if first is None and lab:
                 first = i["number"]
         if a.state:
@@ -89,17 +85,17 @@ def main():
         if first is not None:
             print(first)
     else:
+        f = forge.open(a.repo)
         try:
-            gh("POST", "repos/%s/labels" % a.repo, {"name": DONE, "color": "c5def5",
-                                                  "description": "Triaged by the noodlebot (see its comment)"})
-        except RuntimeError as e:
-            if "already_exists" not in str(e) and "422" not in str(e):
+            f.label_ensure(name=DONE, color="c5def5", description="Triaged by the noodlebot (see its comment)")
+        except forge.ForgeError as e:
+            if e.status != 422:  # an existing label (422) is no failure
                 raise
-        gh("POST", "repos/%s/issues/%d/labels" % (a.repo, a.number), {"labels": [DONE]})
+        f.label_add(number=a.number, name=DONE)
         try:
-            gh("DELETE", "repos/%s/issues/%d/labels/%s" % (a.repo, a.number, LABEL))
-        except RuntimeError as e:
-            if "404" not in str(e) and "Label does not exist" not in str(e):
+            f.label_remove(number=a.number, name=LABEL)
+        except forge.ForgeError as e:
+            if e.status != 404 and "404" not in str(e) and "Label does not exist" not in str(e):
                 raise
 
 

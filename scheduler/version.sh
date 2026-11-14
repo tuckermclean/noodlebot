@@ -14,14 +14,8 @@ link=
 if [ "$v" != unknown ]; then
 	url=$(git -C "$dir" remote get-url origin 2>/dev/null)
 	full=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
-	case $url in
-	https://github.com/* | ssh://git@github.com/*) path=${url#*github.com/} ;;
-	git@github.com:*) path=${url#git@github.com:} ;;
-	*) path= ;;
-	esac
-	path=${path%.git}
-	case $path in */*/* | */ | /* | '') path= ;; */*) ;; *) path= ;; esac
-	[ -n "$path" ] && [ -n "$full" ] && link=https://github.com/$path/commit/$full
+	# the forge module turns the remote's URL into the commit's link (none: origin is no forge repository it knows)
+	out=$(python3 -I "$(dirname "$0")/forge.py" remote-commit-link "$url" "$full" 2>/dev/null) && { link=${out#\"}; link=${link%\"}; }
 fi
 if [ -n "$link" ]; then echo "— n00dl3b0t [$v]($link)"; else echo "— n00dl3b0t $v"; fi
 exit 0

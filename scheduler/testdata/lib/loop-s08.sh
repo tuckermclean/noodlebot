@@ -10,6 +10,7 @@ mkdir -p "$S08" "$tmp/bin08" "$tmp/bin08cc" "$nb08/scheduler/harnesses" "$nb08/s
 cp_scheduler "$nb08/scheduler"
 cp "$src/harness.py" "$nb08/scheduler/"
 cp "$src"/harnesses/*.py "$nb08/scheduler/harnesses/"
+[ -f "$src/forge.py" ] && { mkdir -p "$nb08/scheduler/forges"; cp "$src/forge.py" "$nb08/scheduler/"; cp "$src"/forges/*.py "$nb08/scheduler/forges/"; }
 cp "$src/testdata/harness/fake.py" "$nb08/scheduler/testdata/harness/fake_real.py"
 cp "$src/testdata/lib/fake-harness-hold.py" "$nb08/scheduler/testdata/harness/fake.py"
 git init -q -b main "$tmp/work08"; mkdir -p "$tmp/work08/docs"
