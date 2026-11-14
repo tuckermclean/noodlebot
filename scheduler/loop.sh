@@ -251,13 +251,16 @@ ensure_labels() {
 }
 ensure_labels
 
-# pr_tsvs <open limit>: the forge's merged, open and closed PR lists as the loop's TSVs, in one process (one token run, and the
-# three reads close together in time). Each file is emptied just before its list is read, so a failed list leaves it empty
-# (report.py then sees "unknown") and stops the rest; each row is the line the forge gave (`line`), else built from the row's keys.
+# pr_tsvs <open limit> [1]: the forge's merged, open and closed PR lists as the loop's TSVs, in one process (one token run).
+# The three lists are asked for at once; then the files are written in order, each emptied first, so a failed list leaves
+# its file and the later ones empty (report.py then sees "unknown") and no later file is written; each row is the line the
+# forge gave (`line`), else built from the row's keys. With 1 the process also does vis_ask's part (the forge has the
+# visibility capability): the same `forge.py repo visibility` call, asked alongside the lists, the same state/visibility
+# and report.log line, written before the lists' files.
 pr_tsvs() {
 	python3 -I -c '
-import json, os, sys, threading
-here, repo, state, open_limit = sys.argv[1:5]
+import io, json, os, sys, threading
+here, repo, state, open_limit, want_vis = sys.argv[1:6]
 sys.dont_write_bytecode = True   # the checkout gets no __pycache__
 sys.path.insert(0, here)
 import forge
@@ -273,13 +276,38 @@ def row(kind, r):
     else:
         c = [r["number"], r["head"], r["closed_at"], r["state"] == "merged"]
     return " ".join(s(v) for v in c)
+vis = []
+def ask_vis():   # what "forge.py --repo REPO repo visibility" prints (stdout, else its stderr line) and its exit code
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        rc = forge.main(["--repo", repo, "repo", "visibility"], out, err)
+    except Exception:
+        rc = 1
+    vis.append((rc, (out.getvalue() + err.getvalue()).rstrip("\n")))
+vt = [threading.Thread(target=ask_vis)] if want_vis == "1" else []
+for t in vt:
+    t.start()
+def vis_record():   # as vis_ask: a failed call is unknown and its line goes to report.log
+    while vt:
+        vt.pop().join()
+        rc, text = vis[0] if vis else (1, "")
+        v = text.strip("\"") if rc == 0 and text in ("\"private\"", "\"public\"") else "unknown"
+        try:
+            if rc != 0 and text:
+                with open(os.path.join(state, "report.log"), "a") as fh:
+                    fh.write(text + "\n")
+            with open(os.path.join(state, "visibility.tmp"), "w") as fh:
+                fh.write(v + "\n")
+            os.replace(os.path.join(state, "visibility.tmp"), os.path.join(state, "visibility"))
+        except OSError:
+            pass
 try:
     f = forge.open(repo)
     lists = (("merged", 500, ["number", "head"]),
              ("open", int(open_limit), ["number", "head", "head_sha", "author_is_bot", "mergeable"]),
              ("closed", 500, ["number", "head", "closed_at", "merged"]))
     got = [None] * len(lists)
-    def ask(i):   # the three lists are asked for at once (they wait on the network); the files are written in order below
+    def ask(i):   # the lists wait on the network: asked at once, written in order below
         try:
             got[i] = f.pr_list(state=lists[i][0], limit=lists[i][1], fields=lists[i][2])
         except Exception as e:
@@ -289,6 +317,7 @@ try:
         t.start()
     for t in ts:
         t.join()
+    vis_record()
     for (kind, limit, fields), rows in zip(lists, got):
         path = os.path.join(state, kind + "-prs.tsv")
         open(path, "w").close()
@@ -297,9 +326,10 @@ try:
         with open(path, "w") as out:
             out.write("".join(row(kind, r) + "\n" for r in rows))
 except Exception as e:
+    vis_record()
     print("forge pr list: %s" % " ".join(str(e).split())[:300], file=sys.stderr)
     sys.exit(1)
-' "$here" "$repo" "$state" "$1"
+' "$here" "$repo" "$state" "$1" "${2:-0}"
 }
 
 # alive <pid> <key>: the process exists and is that task's session, whose prompt ends in <key>
@@ -1444,10 +1474,11 @@ tick_run() {
 	git -C "$clone" merge -q --ff-only origin/main 2>/dev/null || git -C "$clone" checkout -q --detach origin/main 2>/dev/null ||
 		note "the clone's checkout could not follow origin/main"
 	tick_forge=''   # set once the forge answered (or failed other than by its token): the report and feedback run then
-	local ferr=$state/forge.err
-	[ "$(cat "$state/visibility" 2>/dev/null)" != unknown ] || vis_ask
+	local ferr=$state/forge.err vis=0
+	# an unknown visibility is asked again, by the lists' process when the forge has the capability (one process fewer)
+	if [ "$(cat "$state/visibility" 2>/dev/null)" = unknown ]; then forge_has visibility && vis=1 || vis_ask; fi
 	# pipefail: a failed list must stop the tick, never read as "no PRs". The lists' process also finds out whether the token script works.
-	if ! pr_tsvs "$open_limit" 2>"$ferr"; then
+	if ! pr_tsvs "$open_limit" "$vis" 2>"$ferr"; then
 		if grep -q 'token script' "$ferr" 2>/dev/null; then
 			cat "$ferr" >>"$state/report.log"; note "no GitHub App token; nothing started"; return
 		fi
