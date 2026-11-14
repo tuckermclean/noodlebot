@@ -134,7 +134,7 @@ has_cap() { [[ $caps == *" $1 "* ]]; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
 # forge <args>: one forge.py call (a JSON document on stdout). The loop's forge processes run with -S: the forge needs only
-# the standard library, and Python's start-up then skips the site-packages scan.
+# the standard library, and Python's start-up then skips the site-packages scan (so do issues.py's and labels.py's).
 forge() { python3 -I -S "$here/forge.py" --repo "$repo" "$@"; }
 [ -d "$clone/.git" ] || git clone -q "$clone_url" "$clone" || { echo "loop.sh: cannot clone $repo" >&2; exit 2; }
 
@@ -246,7 +246,7 @@ vis_ask() {
 ensure_labels() {
 	local out
 	vis_ask || { say "label step: no GitHub App token; labels not checked"; return; }
-	if out=$(python3 -I "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
+	if out=$(python3 -I -S "$here/labels.py" ensure --repo "$repo" 2>>"$state/report.log"); then
 		[ -z "$out" ] || say "label step: $(echo "$out" | sed 's/^created label //' | paste -sd' ' | sed 's/^/created labels: /')"
 	else
 		say "label step failed (see report.log); carrying on"
@@ -522,7 +522,7 @@ triage_ended() {
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
 		git -C "$clone" worktree remove --force "$wtroot/issue-$n" 2>/dev/null
-		if python3 -I "$here/issues.py" done --repo "$repo" --number "$n" 2>>"$state/report.log"; then
+		if python3 -I -S "$here/issues.py" done --repo "$repo" --number "$n" 2>>"$state/report.log"; then
 			say "$saw; triage of #$n done (rc 0); its label is now noodlebot-triaged"
 		else
 			echo "$(date -u +%FT%TZ) triage done, but swapping the label failed (report.log); remove the noodlebot label, then delete this file" >"$d/FAILED"
@@ -1537,7 +1537,7 @@ tick_run() {
 	# While the throttle holds, the labelled issues are still listed (issues.json stays current for the report's queued
 	# milestone); nothing starts because of it.
 	if { [ -z "$triaging" ] && ! full; } || [ "$throttled" = 1 ]; then
-		if n=$(python3 -I "$here/issues.py" next --repo "$repo" --state "$state" --owner "$owner" 2>>"$state/report.log"); then
+		if n=$(python3 -I -S "$here/issues.py" next --repo "$repo" --state "$state" --owner "$owner" 2>>"$state/report.log"); then
 			if [ -z "$n" ] || full || [ -n "$triaging" ]; then :
 			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
 			else start_triage "$n" "$saw" && live+=("$pid $n") && triaging=$n; fi

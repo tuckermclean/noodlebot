@@ -25,7 +25,8 @@ if [ "$hb" = 0 ]; then echo "last GitHub check: never"; else echo "last GitHub c
 # One forge process for the status issue's web link (its number from report.json) and the open PRs shown at the end: its
 # first line is "-" (no status issue) or "+<link>", then the forge's open-PR display form (a row's `line` is "   #N title";
 # dependabot's PRs left out); it exits non-zero when the list failed (the token script included): "(gh unavailable)".
-fout=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I -c 'import json, sys
+# It runs with -S, as the loop's forge processes: it needs only the standard library.
+fout=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I -S -c 'import json, sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
 try:
