@@ -163,5 +163,50 @@ ok "G03-AC-2: FEEDBACK.md of a spec PR holds the PR and its branch" sh -c '
 for n in 10 11 12 13 14 26 27; do fb mark "$n"; done
 ok "G03-AC-1: after feedback.py mark, no more for the same items (every kind)" silent
 
+# --- S09: hand over an item that came from outside the PR (the pickup step's feedback decision) ----------------
+# The interface S09 fixes (scheduler/pickup.test.sh uses it through pickup.py):
+#   python3 -I feedback.py --repo O/N --state DIR --owner LOGIN --prs FILE add N ITEMFILE
+# ITEMFILE is a JSON object {"id": comment id, "url", "author": login, "time", "body"} (other keys are ignored). PR N must be
+# an open bot PR of FILE on node/<ID>-... or spec/...; the item goes into the unit's FEEDBACK.md (node/<ID>/ or pr/<N>/ of DIR),
+# written as the loop's hand-over writes it ("# Feedback", "PR: N", "Branch: B" when the file is new; per item kind
+# (conversation), id, url, author, time, body: continuation lines indented), appended when the file exists; an item whose URL
+# the file holds is not added twice; the unit's starts file is set to 0, as the loop's hand-over does. Exit 0 and nothing on
+# stdout when done; exit 1 (a line on stderr), nothing written, when N is no such PR or the item file is unreadable. The record
+# DIR/feedback/ is not touched (the item is not on the PR).
+s9=$tmp/S09; mkdir -p "$s9/state/node/F06"
+s9prs=$s9/open-prs.tsv
+printf '20 node/F06-thing aaaa true MERGEABLE\n21 node/G07-human bbbb false MERGEABLE\n26 spec/triage-5-thing cccc true MERGEABLE\n27 feature/x dddd true MERGEABLE\n' >"$s9prs"
+echo 2 >"$s9/state/node/F06/starts"
+s9item() { python3 -I -c 'import json, sys; json.dump({"id": int(sys.argv[2]), "url": sys.argv[3], "author": "owner", "time": "2026-06-02T10:00:00Z", "body": sys.argv[4], "extra": 1}, open(sys.argv[1], "w"))' "$@"; }
+s9add() { python3 -I "$src/feedback.py" --repo o/r --state "$s9/state" --owner owner --prs "$s9prs" add "$@"; }
+s9item "$s9/i1.json" 5001 "https://github.com/o/r/issues/13#issuecomment-5001" "please also handle empty input"
+s9item "$s9/i2.json" 5002 "https://github.com/o/r/issues/14#issuecomment-5002" "first line
+second line"
+out=$(s9add 20 "$s9/i1.json" 2>"$tmp/err"); rc=$?
+f=$s9/state/node/F06/FEEDBACK.md
+ok "S09-AC-3: feedback.py add 20 exits 0 and prints nothing" test "$rc" = 0 -a -z "$out"
+ok "S09-AC-3: add writes the node unit's FEEDBACK.md with the PR and its branch" sh -c 'grep -qxF "# Feedback" "$1" && grep -qxF "PR: 20" "$1" && grep -qxF "Branch: node/F06-thing" "$1"' x "$f"
+ok "S09-AC-3: add writes the item's kind, id, url, author, time and body" sh -c '
+	grep -qxF "kind: conversation" "$1" && grep -qxF "id: 5001" "$1" && grep -qxF "url: https://github.com/o/r/issues/13#issuecomment-5001" "$1" &&
+	grep -qxF "author: owner" "$1" && grep -qxF "time: 2026-06-02T10:00:00Z" "$1" && grep -qxF "body: please also handle empty input" "$1"' x "$f"
+ok "S09-AC-3: add sets the unit's starts to 0 (the loop starts its feedback session)" test "$(cat "$s9/state/node/F06/starts" 2>/dev/null)" = 0
+ok "S09-AC-3: add leaves the PR's record alone (no feedback/ folder made)" test -s "$f" -a ! -e "$s9/state/feedback"
+s9add 20 "$s9/i2.json" >/dev/null 2>&1; rc=$?
+ok "S09-AC-3: a second item is appended to the same FEEDBACK.md (one header, both items)" sh -c '[ "$2" = 0 ] && [ "$(grep -c "^# Feedback" "$1")" = 1 ] && [ "$(grep -c "^PR: 20" "$1")" = 1 ] && [ "$(grep -c "^kind: " "$1")" = 2 ] && grep -qxF "id: 5001" "$1" && grep -qxF "id: 5002" "$1"' x "$f" "$rc"
+ok "S09-AC-3: a body of several lines: the first on the body line, the rest indented" sh -c 'grep -qxF "body: first line" "$1" && grep -qxF "  second line" "$1"' x "$f"
+cp "$f" "$s9/f.before"
+s9add 20 "$s9/i1.json" >/dev/null 2>&1; rc=$?
+ok "S09-AC-3: adding an item whose URL the file holds changes nothing (exit 0)" sh -c '[ "$1" = 0 ] && [ -s "$3" ] && cmp -s "$2" "$3"' x "$rc" "$s9/f.before" "$f"
+s9item "$s9/i3.json" 5003 "https://github.com/o/r/pull/26#issuecomment-5003" "the spec needs a rollback section"
+s9add 26 "$s9/i3.json" >/dev/null 2>&1; rc=$?
+ok "S09-AC-3: add for a spec PR writes pr/26/FEEDBACK.md with the PR and the branch" sh -c '[ "$2" = 0 ] && grep -qxF "PR: 26" "$1" && grep -qxF "Branch: spec/triage-5-thing" "$1" && grep -qxF "id: 5003" "$1"' x "$s9/state/pr/26/FEEDBACK.md" "$rc"
+for n in 21 27 99; do
+	out=$(s9add $n "$s9/i1.json" 2>/dev/null); rc=$?
+	ok "S09-AC-4: add for PR $n (a human's / on another branch / not in the list) exits 1 and prints nothing (the first add worked)" test "$rc" = 1 -a -z "$out" -a -s "$f"
+done
+ok "S09-AC-4: and writes no unit folder for them" test -s "$f" -a ! -e "$s9/state/node/G07" -a ! -e "$s9/state/pr/21" -a ! -e "$s9/state/pr/27" -a ! -e "$s9/state/pr/99"
+s9add 20 "$s9/none.json" >/dev/null 2>&1; rc=$?
+ok "S09-AC-3: add with an unreadable item file exits 1 and leaves FEEDBACK.md as it was" sh -c '[ "$1" = 1 ] && [ -s "$3" ] && cmp -s "$2" "$3"' x "$rc" "$s9/f.before" "$f"
+
 [ "$fails" -eq 0 ] || { echo "$fails FAILED"; exit 1; }
 echo "all passed"
