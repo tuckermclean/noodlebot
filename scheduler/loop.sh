@@ -253,8 +253,9 @@ ensure_labels
 
 # pr_tsvs <open limit> [1]: the forge's merged, open and closed PR lists as the loop's TSVs, in one process (one token run).
 # The three lists are asked for at once; then the files are written in order, each emptied first, so a failed list leaves
-# its file and the later ones empty (report.py then sees "unknown") and no later file is written; each row is the line the
-# forge gave (`line`), else built from the row's keys. With 1 the process also does vis_ask's part (the forge has the
+# its file empty (report.py then sees "unknown") and the later files keep what they held (they are not written); each row is
+# the line the forge gave (`line`), else built from the row's keys. A failed token script writes no file: all three keep
+# their bytes. With 1 the process also does vis_ask's part (the forge has the
 # visibility capability): the same `forge.py repo visibility` call, asked alongside the lists, the same state/visibility
 # and report.log line, written before the lists' files.
 pr_tsvs() {
@@ -318,6 +319,9 @@ try:
     for t in ts:
         t.join()
     vis_record()
+    for rows in got:   # the token script failed (every list fails alike): no file is touched
+        if isinstance(rows, Exception) and "token script" in str(rows):
+            raise rows
     for (kind, limit, fields), rows in zip(lists, got):
         path = os.path.join(state, kind + "-prs.tsv")
         open(path, "w").close()
