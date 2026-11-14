@@ -258,9 +258,9 @@ ensure_labels
 # The three lists are asked for at once; then the files are written in order, each emptied first, so a failed list leaves
 # its file empty (report.py then sees "unknown") and the later files keep what they held (they are not written); each row is
 # the line the forge gave (`line`), else built from the row's keys. A failed token script writes no file: all three keep
-# their bytes. With 1 the process also does vis_ask's part (the forge has the
-# visibility capability): the same `forge.py repo visibility` call, asked alongside the lists, the same state/visibility
-# and report.log line, written before the lists' files.
+# their bytes. With 1 the process also does vis_ask's part (the forge has the visibility capability): the same
+# `forge.py repo visibility` call, asked alongside the lists, the same state/visibility and report.log line, written
+# before the lists' files.
 pr_tsvs() {
 	python3 -I -S -c '
 import io, json, os, sys, threading
