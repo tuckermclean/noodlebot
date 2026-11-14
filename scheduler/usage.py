@@ -33,7 +33,7 @@ FIVE_H, WEEK = 5 * 3600, 7 * 86400
 def readings(root, now):
     """{window: {"resetsAt", "utilization", "status"}} from the sessions' usage events."""
     out = {}
-    pats = [os.path.join(root, "*", k, "*") for k in ("node", "issue", "pr")]
+    pats = [os.path.join(root, "*", k, "*") for k in ("node", "issue", "pr", "pickup")]
     for d in [d for p in pats for d in glob.glob(p)]:
         try:
             m = harness.log_stat(d).get("mtime")   # the raw log's age, not the events file's: the real clock

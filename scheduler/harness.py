@@ -9,6 +9,8 @@ the operations are described in harnesses/README.md.
   harness.py resume <worktree> <state-dir> <session-id> <prompt>
   harness.py exec-start|exec-resume <pidfile> <the arguments of start|resume>   (run-session.sh's pipeline, stage 1)
   harness.py record <state-dir> fresh|append [<pidfile>]                             (run-session.sh's pipeline, stage 2)
+  harness.py small-start <state-dir> <prompt-file>     (S09: one small-model, no-tools, one-turn session; exit code = its)
+  harness.py small                                     (exit 0 and the small model's name when the backend has it; 1: not)
   harness.py skill-command <skill> <args> [shipped]
   harness.py matches <unit> <cmdline>
   harness.py match-pattern <unit>                      (matches as a grep -E pattern; exit 1: the backend has none)
@@ -79,6 +81,22 @@ def start(worktree, state_dir, prompt, system_prompt, plugin):
 
 def resume(worktree, state_dir, session_id, prompt):
     return backend().resume(worktree, state_dir, session_id, prompt)
+
+
+def small_start(state_dir, prompt):
+    """One small-model, no-tools, one-turn session in the foreground (S09's pickup run): the raw stream on stdout, events
+    in <state-dir>/events.jsonl as start() writes them; returns the exit code. Not a capability of capabilities()."""
+    return backend().small_start(state_dir, prompt)
+
+
+def small_capable():
+    be = backend()
+    return bool(be.small_capable()) if hasattr(be, "small_capable") else False
+
+
+def small_model():
+    be = backend()
+    return getattr(be, "SMALL_MODEL", None) or getattr(be, "NAME", "small")
 
 
 def events(state_dir, write=True, types=None):
@@ -186,6 +204,19 @@ def main(argv):
         except OSError:
             pass
         sys.stdout.flush()
+        return 0
+    if op == "small-start" and len(a) == 2:
+        try:
+            with open(a[1]) as f:
+                prompt = f.read()
+        except OSError as e:
+            sys.stderr.write("harness.py: cannot read %s: %s\n" % (a[1], e))
+            return 2
+        return int(small_start(a[0], prompt))
+    if op == "small" and not a:
+        if not small_capable():
+            return 1
+        print(small_model())
         return 0
     if op == "log-stat" and len(a) == 1:
         print(json.dumps(log_stat(a[0])))

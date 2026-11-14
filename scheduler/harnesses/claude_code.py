@@ -17,6 +17,7 @@ import time
 
 NAME = "claude-code"
 CAPS = ["usage", "resume", "bg-wait"]
+SMALL_MODEL = "haiku"
 LIMIT_RE = re.compile(r"usage limit|rate limit|limit reached|hit your limit", re.I)
 CUTOFF_RE = re.compile(r"background tasks? still running.*after the last turn.*stopping them", re.I)
 
@@ -533,15 +534,15 @@ def _resume_context(state_dir):
     return sp, plugin
 
 
-def _run(worktree, state_dir, argv, fresh):
-    env = dict(os.environ)
+def _run(worktree, state_dir, argv, fresh, cwd=None, unset=()):
+    env = {k: v for k, v in os.environ.items() if k not in unset}
     env["CLAUDE_CODE_OAUTH_TOKEN"] = _credential()
     if not env.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"):
         env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
     base = _end_cut_line(state_dir, _out_base())
     fd, evf = _open_events(state_dir, fresh, base)
     import signal, subprocess, threading
-    proc = subprocess.Popen(argv, cwd=worktree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    proc = subprocess.Popen(argv, cwd=cwd or worktree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
 
     def fwd(signum, frame):
         try:
@@ -573,3 +574,15 @@ def start(worktree, state_dir, prompt, system_prompt, plugin):
 def resume(worktree, state_dir, session_id, prompt):
     sp, plugin = _resume_context(state_dir)
     return _run(worktree, state_dir, _command(prompt, sp, plugin, session_id), False)
+
+
+def small_capable():
+    return True
+
+
+def small_start(state_dir, prompt):
+    """S09's pickup run: the small model, no tool, one turn, no plugin, no permission mode, no system prompt added;
+    in the state directory; otherwise as start() (credential, events.jsonl, raw stream on stdout)."""
+    argv = ["claude", "-p", prompt, "--model", SMALL_MODEL, "--tools", "", "--max-turns", "1", "--strict-mcp-config",
+            "--disable-slash-commands", "--output-format", "stream-json", "--verbose"]
+    return _run(state_dir, state_dir, argv, True, unset=("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NOODLEBOT_FORGE_TOKEN_SCRIPT"))
