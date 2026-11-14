@@ -91,7 +91,7 @@ def small_start(state_dir, prompt):
 
 def small_capable():
     be = backend()
-    return bool(be.small_capable()) if hasattr(be, "small_capable") else False
+    return bool(be.small_capable()) if hasattr(be, "small_capable") else hasattr(be, "small_start")
 
 
 def small_model():

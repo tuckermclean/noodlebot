@@ -3,6 +3,7 @@
 
   feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE [--limit N]        print the PRs with new feedback
   feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE [--limit N] mark N  advance PR N's record
+  feedback.py --repo OWNER/NAME --state DIR --owner LOGIN --prs FILE add N ITEMFILE      hand over an item from outside the PR (S09)
 
 FILE is the loop's open-prs.tsv ("<number> <branch> <headOid> <is_bot> <mergeable>"); DIR is state/<name>; all
 forge access is through forge.py (every page of each list; its token script, or a GH_TOKEN in the environment).
@@ -17,6 +18,10 @@ per item kind, id, url, author, time, body, and for a line comment file, line, t
 to the items of that file. The first run (no feedback/ folder) records every open bot PR's newest IDs and prints
 nothing; a PR seen later starts from an empty record. The record and file of a PR no longer open are removed, except when --limit N is given and FILE has N or more lines:
 the list may then be cut short by its own limit, so no record or file of a PR missing from it is removed (G06).
+`add N ITEMFILE`: ITEMFILE is a JSON object {"id", "url", "author", "time", "body"}; PR N must be an open bot PR of FILE on
+node/<ID>-... or spec/*. The item is appended to the unit's FEEDBACK.md (created with its header when new; an item whose URL
+the file holds is not added twice) and the unit's starts are set to 0, as the loop's own hand-over does; the record
+DIR/feedback/ is not touched. Exit 0 and no output when done, 1 (a line on stderr, nothing written) otherwise.
 A failing gh call is logged to stderr, prints nothing for that PR, leaves its record alone and makes the exit code 1.
 """
 import argparse
@@ -173,6 +178,50 @@ def mark(state, n):
     write_record(state, n, rec)
 
 
+def add(state, prs_file, n, item_file):
+    """Hand the item in item_file over to PR n's unit (S09); returns the exit code."""
+    try:
+        with open(item_file, encoding="utf-8") as f:
+            it = json.load(f)
+        item = {"kind": "conversation", "time": str(it.get("time") or ""),
+                "raw": {"id": int(it["id"]), "url": str(it.get("url") or ""),
+                        "author": {"login": str(it.get("author") or "")}, "body": str(it.get("body") or "")}}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        log("cannot read the item %s: %s" % (item_file, e))
+        return 1
+    branch = None
+    try:
+        with open(prs_file, encoding="utf-8") as f:
+            for line in f:
+                p = line.split()
+                if len(p) >= 4 and p[0] == str(n) and p[3] == "true":
+                    branch = p[1]
+    except OSError as e:
+        log("cannot read %s: %s" % (prs_file, e))
+        return 1
+    udir = unit_dir(state, n, branch) if branch else None
+    if udir is None:
+        log("PR %s is not an open bot PR on node/<ID>-... or spec/..." % n)
+        return 1
+    path = os.path.join(udir, "FEEDBACK.md")
+    text = feedback_md(n, branch, [item])
+    try:
+        with open(path, encoding="utf-8") as f:
+            old = f.read()
+    except OSError:
+        old = None
+    if old is None:
+        new = text
+    elif item["raw"]["url"] and ("\nurl: " + item["raw"]["url"] + "\n") in "\n" + old:
+        return 0   # already handed over
+    else:
+        new = old.rstrip("\n") + "\n\n" + text.split("\n\n", 2)[2]
+    os.makedirs(udir, exist_ok=True)
+    write_atomic(path, new)
+    write_atomic(os.path.join(udir, "starts"), "0\n")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
@@ -183,6 +232,10 @@ def main():
     ap.add_argument("cmd", nargs="*")
     a = ap.parse_args()
     fdir = os.path.join(a.state, "feedback")
+    if a.cmd and a.cmd[0] == "add":
+        if len(a.cmd) != 3 or not a.cmd[1].isdigit():
+            ap.error("usage: add N ITEMFILE")
+        return add(a.state, a.prs, int(a.cmd[1]), a.cmd[2])
     if a.cmd:
         if len(a.cmd) != 2 or a.cmd[0] != "mark" or not a.cmd[1].isdigit():
             ap.error("usage: [mark N]")

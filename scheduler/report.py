@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mirror one repository's scheduler state to a GitHub status issue, and take the owner's answers from it.
 
-  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN] [--site URL]
+  report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN] [--site URL] [--pickup]
 
 Run by loop.sh after each tick; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all forge access through forge.py (the token script, or a GH_TOKEN in the environment).
 Each run:
@@ -62,6 +62,11 @@ With --site (the status site's https address) the texts it writes itself link to
 node of the repository's graph, a whole word outside a code span, a link or a URL) becomes a link to the node's view, the
 log issue's body has a status-site line, and the units' home issues link their node's (or the triage's) view. Text copied
 from a session (a QUESTION.md, its narration) is posted as it is. Without --site every text is as it was.
+With --pickup (the pickup step is on, S09) the owner comments it cannot place are not answered "Not recorded as an answer": on a
+home issue one with no question waiting there, or several waiting and no matching prefix; on the log issue an unprefixed one
+with no node or several waiting. Each is written to DIR/pickup/pending/<comment id>.json (id, url, issue, where "home" | "log",
+created_at, author, body, and the unsigned reply it would have posted) for pickup.py, which decides what it is and replies.
+Every other reply is as without the flag, and without it no pickup folder is written.
 On the first run it does not replay old comments or events. Any failure (a failed milestone post included,
 after the other work is done) exits non-zero; the loop logs it and carries on, and the next run picks up
 where this one stopped.
@@ -1003,6 +1008,22 @@ def signed(a, text):
     return text.rstrip("\n") + "\n\n" + a.signature + "\n" if a.signature else text
 
 
+def leave_to_pickup(a, issue, c, where, reply):
+    """With --pickup: the owner comment c that report.py cannot place is written to DIR/pickup/pending/<id>.json with the reply
+    it would have posted (pickup.py replies once); returns True. Without --pickup: False, and the caller replies as always."""
+    if not getattr(a, "pickup", False):
+        return False
+    d = os.path.join(a.state, "pickup", "pending")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "%d.json" % c["id"])
+    if not os.path.exists(path):
+        with open(path + ".tmp", "w") as f:
+            json.dump({"id": c["id"], "url": c["url"], "issue": int(issue), "where": where, "created_at": c["created_at"],
+                       "author": c["author"], "body": c["body"], "reply": reply}, f, indent=1)
+        os.replace(path + ".tmp", path)
+    return True
+
+
 def comment(a, issue, text):
     room = MAX_COMMENT - (len(a.signature) + 4 if a.signature else 0)
     if len(text) > room:
@@ -1371,11 +1392,13 @@ def take_home_answers(a, rs, status_issue):
                     if issue in on_pr and not cands:
                         pass  # a comment on a bot PR is feedback, not a stray answer
                     elif not pending:
-                        comment(a, issue, "Not recorded as an answer: no question is waiting on this issue.")
+                        txt = "Not recorded as an answer: no question is waiting on this issue."
+                        leave_to_pickup(a, issue, c, "home", txt) or comment(a, issue, txt)
                     elif len(cands) > 1 and not (m and m.group(1) in cands):
-                        comment(a, issue, "Not recorded as an answer: more than one unit is waiting on this issue (%s). "
-                                "Start the reply with the ID of the one you answer, e.g. `%s: ...`." %
-                                (", ".join(cands), cands[0]))
+                        txt = ("Not recorded as an answer: more than one unit is waiting on this issue (%s). "
+                               "Start the reply with the ID of the one you answer, e.g. `%s: ...`." %
+                               (", ".join(cands), cands[0]))
+                        leave_to_pickup(a, issue, c, "home", txt) or comment(a, issue, txt)
                     elif cands and m and m.group(1) in nodes(a.state) and m.group(1) not in cands:
                         comment(a, issue, "Not recorded as an answer: %s has no question waiting on this issue (waiting here: %s)." %
                                 (m.group(1), ", ".join(cands)))
@@ -1411,9 +1434,10 @@ def take_answers(a, rs, issue):
                     (m.group(1), ", ".join(open_q)))
             continue
         if node is None:
-            comment(a, issue, "Not recorded as an answer: %s. Start the reply with the node's ID, e.g. `%s: ...`." %
-                    ("no node is waiting on a question" if not open_q else
-                     "more than one node is waiting (%s)" % ", ".join(open_q), open_q[0] if open_q else "B03"))
+            txt = ("Not recorded as an answer: %s. Start the reply with the node's ID, e.g. `%s: ...`." %
+                   ("no node is waiting on a question" if not open_q else
+                    "more than one node is waiting (%s)" % ", ".join(open_q), open_q[0] if open_q else "B03"))
+            leave_to_pickup(a, issue, c, "log", txt) or comment(a, issue, txt)
             continue
         what = record_answer(a, rs, node, c, text)
         if what is None:
@@ -1776,6 +1800,7 @@ def main():
     p.add_argument("--version", default="")
     p.add_argument("--signature", default="")
     p.add_argument("--site", default="")
+    p.add_argument("--pickup", action="store_true", help="leave the owner comments it cannot place to pickup.py (S09)")
     p.add_argument("--clause", metavar="KEY", help="print the clause for the answered unit KEY (read-only; status.sh) and exit")
     a = p.parse_args()
     if a.clause:
