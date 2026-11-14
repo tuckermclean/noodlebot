@@ -267,7 +267,10 @@ def main(argv, out=None, err=None):
         if argv == ["caps"]:
             print(json.dumps(sorted(open(repo).capabilities)), file=out)
             return 0
-        if argv == ["runtime"]:  # loop.sh: <runtime name> TAB <owner> TAB <canonical spec>
+        if argv == ["runtime"]:
+            # loop.sh, once per start: <runtime name> TAB <owner> TAB <canonical spec> TAB <capabilities> TAB <clone URL>,
+            # the last two as `caps` and `repo clone-url` give them (space-separated; the URL as its JSON string without the
+            # quotes), each empty when it cannot be had (the loop then assumes all capabilities, and a clone fails)
             fname, path = parse(repo if repo is not None else os.environ.get("NOODLEBOT_FORGE_REPO"))
             canon = repo if repo is not None else os.environ.get("NOODLEBOT_FORGE_REPO")
             if fname == "github":
@@ -280,7 +283,14 @@ def main(argv, out=None, err=None):
                         owner = str(json.load(f).get("owner") or "")
                 except (OSError, ValueError, AttributeError):
                     pass
-            print("%s\t%s\t%s" % (rname, owner, canon), file=out)
+            caps = url = ""
+            try:
+                f = open(canon)
+                caps = " ".join(sorted(f.capabilities))
+                url = json.dumps(f.repo_clone_url())[1:-1]
+            except Exception:  # noqa: BLE001 (what cannot be had is empty)
+                pass
+            print("%s\t%s\t%s\t%s\t%s" % (rname, owner, canon, caps, url), file=out)
             return 0
         if len(argv) < 2 or "%s %s" % (argv[0], argv[1]) not in _ARGS:
             raise _Usage("usage: forge.py [--repo SPEC] <family> <op> [--opt value ...] | ops | caps")
