@@ -114,9 +114,9 @@ def _load(name):
         return _LOADED[name]
 
 
-def _load_file(name, path=None):
+def _load_file(name):
     """A backend's module from its source file, compiled here (no bytecode is written; importlib's loader is not needed)."""
-    path = path or BACKENDS[name]
+    path = BACKENDS[name]
     mod = types.ModuleType("forge_backend_" + name)
     mod.__file__ = path
     with builtins.open(path, encoding="utf-8") as f:
