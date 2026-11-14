@@ -6,8 +6,10 @@
 State comes from the node branches' PRs (`node/<ID>-<name>`): merged, open #N, or none; a squash commit
 subject "<ID> <name>: ..." on HEAD also counts as merged (run it on a fresh checkout of main). --grep lists,
 for each term, the nodes whose spec mentions it (case-insensitive), most mentions first. The PR list comes from the
-forge interface (scheduler/forge.py): the repository of $NOODLEBOT_FORGE_REPO (a session has it), else the one `origin`
-names; if the forge cannot be reached the state column is "?".
+forge interface: in a session, $NOODLEBOT_FORGE (the wrapper scheduler/forge-cli.sh, which holds the token script) is run
+as a CLI (`pr list`, JSON on stdout); without it the checkout's own scheduler/forge.py is imported. The repository is
+$NOODLEBOT_FORGE_REPO (a session has it), else the one `origin` names; if the forge cannot be reached (the CLI exits
+non-zero) the state column is "?".
 Also lists the open PRs whose head branch starts with spec/ (their docs/graph.yaml is read from
 origin/<branch>, so fetch first): the IDs each adds that main lacks, with its PR number; one `next free:`
 line holding, for every letter in use, the number after the highest ID on main, in those PRs and in this graph (`next free: S05 T02`); and
@@ -23,18 +25,22 @@ import json, os, re, subprocess, sys
 import yaml
 
 
-def open_forge():
-    """The forge of $NOODLEBOT_FORGE_REPO, else of `origin`; ValueError when none can be opened (callers say "unknown")."""
-    here = os.path.dirname(os.path.realpath(__file__))
+def import_forge(folder):
     sys.dont_write_bytecode = True  # the checkout the forge module lives in gets no __pycache__
-    forge_py = os.environ.get("NOODLEBOT_FORGE")  # the session's forge CLI: its folder holds the module
-    sys.path.insert(0, os.path.dirname(forge_py) if forge_py else os.path.join(here, "..", "..", "..", "scheduler"))
+    sys.path.insert(0, folder)
     try:
         import forge
     except ImportError:
         raise ValueError("the forge module is not found")
     finally:
         sys.path.pop(0)
+    return forge
+
+
+def open_forge():
+    """The forge of $NOODLEBOT_FORGE_REPO, else of `origin`; ValueError when none can be opened (callers say "unknown")."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    forge = import_forge(os.path.join(here, "..", "..", "..", "scheduler"))  # this checkout's own scheduler/
     spec = os.environ.get("NOODLEBOT_FORGE_REPO")
     if not spec:
         r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
@@ -49,10 +55,37 @@ def open_forge():
 
 def list_prs(**kw):
     """The forge's pr list; a failed call is a ValueError, as the callers treat every unreadable list."""
+    cli = os.environ.get("NOODLEBOT_FORGE")
+    if cli:
+        return cli_prs(cli, **kw)
     f, forge = open_forge()
     try:
         return f.pr_list(**kw)
     except forge.ForgeError as e:
+        raise ValueError(str(e))
+
+
+def cli_prs(cli, state, limit, fields):
+    """`pr list` through the session's forge CLI; the repository is $NOODLEBOT_FORGE_REPO (the CLI reads it), else origin's."""
+    argv = [cli]
+    if not os.environ.get("NOODLEBOT_FORGE_REPO"):
+        try:
+            forge = import_forge(os.path.dirname(os.path.realpath(cli)))
+            r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+            spec = forge.repo_of_remote(r.stdout.strip()) if r.returncode == 0 else None
+        except (ValueError, OSError):
+            spec = None
+        if spec:
+            argv += ["--repo", spec]
+    argv += ["pr", "list", "--state", state, "--limit", str(limit)]
+    for f in fields:
+        argv += ["--fields", f]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise ValueError("forge CLI failed (%d): %s" % (r.returncode, r.stderr.strip()[:200]))
+        return json.loads(r.stdout)
+    except (OSError, subprocess.TimeoutExpired) as e:
         raise ValueError(str(e))
 
 

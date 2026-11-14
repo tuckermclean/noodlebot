@@ -216,7 +216,7 @@ ci_read() {
 	ci_dir=$(mktemp -d) || { ci_err="mktemp failed"; return 1; }
 	# the forge's ci runs (its GitHub backend runs the token script once; no token is held here), bounded by 60 s (the token script's own limit
 	# is 30 s, so its timeout is reported by the CLI before this one fires); always the token script, never a caller's GH_TOKEN
-	env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 60 python3 -I "$forge_py" --repo "$ci_repo" ci runs \
+	env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" timeout 60 python3 -I "$forge_py" --repo "$ci_repo" ci runs \
 		--workflow "$ci_wf" --sha "$new" --event push --branch "$ci_branch" >"$ci_dir/out" 2>"$ci_dir/err" 9>&-
 	ci_rc=$?
 	if [ "$ci_rc" != 0 ]; then

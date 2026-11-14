@@ -22,6 +22,8 @@ Credentials (GitHub): a `GH_TOKEN` in the caller's environment is used as given;
 else no token (`gh` uses its own login). A failing token script is not run again in that process either: every later
 call for the repository fails with the same error. The token reaches `gh` and `git` only through the child's
 environment, never an argument, output, log, file or Git configuration.
+The loop exports `NOODLEBOT_FORGE_TOKEN_SCRIPT` for its own helpers; a session does not have it: `run-session.sh` unsets it
+and exports `NOODLEBOT_FORGE=scheduler/forge-cli.sh`, the wrapper that sets it for its own process only.
 
 ## Inventory
 

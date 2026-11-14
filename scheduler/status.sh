@@ -96,7 +96,7 @@ done
 
 echo "-- open PRs:"
 # the forge's open-PR display form (a row's `line` is "   #N title"; dependabot's PRs left out); a failure, token script included, is "(gh unavailable)"
-prs=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token python3 -I "$here/forge.py" --repo "$repo" pr list --state open \
+prs=$(env -u GH_TOKEN NOODLEBOT_FORGE_TOKEN_SCRIPT="$HOME/.config/noodlebot/token" python3 -I "$here/forge.py" --repo "$repo" pr list --state open \
 	--fields number --fields title 2>/dev/null) &&
 	python3 -I -c 'import json, sys
 for r in json.loads(sys.argv[1]): print(r["line"])' "$prs" 2>/dev/null ||
