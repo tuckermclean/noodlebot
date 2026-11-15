@@ -22,7 +22,7 @@ If a new test already passes, stop and report `already_satisfied` with the evide
 
 ## You must not
 - write or change implementation, or change or remove any line of a test an earlier slice or node committed (you may add cases);
-- edit `SPEC.md`, `docs/graph.yaml`, `nodes/`, `AGENTS.md`, `CLAUDE.md` or `.claude/`;
+- edit `SPEC.md`, `docs/graph.yaml`, `nodes/`, `AGENTS.md`, or the spec and instruction files the repository's AGENTS.md and its guard config name;
 - touch anything `AGENTS.md` forbids (a live checkout, a running loop, a configuration directory);
 - push, amend, rebase or reset; read or print secrets.
 

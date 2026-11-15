@@ -101,3 +101,29 @@ line(forge is not None and issubclass(forge.CapabilityOff, forge.ForgeError) if 
 for kind, ref, tail in (("repo", None, ""), ("issue", "1", "/issues/1"), ("pr", "5", "/pull/5"), ("commit", "abc123", "/commit/abc123")):
     got, e = attempt(lambda: forge.web_url("acme/widgets", kind, ref) if ref else forge.web_url("acme/widgets", kind))
     line(got == "https://github.com/acme/widgets" + tail, "G04-AC-2: forge.web_url('acme/widgets', %r) is the GitHub web URL, with no call" % kind, e or "got %r" % (got,))
+
+# --- R02-AC-6: the operations of R02's change 6 (new checks only) ---
+for op in ("pr close", "ci rerun", "repo permissions"):
+    line(op in ops, "R02-AC-6: forge.OPERATIONS has the new operation `%s` (and `forge.py ops` prints it)" % op,
+         "missing from %s" % ops)
+    line(op in (cl or []), "R02-AC-6: `forge.py ops` lists `%s`" % op, "missing from %s" % cl)
+got, e = attempt(lambda: forge.web_url("acme/widgets", "run", "9001"))
+line(got == "https://github.com/acme/widgets/actions/runs/9001", "R02-AC-6: forge.web_url('acme/widgets', 'run', '9001') is the GitHub run URL, with no call",
+     e or "got %r" % (got,))
+got, e = attempt(lambda: forge.open("fake:" + state).ci_runs(branch="main"))
+line(isinstance(got, list) and got, "R02-AC-6: ci_runs(branch=...) alone works through the Python interface (no workflow, no sha)", e or "got %r" % (got,))
+got, e = attempt(lambda: forge.open("fake:" + state).issue_list(state="all"))
+line(isinstance(got, list) and len(got) >= 3, "R02-AC-6: issue_list(state='all') works through the Python interface (no label)", e or "got %r" % (got,))
+r = cli("--repo", "fake:" + state, "ci", "rerun")
+line(HAVE and r.returncode == 2 and r.stdout == "" and r.stderr.strip(), "R02-AC-6: `ci rerun` without --run is a usage error: exit 2, nothing on stdout",
+     "rc %s, stdout %r, stderr %r" % (r.returncode, r.stdout[:100], r.stderr[:200]))
+r = cli("--repo", "fake:" + state, "pr", "close")
+line(HAVE and r.returncode == 2 and r.stdout == "" and r.stderr.strip(), "R02-AC-6: `pr close` without --number is a usage error: exit 2, nothing on stdout",
+     "rc %s, stdout %r, stderr %r" % (r.returncode, r.stdout[:100], r.stderr[:200]))
+r = cli("--repo", "fake:" + state, "repo", "permissions")
+try:
+    perms = json.loads(r.stdout)
+except ValueError:
+    perms = None
+line(r.returncode == 0 and isinstance(perms, dict) and set(perms) >= {"read", "write", "admin"}, "R02-AC-6: `repo permissions` prints one JSON object with read, write and admin",
+     "rc %s, stdout %r, stderr %r" % (r.returncode, r.stdout[:100], r.stderr[:200]))

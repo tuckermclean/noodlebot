@@ -220,6 +220,49 @@ def cases():
         gh=[("PATCH", "gists/gist123", {"files": {"index.json": {"content": "{\"a\": 1}"}}})])
     add("branch push", "branch push", {"path": "<WORK>/checkout", "branch": "feat/x"}, expect=lambda b, m: {},
         observe="push", observe_expect=None)  # expectation: the commit of the checkout's feat/x (see check)
+    # --- R02-AC-6: the operations the texts need (change 6 of R02): new cases only, G04's cases above are unchanged ---
+    add("R02-AC-6 pr close", "pr close", {"number": 6}, "pr", expect=lambda b, m: upd(PR(6), state="closed", closed_at=NOW),
+        effect=("pr view", {"number": 6}, "pr"), effect_expect=lambda b, m: upd(PR(6), state="closed", closed_at=NOW),
+        gh=[("PATCH", "repos/acme/widgets/pulls/6", {"state": "closed"})])
+    add("R02-AC-6 pr view merge_commit of a merged PR", "pr view", {"number": 7}, "prm",
+        expect=lambda b, m: {"number": 7, "state": "merged", "merge_commit": MERGE_SHA},
+        setup=lambda s: set_pr(s, 7, merge_commit=MERGE_SHA))
+    add("R02-AC-6 pr view merge_commit of an open PR is null", "pr view", {"number": 5}, "prm",
+        expect=lambda b, m: {"number": 5, "state": "open", "merge_commit": None})
+    add("R02-AC-6 pr view merge_commit of a PR closed unmerged is null", "pr view", {"number": 4}, "prm",
+        expect=lambda b, m: {"number": 4, "state": "closed", "merge_commit": None})
+    add("R02-AC-6 ci runs by branch alone", "ci runs", {"branch": "main"}, "list:ci",
+        expect=lambda b, m: by(F.ci_runs, "id", 9005, 9003, 9002, 9001))
+    add("R02-AC-6 ci runs by another branch alone", "ci runs", {"branch": "feat/two"}, "list:ci",
+        expect=lambda b, m: by(F.ci_runs, "id", 9004))
+    add("R02-AC-6 ci runs by an unknown branch is empty", "ci runs", {"branch": "no/such"}, "list:ci", expect=lambda b, m: [])
+    add("R02-AC-6 ci runs by branch and event", "ci runs", {"branch": "main", "event": "push"}, "list:ci",
+        expect=lambda b, m: by(F.ci_runs, "id", 9005, 9003, 9002, 9001))
+    reran = upd(by(F.ci_runs, "id", 9001)[0], status="queued", conclusion=None)
+    add("R02-AC-6 ci rerun", "ci rerun", {"run": 9001}, expect=lambda b, m: {},
+        effect=("ci runs", {"workflow": "ci.yml", "sha": CI_SHA}, "list:ci"),
+        effect_expect=lambda b, m: [by(F.ci_runs, "id", 9004)[0], by(F.ci_runs, "id", 9002)[0], reran],
+        gh=[("POST", "repos/acme/widgets/actions/runs/9001/rerun-failed-jobs", None)])
+    add("R02-AC-6 repo url run", "repo url", {"kind": "run", "ref": "9001"},
+        expect=lambda b, m: (GH_URL if b == "github" else "fake://acme/widgets") + "/actions/runs/9001")
+    add("R02-AC-6 issue list without a label, state all", "issue list", {"state": "all"}, "list:issue",
+        expect=lambda b, m: [NOLAB] + by(F.issues, "number", 3, 2, 1), setup=lambda s: add_issue(s, NOLAB))
+    add("R02-AC-6 issue list without a label, default state is open", "issue list", {}, "list:issue",
+        expect=lambda b, m: [NOLAB] + by(F.issues, "number", 2, 1), setup=lambda s: add_issue(s, NOLAB))
+    add("R02-AC-6 issue list without a label, state closed", "issue list", {"state": "closed"}, "list:issue",
+        expect=lambda b, m: by(F.issues, "number", 3), setup=lambda s: add_issue(s, NOLAB))
+    add("R02-AC-6 issue list without a label, oldest first", "issue list", {"state": "all", "oldest_first": True}, "list:issue",
+        expect=lambda b, m: by(F.issues, "number", 1, 2, 3) + [NOLAB], setup=lambda s: add_issue(s, NOLAB))
+    add("R02-AC-6 issue list with a label and state all still filters", "issue list", {"label": "bug", "state": "all"}, "list:issue",
+        expect=lambda b, m: by(F.issues, "number", 1), setup=lambda s: add_issue(s, NOLAB))
+    add("R02-AC-6 repo permissions with every access", "repo permissions", {}, "raw",
+        expect=lambda b, m: {"read": True, "write": True, "admin": True})
+    add("R02-AC-6 repo permissions without admin", "repo permissions", {}, "raw",
+        expect=lambda b, m: {"read": True, "write": True, "admin": False},
+        setup=lambda s: edit_forge(s, permissions={"read": True, "write": True, "admin": False}))
+    add("R02-AC-6 repo permissions read-only", "repo permissions", {}, "raw",
+        expect=lambda b, m: {"read": True, "write": False, "admin": False},
+        setup=lambda s: edit_forge(s, permissions={"read": True, "write": False, "admin": False}))
     return cs
 
 
@@ -234,6 +277,28 @@ FAIL_OPS = [
     ("issue create", {"title": "t", "body": "b"}), ("label ensure", {"name": "x", "color": "000000", "description": ""}),
 ]
 MISSING_OPS = [("issue view", {"number": 99}), ("pr view", {"number": 99}), ("issue comments", {"number": 99})]
+# R02-AC-6: the same failure rules for the new operations (the lists are extended, G04's entries are untouched)
+SHAPES["prm"] = ["number", "state", "merge_commit"]
+MERGE_SHA = "7" * 40
+NOLAB = {"number": 8, "title": "No label", "body": "Unlabelled.", "state": "open", "labels": [], "is_pr": False,
+         "author": {"login": "ada", "is_bot": False, "is_owner": False}, "created_at": "2026-05-08T07:00:00Z"}
+FAIL_OPS += [("pr close", {"number": 6}), ("ci rerun", {"run": 9001}), ("repo permissions", {})]
+MISSING_OPS += [("pr close", {"number": 99}), ("ci rerun", {"run": 99999})]
+
+
+def set_pr(s, number, **kw):
+    p = os.path.join(s, "prs.json")
+    d = json.load(open(p))
+    for x in d:
+        if x["number"] == number:
+            x.update(kw)
+    json.dump(d, open(p, "w"))
+
+
+def add_issue(s, issue):
+    p = os.path.join(s, "issues.json")
+    d = json.load(open(p))
+    json.dump(d + [issue], open(p, "w"))
 
 
 def edit_forge(s, **kw):

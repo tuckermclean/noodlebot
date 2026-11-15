@@ -31,17 +31,19 @@ _OPS = [
     ("repo clone-url", None, {}),
     ("repo url", None, {"kind": "str!", "ref": "str"}),
     ("repo identities", None, {}),
+    ("repo permissions", None, {}),
     ("pr list", None, {"state": "str", "limit": "int", "fields": "list"}),
     ("pr view", None, {"number": "int!"}),
     ("pr create", None, {"head": "str!", "base": "str!", "title": "str!", "body": "text!"}),
     ("pr edit", None, {"number": "int!", "title": "str", "body": "text"}),
+    ("pr close", None, {"number": "int!"}),
     ("pr comment", None, {"number": "int!", "body": "text!"}),
     ("pr comments", None, {"number": "int!"}),
     ("pr reviews", None, {"number": "int!"}),
     ("pr line-comments", None, {"number": "int!"}),
     ("pr reply", None, {"number": "int!", "to": "int!", "body": "text!"}),
     ("pr resolve-thread", "resolve_threads", {"thread": "str!"}),
-    ("issue list", None, {"label": "str!", "state": "str", "oldest_first": "bool"}),
+    ("issue list", None, {"label": "str", "state": "str", "oldest_first": "bool"}),
     ("issue view", None, {"number": "int!"}),
     ("issue comments", None, {"number": "int!", "since": "str"}),
     ("issue create", None, {"title": "str!", "body": "text!", "labels": "list"}),
@@ -58,7 +60,8 @@ _OPS = [
     ("label add", None, {"number": "int!", "name": "str!"}),
     ("label remove", None, {"number": "int!", "name": "str!"}),
     ("commit checks", None, {"sha": "str!"}),
-    ("ci runs", None, {"workflow": "str!", "sha": "str!", "branch": "str", "event": "str"}),
+    ("ci runs", None, {"workflow": "str", "sha": "str", "branch": "str", "event": "str"}),
+    ("ci rerun", None, {"run": "int!"}),
     ("site publish", "site", {"target": "str!", "input": "str!"}),
     ("branch push", None, {"path": "str!", "branch": "str!"}),
 ]
@@ -164,7 +167,7 @@ def open(spec=None):  # noqa: A001 (the interface's name)
 
 
 def web_url(spec, kind, ref=None):
-    """The web URL of the repository or of one issue, PR or commit; no call for GitHub."""
+    """The web URL of the repository or of one issue, PR, commit or run; no call for GitHub."""
     name, path = parse(spec)
     if name == "github":
         return _load("github").web_url(path, kind, ref)

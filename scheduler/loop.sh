@@ -136,6 +136,8 @@ caps=$(python3 -I -B "$nb/scheduler/harness.py" capabilities 2>/dev/null) || { c
 caps=" $(echo $caps) "
 # The harness's process match as an extended regex with @UNIT@ for the task key (empty: ask it for each check).
 match_tpl=$(python3 -I -B "$nb/scheduler/harness.py" match-pattern '@UNIT@' 2>/dev/null) || match_tpl=
+# The harness's node feedback command with the PR number as a regex (alive recognises a feedback session by it).
+fb_node_re=$(python3 -I -B "$nb/scheduler/harness.py" skill-command node '--feedback 0' 2>/dev/null | sed -e 's/[][\.*^$+?(){}|]/\\&/g' -e 's/0$/[0-9]+/') || fb_node_re=
 has_cap() { [[ $caps == *" $1 "* ]]; }
 exec 9>"$state/loop.lock"
 flock -n 9 || { echo "loop.sh: another loop is already running for $repo" >&2; exit 1; }
@@ -358,7 +360,7 @@ alive() {
 	local cmd
 	cmd=$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)
 	# a node's feedback prompt ends in the PR number, so it is recognised by the node's state folder
-	grep -qE "run-session\.sh [^ ]+ [^ ]*/node/$2 /noodlebot:node --feedback [0-9]+( |\$)" <<<"$cmd" && return 0
+	[ -z "$fb_node_re" ] || ! grep -qE "run-session\.sh [^ ]+ [^ ]*/node/$2 $fb_node_re( |\$)" <<<"$cmd" || return 0
 	if [ -n "$match_tpl" ]; then   # the harness's pattern, asked once per loop start: no python run per check
 		grep -Eq -- "${match_tpl//@UNIT@/$2}" <<<"$cmd"
 	else
@@ -741,9 +743,9 @@ start_triage() {
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return 1; }
 	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return 1; }
 	site_sed
-	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
-		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	skill=$(python3 -I -B "$here/harness.py" skill-command triage "$n") || { note "$saw; #$n: the harness gave no skill command; not started"; return 1; }
+	sed "${ssed[@]}" -e "s|@CMD@|$(sedesc "$skill")|g" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "$skill"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
@@ -859,11 +861,11 @@ start_update() {
 		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
 	fi
 	site_sed
-	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--update $n") || { note "$saw; PR #$n: the harness gave no skill command; not started"; return 1; }
+	sed "${ssed[@]}" -e "s|@CMD@|$(sedesc "$cmd")|g" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/$tmpl" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
 	[ -z "$nid" ] || echo "$nid" >"$d/node"
-	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--update $n") || { note "$saw; PR #$n: the harness gave no skill command; not started"; return 1; }
 	launch "$wt" "$d" "$cmd"
 	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
@@ -890,9 +892,10 @@ fbsay() { [ "${fb_said[$1]:-}" = "${2#*; }" ] || { say "$2"; fb_said[$1]=${2#*; 
 # anything is handed over, and node/<ID>/detached is removed once the node's worktree is back on the branch.
 # fbnew (set by tick_run) says which PRs have new feedback this tick.
 start_feedback() {
-	local t=$1 key=$2 n=$3 br=$4 saw=$5 d wt name cmd released list u ni pn=''
-	if [ "$t" = node ]; then d=$state/node/$key wt=$wtroot/$key name=$key cmd="/noodlebot:node --feedback $n"
-	else d=$state/pr/$n wt=$wtroot/pr-$n name="PR #$n" cmd="/noodlebot:triage --feedback $n"; fi
+	local t=$1 key=$2 n=$3 br=$4 saw=$5 d wt name skill cmd released list u ni pn=''
+	if [ "$t" = node ]; then d=$state/node/$key wt=$wtroot/$key name=$key skill=node
+	else d=$state/pr/$n wt=$wtroot/pr-$n name="PR #$n" skill=triage; fi
+	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--feedback $n") || { fbsay "$name" "$saw; $name: the harness gave no skill command; feedback not started"; return 1; }
 	mkdir -p "$d"
 	fb_blocked "$d" "$n" && return 1
 	[ "$t" = node ] || [ -z "$triaging" ] || return 1
@@ -976,7 +979,7 @@ start_feedback() {
 	while read -r u; do list+="${list:+\n}- $(sedesc "$u")"; done < <(sed -n 's/^url: //p' "$d/FEEDBACK.md")
 	site_sed
 	sed "${ssed[@]}" -e "s|^@ITEMS@\$|${list:-- (none)}|" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
-		-e "s|@BR@|$(sedesc "$br")|g" -e "s|@FB@|$(sedesc "$d/FEEDBACK.md")|g" -e "s|@CMD@|$cmd|g" -e "s|@LOOP@|$here/loop.sh|g" \
+		-e "s|@BR@|$(sedesc "$br")|g" -e "s|@FB@|$(sedesc "$d/FEEDBACK.md")|g" -e "s|@CMD@|$(sedesc "$cmd")|g" -e "s|@LOOP@|$here/loop.sh|g" \
 		-e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-feedback.md" >"$d/unattended.md" ||
 		{ fbsay "$name" "$saw; $name: rendering unattended-feedback.md failed; not started"; return 1; }
 	unset "fb_said[$name]"

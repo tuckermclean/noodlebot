@@ -387,5 +387,193 @@ for rel in scheduler/forges/github.py scheduler/testdata/g04.sh scheduler/testda
 done
 rm -rf "$G04"
 
+# ---- R02-AC-2 / R02-AC-4 (change 4): the plugin rules. The tracked files under plugin/ and the templates
+# scheduler/unattended*.md and scheduler/limit-resume.md name no forge CLI, no harness and no harness tool. Exempt: the
+# adapter's files (plugin/.claude-plugin/, plugin/hooks/hooks.json, plugin/hooks/claude_code.py), *.test.sh and any
+# testdata/ folder. Whole text is scanned, prose and code spans too: Markdown is the content, so a 'gh pr create' in a
+# sentence is a gh command; in a .py or .sh under plugin/ comments and docstrings count as well (AC-2 names texts, and
+# a neutral file has no reason to name a harness even in a comment). What fails, per line, in any scanned file:
+#   - a gh command: the word gh (not part of a longer word, path, option or variable: ghost, gh_x, $gh, ./gh, gh-pages
+#     pass) anywhere: `gh pr create`, "every gh call", `gh` in a code span all fail; GitHub (the word) passes;
+#   - a github.com URL: 'github.com' anywhere;
+#   - a claude command: the word claude (lower case; CLAUDE.md, Claude, .claude/ and claude_code do not count) followed
+#     by an option ('claude -p', 'claude --resume'), or at a command position: at the start of a line (behind a list
+#     bullet or '$ '), after | ; & ( a backquote or $( , behind exec/env/sudo/time/nohup/setsid/then/do/else;
+#   - 'Claude Code', CLAUDE_PLUGIN_ROOT, PreToolUse, and the tool names of change 2: 'Agent tool', subagent_type,
+#     run_in_background, SendMessage, TaskStop.
+# Not flagged (owner Q4 and change 2): the frontmatter 'tools: Read, Grep, Glob, Edit, Write, Bash', '.claude/' paths,
+# CLAUDE.md, the word GitHub, 'Agent' or 'subagent' alone.
+cat >"$tmp/scan3.py" <<'PY'
+import re, sys
+
+root = sys.argv[1]
+ADAPTER = ("plugin/.claude-plugin/", "plugin/hooks/hooks.json", "plugin/hooks/claude_code.py")
+GH = re.compile(r"(?<![\w./$\-])gh(?![\w\-])")
+URL = re.compile(r"github\.com")
+PRE = r"(?:(?:exec|env|sudo|time|nohup|setsid|command|then|do|else)\s+)*"
+CLAUDE = re.compile(r"(?<![\w./\-])claude(?=\s+-)|(?:^\s*(?:[-*+]\s+|\$\s+)?|[|;&(`]\s*|\$\(\s*)" + PRE + r"claude(?![\w./\-])")
+PLAIN = [("Claude Code", r"Claude Code"), ("CLAUDE_PLUGIN_ROOT", r"CLAUDE_PLUGIN_ROOT"), ("PreToolUse", r"PreToolUse"),
+         ("Agent tool", r"\bAgent tool\b"), ("subagent_type", r"subagent_type"),
+         ("run_in_background", r"run_in_background"), ("SendMessage", r"SendMessage"), ("TaskStop", r"TaskStop")]
+
+def in_scope(rel):
+    parts = rel.split("/")
+    if rel.endswith(".test.sh") or "testdata" in parts[:-1] or rel.startswith(ADAPTER[0]) or rel in ADAPTER[1:]:
+        return False
+    if rel.startswith("plugin/"):
+        return True
+    return len(parts) == 2 and parts[0] == "scheduler" and rel.endswith(".md") and \
+        (parts[1].startswith("unattended") or parts[1] == "limit-resume.md")
+
+bad = 0
+for rel in sys.stdin.read().split("\n"):
+    if not rel or not in_scope(rel):
+        continue
+    try:
+        text = open(root + "/" + rel, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as e:
+        print("%s:0: cannot scan: %s" % (rel, e))
+        bad += 1
+        continue
+    for no, line in enumerate(text.split("\n"), 1):
+        hits = []
+        if GH.search(line):
+            hits.append("gh command")
+        if URL.search(line):
+            hits.append("github.com URL")
+        if CLAUDE.search(line):
+            hits.append("claude command")
+        hits += [n for n, rx in PLAIN if re.search(rx, line)]
+        for h in hits:
+            print("%s:%d: %s: %s" % (rel, no, h, line.strip()[:100]))
+            bad += 1
+sys.exit(1 if bad else 0)
+PY
+scan3() { python3 -I "$tmp/scan3.py" "$1"; }
+
+out=$(cd "$root" && { git ls-files plugin; git ls-files 'scheduler/unattended*.md' scheduler/limit-resume.md; } | scan3 "$root"); rc=$?
+if [ $rc = 0 ]; then pass "R02-AC-2: no skill, fixture, agent or session template holds a gh command, github.com URL, claude command, Claude Code or harness tool name"
+else fail "R02-AC-2: the plugin and the templates hold forge or harness forms (file:line):
+$out"; fi
+if [ $rc = 0 ]; then pass "R02-AC-4: the core check passes on the tree (plugin rules)"
+else fail "R02-AC-4: the core check's plugin rules fail on the tree (findings under R02-AC-2 above)"; fi
+
+# Scratch folders named R02 inside the tmp. Each plant file holds one form per line; line numbers follow it.
+R02=$tmp/R02
+mkdir -p "$R02"
+r_plant() { mkdir -p "$R02/$(dirname "$1")"; cat >"$R02/$1"; }
+r_expect() { # <rel> <line> <what>
+	printf '%s\n' "$1" | scan3 "$R02" >"$R02/o" 2>&1
+	if grep -q "^$1:$2: " "$R02/o"; then pass "R02-AC-4: a planted $3 fails, naming $1:$2"; else fail "R02-AC-4: planted $3 not named at $1:$2 (got: $(cat "$R02/o"))"; fi
+}
+r_quiet() { # <rel> <what>
+	if printf '%s\n' "$1" | scan3 "$R02" >"$R02/o" 2>&1; then pass "R02-AC-4: $2 passes"; else fail "R02-AC-4: $2 was flagged: $(cat "$R02/o")"; fi
+}
+cat >"$R02/forms.md" <<'EOF2'
+Open the PR with gh pr create when done.
+Read it with `gh issue view 3 --comments` first.
+The log is at https://github.com/o/n/issues/1 today.
+Start it with `claude -p /noodlebot:node X` now.
+$ claude --resume abc
+This text is written for Claude Code only.
+Load ${CLAUDE_PLUGIN_ROOT}/skills/node first.
+The hook fires on PreToolUse for every call.
+Start the reviewer with the Agent tool, one per slice.
+Pass subagent_type: tester to it.
+Set run_in_background: true for it.
+Answer it with SendMessage afterwards.
+End it with TaskStop when stale.
+x=1; claude
+run it | claude
+every gh call needs a token
+EOF2
+cat >"$R02/wl" <<'EOF2'
+a gh command in prose
+a gh command in a code span
+a github.com URL
+a claude command with -p
+a claude command behind a $ prompt
+Claude Code
+CLAUDE_PLUGIN_ROOT
+PreToolUse
+the Agent tool name
+subagent_type
+run_in_background
+SendMessage
+TaskStop
+a claude command after ;
+a claude command after a pipe
+a bare gh word in prose (gh call)
+EOF2
+for kind in "plugin/skills/x/SKILL.md skill" "plugin/agents/x.md agent" "scheduler/unattended-x.md session template" \
+	"scheduler/limit-resume.md limit-resume template"; do
+	rel=${kind%% *}; what=${kind#* }
+	mkdir -p "$R02/$(dirname "$rel")"; cp "$R02/forms.md" "$R02/$rel"
+	i=0
+	while IFS= read -r w; do
+		i=$((i + 1)); r_expect "$rel" "$i" "$w in a $what"
+	done <"$R02/wl"
+done
+# More places: a skill fixture, a .py's comment (comments count), templates by the glob.
+r_plant plugin/skills/adopt/example/FACTS.md <<'EOF2'
+stood in for gh issue list --state all
+EOF2
+r_expect plugin/skills/adopt/example/FACTS.md 1 "gh command in a skill fixture"
+r_plant plugin/skills/x/p.py <<'EOF2'
+"""A docstring."""
+# runs gh pr list and Claude Code
+x = 1
+EOF2
+r_expect plugin/skills/x/p.py 2 "gh command in a .py comment (comments count)"
+# A plugin file that is not an adapter file is scanned (plugin/hooks/guard.py is neutral).
+r_plant plugin/hooks/guard.py <<'EOF2'
+# the Claude Code hook
+x = 1
+EOF2
+r_expect plugin/hooks/guard.py 1 "Claude Code in plugin/hooks/guard.py (only claude_code.py and hooks.json are the adapter)"
+
+# Not flagged: look-alikes in a skill, an agent and a template.
+cat >"$R02/ok.md" <<'EOF2'
+---
+name: x
+description: GitHub is only a word here, and ghost, high and gh_x are not commands.
+tools: Read, Grep, Glob, Edit, Write, Bash
+---
+The repository's own facts live in CLAUDE.md and .claude/agents and .claude/skills/node/SKILL.md.
+The adapter is claude_code.py and the claude_code module; Claude is a name; the Claudette tool.
+Use "$NOODLEBOT_FORGE" pr create and a fresh subagent; the Agent role starts a reviewer in the background.
+The variable $gh and the path ./gh/x and gh-pages are not commands; GH_TOKEN is a variable.
+Pre-tool hooks and a task stop are role terms.
+EOF2
+for rel in plugin/skills/x/ok.md plugin/agents/ok.md scheduler/unattended-ok.md scheduler/limit-resume.md; do
+	mkdir -p "$R02/$(dirname "$rel")"; cp "$R02/ok.md" "$R02/$rel"
+	r_quiet "$rel" "$rel with GitHub, ghost, CLAUDE.md, .claude/ paths, claude_code, the tools: list and the forge CLI"
+done
+# Exempt places hold every form without failing: the adapter's files, tests and testdata.
+for rel in plugin/.claude-plugin/plugin.json plugin/hooks/hooks.json plugin/hooks/claude_code.py plugin/skills/x/p.test.sh \
+	plugin/skills/x/testdata/p.md plugin/hooks/testdata/p.md plugin/skills/node/p.test.sh scheduler/testdata/unattended-p.md \
+	scheduler/unattended-p.test.sh; do
+	mkdir -p "$R02/$(dirname "$rel")"; cp "$R02/forms.md" "$R02/$rel"
+	r_quiet "$rel" "the planted forms in the exempt $rel"
+done
+# Files outside the rule's places are not scanned (the core's own rules are S08's and G04's scans).
+for rel in scheduler/notes.md README.md scheduler/loop.sh; do
+	mkdir -p "$R02/$(dirname "$rel")"; cp "$R02/forms.md" "$R02/$rel"
+	r_quiet "$rel" "the planted forms in $rel (outside plugin/ and the templates)"
+done
+rm -rf "$R02"
+
+# ---- R02 change 2 (review 1): the agents and the templates name no fixed harness path or file. .claude/ and CLAUDE.md are
+# named only as the repository's own facts, read from its AGENTS.md or .noodlebot/roles.yaml; limit-resume.md names no harness tool.
+r02_files="$root/plugin/agents/*.md $root/scheduler/unattended*.md $root/scheduler/limit-resume.md"
+r02_hit=$(grep -nE -e '\.claude/|CLAUDE\.md' $r02_files 2>/dev/null | sed "s#^$root/##" | head -n 12)
+if [ -z "$r02_hit" ]; then pass "R02-AC-2: no agent or session template holds a fixed .claude/ path or CLAUDE.md"
+else fail "R02-AC-2: an agent or template names a fixed .claude/ path or CLAUDE.md (file:line:text):
+$r02_hit"; fi
+r02_hit=$(grep -nE -e 'Monitor|[Ss]cheduled wakeup|ScheduleWakeup' "$root/scheduler/limit-resume.md" 2>/dev/null | head -n 5)
+if [ -z "$r02_hit" ]; then pass "R02-AC-2: limit-resume.md names no harness tool (Monitor, scheduled wakeup)"
+else fail "R02-AC-2: limit-resume.md names a harness tool (line:text):
+$r02_hit"; fi
+
 [ "$fails" = 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"

@@ -1,6 +1,6 @@
 ---
 name: node
-description: Build one node of a graph-regime repository (docs/graph.yaml + nodes/<ID>-<name>.md) test-first - brief, tester RED, verified RED, implementer GREEN, independent review, CI evidence for criteria that need a build, a boot or GitHub, and a PR with the criterion → evidence table. Use for "/noodlebot:node <ID>" or when asked to implement, build or start a node such as F01 or B01.
+description: Build one node of a graph-regime repository (docs/graph.yaml + nodes/<ID>-<name>.md) test-first - brief, tester RED, verified RED, implementer GREEN, independent review, CI evidence for criteria that need a build, a boot or the forge, and a PR with the criterion → evidence table. Use for "/noodlebot:node <ID>" or when asked to implement, build or start a node such as F01 or B01.
 argument-hint: "<node-id, e.g. F01> [AC ids to limit the slice] | --update <PR> [--dry-run]"
 ---
 
@@ -14,11 +14,13 @@ You are the **orchestrator**. You never write tests or implementation yourself. 
 
 **The repository's part.** Read the repository's `AGENTS.md` first, its **Building a node** section above all. It names the authority order of its documents, the role agents, the spec checker, the test, lint and CI commands, the frozen test paths, any extra precondition, and, if the repository ports code from a predecessor, its porting rules (what to port first, the baseline, the ledger). Where this skill says "the repository's …", use what that section says. Where the two differ, the repository wins.
 
+**The forge.** Every forge operation (PRs, issues, comments, labels, CI runs, pushes) goes through the forge CLI, written `<forge>` below: the command the run's environment and prompt name for it, used as `<forge> <family> <op> --opt value`, printing JSON. With none (a run by hand), use `<plugin dir>/../scheduler/forge-cli.sh --repo <kind>:<owner/name>` (for example `github:owner/name`), the same command with the repository named. It fetches credentials itself: never print, echo or log a token, and use no other forge client.
+
 **Role agents.** Dispatch the role agents the repository's `AGENTS.md` names. If it names none of its own (no role agents), dispatch the plugin's `noodlebot:tester`, `noodlebot:implementer` and `noodlebot:reviewer`. The plugin's guard (`plugin/hooks/`) holds them to their roles: the test and spec paths come from the repository's `.noodlebot/roles.yaml`, or from its defaults.
 
 ## 0. Preconditions
 - The working tree is clean and `main` is current.
-- The node is in `docs/graph.yaml`. Each node in its `deps` has a merged PR (`gh pr list --state merged --search "head:node/<dep>-"`, or its squash commit `<ID> <name>: …` on `main`). If one is missing, stop and say which.
+- The node is in `docs/graph.yaml`. Each node in its `deps` has a merged PR (`<forge> pr list --state merged`, a merged PR whose head branch starts `node/<dep>-`, or its squash commit `<ID> <name>: …` on `main`). If one is missing, stop and say which.
 - Each open decision in the node's `decisions` is settled (the repository's decisions table), or the owner said to take its default. If not, ask.
 - The repository's spec checker reports no problems, and its other preconditions pass.
 - Create the branch `node/<ID>-<name>` from `main`.
@@ -59,13 +61,13 @@ Dispatch a **new** implementer with the brief path, the RED SHA, the red target 
 - `git diff <first-red>..HEAD -- <test and fixture paths>`, from the node's first RED commit, modifies or deletes no frozen test or fixture, ported or new; later RED commits only add (above);
 - everything the repository's porting rules check at GREEN (ported files equal their source plus the numbered changes, the ledger on the node's last slice, provenance in commit messages only). A needed change to a ledger is a spec change only when the ledger is one of the repository's spec files (the **Spec files:** line); otherwise the owner approves it as a question (step 7) and it is made on the node branch.
 
-Retries are bounded: **at most 4 implementer attempts per slice.** Attempts 1–3 use the agent's model. Attempt 4 uses the Agent tool's `model: "opus"` override and gets every earlier finding and failed diff SHA. After that, go to step 7.
+Retries are bounded: **at most 4 implementer attempts per slice.** Attempts 1–3 use the agent's model. Attempt 4 uses the strongest model the harness offers, as an override of the agent's model, and gets every earlier finding and failed diff SHA. After that, go to step 7.
 
 ## 4. Review
 Dispatch a **new** reviewer with the brief path, the base, RED and head SHAs, and the evidence. On `request_changes`, give the findings to a new implementer (the retry budget applies). On `test_spec_conflict`, go to step 7. Never edit tests to satisfy a reviewer: a wrong test means a new RED commit from a new tester, and the owner approves that first.
 
 ## 5. Builds, boots and CI runs
-Every test is reached by the repository's test entry point; some need a build, a boot, a build image or GitHub. **A criterion that needs a build, a boot, the gates or GitHub is verified in CI on GitHub Actions**, on clean runners: push the branch and let its workflows run (with whatever label or dispatch the repository's workflows need), and record the run URL. This covers package and image builds, every boot mode, artifact checks and gates, registry pushes, attestations, tag pipelines and anything that moves files between jobs. Builds that must be clean or separate run only in CI.
+Every test is reached by the repository's test entry point; some need a build, a boot, a build image or the forge. **A criterion that needs a build, a boot, the gates or the forge is verified in CI on the forge's runners**, on clean runners: push the branch and let its workflows run (with whatever label or dispatch the repository's workflows need), and record the run URL. This covers package and image builds, every boot mode, artifact checks and gates, registry pushes, attestations, tag pipelines and anything that moves files between jobs. Builds that must be clean or separate run only in CI.
 
 Local runs are for quick checks while you work, not evidence: the quick test gate, and one boot mode or one gate to try a fix before pushing. Keep their logs under `out/node/<ID>/`. Several nodes run at once on one small machine, so avoid local package or image builds; a local build is for diagnosing a CI failure that CI cannot show.
 
@@ -75,11 +77,11 @@ Record each command, exit code and log path or run URL. A criterion verified by 
 Before the final CI run, merge `origin/main` again: other nodes merge while you work.
 If the merge had conflicts, run the resolution review (below) on it before you continue. Do the same for any other merge of `origin/main` made while building.
 
-Push with `git push -u origin HEAD`. A push that changes `.github/workflows/*` needs a token with workflow permission; use the credential your run provides, transiently, or ask the owner to push the branch.
+Push with `<forge> branch push --path . --branch <branch>`. A push that changes `.github/workflows/*` needs a credential with workflow permission; if the forge refuses it, ask the owner to push the branch.
 
-**Files a merged spec PR carried.** When the `answered/` of the state directory the run names has merged spec PRs (`<ts>-SPEC-PR`), run the checker on each PR's merge commit (`gh pr view <N> --json mergeCommit --jq .mergeCommit.oid`): `python3 -I <plugin dir>/skills/node/check-spec-diff.py <sha>^ <sha>`. Every file outside the spec files that it prints as `NOT SPEC <path>` gets a row in the criterion → evidence table, naming the spec PR. The whole-node fresh reviewer gets those diffs too: it reviews them as part of the node.
+**Files a merged spec PR carried.** When the `answered/` of the state directory the run names has merged spec PRs (`<ts>-SPEC-PR`), run the checker on each PR's merge commit (`<forge> pr view --number <N>`, its `merge_commit`): `python3 -I <plugin dir>/skills/node/check-spec-diff.py <sha>^ <sha>`. Every file outside the spec files that it prints as `NOT SPEC <path>` gets a row in the criterion → evidence table, naming the spec PR. The whole-node fresh reviewer gets those diffs too: it reviews them as part of the node.
 
-Open the PR with `gh pr create`. The body has:
+Open the PR with `<forge> pr create --head <branch> --base main --title <title> --body-file <file>`. The body has:
 - what the node delivers, in two or three sentences;
 - the files ported or brought in, with their source and the numbered changes applied, tests first;
 - the baseline result (`out/node/<ID>/baseline.log` summary), or why it was not practical;
@@ -89,7 +91,7 @@ Open the PR with `gh pr create`. The body has:
 - files that a merged spec PR of this node carried outside the spec files (above), or "none";
 - deviations and open questions.
 
-**Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL, the evidence table and the diffs of any merged spec PR's files outside the spec files (above). It has seen none of the slice reviews. Post its verdict and findings on the PR with `gh pr comment <N> --body-file <file>`, headed `Fresh review (<verdict>)`. This is a comment, never an approval. On `request_changes`, give the findings to a new implementer (the slice retry budget applies), push, then run a new reviewer and post a new comment. On `test_spec_conflict`, go to step 7.
+**Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL, the evidence table and the diffs of any merged spec PR's files outside the spec files (above). It has seen none of the slice reviews. Post its verdict and findings on the PR with `<forge> pr comment --number <N> --body-file <file>`, headed `Fresh review (<verdict>)`. This is a comment, never an approval. On `request_changes`, give the findings to a new implementer (the slice retry budget applies), push, then run a new reviewer and post a new comment. On `test_spec_conflict`, go to step 7.
 
 Give the owner the PR URL. You never approve or merge.
 
@@ -112,7 +114,7 @@ Propose the amendment. Do not continue on a guess. A spec change is the owner's,
 ## Update a node PR: `/noodlebot:node --update <PR> [--dry-run]`
 Bring an open node PR up to date with `main` when it conflicts. Work in a worktree checked out on the PR's named branch, not a detached HEAD. Change nothing else.
 A restarted update first reads the owner's answer: every file in `answered/` of the state directory the run's prompt names, oldest first. `answered/` builds up across update cycles: only the newest QUESTION/ANSWER pair is the owner's decision for this run. Older pairs are context from earlier cycles, not approval. An owner's approval in that newest answer permits exactly the change it approves, quoted in the PR comment; anything else the rules below forbid still ends in `QUESTION.md`.
-1. Read the PR with `gh pr view <PR> --json headRefName,body`: its branch, and the body with the criterion → evidence table. `git fetch origin`, bring the branch to `origin/<branch>` (a fast-forward), then merge `origin/main`: a merge commit, never a rebase, never a force push.
+1. Read the PR with `<forge> pr view --number <PR>`: its branch (`head`), and the body with the criterion → evidence table. `git fetch origin`, bring the branch to `origin/<branch>` (a fast-forward), then merge `origin/main`: a merge commit, never a rebase, never a force push.
 2. If resolving a conflict would change a frozen test or fixture line, or a spec file, run `git merge --abort`, push nothing, and write `QUESTION.md` (in the state directory the run names, else `out/node/pr-<N>/QUESTION.md`) with the conflicting files and lines and your recommendation. End.
 3. Otherwise resolve by keeping both sides. Add test lines only to keep appended test blocks apart: lines between the blocks, e.g. clearing the first block's scratch paths; never rename or change an existing line. Leave no conflict markers. Commit the merge with its resolution now, before the tests and the review.
 4. Run the repository's test entry point (`make test`) and each red target: from the PR body's criterion → evidence table, else the `TDD-Red-Target:` trailers in `git log origin/main..HEAD`. A failing test the resolution cannot fix: push nothing, write `QUESTION.md` with the failure, run `git reset --hard origin/<branch>` (no merge commit left) and end.
@@ -127,7 +129,7 @@ Run after any merge of `origin/main` that had conflicts, before anything is push
 - the test blocks of different nodes share no names or state;
 - no frozen test line was changed, removed or renamed.
 
-Its verdict is posted on the PR as `Resolution review (<verdict>)` with `gh pr comment <N> --body-file <file>`: a comment, never an approval; with `--dry-run` the verdict goes into `result.md` and is not posted. In a node build with no PR yet, it goes into the PR body's deviations and is posted as that comment once the PR is open. Nothing is pushed until it approves. On `request_changes`, fix the findings as new commits and run one more new reviewer on the result. A second rejection pushes nothing: write `QUESTION.md` with the findings and leave the branch as it was. With `--update`, run `git reset --hard origin/<branch>` (no merge commit left). In a node build's own merge of `origin/main` (build step 6), undo only the merge (`git reset --hard` to the merge's first parent, or `ORIG_HEAD`), never losing the node's commits. Then end.
+Its verdict is posted on the PR as `Resolution review (<verdict>)` with `<forge> pr comment --number <N> --body-file <file>`: a comment, never an approval; with `--dry-run` the verdict goes into `result.md` and is not posted. In a node build with no PR yet, it goes into the PR body's deviations and is posted as that comment once the PR is open. Nothing is pushed until it approves. On `request_changes`, fix the findings as new commits and run one more new reviewer on the result. A second rejection pushes nothing: write `QUESTION.md` with the findings and leave the branch as it was. With `--update`, run `git reset --hard origin/<branch>` (no merge commit left). In a node build's own merge of `origin/main` (build step 6), undo only the merge (`git reset --hard` to the merge's first parent, or `ORIG_HEAD`), never losing the node's commits. Then end.
 
 ## 8. Feedback on a PR: `/noodlebot:node --feedback <PR> [--dry-run]`
 Run by the loop for one of the bot's own open node PRs that has new feedback from the owner. This session acts as the node's orchestrator for this PR, on the PR's branch, not a new one. Work in a worktree checked out on the PR's branch, brought to `origin/<branch>` (a fast-forward), and read `FEEDBACK.md` in your state folder: each item has its kind, URL, author, body and, for a line comment, its file, line and thread.
@@ -135,7 +137,7 @@ Run by the loop for one of the bot's own open node PRs that has new feedback fro
 2. Never rebase or force-push; add commits and merge `origin/main` if the PR needs it. A merge that had conflicts gets the resolution review (see "Resolution review") before anything is pushed; on a second rejection push nothing, write `QUESTION.md` with the findings and undo only the merge (the branch as it was), never losing the PR's commits, then end. Never edit a frozen test or fixture line.
 3. Rerun the repository's test entry point (e.g. `make test`) and the red targets that the PR's criterion → evidence table names. When the node's code changed, rerun the whole-node fresh review (§6) and post it as a new `Fresh review (<verdict>)` comment; update the PR body's table when its evidence changed.
 4. With `--dry-run`: no push, no reply, no comment, no PR edit, no thread resolved. Write `out/node/pr-<N>/result.md` holding the commits (SHA and subject, e.g. the RED and GREEN commits) and one reply per item, each naming the commit (or why nothing changed) and, for a fixed line comment, the thread it would resolve; and write QUESTION.md for the points of item 1 that need the owner, with your recommendation (the loop posts it; the answer comes back as ANSWER.md). QUESTION.md goes in the state folder the loop gives; with none (a dry run by hand), next to result.md as `out/node/pr-<N>/QUESTION.md`. Stop there.
-5. Otherwise push, then reply to each point: a line comment in its own thread, every other point in one PR comment that links each of them. Each reply says what changed, with the commit, or why nothing did. Resolve the line threads you fixed (GitHub's GraphQL `resolveReviewThread`); leave the others open. Write QUESTION.md last, for the points of item 1 that need the owner, with your recommendation.
+5. Otherwise push, then reply to each point: a line comment in its own thread, every other point in one PR comment that links each of them. Each reply says what changed, with the commit, or why nothing did. Resolve the line threads you fixed (`<forge> pr resolve-thread --thread <id>`, and `pr reply --number <PR> --to <comment id> --body-file <file>` for the reply in its own thread); leave the others open. Write QUESTION.md last, for the points of item 1 that need the owner, with your recommendation.
 6. Never approve or merge the PR, and never dismiss a review. Write no closing keyword before an issue number.
 
 ## Cost discipline

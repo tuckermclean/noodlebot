@@ -15,8 +15,9 @@ Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/nood
   `<name>` is the last component of `<path>`; an unknown forge exits 2. A forge lacking a capability (site, pin, resolve_threads, visibility) gets one status line `forge <name> lacks <capability>: <feature> off` per loop start and that feature is skipped.
   Each repository has its own lock, state (`$NOODLEBOT_DATA/state/<name>/`), clone, worktrees and
   status issue; `touch ~/STOP` stops every loop, `touch ~/STOP-<name>` one. `scheduler/status.sh [owner/name]` shows one repository.
-- `plugin/`: the bot's Claude Code skills, generic over repositories in the graph regime
-  (`docs/graph.yaml` + `nodes/<ID>-<name>.md`); load with `claude --plugin-dir ~/gitrepos/noodlebot/plugin`.
+- `plugin/`: the bot's skills and agents, neutral about the harness and the forge and generic over repositories in
+  the graph regime (`docs/graph.yaml` + `nodes/<ID>-<name>.md`), plus a small Claude Code adapter
+  (`plugin/hooks/claude_code.py`, `hooks.json`, `.claude-plugin/`); with Claude Code, load with `claude --plugin-dir ~/gitrepos/noodlebot/plugin`.
   `/noodlebot:node <ID>` builds a node test-first (the repository's part comes from its AGENTS.md,
   "Building a node"); `/noodlebot:triage <issue> [--dry-run]` fits an issue into the graph as a spec PR.
 - `make test`: the ready-node, release-markers, status-issue, issue-label and end-to-end loop tests.

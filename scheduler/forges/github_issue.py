@@ -17,10 +17,10 @@ def _seen(self, o):
     return o
 
 
-def issue_list(self, label, state="open", oldest_first=False):
+def issue_list(self, label=None, state="open", oldest_first=False):
     if state not in ("open", "closed", "all"):
         raise forge.ForgeError("issue list: bad state %r" % (state,))
-    head = "issues?labels=%s&state=%s" % (quote(label, safe="-_.,"), state)
+    head = "issues?%sstate=%s" % ("labels=%s&" % quote(label, safe="-_.,") if label else "", state)
     if oldest_first:
         got = self._api("GET", self._r("/" + head + "&per_page=50&sort=created&direction=asc")) or []
         return [_issue(self._seen(o)) for o in got]

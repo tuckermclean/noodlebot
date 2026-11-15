@@ -46,7 +46,8 @@ def quote(s, safe=""):
 
 
 def web_url(repo, kind, ref=None):
-    tail = {"repo": "", "issue": "/issues/%s", "pr": "/pull/%s", "commit": "/commit/%s"}.get(kind)
+    tail = {"repo": "", "issue": "/issues/%s", "pr": "/pull/%s", "commit": "/commit/%s",
+            "run": "/actions/runs/%s"}.get(kind)
     if tail is None or (kind != "repo" and ref is None):
         raise forge.ForgeError("bad url kind %r" % (kind,))
     return "https://github.com/" + repo + (tail % (ref,) if kind != "repo" else "")
@@ -131,13 +132,13 @@ def _comment(o):
 
 # The parts and the Backend methods each defines (a method is looked up here the first time; its part then registers it).
 _PARTS = {
-    "pr": ("pr_list", "pr_view", "pr_create", "pr_edit", "pr_comment", "_pr_rest", "_json", "_pr_row"),
+    "pr": ("pr_list", "pr_view", "pr_create", "pr_edit", "pr_close", "pr_comment", "_pr_rest", "_json", "_pr_row"),
     "prlines": (),
     "review": ("pr_comments", "pr_reviews", "pr_line_comments", "pr_reply", "pr_resolve_thread", "_paginate"),
     "issue": ("issue_list", "issue_view", "issue_comments", "issue_create", "issue_edit", "issue_comment", "issue_close",
               "issue_reopen", "issue_pin", "issue_unpin", "issue_events", "issue_react", "_pin", "_seen", "label_list",
               "label_ensure", "label_add", "label_remove", "_labels", "commit_checks"),
-    "misc": ("ci_runs", "site_publish", "branch_push"),
+    "misc": ("ci_runs", "ci_rerun", "site_publish", "branch_push"),
 }
 _PART_OF = {m: p for p, ms in _PARTS.items() for m in ms}
 _LOADED = set()
@@ -261,6 +262,13 @@ class Backend:
 
     def repo_url(self, kind="repo", ref=None):
         return web_url(self.repo, kind, ref)
+
+    def repo_permissions(self):
+        got = self._obj("GET", self._r())
+        perm = got.get("permissions")
+        if not isinstance(perm, dict):
+            raise forge.ForgeError("gh api %s: no permissions in the answer" % self._r())
+        return {"read": bool(perm.get("pull")), "write": bool(perm.get("push")), "admin": bool(perm.get("admin"))}
 
     def repo_identities(self):
         return {"owner": self.repo.split("/")[0], "bot": None}

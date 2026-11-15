@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Role guard: a PreToolUse hook that holds the plugin's role agents to their roles.
+"""Role guard: holds a tester, an implementer and a reviewer to their roles.
 
-Why a plugin-level hook keyed on agent_type: Claude Code ignores the `hooks`,
-`mcpServers` and `permissionMode` frontmatter fields of agents shipped by a plugin
-(https://code.claude.com/docs/en/sub-agents, "Choose the subagent scope"), and tells a
-plugin to ship its hooks in hooks/hooks.json instead. Those apply whenever the plugin is
-enabled, so this script runs for every Edit, Write, NotebookEdit and Bash call and acts
-only when the hook input's `agent_type` is one of the plugin's agents
-(`noodlebot:tester`, `noodlebot:implementer`, `noodlebot:reviewer`;
-https://code.claude.com/docs/en/hooks, "Hook locations"). Any other session is allowed.
+  python3 -I guard.py --role ROLE --kind write|shell [--root DIR] [--path=P ...] [--command=C]
+
+ROLE is tester, implementer or reviewer; any other role is not a role and is allowed.
+--kind write takes the paths written (none: allowed); --kind shell takes the command.
+--root is the repository root (default: the working directory). Nothing is read from
+stdin. Exit 0 allows; exit 2 blocks with the reason on stderr. The same decision is
+available as check(role, kind, root, paths, command), which returns None to allow and
+the reason to block.
 
   tester       may write only test paths
   implementer  may not write test or spec paths
@@ -16,17 +16,15 @@ https://code.claude.com/docs/en/hooks, "Hook locations"). Any other session is a
 
 Paths come from `.noodlebot/roles.yaml` in the repository root (`tests:` and `specs:`,
 root-relative globs; a key that is present replaces that key's default). A malformed file
-blocks role writes with a reason. The Bash detection is a heuristic guardrail for
-cooperative agents, not a sandbox. Exit 2 with the reason on stderr blocks; exit 0 allows.
+blocks role writes with a reason. The shell detection is a heuristic guardrail for
+cooperative agents, not a sandbox.
 """
-import json
+import argparse
 import os
 import re
 import subprocess
 import sys
 
-ROLES = {"noodlebot:tester": "tester", "noodlebot:implementer": "implementer",
-         "noodlebot:reviewer": "reviewer"}
 DEFAULTS = {
     "tests": ["**/*.test.sh", "**/*_test.*", "**/test_*", "**/tests/**", "**/testdata/**", "**/fixtures/**"],
     "specs": ["SPEC.md", "AGENTS.md", "CLAUDE.md", "docs/graph.yaml", "nodes/**"],
@@ -465,34 +463,43 @@ class Bash:
         return cwd
 
 
-def decide(role, repo, tool, tin):
-    if tool in ("Edit", "Write", "NotebookEdit"):
-        p = tin.get("file_path") or tin.get("notebook_path")
+def decide(role, repo, kind, paths, command):
+    if kind == "write":
         if role == "reviewer":
-            raise Block("the reviewer role is read-only: it may not use " + tool)
-        if not p:
-            return
-        repo.check(role, p, True)
-        return
-    if tool != "Bash":
-        return
-    Bash(role, repo).run(Lexer(tin.get("command") or "").tokens(), repo.root)
+            raise Block("the reviewer role is read-only: it may not write")
+        for p in paths:
+            repo.check(role, p, True)
+    elif kind == "shell":
+        Bash(role, repo).run(Lexer(command or "").tokens(), repo.root)
 
 
-def main():
+def check(role, kind, root=None, paths=(), command=""):
+    """None when the role may do this, else the reason it may not."""
+    if role not in ("tester", "implementer", "reviewer"):
+        return None
     try:
-        data = json.load(sys.stdin)
-        role = ROLES.get(data.get("agent_type"))
-        if role is None:
-            return 0
-        root = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
-        decide(role, Repo(root), data.get("tool_name"), data.get("tool_input") or {})
+        decide(role, Repo(root or os.getcwd()), kind, list(paths), command)
     except Block as b:
-        print(f"noodlebot role guard: {b}", file=sys.stderr)
-        return 2
+        return str(b)
+    return None
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="guard.py")
+    ap.add_argument("--role", required=True)
+    ap.add_argument("--kind", required=True, choices=["write", "shell"])
+    ap.add_argument("--root")
+    ap.add_argument("--path", action="append", default=[])
+    ap.add_argument("--command", default="")
+    a = ap.parse_args(argv)
+    try:
+        reason = check(a.role, a.kind, a.root, a.path, a.command)
     except Exception as e:  # a bug here must not block unrelated work
         print(f"noodlebot role guard: ignored internal error: {e!r}", file=sys.stderr)
         return 0
+    if reason is not None:
+        print(f"noodlebot role guard: {reason}", file=sys.stderr)
+        return 2
     return 0
 
 

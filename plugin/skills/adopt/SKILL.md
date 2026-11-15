@@ -10,19 +10,19 @@ You turn an existing repository into a **plan the scheduler can build from**: th
 proposed as one PR the owner reviews. The owner decides scope and priorities; you never guess them.
 
 **Never** write implementation or tests, change the repository's code, merge, approve or push to its
-main branch. Credentials come only through the run's own `gh` credential; never print them.
+main branch. Every forge operation goes through the forge CLI, written `<forge>` below: the command the run's environment and prompt name for it, used as `<forge> <family> <op> --opt value` (JSON out). With none (a run by hand), use `<plugin dir>/../scheduler/forge-cli.sh --repo <kind>:<owner/name>` (for example `github:owner/name`), the same command with the repository named. It fetches credentials itself: never print, echo or log a token, and use no other forge client.
 With `--dry-run` the argument may also be a local directory instead of `owner/name`. A dry run works
 offline and stops with files in an output directory: no push, no PR, no comment (see "Dry run").
 If the repository already has `docs/graph.yaml`, stop and say so: changing its plan is a triage job.
 
 ## 1. Facts first (deterministic)
 - Work in a fresh clone or worktree, never in someone's checkout:
-  `gh repo clone <owner/name> <dir>` (or `git fetch origin && git worktree add -b spec/adopt <dir> origin/<default branch>`).
+  `<forge> repo clone-url`, then `git clone <that URL> <dir>` (or `git fetch origin && git worktree add -b spec/adopt <dir> origin/<default branch>`).
   A real run's clone goes in `out/adopt/<name>/repo`. Create the branch `spec/adopt` there and leave
   it local and unpushed until section 5; on resume, re-create it from the current default branch if
   that moved while the owner answered. (A dry run on a local directory creates no clone and no
   branch and makes no commit; it stops with files in the output directory.)
-- Real run only: record in `FACTS.md` what `gh api repos/<owner/name>` reports about the credential's
+- Real run only: record in `FACTS.md` what `<forge> repo permissions` reports about the credential's
   permissions; an App installation token may report none, so this alone never stops the run; a push
   refused in section 5 stops the run and is reported. Never print a credential.
 - Read the code layout, the README and any `AGENTS.md`/`CLAUDE.md`/docs, the existing tests, the CI
@@ -33,9 +33,9 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
 - Compare the repository's test and fixture paths with the role guard's defaults (see section 3), e.g.
   a `fixtures/` directory that holds application data, or `tests.py` files the defaults miss.
 - Read the issues, closed ones too, and merged PRs: they are the history of intent (section 2 item 3
-  needs them). `gh issue list --state all --json number,title,body,labels,state`,
-  `gh pr list --state merged --json number,title,body` and
-  `gh issue view <n> --comments` for the ones that matter. Note the work they ask for. With no issues
+  needs them). `<forge> issue list --state all` (it may also return PRs, marked `is_pr` true: skip those),
+  `<forge> pr list --state merged` and
+  `<forge> issue view --number <n>` with `issue comments --number <n>` for the ones that matter. Note the work they ask for. With no issues
   at all, the work list is asked for in section 2.
 - Write down what you found and what you could not tell in `FACTS.md` next to `QUESTION.md`, so a
   resumed run has it. Do not invent intent from the code.
@@ -120,11 +120,11 @@ fixing the drafts (not the checker). Also check the drafted `AGENTS.md` commands
   default list: this PR is the one that sets up the regime files, and no **Spec files:** line exists at
   origin/main yet. On exit 1 it names the other paths (`NOT SPEC <path>`): stop, and do not push. On
   exit 2 (git failed) stop too.
-- Push the branch and open one PR (`gh pr create`). Body: what was drafted; which owner answers it
+- Push the branch and open one PR (`<forge> pr create --head spec/adopt --base <default branch> --title <title> --body-file <file>`, the branch pushed first with `<forge> branch push --path <dir> --branch spec/adopt`). Body: what was drafted; which owner answers it
   carries out (by number); open decisions and their defaults; what to check first (scope, track
   order, sizes); `Refs #N` for the issues the nodes cover. Never merge, approve or push to main.
 
-**Closing keywords.** GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
+**Closing keywords.** A forge closes an issue when a PR description, or a commit message that reaches main, contains a
 closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
 without a colon) followed by its number. Write none here: use "issue #N" or "Refs #N", because the
 loop closes the issue once the nodes that build the work are merged.
@@ -132,7 +132,7 @@ loop closes the issue once the nodes that build the work are merged.
 ## Dry run
 With `--dry-run`, run sections 1 to 4 offline against a local directory or a clone:
 - Issues come from `issues.json` in that directory if present (the form of
-  `gh issue list --state all --json number,title,body,labels,state`; an entry without `state` counts
+  `<forge> issue list --state all`: a JSON list of objects with number, title, body, labels, state; an entry without `state` counts
   as open), else there are none.
 - The owner's answers come from the `--answers <file>` the caller names, else an `ANSWER.md` in the
   output directory, else one in the input directory. If none exists, write `QUESTION.md` (into the

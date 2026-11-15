@@ -156,7 +156,7 @@ if printf '%s\n' "$ft" | grep -Eqi 'frozen test or fixture'; then ok "G02-AC-4: 
 if printf '%s\n' "$ft" | grep -Eqi 'resolv' && printf '%s\n' "$ft" | grep -Eqi 'would change'; then ok "G02-AC-4: the frozen/spec rule speaks of what resolving a conflict would change"; else bad "G02-AC-4: the frozen/spec rule (step ${fn:-none}) must speak of what resolving a conflict would change, not of everything the merge brings in"; fi
 # finding 4: no repository named through -R / --repo / a slug after gh options
 if grep -Eqi -e '(^|[[:space:]])(-R|--repo)[ =]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$d/skill.stripped"; then bad "G02-AC-4: SKILL.md names a repository after -R / --repo"; else ok "G02-AC-4: SKILL.md names no repository after -R / --repo"; fi
-if grep -o 'gh [^`]*' "$d/skill.stripped" | tr -s ' ' '\n' | grep -Eq '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(#[0-9]+)?$'; then bad "G02-AC-4: a gh command in SKILL.md carries an owner/name slug"; else ok "G02-AC-4: no gh command in SKILL.md carries an owner/name slug"; fi
+if grep -o '<forge> [^`]*' "$d/skill.stripped" | tr -s ' ' '\n' | grep -Eq '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(#[0-9]+)?$'; then bad "G02-AC-4: a <forge> command in SKILL.md carries an owner/name slug"; else ok "G02-AC-4: no forge CLI command in SKILL.md carries an owner/name slug"; fi
 # finding 2: the resolution review scopes the second-rejection reset
 rvj=$(tr -d '*\n' <"$rv" | tr 'A-Z' 'a-z')
 if printf '%s\n' "$rvj" | grep -Fq 'reset --hard origin/<branch>'; then ok "G02-AC-5: the review section keeps 'reset --hard origin/<branch>'"; else bad "G02-AC-5: the review section lacks 'reset --hard origin/<branch>'"; fi
@@ -171,7 +171,7 @@ g02d_sr=$(tr -d '*\n' <"$rv" | tr 'A-Z' 'a-z' | awk '{ i = index($0, "second rej
 if printf '%s\n' "$g02d_sr" | grep -Eq 'push(es)? nothing|nothing is pushed' && printf '%s\n' "$g02d_sr" | grep -Fq 'question.md'; then ok "G02-AC-5: the second-rejection sentence itself says nothing is pushed and writes QUESTION.md"; else bad "G02-AC-5: the second-rejection sentence ('${g02d_sr:-none}') must say nothing is pushed and write QUESTION.md"; fi
 # finding 3 (AC-5): the sentence holding "Resolution review (" says the verdict is posted on the PR
 g02d_pv=$(tr -d '*\n' <"$rv" | tr 'A-Z' 'a-z' | sed 's/\. /.\n/g' | grep -F 'resolution review (')
-if printf '%s\n' "$g02d_pv" | grep -Eq 'posted on the pr|gh pr comment'; then ok "G02-AC-5: the sentence with 'Resolution review (' says the verdict is posted on the PR"; else bad "G02-AC-5: the sentence with 'Resolution review (' ('${g02d_pv:-none}') must say the verdict is posted on the PR (gh pr comment)"; fi
+if printf '%s\n' "$g02d_pv" | grep -Eq 'posted on the pr|<forge> pr comment'; then ok "G02-AC-5: the sentence with 'Resolution review (' says the verdict is posted on the PR"; else bad "G02-AC-5: the sentence with 'Resolution review (' ('${g02d_pv:-none}') must say the verdict is posted on the PR (the forge CLI's pr comment)"; fi
 # finding 4 (AC-4): the fresh review is rerun only when the resolution changed the node's own code beyond keeping both sides
 if grep -Eqi 'fresh review' "$d/usteps.txt" && grep -E 'fresh review' "$d/usteps.txt" | grep -Eq 'only when[^.]*changed[^.]*beyond keeping both sides'; then ok "G02-AC-4: the fresh-review step runs only when the resolution changed the node's code beyond keeping both sides"; else bad "G02-AC-4: the fresh-review step must say 'only when ... changed ... beyond keeping both sides'"; fi
 # finding 5 (AC-4): the frozen/spec rule ends the run there and does not go on resolving
@@ -247,5 +247,11 @@ g05c "G06-AC-5: section 8 names the resolution review" "$g06d/s8.md" 40 'resolut
 g05c "G06-AC-5: section 8 requires the resolution review for a merge of origin/main that had conflicts" "$g06d/s8.md" 4 'resolution review' 'merge' 'origin/main' 'conflict'
 g05c "G06-AC-5: section 8 requires the resolution review before anything is pushed" "$g06d/s8.md" 5 'resolution review' 'before' 'push'
 g05c "G06-AC-5: section 8 says a second rejection pushes nothing and ends with QUESTION.md" "$g06d/s8.md" 4 'second' 'reject' 'push(es)? nothing|nothing is pushed|no push' 'question[.]md'
+
+# R02-AC-1 (review 1): with no environment naming a forge CLI, the skill says how to reach one: scheduler/forge-cli.sh and --repo, close together
+r02_forge_win() { # <file> <label>
+	if awk '{ L[NR] = $0 } END { for (i = 1; i <= NR; i++) { w = ""; for (j = i; j < i + 6 && j <= NR; j++) w = w " " L[j]; if (w ~ /scheduler\/forge-cli\.sh/ && w ~ /--repo/) exit 0 } exit 1 }' "$1"; then ok "R02-AC-1: $2 SKILL.md says how to reach the forge CLI with no environment naming one (scheduler/forge-cli.sh, --repo)"; else bad "R02-AC-1: $2 SKILL.md does not say how to reach the forge CLI with no environment naming one (needs scheduler/forge-cli.sh and --repo within a few lines)"; fi
+}
+r02_forge_win "$sk" node
 
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

@@ -103,8 +103,8 @@ s4ok "S04-AC-3: (staged-only change) its worktree is clean at that start" sh -c 
 s4ok "S04-AC-3: (staged-only change) HEAD is unchanged" sh -c "[ -s '$S04C/head1.H04' ] && [ \"\$(cat '$S04C/rec/H04.2/head' 2>/dev/null)\" = \"\$(cat '$S04C/head1.H04')\" ]"
 # 5: a follow-up
 fp=$S04C/rec/H05.2/prompt
-s4ok "S04-AC-2: (follow-up) its first start gets no resume section" sh -c "[ -s '$S04C/rec/H05.1/prompt' ] && grep -q 'FOLLOW-UP' '$S04C/rec/H05.1/prompt' && ! grep -qF 'git log origin/main..HEAD' '$S04C/rec/H05.1/prompt' && ! grep -qF 'gh run list' '$S04C/rec/H05.1/prompt'"
-s4ok "S04-AC-2: (follow-up) its restart renders the follow-up prompt with the resume section (git log origin/main..HEAD, gh run list --branch)" sh -c "grep -q 'FOLLOW-UP' '$fp' && grep -qF 'git log origin/main..HEAD' '$fp' && grep -qF 'gh run list --branch' '$fp'"
+s4ok "S04-AC-2: (follow-up) its first start gets no resume section" sh -c "[ -s '$S04C/rec/H05.1/prompt' ] && grep -q 'FOLLOW-UP' '$S04C/rec/H05.1/prompt' && ! grep -qF 'git log origin/main..HEAD' '$S04C/rec/H05.1/prompt' && ! grep -qF 'ci runs --branch' '$S04C/rec/H05.1/prompt'"
+s4ok "S04-AC-2: (follow-up) its restart renders the follow-up prompt with the resume section (git log origin/main..HEAD, \"\$NOODLEBOT_FORGE\" ci runs --branch)" sh -c "grep -q 'FOLLOW-UP' '$fp' && grep -qF 'git log origin/main..HEAD' '$fp' && grep -qF '\"\$NOODLEBOT_FORGE\" ci runs --branch' '$fp'"
 s4ok "S04-AC-2: (follow-up) it gives the reason 'rc 1' and 1 commit past origin/main" sh -c "grep -qF 'rc 1' '$fp' && grep -Eq '(^|[^0-9.])1 commit|commits?[^0-9]*[:=(] ?1([^0-9]|\$)' '$fp'"
 s4ok "S04-AC-2: (follow-up) it has no unfilled placeholder" sh -c "[ -s '$fp' ] && ! grep -qE '@[A-Z]+@' '$fp'"
 kill "$lp9"; wait "$lp9" 2>/dev/null

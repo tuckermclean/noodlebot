@@ -401,4 +401,57 @@ def pr_list(w, args, rec):
     out(rows, q)
 
 
+# --- R02-AC-6: what the operations of R02's change 6 need (added; the forms above are unchanged) ---
+# pr close (PATCH pulls/N state=closed), the merge commit in a pull request, repo permissions, runs by branch alone
+# (GET actions/runs), rerun of a run's failed jobs (POST actions/runs/ID/rerun-failed-jobs).
+_g_pr_before_r02 = g_pr
+_route_before_r02 = route
+
+
+def g_pr(w, p):  # noqa: F811 (the pull request as before, with GitHub's merge_commit_sha: a test merge commit while open)
+    d = _g_pr_before_r02(w, p)
+    d["merge_commit_sha"] = p.get("merge_commit") or (None if p["state"] != "open" else "e" * 40)
+    return d
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s" % (w.forge["owner"], w.forge["name"])
+    rest = path[len(own):].strip("/") if path == own or path.startswith(own + "/") else None
+    try:
+        m = re.fullmatch(r"pulls/(\d+)", rest or "")
+        if m and method == "PATCH" and (body or {}).get("state") == "closed":
+            p = w.find_pr(m[1])
+            if p["state"] == "merged":
+                raise Fail(422, "Validation Failed")
+            if p["state"] == "open":
+                p["state"], p["closed_at"] = "closed", W.NOW
+                w.save("prs")
+            return g_pr(w, p)
+        if rest == "actions/runs" and method == "GET":
+            runs = [r for r in w.ci_runs if (not qs.get("branch") or r["branch"] == qs["branch"])
+                    and (not qs.get("event") or r["event"] == qs["event"]) and (not qs.get("head_sha") or r["head_sha"] == qs["head_sha"])]
+            runs.sort(key=lambda r: (r["created_at"], r["id"]), reverse=True)
+            return {"total_count": len(runs), "workflow_runs": [
+                {"id": r["id"], "status": r["status"], "conclusion": r["conclusion"], "head_sha": r["head_sha"],
+                 "created_at": r["created_at"], "head_branch": r["branch"], "event": r["event"]} for r in runs]}
+        m = re.fullmatch(r"actions/runs/(\d+)/rerun-failed-jobs", rest or "")
+        if m and method == "POST":
+            run_ = next((r for r in w.ci_runs if r["id"] == int(m[1])), None)
+            if run_ is None:
+                return None
+            if run_["status"] != "completed":
+                raise Fail(403, "Workflow run %s is still in progress" % m[1])
+            run_["status"], run_["conclusion"] = "queued", None
+            w.save("ci_runs")
+            return {}
+    except W.WorldError as e:
+        raise Fail(404, "Not Found", {"message": str(e)})
+    res = _route_before_r02(w, method, path, qs, body)
+    if rest == "" and method == "GET" and isinstance(res, dict):  # the repository: the credential's access
+        perm = w.forge.get("permissions") or {}
+        res = dict(res, permissions={"pull": perm.get("read", True), "push": perm.get("write", True),
+                                     "admin": perm.get("admin", True), "maintain": False, "triage": False})
+    return res
+
+
 main()

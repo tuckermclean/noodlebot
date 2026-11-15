@@ -7,7 +7,7 @@ Agent guidance for noodlebot. Architecture and principles are in `SPEC.md`; usag
 - `scheduler/`: the loop and its helpers, each with a `*.test.sh` next to it; `scheduler/testdata/`.
 - `container/`: the image (`Containerfile`, `entrypoint.sh`), `compose.yaml`, the manifests `k8s/`, their tests and
   `testdata/`; `.containerignore` and `.github/workflows/image.yml` are its build context rules and CI.
-- `plugin/`: the Claude Code plugin (skills `node` and `triage`, the regime checker).
+- `plugin/`: neutral content (skills `node`, `triage` and `adopt`, the agents, the regime checker, the role guard's neutral check) plus a small Claude Code adapter (`plugin/hooks/claude_code.py`, `plugin/hooks/hooks.json`, `plugin/.claude-plugin/`).
 - `docs/graph.yaml` and `nodes/`: this repository's planned work, under the graph regime.
 - `.claude/agents/`: this repository's role agents.
 - Runtime lives outside the checkout, under `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`: `repos/`,
