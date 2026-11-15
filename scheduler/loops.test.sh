@@ -4,4 +4,5 @@
 # The cases and helpers are in testdata/lib/loops-body.sh, which runs the cases of the parts named here; the
 # parts run at the same time (each has its own temporary folder, and only its own processes are matched by pkill/pgrep).
 parts="A D F"
+parts="$parts S09"
 . "$(cd "$(dirname "$0")" && pwd -P)/testdata/lib/loops-body.sh"

@@ -78,6 +78,11 @@ scheduler/harness.py conform to it; the README in scheduler/harnesses/ documents
      FAKE_HARNESS_PREFLIGHT      "fail": preflight reports a missing credential
      FAKE_HARNESS_LOG            file that gets one line per call: "start <state_dir> <prompt>" or
                                  "resume <state_dir> <session id> <prompt>"
+   S09 (the small-model, no-tools start; not a capability):
+     FAKE_HARNESS_SMALL_SCRIPT   file of events replayed by small_start; defaults to FAKE_HARNESS_SCRIPT
+     FAKE_HARNESS_SMALL_RC       exit code of small_start (default 0)
+     FAKE_HARNESS_SMALL          "0": small_capable() is false (default: true)
+     small_start logs "small <state_dir> <the prompt's first line>" to FAKE_HARNESS_LOG.
    The fake replays each scripted event as one raw line on stdout too (its "raw log"), appends the events verbatim to
    events.jsonl, and returns the exit code. It reads no credential. Its events() has nothing to rebuild from and returns
    events.jsonl as it is.
@@ -147,3 +152,13 @@ def events(state_dir):
             return [json.loads(l) for l in f if l.strip()]
     except OSError:
         return []
+
+
+def small_start(state_dir, prompt):
+    _log("small", state_dir, prompt.split("\n", 1)[0])
+    script = os.environ.get("FAKE_HARNESS_SMALL_SCRIPT") or os.environ.get("FAKE_HARNESS_SCRIPT")
+    return _replay(state_dir, script, os.environ.get("FAKE_HARNESS_SMALL_RC", "0"))
+
+
+def small_capable():
+    return os.environ.get("FAKE_HARNESS_SMALL") != "0"

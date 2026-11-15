@@ -123,5 +123,37 @@ ev "$tmp/s/a/pr/12/session.jsonl" 0.40 $r5 0.30 $r7
 run $now
 if printf '%s' "$out" | grep -q '^hold: 5-hour window projected'; then pass "G01-AC-5: a fast burn logged only by an update session holds"; else fail "G01-AC-5: update session burn ignored by the throttle: $out"; fi
 
+# S09-AC-2: a pickup run's usage readings (DIR/<repo>/pickup/<ts>/session.jsonl, as events.jsonl is rebuilt from it) count in
+# the windows like a session's. A non-session entry under pickup/ (the `handled` file, the `pending/` folder, which has no
+# session log) is skipped without error. Scratch: $tmp/S09.
+unset USAGE_7D_PACE USAGE_7D_MARGIN USAGE_5H_LIMIT
+s9=$tmp/S09
+run9() { out=$(python3 -I "$src/usage.py" --state-root "$s9" --now "$1" 2>&1); rc=$?; }
+reset9() { rm -rf "$s9"; mkdir -p "$s9"; }
+reset9
+ev "$s9/a/pickup/20261114T100000Z/session.jsonl" 0.20 $r5 0.30 $r7 rejected
+run9 $now
+if [ $rc = 0 ] && printf '%s' "$out" | grep -q '^hold: five-hour window rejected'; then pass "S09-AC-2: a rejected window logged only by a pickup run holds like a session's"; else fail "S09-AC-2: pickup rejected reading ignored (rc $rc): $out"; fi
+reset9
+ev "$s9/a/pickup/20261114T100000Z/session.jsonl" 0.40 $r5 0.30 $r7
+run9 $now
+if printf '%s' "$out" | grep -q '^hold: 5-hour window projected'; then pass "S09-AC-2: a fast burn logged only by a pickup run is projected"; else fail "S09-AC-2: pickup burn ignored: $out"; fi
+reset9
+ev "$s9/a/node/X01/session.jsonl" 0.05 $r5 0.30 $r7
+ev "$s9/b/pickup/20261114T100000Z/session.jsonl" 0.12 $r5 0.33 $r7
+run9 $now
+if [ $rc = 0 ] && [ "$(python3 -I -c "import json; d=json.load(open('$s9/usage.json')); print(d['windows']['five_hour']['utilization'], d['windows']['seven_day']['utilization'])")" = "0.12 0.33" ]; then pass "S09-AC-2: a pickup run's reading is merged with a session's across repositories (the highest wins, both windows)"; else fail "S09-AC-2: merged pickup reading: $out $(tr -d '\n ' <"$s9/usage.json" 2>&1)"; fi
+reset9
+ev "$s9/a/pickup/20261114T100000Z/session.jsonl" 0.15 $r5 0.30 $r7
+printf '%s\n' 1799999000.1 >"$s9/a/pickup/handled"
+mkdir -p "$s9/a/pickup/pending"; echo '{"id": 7}' >"$s9/a/pickup/pending/7.json"
+mkdir -p "$s9/a/pickup/20261114T110000Z"; echo 'notes' >"$s9/a/pickup/20261114T110000Z/run.txt"
+run9 $now
+if [ $rc = 0 ] && ! printf '%s' "$out" | grep -qi 'traceback\|error' && [ "$(python3 -I -c "import json; print(json.load(open('$s9/usage.json'))['windows']['five_hour']['utilization'])")" = 0.15 ]; then pass "S09-AC-2: a handled file, a pending/ folder and a run folder without a log are skipped without error, the run's reading still counts"; else fail "S09-AC-2: non-session entries under pickup/ (rc $rc): $out"; fi
+reset9
+ev "$s9/a/pickup/20261114T100000Z/session.jsonl" 0.20 $((now - 60)) 0.30 $r7 rejected
+run9 $now
+if printf '%s' "$out" | grep -q '^open:'; then pass "S09-AC-2: a pickup reading past its reset no longer holds"; else fail "S09-AC-2: pickup reading past reset: $out"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all usage checks"

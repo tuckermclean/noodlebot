@@ -44,6 +44,7 @@ and the interface operation that serves it. Capabilities (`usage`, `resume`, `bg
 | `loop.sh` `stop_idle` (~l.415-421) | stops an idle session: `pgrep -P` and TERM to the children of `run-session.sh` (the agent CLI; the recorder ignores TERM) | the process tree of the scheduler's own `run-session.sh` | none: `run-session.sh`'s process is the scheduler's own, not the harness's |
 | `loop.sh` `resume_idle` (~l.448-449) | the argv and cwd of the idle `run-session.sh`, to start it again | `/proc/<pid>/cmdline` and `cwd` of the scheduler's own `run-session.sh` | none: `run-session.sh`'s process is the scheduler's own, not the harness's |
 | `run-session.sh` | one unattended session: forge tokens unset, start or resume, `session.rc` written atomically | the start prompt and `unattended.md`, or the session id and `resume-prompt.md` | `start`, `resume` |
+| pickup run (S09) | one small-model, no-tools, one-turn session that sorts the owner's items, run in the foreground with its stdout appended to `pickup/<ts>/session.jsonl` | the prompt file's text; writes `events.jsonl` as `start` does | `small_start` (CLI `harness.py small-start <state-dir> <prompt-file>`; `harness.py small` exits 0 and names the small model when the backend has it, 1 when not; not an entry of `capabilities`) |
 | `usage.py` `readings` (~l.28-50) | the plan's usage windows of every session changed in the last 7 days | each usage reading: windows, status, utilization, reset | `events` |
 | `api.py` `session_alive` (~l.245-255) | whether a node or issue unit has a live session | `/proc/<pid>/cmdline` | `matches` |
 | `api.py` `at_limit` (~l.258-298) | a live session idle at the usage limit (the idle-limit state) | the last line of the log, usage status and reset time | `events` |
@@ -79,6 +80,13 @@ its own and its `start` is kept by a rebuild too.
 | `cutoff` | none | session end with background tasks stopped by the CLI (last, once) |
 | `other` | none | well-formed line that gave no other event (so the last event is the last line) |
 | `garbled` | none | non-blank line that is no JSON object, or that cannot be read or translated (nested too deeply to parse, say); the last line is unknown |
+
+### `small-start` and `small` (S09)
+
+`small_start(state_dir, prompt)` runs one small-model, no-tools, one-turn session in the foreground (the pickup run). Claude Code:
+`claude -p <prompt> --model haiku --tools "" --max-turns 1 --strict-mcp-config --disable-slash-commands --output-format stream-json --verbose`,
+run in the state directory with the session credential, no plugin, no permission mode and no added system prompt. The raw stream goes
+to stdout, `events.jsonl` is written as `start` does. `small_capable()` says whether the backend has it; it is not in `capabilities()`.
 
 ## Across harnesses
 
