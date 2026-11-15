@@ -218,7 +218,7 @@ g02c_pre=$(awk -F'\t' -v n="${g02b_rn:-0}" '$1 < n { print $2 } $1 == n { t = $2
 if [ -n "$g02b_rn" ] && ! printf '%s\n' "$g02c_pre" | grep -Eqi 'push'; then ok "G02-AC-5: no step before the resolution review pushes"; else bad "G02-AC-5: a step before (or the start of) the review step ${g02b_rn:-none} pushes"; fi
 # ---------- G02 slice 3d (review3c finding 3): checks that only tighten the AC-5 check above ----------
 g02d_pv=$(printf '%s\n' "$g02b_rt" | sed 's/\. /.\n/g' | grep -F 'resolution review (')
-if printf '%s\n' "$g02d_pv" | grep -Eq 'posted on the pr|gh pr comment'; then ok "G02-AC-5: the sentence with 'Resolution review (' says the verdict is posted on the PR"; else bad "G02-AC-5: the sentence with 'Resolution review (' ('${g02d_pv:-none}') must say the verdict is posted on the PR"; fi
+if printf '%s\n' "$g02d_pv" | grep -Eq 'posted on the pr|"\$NOODLEBOT_FORGE" pr comment'; then ok "G02-AC-5: the sentence with 'Resolution review (' says the verdict is posted on the PR"; else bad "G02-AC-5: the sentence with 'Resolution review (' ('${g02d_pv:-none}') must say the verdict is posted on the PR"; fi
 
 # ---------- G05 slice 2: triage section 3 runs the spec checker before its push (G05-AC-4) ----------
 g05d="$tmp/G05"; mkdir -p "$g05d"
