@@ -8,18 +8,25 @@ methods of its Backend. Everything github.py defines is in scope here; `gh` itse
 import subprocess
 
 
-def ci_runs(self, workflow, sha, branch=None, event=None):
-    extra = ["-f", "head_sha=" + sha]
+def ci_runs(self, workflow=None, sha=None, branch=None, event=None):
+    extra = ["-f", "head_sha=" + sha] if sha else []
     if event:
         extra += ["-f", "event=" + event]
     if branch:
         extra += ["-f", "branch=" + branch]
-    got = self._api("GET", self._r("/actions/workflows/%s/runs" % workflow), None, extra)
+    path = "/actions/workflows/%s/runs" % workflow if workflow else "/actions/runs"
+    got = self._api("GET", self._r(path), None, extra)
     if not isinstance(got, dict) or not isinstance(got.get("workflow_runs"), list):
-        raise forge.ForgeError("the answer for the runs of %s does not parse: no workflow_runs list" % workflow)
+        raise forge.ForgeError("the answer for the runs of %s does not parse: no workflow_runs list" % (workflow or "the repository"))
     return [{"id": o["id"], "status": o.get("status"), "conclusion": o.get("conclusion"),
              "head_sha": o.get("head_sha"), "created_at": o.get("created_at")}
             for o in got["workflow_runs"] if isinstance(o, dict)]
+
+
+def ci_rerun(self, run):
+    path = self._r("/actions/runs/%d/rerun-failed-jobs" % int(run))
+    self._gh(["api", "-X", "POST", path], None, "gh api -X POST " + path.split("?")[0])
+    return {}
 
 
 def site_publish(self, target, input):
@@ -50,4 +57,4 @@ def branch_push(self, path, branch):
     return {}
 
 
-_register(ci_runs, site_publish, branch_push)
+_register(ci_runs, ci_rerun, site_publish, branch_push)

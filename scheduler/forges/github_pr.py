@@ -86,7 +86,11 @@ def _pr_row(self, r, keys):
 
 
 def pr_view(self, number):
-    return _pr(self._obj("GET", self._r("/pulls/%d" % int(number))))
+    got = self._obj("GET", self._r("/pulls/%d" % int(number)))
+    out = _pr(got)
+    # the merge commit of a merged PR; GitHub's merge_commit_sha of an open or unmerged one is a test merge: null
+    out["merge_commit"] = got.get("merge_commit_sha") if out["state"] == "merged" else None
+    return out
 
 
 def pr_create(self, head, base, title, body):
@@ -97,8 +101,12 @@ def pr_edit(self, number, title=None, body=None):
     return _pr(self._obj("PATCH", self._r("/pulls/%d" % int(number)), self._set(title=title, body=body)))
 
 
+def pr_close(self, number):
+    return _pr(self._obj("PATCH", self._r("/pulls/%d" % int(number)), {"state": "closed"}))
+
+
 def pr_comment(self, number, body):
     return _comment(self._obj("POST", self._r("/issues/%d/comments" % int(number)), {"body": body}))
 
 
-_register(pr_list, _pr_rest, _json, _pr_row, pr_view, pr_create, pr_edit, pr_comment)
+_register(pr_list, _pr_rest, _json, _pr_row, pr_view, pr_create, pr_edit, pr_close, pr_comment)

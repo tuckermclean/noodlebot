@@ -237,3 +237,70 @@ class Backend:
         if r.returncode:
             raise forge.ForgeError("fake forge: push failed: %s" % r.stderr.strip()[:300])
         return {}
+
+    # --- R02-AC-6: the operations of R02's change 6 (added; the methods above are replaced below where they change) ---
+    def pr_close(self, number):
+        w = self._w()
+        p = self._do(w.find_pr, number)
+        if p["state"] == "merged":
+            raise forge.ForgeError("fake forge: pull request %s is merged" % number)
+        if p["state"] == "open":
+            p["state"], p["closed_at"] = "closed", _world.NOW
+            w.save("prs")
+        return self._pr(w, p)
+
+    def ci_rerun(self, run):
+        w = self._w()
+        r = next((x for x in w.ci_runs if x["id"] == int(run)), None)
+        if r is None:
+            raise forge.ForgeError("fake forge: run %s not found" % run)
+        if r["status"] != "completed":
+            raise forge.ForgeError("fake forge: run %s is still in progress" % run)
+        r["status"], r["conclusion"] = "queued", None
+        w.save("ci_runs")
+        return {}
+
+    def repo_permissions(self):
+        perm = self._w().forge.get("permissions") or {}
+        return {k: bool(perm.get(k, True)) for k in ("read", "write", "admin")}
+
+
+def _r02_pr_view(self, number):
+    w = self._w()
+    p = self._do(w.find_pr, number)
+    out = self._pr(w, p)
+    out["merge_commit"] = p.get("merge_commit") if p["state"] == "merged" else None
+    return out
+
+
+def _r02_ci_runs(self, workflow=None, sha=None, branch=None, event=None):
+    w = self._w()
+    runs = [r for r in w.ci_runs if (not workflow or r["workflow"] == workflow) and (not sha or r["head_sha"] == sha)
+            and (not branch or r["branch"] == branch) and (not event or r["event"] == event)]
+    runs.sort(key=lambda r: (r["created_at"], r["id"]), reverse=True)
+    return [{k: r[k] for k in ("id", "status", "conclusion", "head_sha", "created_at")} for r in runs]
+
+
+def _r02_issue_list(self, label=None, state="open", oldest_first=False):
+    w = self._w()
+    if state not in ("open", "closed", "all"):
+        raise forge.ForgeError("fake forge: bad state %r" % (state,))
+    out = [i for i in w.issues if (not label or label in i["labels"]) and state in ("all", i["state"])]
+    out.sort(key=lambda i: i["number"], reverse=not oldest_first)
+    return [self._issue(w, i) for i in out]
+
+
+_r02_repo_url_before = Backend.repo_url
+
+
+def _r02_repo_url(self, kind="repo", ref=None):
+    if kind == "run":
+        if ref is None:
+            raise forge.ForgeError("fake forge: bad url kind 'run' without a run id")
+        w = _world.World(self.path)
+        return "fake://%s/%s/actions/runs/%s" % (w.forge["owner"], w.forge["name"], ref)
+    return _r02_repo_url_before(self, kind, ref)
+
+
+Backend.pr_view, Backend.ci_runs, Backend.issue_list, Backend.repo_url = (
+    _r02_pr_view, _r02_ci_runs, _r02_issue_list, _r02_repo_url)
