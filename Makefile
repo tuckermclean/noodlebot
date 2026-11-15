@@ -155,6 +155,7 @@ TESTS = \
 	scheduler/feedback.test.sh \
 	scheduler/pickup.test.sh \
 	scheduler/pickup-retry.test.sh \
+	scheduler/pickup-window.test.sh \
 	scheduler/forge.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
