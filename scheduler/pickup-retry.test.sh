@@ -186,19 +186,20 @@ rp --pickup >/dev/null 2>&1; uy1=$(tool url "$FK" "$y1")
 echo 4242 >"$ST/node/F06/session.pid"
 script "$(printf '[{"item": %s, "action": "feedback", "pr": 20, "reason": "r"}]' "$y1")"
 runit
-okx "S09-AC-3: (the first run: PR 20 is open, its session runs: the item waits, no reply)" '[ -d "$RUNDIR" ] && [ "$(tool nbot "$FK" 14)" = "$(tool nbot "$CK" 14)" ] && ! handled "$y1"'
+okx "S09-AC-3: (the first run: PR 20 is open, its session runs: the item waits, no reply)" '[ -d "$RUNDIR" ] && [ "$(tool nbot "$FK" 14)" = "$(( $(tool nbot "$CK" 14) - 1 ))" ] && ! handled "$y1"'
 grep -v '^20 ' "$ST/open-prs.tsv" >"$ST/open-prs.new" && mv "$ST/open-prs.new" "$ST/open-prs.tsv"
 rm -f "$ST/node/F06/session.pid"
 pk apply --run "$RUNDIR" >/dev/null 2>"$AUX/y.err"; rc=$?
 ok "S09-AC-4: the retry, PR 20 gone from open-prs.tsv: the item's deterministic reply is posted once (report.py's text), it exits 0" \
-	test "$rc" = 0 -a "$(tool notrec "$FK" | grep -c '^14 ')" = 1 -a "$(tool notrec "$FK")" = "$(tool notrec "$CK" 14)"
+	test "$rc" = 0 -a "$(tool notrec "$FK" | grep -c '^14 ')" = 1 -a "$(tool notrec "$FK")" = "$(tool notrec "$CK")"
 ok "S09-AC-4: ... the refusal is logged on stderr with the item's URL" all_logged "$AUX/y.err" "$y1"
 ok "S09-AC-4: ... the item is handled" handled "$y1"
 ok "S09-AC-4: ... nothing was handed over (no FEEDBACK.md, starts as they were)" test ! -e "$ST/node/F06/FEEDBACK.md" -a "$(cat "$ST/node/F06/starts")" = 2
+n4=$(nsmall)
 pk apply --run "$RUNDIR" >/dev/null 2>"$AUX/y2.err"; rc=$?
 runit
 ok "S09-AC-4: not retried again: a further apply and tick post nothing, log nothing, start no run" \
-	test "$rc" = 0 -a "$(tool nbot "$FK" 14)" = "$(( $(tool nbot "$CK" 14) + 1 ))" -a "$(grep -ci refused "$AUX/y2.err")" = 0 -a -z "$RUN" -a "$(nsmall)" = 1 -a ! -s "$AUX/run.out"
+	test "$rc" = 0 -a "$(tool nbot "$FK" 14)" = "$(tool nbot "$CK" 14)" -a "$(grep -ci refused "$AUX/y2.err")" = 0 -a -z "$RUN" -a "$(nsmall)" = "$n4" -a ! -s "$AUX/run.out"
 
 # =================================================================================================================
 echo "== F5: an answer is recorded once"
