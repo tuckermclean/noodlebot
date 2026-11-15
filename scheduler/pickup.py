@@ -32,8 +32,10 @@ into the handled record once the reply is posted; a failed post (exit 1) is retr
 Nothing outside DIR is written but the budget record (below).
 
 Budget (start_allowed, before each run): $NOODLEBOT_DATA/state/pickup.json, read and written under flock (pickup.json.lock
-beside it; one record for every loop of the runtime), counts the runs started in the five-hour window of usage.json (its
-resetsAt; else five hours from the first run counted). At most PICKUP_RUNS (default 12) start in a window. No run starts when a
+beside it; one record for every loop of the runtime), keeps [start time, window] of the runs of the last five hours (the first format, a count, is read as runs at the start of
+its window). A run counts in the window it started in and in every window whose span (resetsAt - 5 h .. resetsAt) holds its
+start time; resetsAt is that of
+usage.json's five_hour window, else the window is a stand-in of five hours from the first run counted. At most PICKUP_RUNS (default 12) start in a window. No run starts when a
 window of usage.json that is not past its reset is rejecting requests (allowed_warning is not a rejection) or is at or above
 PICKUP_CEILING (default 90%; "90%", "90" and "0.9" all mean 90 percent); usage.json's hold and reason (the pace holds) are
 never read. With no run the items get their pending file's reply and are handled, stderr names the reason, and the first such
@@ -285,17 +287,25 @@ def start_allowed(a):
             rec = {}
         reset, why = usage_limit(root, now)
         win = rec.get("window")
+        runs = rec.get("runs", [])
+        if isinstance(runs, (int, float)) and not isinstance(runs, bool) and isinstance(win, (int, float)):
+            runs = [[win - 5 * 3600, win]] * max(0, int(runs))   # the first format: a count, at unknown times, in its window
+        runs = [r for r in runs if isinstance(r, list) and len(r) == 2 and all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) for x in r)] if isinstance(runs, list) else []
         if reset is not None and win != reset or not isinstance(win, (int, float)) or (reset is None and win <= now):
             win = reset if reset is not None else now + 5 * 3600
-            rec = {"window": win, "runs": 0, "said": False}
+            rec["said"] = False
+        runs = [r for r in runs if r[0] > now - 5 * 3600]   # the record stays small: older runs are in no window
+        n = sum(1 for t, w in runs if w == win or win - 5 * 3600 <= t <= win)
         if why:
             why = ("rejecting: " if "rejecting" in why else "ceiling: ") + why
-        elif rec.get("runs", 0) >= runs_limit():
-            why = "budget: %d runs started in this five-hour window" % rec.get("runs", 0)
+        elif n >= runs_limit():
+            why = "budget: %d runs started in this five-hour window" % n
         if not why:
-            rec["runs"] = rec.get("runs", 0) + 1
+            runs.append([now, win])
         elif not rec.get("said"):
             rec["said"] = a.say = True
+        rec.update(window=win, runs=runs)
         write_json(path, rec)
         return (False, why) if why else (True, "")
     finally:
