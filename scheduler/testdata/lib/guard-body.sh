@@ -5,7 +5,7 @@
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 plug=$(dirname "$src")
-guard="$src/guard.py"
+guard="$src/claude_code.py"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fails=0
@@ -48,6 +48,67 @@ expect() {
 	fi
 }
 
+# ---------- R02-AC-3: the neutral check, called directly ----------
+# The neutral check is plugin/hooks/guard.py; the Claude Code adapter is plugin/hooks/claude_code.py (the $guard above).
+# Interface of the neutral check (a command line; the same function may be imported):
+#   python3 -I guard.py --role ROLE --kind write|shell [--root DIR] [--path=P ...] [--command=C]
+#   ROLE is tester, implementer or reviewer; any other ROLE is not a role and is allowed. --kind write takes the paths
+#   written (none: allowed); --kind shell takes the command. --root is the repository root (default: the working directory).
+#   Exit 0 allows; exit 2 blocks with the reason on stderr; nothing is read from stdin.
+neutral="$src/guard.py"
+# direct <root> <usecwd 0|1> <role> <kind> <arg...> : runs the neutral check, sets drc and derr
+direct() {
+	drc=127; derr=""
+	[ -f "$neutral" ] || return 0
+	d_root=$1; d_cwd=$2; d_role=$3; d_kind=$4; shift 4
+	if [ "$d_cwd" = 1 ]; then
+		derr=$(cd "$d_root" && python3 -I "$neutral" --role "$d_role" --kind "$d_kind" "$@" </dev/null 2>&1 >/dev/null)
+	else
+		derr=$(python3 -I "$neutral" --role "$d_role" --kind "$d_kind" --root "$d_root" "$@" </dev/null 2>&1 >/dev/null)
+	fi
+	drc=$?
+}
+# dverdict <id> <desc> <allow|block> : checks drc and derr against the wanted decision
+dverdict() {
+	if [ ! -f "$neutral" ]; then bad "$1: $2: plugin/hooks/guard.py does not exist"; return; fi
+	if [ "$3" = allow ]; then
+		if [ "$drc" -eq 0 ]; then ok "$1: $2"; else bad "$1: $2: want allow (exit 0), got exit $drc: $derr"; fi
+	else
+		if [ "$drc" -eq 2 ] && [ -n "$derr" ]; then ok "$1: $2"; else bad "$1: $2: want block (exit 2 with a reason on stderr), got exit $drc: $derr"; fi
+	fi
+}
+# dexpect <desc> <allow|block> <root> <usecwd> <role> <kind> <arg...> : a direct call with its wanted decision
+dexpect() {
+	d_desc=$1; d_want=$2; shift 2
+	direct "$@"
+	dverdict "R02-AC-3 (direct)" "$d_desc" "$d_want"
+}
+
+# expect <id> <desc> <allow|block> <root> <agent_type> <tool> <key> <value> [usecwd]
+# Redefined: it judges the case through the adapter as before, then makes the same call (role, tool kind, path or
+# command) on the neutral check and wants the same decision, so every case below covers both.
+expect() {
+	decide "$4" "${9:-0}" "$5" "$6" "$7" "$8"
+	if [ ! -f "$guard" ]; then bad "$1: $2: plugin/hooks/claude_code.py does not exist"
+	elif [ "$3" = allow ]; then
+		if [ "$rc" -eq 0 ]; then ok "$1: $2"; else bad "$1: $2: want allow (exit 0), got exit $rc: $err"; fi
+	else
+		if [ "$rc" -eq 2 ] && [ -n "$err" ]; then ok "$1: $2"; else bad "$1: $2: want block (exit 2 with a reason on stderr), got exit $rc: $err"; fi
+	fi
+	case "$5" in
+	noodlebot:tester) x_role=tester ;;
+	noodlebot:implementer) x_role=implementer ;;
+	noodlebot:reviewer) x_role=reviewer ;;
+	*) x_role=none ;;
+	esac
+	case "$6" in
+	Write|Edit|NotebookEdit) direct "$4" "${9:-0}" "$x_role" write "--path=$8" ;;
+	Bash) direct "$4" "${9:-0}" "$x_role" shell "--command=$8" ;;
+	*) return 0 ;;
+	esac
+	dverdict "R02-AC-3 (direct) $1" "$2" "$3"
+}
+
 # want <part>: this run includes the part (the test files set $parts; the parts run at the same time).
 want() { case " $parts " in *" $1 "*) return 0 ;; esac; return 1; }
 if want 1; then
@@ -78,7 +139,7 @@ for e in entries:
     if all(t in m.split("|") or t in m for t in ("Edit", "Write", "NotebookEdit", "Bash")):
         for h in e["hooks"]:
             c = h.get("command", "")
-            if "${CLAUDE_PLUGIN_ROOT}" in c and "guard.py" in c:
+            if "${CLAUDE_PLUGIN_ROOT}" in c and "claude_code.py" in c:
                 sys.exit(0)
 sys.exit(1)
 PY
@@ -191,6 +252,44 @@ expect $a "root from cwd: roles.yaml applies (implementer, configured test path)
 expect $a "root from cwd: roles.yaml applies (implementer, replaced default)" allow "$C" $I $W $fp "x.test.sh" 1
 expect $a "root from cwd: relative path (tester, source)" block "$D" $T $W $fp "src/main.py" 1
 
+
+# ---------- R02-AC-3: direct calls of the neutral check beyond the cases above ----------
+r3=R02-AC-3
+M="$tmp/mal"; mkrepo "$M"; mkdir -p "$M/.noodlebot"
+printf 'tests: [unclosed\n  - : :\n' >"$M/.noodlebot/roles.yaml"
+for role in tester implementer; do
+	expect $r3 "malformed roles.yaml blocks a $role write (adapter and direct)" block "$M" noodlebot:$role $W $fp "src/main.py"
+done
+expect $r3 "malformed roles.yaml blocks a tester Bash write (adapter and direct)" block "$M" $T $B $cmd "echo x > a.test.sh"
+expect $r3 "malformed roles.yaml does not block a non-role session" allow "$M" - $W $fp "src/main.py"
+dexpect "tester, write, two paths, one of them source" block "$D" 0 tester write --path=a.test.sh --path=src/main.py
+dexpect "tester, write, two test paths" allow "$D" 0 tester write --path=a.test.sh --path=tests/b.py
+dexpect "implementer, write, a source and a test path" block "$D" 0 implementer write --path=src/main.py --path=x.test.sh
+dexpect "implementer, write, no path" allow "$D" 0 implementer write
+dexpect "reviewer, write, no path is still read-only" block "$D" 0 reviewer write --path=src/main.py
+dexpect "a role other than the three is allowed (write to SPEC.md)" allow "$D" 0 none write --path=SPEC.md
+dexpect "a role other than the three is allowed (shell redirect into a test)" allow "$D" 0 other shell "--command=echo x > a.test.sh"
+dexpect "an unset root is the working directory (implementer, roles.yaml test path)" block "$C" 1 implementer write --path=spec_tests/a.txt
+dexpect "an unset root is the working directory (implementer, replaced default)" allow "$C" 1 implementer write --path=x.test.sh
+dexpect "the root is --root (reviewer, shell redirect in the repository)" block "$D" 0 reviewer shell "--command=echo x > out.txt"
+dexpect "reviewer, shell, git log is allowed" allow "$D" 0 reviewer shell "--command=git log --oneline"
+dexpect "reviewer, shell, git reset is blocked" block "$D" 0 reviewer shell "--command=git reset --hard"
+dexpect "reviewer, shell, git switch -c is blocked" block "$D" 0 reviewer shell "--command=git switch -c y"
+dexpect "reviewer, shell, git merge is blocked" block "$D" 0 reviewer shell "--command=git merge main"
+dexpect "reviewer, shell, git status is allowed" allow "$D" 0 reviewer shell "--command=git status"
+dexpect "the reason is on stderr and nothing is read from stdin" block "$D" 0 tester write --path=src/main.py
+direct "$D" 0 tester write --path=src/main.py
+if [ -f "$neutral" ] && [ -n "$derr" ] && ! printf '%s' "$derr" | grep -q 'Traceback'; then ok "$r3: the neutral check gives a reason, no traceback"; else bad "$r3: the neutral check gives no reason on stderr, or a traceback: $derr"; fi
+
+# the neutral check holds nothing of Claude Code (change 3 and 4): file:line of each form found in plugin/hooks/guard.py
+if [ -f "$neutral" ]; then
+	hits=$(grep -n -e 'Claude Code' -e 'PreToolUse' -e 'CLAUDE_PLUGIN_ROOT' -e 'agent_type' -e 'tool_name' -e 'tool_input' "$neutral")
+	if [ -z "$hits" ]; then ok "$r3: plugin/hooks/guard.py holds no Claude Code form"; else
+		while IFS= read -r h; do bad "$r3: plugin/hooks/guard.py:${h%%:*}: holds a Claude Code form:${h#*:}"; done <<HITS
+$hits
+HITS
+	fi
+else bad "$r3: plugin/hooks/guard.py does not exist"; fi
 fi
 # ---------- git commit with staged paths ----------
 staged() {  # staged <dir> <path> : fresh repo with <path> staged
