@@ -154,6 +154,7 @@ TESTS = \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
 	scheduler/pickup.test.sh \
+	scheduler/pickup-retry.test.sh \
 	scheduler/forge.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \

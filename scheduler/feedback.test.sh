@@ -208,5 +208,33 @@ ok "S09-AC-4: and writes no unit folder for them" test -s "$f" -a ! -e "$s9/stat
 s9add 20 "$s9/none.json" >/dev/null 2>&1; rc=$?
 ok "S09-AC-3: add with an unreadable item file exits 1 and leaves FEEDBACK.md as it was" sh -c '[ "$1" = 1 ] && [ -s "$3" ] && cmp -s "$2" "$3"' x "$rc" "$s9/f.before" "$f"
 
+
+# --- S09: add defers while the unit's session runs (the pickup step's review, F1) ----------------------------------
+# add N ITEMFILE for an open bot PR whose unit has a running session (node/<ID>/session.pid for a node's PR, pr/<N>/session.pid
+# for a spec PR, or for an update of a node's PR; the loop's fb_blocked takes them so) writes nothing (FEEDBACK.md and starts as
+# they were, no unit folder made) and exits 3 (busy): one line on stderr, nothing on stdout. Once the pid file is gone it adds.
+s9b=$s9/busy; mkdir -p "$s9b/state/node/F06" "$s9b/state/pr/26"
+echo 2 >"$s9b/state/node/F06/starts"
+s9bad() { python3 -I "$src/feedback.py" --repo o/r --state "$s9b/state" --owner owner --prs "$s9prs" add "$@"; }
+s9item "$s9b/b1.json" 5101 "https://github.com/o/r/issues/13#issuecomment-5101" "busy item for a node's PR"
+s9item "$s9b/b2.json" 5102 "https://github.com/o/r/issues/14#issuecomment-5102" "busy item for a spec PR"
+for pid in node/F06 pr/20; do
+	mkdir -p "$s9b/state/$pid"; echo 4242 >"$s9b/state/$pid/session.pid"
+	out=$(s9bad 20 "$s9b/b1.json" 2>"$tmp/errb"); rc=$?
+	ok "S09-AC-3: add 20 while $pid/session.pid exists: exit 3, nothing on stdout, a line on stderr" test "$rc" = 3 -a -z "$out" -a -s "$tmp/errb"
+	ok "S09-AC-3: ... nothing written (no FEEDBACK.md, starts still 2)" test ! -e "$s9b/state/node/F06/FEEDBACK.md" -a ! -e "$s9b/state/pr/20/FEEDBACK.md" -a "$(cat "$s9b/state/node/F06/starts")" = 2
+	rm -f "$s9b/state/$pid/session.pid"
+done
+echo 4243 >"$s9b/state/pr/26/session.pid"
+out=$(s9bad 26 "$s9b/b2.json" 2>/dev/null); rc=$?
+ok "S09-AC-3: add 26 while pr/26/session.pid exists: exit 3, nothing on stdout, no FEEDBACK.md, no starts" test "$rc" = 3 -a -z "$out" -a ! -e "$s9b/state/pr/26/FEEDBACK.md" -a ! -e "$s9b/state/pr/26/starts"
+rm -f "$s9b/state/pr/26/session.pid"
+s9bad 26 "$s9b/b2.json" >/dev/null 2>&1; rc=$?
+ok "S09-AC-3: the session gone, add 26 hands the item over (exit 0, FEEDBACK.md written, starts 0)" sh -c '[ "$1" = 0 ] && grep -qxF "id: 5102" "$2" && [ "$(cat "$3")" = 0 ]' x "$rc" "$s9b/state/pr/26/FEEDBACK.md" "$s9b/state/pr/26/starts"
+s9bad 20 "$s9b/b1.json" >/dev/null 2>&1; rc=$?
+ok "S09-AC-3: ... and add 20 too (starts 2 -> 0)" sh -c '[ "$1" = 0 ] && grep -qxF "id: 5101" "$2" && [ "$(cat "$3")" = 0 ]' x "$rc" "$s9b/state/node/F06/FEEDBACK.md" "$s9b/state/node/F06/starts"
+out=$(s9bad 99 "$s9b/b1.json" 2>/dev/null); rc=$?
+ok "S09-AC-4: add for an unknown PR is still exit 1 (permanent, not busy)" test "$rc" = 1 -a -z "$out"
+
 [ "$fails" -eq 0 ] || { echo "$fails FAILED"; exit 1; }
 echo "all passed"
