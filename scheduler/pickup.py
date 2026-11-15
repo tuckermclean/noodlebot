@@ -29,9 +29,19 @@ own, signed) and one line "pickup.py: refused <url>: <reason>" on stderr. An acc
   note      nothing.
 and gets one reply on its thread (what was done, and the start clause). An item is recorded as done before its reply, and goes
 into the handled record once the reply is posted; a failed post (exit 1) is retried by the next apply (and by `run`).
-Nothing outside DIR is written. The budget and the ceiling (S09 slice 3) decide in start_allowed().
+Nothing outside DIR is written but the budget record (below).
+
+Budget (start_allowed, before each run): $NOODLEBOT_DATA/state/pickup.json, read and written under flock (pickup.json.lock
+beside it; one record for every loop of the runtime), counts the runs started in the five-hour window of usage.json (its
+resetsAt; else five hours from the first run counted). At most PICKUP_RUNS (default 12) start in a window. No run starts when a
+window of usage.json that is not past its reset is rejecting requests (allowed_warning is not a rejection) or is at or above
+PICKUP_CEILING (default 90%; "90%", "90" and "0.9" all mean 90 percent); usage.json's hold and reason (the pace holds) are
+never read. With no run the items get their pending file's reply and are handled, stderr names the reason, and the first such
+tick of a window prints one stdout line "pickup: no run: <reason>". Without NOODLEBOT_DATA there is no record and no ceiling.
+An answer a run records writes DIR/pickup/answered (the loop ticks again at once, as for report.py's exit 3).
 """
 import argparse
+import fcntl
 import glob
 import json
 import os
@@ -208,9 +218,107 @@ def cmd_items(a):
 
 # --- the run --------------------------------------------------------------------------------------------------------
 
+def ceiling():
+    """PICKUP_CEILING as a fraction: "90%" and "90" (above 1) are percent, "0.9" (up to 1) a fraction; default 90%."""
+    raw = os.environ.get("PICKUP_CEILING", "").strip()
+    try:
+        v = float(raw[:-1] if raw.endswith("%") else raw)
+        return v / 100 if raw.endswith("%") or v > 1 else v
+    except ValueError:
+        return 0.9
+
+
+def runs_limit():
+    try:
+        n = int(os.environ.get("PICKUP_RUNS", "").strip())
+        return n if n > 0 else 12
+    except ValueError:
+        return 12
+
+
+def usage_limit(root, now):
+    """(window reset epoch or None, reason or "") from usage.json: a rejecting window or one at the ceiling stops a run.
+    A window past its reset counts for nothing; the file's hold and reason (the pace holds) are never read."""
+    u = read_json(os.path.join(root, "usage.json"), {})
+    ws = u.get("windows") if isinstance(u, dict) else None
+    reset, why, top = None, "", ceiling()
+    for name, w in (ws.items() if isinstance(ws, dict) else ()):
+        try:
+            r = float(w["resetsAt"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if name == "five_hour" and r > now:
+            reset = r
+        if r <= now:
+            continue
+        util = w.get("utilization")
+        if w.get("status") == "rejected":
+            why = why or "the %s window is rejecting requests" % name
+        elif isinstance(util, (int, float)) and not isinstance(util, bool) and util >= top:
+            why = why or "the %s window is at %d%%, the ceiling is %d%%" % (name, round(util * 100), round(top * 100))
+    return reset, why
+
+
 def start_allowed(a):
-    """(True, "") when a run may start now. The budget and the ceiling of S09's slice 3 decide here."""
-    return True, ""
+    """(True, "") when a run may start now, and then it is counted. Else (False, reason): a window of usage.json rejects
+    requests or is at PICKUP_CEILING ("ceiling" / "rejecting"), or PICKUP_RUNS runs started in this five-hour window
+    ("budget"). The record is the state root's pickup.json under flock (every loop of the runtime shares it). Sets
+    a.say when this refusal is the first of its window: the caller prints one line. Without NOODLEBOT_DATA: no record,
+    no ceiling."""
+    a.say = False
+    data = os.environ.get("NOODLEBOT_DATA", "")
+    if not data:
+        return True, ""
+    root = os.path.join(data, "state")
+    now = time.time()
+    try:
+        os.makedirs(root, exist_ok=True)
+        lock = os.open(os.path.join(root, "pickup.json.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as e:
+        log("no budget record: %s" % e)
+        return True, ""
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        path = os.path.join(root, "pickup.json")
+        rec = read_json(path, {})
+        if not isinstance(rec, dict):
+            rec = {}
+        reset, why = usage_limit(root, now)
+        win = rec.get("window")
+        if reset is not None and win != reset or not isinstance(win, (int, float)) or (reset is None and win <= now):
+            win = reset if reset is not None else now + 5 * 3600
+            rec = {"window": win, "runs": 0, "said": False}
+        if why:
+            why = ("rejecting: " if "rejecting" in why else "ceiling: ") + why
+        elif rec.get("runs", 0) >= runs_limit():
+            why = "budget: %d runs started in this five-hour window" % rec.get("runs", 0)
+        if not why:
+            rec["runs"] = rec.get("runs", 0) + 1
+        elif not rec.get("said"):
+            rec["said"] = a.say = True
+        write_json(path, rec)
+        return (False, why) if why else (True, "")
+    finally:
+        os.close(lock)   # releases the flock
+
+
+def deny(a, items, why):
+    """No run: each item gets its pending file's deterministic reply (as a refused one does) and is handled."""
+    ctx = None
+    for c in items:
+        key = str(c["id"])
+        try:
+            ctx = ctx or Ctx(a)
+            report.comment(ctx.a, c["issue"], c["reply"])
+        except Exception as e:
+            log("the reply to %s was not posted: %s" % (c["url"], e))
+            continue
+        with open(os.path.join(pdir(a), "handled"), "a", encoding="utf-8") as f:
+            f.write(key + "\n")
+        try:
+            os.remove(os.path.join(pdir(a), "pending", key + ".json"))
+        except OSError:
+            pass
 
 
 def new_rundir(a):
@@ -262,6 +370,10 @@ def cmd_run(a):
     ok, why = start_allowed(a)
     if not ok:
         log("no run: %s" % why)
+        if a.say:
+            print("pickup: no run: %s" % why)
+            sys.stdout.flush()
+        deny(a, items, why)
         return 0
     rundir = new_rundir(a)
     write_json(os.path.join(rundir, "items.json"), items)
@@ -415,6 +527,10 @@ def perform(ctx, args, rundir, c, ent):
                 raise Permanent("%s has no open question any more" % unit)
             else:
                 what = report.record_answer(a, ctx.rs, unit, {"id": c["id"], "url": url, "created_at": c["created_at"]}, c["body"])
+                try:
+                    open(os.path.join(pdir(args), "answered"), "w").close()   # the loop ticks again at once
+                except OSError:
+                    pass
             ent["recorded"] = True
             ent["reply"] = "Recorded as %s's ANSWER.md from this comment (%s); %s." % (
                 unit, url, what or "its session starts at its turn")

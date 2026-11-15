@@ -66,6 +66,12 @@
 # https:// address with no whitespace, ( ) < > or ", the loop publishes the site (the condition above) and state/<name>/visibility
 # is public. Then report.py gets --site <address without the trailing /> and the session prompts render their @SITE@ line;
 # otherwise report.py gets no --site and the line is removed. An invalid address is one status line, `status site links off: <reason>`.
+# The pickup step (S09): once per loop iteration after `report`, when the tick reached the forge (also while the throttle holds), pickup.py
+# run sorts the owner comments report.py cannot place with one small-model, no-tools session (harness.py small-start), carries out
+# its decisions and replies once to each comment. It takes no turn, no start count and no SCHED_MAX slot; each line it prints is one
+# status-log event. Settings: PICKUP (default 1; 0 is off), PICKUP_RUNS (runs per 5-hour window across all loops, default 12),
+# PICKUP_CEILING (no run when a usage window is at or above it, default 90%); the pace hold does not stop it, a rejecting window does.
+# Off (PICKUP=0, or `harness.py small` fails, or no pickup.py): one status line at start, and report.py gets no --pickup.
 # Reads ~/.config/noodlebot/oauth-token
 # (CLAUDE_CODE_OAUTH_TOKEN, read by run-session.sh for the session only). Every forge call goes through forge.py (G04), which
 # runs the token script ~/.config/noodlebot/token (named by NOODLEBOT_FORGE_TOKEN_SCRIPT, exported below) once per process; the loop holds no token.
@@ -159,6 +165,12 @@ for fc in "site:site publishing" "pin:pinning" "resolve_threads:resolving thread
 done
 has_cap resume || say "harness $hname lacks resume: limit resume off"
 has_cap bg-wait || say "harness $hname lacks bg-wait: cut-off check off"
+# The pickup step (S09): on unless PICKUP=0, the harness lacks the small-model start, or pickup.py is missing (then silently as before).
+pickup_on=0
+if [ "${PICKUP:-1}" = 0 ]; then say "PICKUP=0: pickup off"
+elif [ ! -f "$here/pickup.py" ]; then :
+elif python3 -I -B "$nb/scheduler/harness.py" small >/dev/null 2>&1; then pickup_on=1
+else say "harness $hname lacks small-model start: pickup off"; fi
 # sedesc <text>: text for a sed replacement (delimiter |) with & | \ escaped.
 sedesc() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
 vsub=$(sedesc "$version") ssub=$(sedesc "$signature")
@@ -1084,8 +1096,24 @@ report() {
 	[ -n "$tick_forge" ] || return 0   # the tick had no token or did not reach GitHub
 	site_links
 	timeout 120 python3 -I "$here/report.py" --repo "$repo" --state "$state" --owner "$owner" --worktrees "$wtroot" \
-		--version "$version" --signature "$signature" ${site_addr:+--site "$site_addr"} \
+		--version "$version" --signature "$signature" ${site_addr:+--site "$site_addr"} $([ "$pickup_on" = 1 ] && echo --pickup) \
 		2>&1 | sed "s/^/$(date -u +%FT%TZ) /" >>"$state/report.log"
+}
+
+# pickup: after report, one pickup run when report.py left items for it (pickup.py run; its budget and ceiling decide whether it starts). Each
+# stdout line is one status event; its stderr goes to report.log. Returns 3 when the run recorded an answer, so the loop ticks again
+# at once. A failure never stops the tick.
+pickup() {
+	[ "$pickup_on" = 1 ] && [ "${SCHED_REPORT:-1}" = 1 ] && [ -n "$tick_forge" ] || return 0
+	local out line rc=0
+	compgen -G "$state/pickup/pending/*.json" >/dev/null || return 0   # report.py left nothing for it (a pending file stays until its item is handled)
+	rm -f "$state/pickup/answered"
+	out=$(NOODLEBOT_DATA=$root timeout 150 python3 -I "$here/pickup.py" --repo "$repo" --state "$state" --owner "$owner" --clone "$clone" \
+		--worktrees "$wtroot" --version "$version" --signature "$signature" run 2>>"$state/report.log") || rc=$?
+	while IFS= read -r line; do [ -z "$line" ] || say "$line"; done <<<"$out"
+	[ "$rc" = 0 ] || [ "$rc" = 1 ] || echo "$(date -u +%FT%TZ) pickup.py exited $rc" >>"$state/report.log"
+	[ ! -e "$state/pickup/answered" ] || return 3
+	return 0
 }
 
 # publish: after report, send the status site to the gist (site.py publish). The gist token is read
@@ -1755,8 +1783,10 @@ while :; do
 	tick
 	[ "${#rels[@]}" = 0 ] || { say "RELEASE for ${rels[*]} dropped: the tick ended before the ready list"; rels=(); }
 	fforge=$tick_forge
-	report; rc=$?; tick_forge=''
-	if [ $rc = 3 ]; then   # an answer was recorded: a listing made before it existed is never handed over
+	report; rc=$?
+	[ $rc = 3 ] || { pickup; rc=$?; }   # an answer recorded by either: tick again at once
+	tick_forge=''
+	if [ $rc = 3 ]; then   # an answer was recorded (by report or pickup): a listing made before it existed is never handed over
 		fb_stop; fbcarry=(); rm -rf "$state/feedback-carry"
 		publish; continue
 	fi
