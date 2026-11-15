@@ -244,4 +244,13 @@ if [ -s "$g05d/s3.md" ]; then ok "G05-AC-4: triage SKILL.md has a section 3"; el
 if g05_win "$g05d/s3.md" 6 'check-spec-diff' 'origin/main' 'before' 'push'; then ok "G05-AC-4: triage section 3 runs check-spec-diff.py against origin/main before it pushes"; else bad "G05-AC-4: triage section 3 does not run check-spec-diff.py against origin/main before the push"; fi
 if g05_win "$g05d/s3.md" 6 'check-spec-diff' 'exit(s)? (code )?1|exit 1|non-zero' 'stop'; then ok "G05-AC-4: triage section 3 stops when the checker exits 1"; else bad "G05-AC-4: triage section 3 does not stop when the checker exits 1"; fi
 
+# R02-AC-1 (review 1): with no environment naming a forge CLI, the skill says how to reach one: scheduler/forge-cli.sh and --repo, close together
+r02_forge_win() { # <file> <label>
+	if awk '{ L[NR] = $0 } END { for (i = 1; i <= NR; i++) { w = ""; for (j = i; j < i + 6 && j <= NR; j++) w = w " " L[j]; if (w ~ /scheduler\/forge-cli\.sh/ && w ~ /--repo/) exit 0 } exit 1 }' "$1"; then ok "R02-AC-1: $2 SKILL.md says how to reach the forge CLI with no environment naming one (scheduler/forge-cli.sh, --repo)"; else bad "R02-AC-1: $2 SKILL.md does not say how to reach the forge CLI with no environment naming one (needs scheduler/forge-cli.sh and --repo within a few lines)"; fi
+}
+r02_forge_win "$sk" triage
+# R02-AC-5 (run 1): a dry-run triage's result.md holds the issue as read and nodes.py's output
+r02_dr=$(tr -d '*\n' <"$sk" | tr 'A-Z' 'a-z' | sed 's/\. /.\n/g' | grep -F -e '--dry-run' | grep -F 'result.md' | grep -F 'nodes.py' | grep -E 'issue' | grep -E 'hold|contain|record|with')
+if [ -n "$r02_dr" ]; then ok "R02-AC-5: the dry-run instruction says result.md holds the issue as read and nodes.py's output"; else bad "R02-AC-5: no sentence says a --dry-run's result.md holds the issue as read and nodes.py's output (needs --dry-run, result.md, issue and nodes.py in one sentence)"; fi
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

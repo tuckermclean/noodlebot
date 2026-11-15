@@ -563,5 +563,17 @@ for rel in scheduler/notes.md README.md scheduler/loop.sh; do
 done
 rm -rf "$R02"
 
+# ---- R02 change 2 (review 1): the agents and the templates name no fixed harness path or file. .claude/ and CLAUDE.md are
+# named only as the repository's own facts, read from its AGENTS.md or .noodlebot/roles.yaml; limit-resume.md names no harness tool.
+r02_files="$root/plugin/agents/*.md $root/scheduler/unattended*.md $root/scheduler/limit-resume.md"
+r02_hit=$(grep -nE -e '\.claude/|CLAUDE\.md' $r02_files 2>/dev/null | sed "s#^$root/##" | head -n 12)
+if [ -z "$r02_hit" ]; then pass "R02-AC-2: no agent or session template holds a fixed .claude/ path or CLAUDE.md"
+else fail "R02-AC-2: an agent or template names a fixed .claude/ path or CLAUDE.md (file:line:text):
+$r02_hit"; fi
+r02_hit=$(grep -nE -e 'Monitor|[Ss]cheduled wakeup|ScheduleWakeup' "$root/scheduler/limit-resume.md" 2>/dev/null | head -n 5)
+if [ -z "$r02_hit" ]; then pass "R02-AC-2: limit-resume.md names no harness tool (Monitor, scheduled wakeup)"
+else fail "R02-AC-2: limit-resume.md names a harness tool (line:text):
+$r02_hit"; fi
+
 [ "$fails" = 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"

@@ -50,4 +50,7 @@ sk() { SCHED_HARNESS=fake python3 -I -B "$src/harness.py" skill-command "$@"; }
 r02_skill triage "$tmp/R02-tri.md" "$(sk triage 46)"
 r02_skill update "$tmp/R02-upd.md" "$(sk triage '--update 15')"
 r02_skill node-update "$tmp/R02-nup.md" "$(sk node '--update 12')"
+# review 1: the feedback prompts carry the harness's skill command too (PR 11 is the node's, PR 13 the spec PR's)
+r02_skill "node feedback" "$tmp/R02-fbn.md" "$(sk node '--feedback 11')"
+r02_skill "spec feedback" "$tmp/R02-fbs.md" "$(sk triage '--feedback 13')"
 loop_end

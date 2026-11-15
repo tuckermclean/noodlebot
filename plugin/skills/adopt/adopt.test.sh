@@ -127,5 +127,11 @@ else
 	bad "G05-AC-4: adopt checks cannot run: no SKILL.md"
 fi
 
+# R02-AC-1 (review 1): with no environment naming a forge CLI, the skill says how to reach one: scheduler/forge-cli.sh and --repo, close together
+r02_forge_win() { # <file> <label>
+	if awk '{ L[NR] = $0 } END { for (i = 1; i <= NR; i++) { w = ""; for (j = i; j < i + 6 && j <= NR; j++) w = w " " L[j]; if (w ~ /scheduler\/forge-cli\.sh/ && w ~ /--repo/) exit 0 } exit 1 }' "$1"; then ok "R02-AC-1: $2 SKILL.md says how to reach the forge CLI with no environment naming one (scheduler/forge-cli.sh, --repo)"; else bad "R02-AC-1: $2 SKILL.md does not say how to reach the forge CLI with no environment naming one (needs scheduler/forge-cli.sh and --repo within a few lines)"; fi
+}
+r02_forge_win "$f" adopt
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
