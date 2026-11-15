@@ -21,7 +21,9 @@ the list may then be cut short by its own limit, so no record or file of a PR mi
 `add N ITEMFILE`: ITEMFILE is a JSON object {"id", "url", "author", "time", "body"}; PR N must be an open bot PR of FILE on
 node/<ID>-... or spec/*. The item is appended to the unit's FEEDBACK.md (created with its header when new; an item whose URL
 the file holds is not added twice) and the unit's starts are set to 0, as the loop's own hand-over does; the record
-DIR/feedback/ is not touched. Exit 0 and no output when done, 1 (a line on stderr, nothing written) otherwise.
+DIR/feedback/ is not touched. Exit 0 and no output when done, 1 (a line on stderr, nothing written) otherwise. Exit 3 (busy:
+a line on stderr, nothing written) while a session of the unit runs (node/<ID>/session.pid, or pr/N/session.pid): the session
+owns FEEDBACK.md, and the caller tries again later.
 A failing gh call is logged to stderr, prints nothing for that PR, leaves its record alone and makes the exit code 1.
 """
 import argparse
@@ -85,7 +87,7 @@ def answer_urls(udir):
     ("The owner's answer, posted by <login> on GitHub at <time>: <URL>", or "answer: <URL>"), never a URL in the
     answer's own text."""
     return {m.group(1) for m in re.finditer(
-        r"^(?:The owner's answer, posted by .* at [^\n]*?|answer): (https?://\S+)[ \t]*$", answer_text(udir), re.M)}
+        r"^(?:The owner's answer, posted by .* at [^\n]*?|answer): ([A-Za-z][A-Za-z0-9+.-]*://\S+)[ \t]*$", answer_text(udir), re.M)}
 
 
 def answer_text(udir):
@@ -203,6 +205,9 @@ def add(state, prs_file, n, item_file):
     if udir is None:
         log("PR %s is not an open bot PR on node/<ID>-... or spec/..." % n)
         return 1
+    if os.path.exists(os.path.join(udir, "session.pid")) or os.path.exists(os.path.join(state, "pr", str(n), "session.pid")):
+        log("busy: a session of the unit of PR %s runs; nothing written" % n)
+        return 3
     path = os.path.join(udir, "FEEDBACK.md")
     text = feedback_md(n, branch, [item])
     try:

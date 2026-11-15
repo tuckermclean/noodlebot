@@ -1437,7 +1437,7 @@ def take_answers(a, rs, issue):
             txt = ("Not recorded as an answer: %s. Start the reply with the node's ID, e.g. `%s: ...`." %
                    ("no node is waiting on a question" if not open_q else
                     "more than one node is waiting (%s)" % ", ".join(open_q), open_q[0] if open_q else "B03"))
-            leave_to_pickup(a, issue, c, "log", txt) or comment(a, issue, txt)
+            (not m and leave_to_pickup(a, issue, c, "log", txt)) or comment(a, issue, txt)   # only an unprefixed one is pickup's
             continue
         what = record_answer(a, rs, node, c, text)
         if what is None:

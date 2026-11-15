@@ -16,7 +16,7 @@ in DIR/pickup/handled (one comment id per line) and those in a run whose actions
 
 Run: DIR/pickup/<UTC timestamp>/ holds items.json, prompt.md (scheduler/pickup.md and the items), the session's log and events
 (harness.py small-start: the small model, no tools, one turn) and state.json (what was done per item). The agent's whole
-output (the last `result` event's text) is a JSON list, one object per item: {"item": id or url, "action": "answer" | "feedback" |
+output (the last `result` event's text; a single ```json fence around the list is tolerated and stripped) is a JSON list, one object per item: {"item": id or url, "action": "answer" | "feedback" |
 "request" | "note", "unit", "pr", "title", "reason"}.
 
 Apply: a decision is refused when its action is not one of the four, when `answer` names a unit with no open question, or when
@@ -36,6 +36,7 @@ import glob
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -52,7 +53,16 @@ ACTIONS = ("answer", "feedback", "request", "note")
 MAX_ITEMS = 40        # items in one run: the prompt is one argument (Linux caps it at 128 KiB)
 MAX_TEXT = 1500       # characters of one item's text in the prompt
 MAX_LIST = 40         # lines of each list of what is open
-SESSION_TIMEOUT = 300
+MAX_PROMPT = 90000    # bytes (UTF-8) of the whole prompt, well under the 128 KiB of one argument
+SESSION_TIMEOUT = 120
+
+
+class Busy(Exception):
+    """A step must wait (feedback.py add exited 3): no reply, nothing handled, the next apply retries."""
+
+
+class Permanent(Exception):
+    """A step failed for good: the item ends as a refusal."""
 
 
 def log(msg):
@@ -247,6 +257,8 @@ def cmd_run(a):
     items = pending_items(a)[:MAX_ITEMS]
     if not items:
         return 0
+    while len(items) > 1 and len(prompt_text(a, items).encode("utf-8")) > MAX_PROMPT:
+        items = items[:-1]   # the rest waits for the next run
     ok, why = start_allowed(a)
     if not ok:
         log("no run: %s" % why)
@@ -258,10 +270,20 @@ def cmd_run(a):
         f.write(prompt_text(a, items))
     try:
         with open(os.path.join(rundir, "session.jsonl"), "w") as out, open(os.path.join(rundir, "session.stderr"), "w") as err:
-            r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "harness.py"), "small-start", rundir, prompt],
-                               stdin=subprocess.DEVNULL, stdout=out, stderr=err, cwd=rundir, timeout=SESSION_TIMEOUT)
-        if r.returncode:
-            log("the run's session exited %d" % r.returncode)
+            # its own process group, so a timeout takes the harness's children (the agent CLI) down with it
+            proc = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "harness.py"), "small-start", rundir, prompt],
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=err, cwd=rundir, start_new_session=True)
+            try:
+                rc = proc.wait(timeout=SESSION_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                proc.wait()
+                raise
+        if rc:
+            log("the run's session exited %d" % rc)
     except (OSError, subprocess.TimeoutExpired) as e:
         log("the run's session failed: %s" % e)
     rc, state = apply_run(a, rundir)
@@ -343,13 +365,15 @@ class Ctx:
         a.forge = forge.open(args.repo)
 
 
-def check(a, d):
+def check(a, d, c):
     """None when the decision d is acceptable, else the reason it is refused."""
     act = d.get("action")
     if act not in ACTIONS:
         return "the action %r is not one of %s" % (act if isinstance(act, (str, int)) else "?", ", ".join(ACTIONS))
     if act == "answer":
         unit = d.get("unit")
+        if isinstance(unit, str) and c["url"] in feedback.answer_urls(report.tdir(a.state, unit.strip())):
+            return None   # already recorded (a replay)
         if not isinstance(unit, str) or unit.strip() not in report.waiting(a.state):
             return "%s has no open question" % (unit.strip() if isinstance(unit, str) and unit.strip() else "no unit")
     elif act == "feedback":
@@ -364,6 +388,17 @@ def check(a, d):
     return None
 
 
+def found_issue(a, url):
+    """The number of an issue whose body links the comment url (a request opened before a crash), or None."""
+    try:
+        for i in a.forge.issue_list(label="", state="all"):
+            if re.search(re.escape(url) + r"(?!\d)", i.get("body") or ""):
+                return i["number"]
+    except Exception as e:
+        log("cannot look for an earlier issue: %s" % e)
+    return None
+
+
 def perform(ctx, args, rundir, c, ent):
     """Carry out the accepted decision of ent (steps are recorded in ent, so a retry repeats none) and set ent["reply"]."""
     a, url = ctx.a, c["url"]
@@ -371,7 +406,15 @@ def perform(ctx, args, rundir, c, ent):
     if act == "answer":
         unit = ent["unit"]
         if not ent.get("recorded"):
-            what = report.record_answer(a, ctx.rs, unit, {"id": c["id"], "url": url, "created_at": c["created_at"]}, c["body"])
+            if url in feedback.answer_urls(report.tdir(a.state, unit)):   # recorded before (a crash, a replay): not again
+                try:
+                    what = None if unit.startswith("PR #") else report.start_clause(a, unit, answered=True)
+                except Exception:
+                    what = None
+            elif unit not in report.waiting(a.state):
+                raise Permanent("%s has no open question any more" % unit)
+            else:
+                what = report.record_answer(a, ctx.rs, unit, {"id": c["id"], "url": url, "created_at": c["created_at"]}, c["body"])
             ent["recorded"] = True
             ent["reply"] = "Recorded as %s's ANSWER.md from this comment (%s); %s." % (
                 unit, url, what or "its session starts at its turn")
@@ -384,8 +427,11 @@ def perform(ctx, args, rundir, c, ent):
             item = os.path.join(rundir, "item-%s.json" % c["id"])
             write_json(item, {"id": c["id"], "url": url, "author": c["author"]["login"], "time": c["created_at"],
                               "body": c["body"]})
-            if feedback.add(args.state, os.path.join(args.state, "open-prs.tsv"), ent["pr"], item) != 0:
-                raise RuntimeError("feedback.py add failed")
+            rc = feedback.add(args.state, os.path.join(args.state, "open-prs.tsv"), ent["pr"], item)
+            if rc == 3:
+                raise Busy("a session of %s runs" % ent["unit"])
+            if rc != 0:
+                raise Permanent("feedback.py add refused PR #%d" % ent["pr"])
             ent["handed"] = True
             try:
                 clause = report.start_clause(a, ent["unit"], answered=True)
@@ -393,7 +439,14 @@ def perform(ctx, args, rundir, c, ent):
                 clause = "its session starts at its turn"
             ent["reply"] = "Handed to %s as feedback on PR #%d (%s); %s." % (ent["unit"], ent["pr"], url, clause)
     elif act == "request":
+        if not ent.get("issue") and ent.get("issuing"):   # a crash between the create and its record: look before creating again
+            ent["issue"] = found_issue(a, url)
+            if ent["issue"]:
+                ent["reply"] = ("Opened #%d for this request (%s). It has no label: it waits until you add the `noodlebot` "
+                                "label to hand it to the bot." % (ent["issue"], url))
         if not ent.get("issue"):
+            ent["issuing"] = True
+            yield   # the mark is recorded before the create
             quote = "\n".join("> " + l for l in c["body"].strip()[:4000].splitlines())
             body = report.signed(a, "Written from the owner's comment %s:\n\n%s" % (url, quote))
             ent["issue"] = a.forge.issue_create(title=ent["title"], body=body)["number"]
@@ -424,6 +477,10 @@ def apply_run(a, rundir):
     for c in todo:
         key = str(c["id"])
         ent = state.setdefault(key, {})
+        if key in done and not ent.get("action") and "reply" not in ent:   # handled before: a replay does nothing
+            ent["done"] = True
+            write_json(statep, state)
+            continue
         try:
             ctx = ctx or Ctx(a)
             if "reply" not in ent and "action" not in ent:   # not decided yet
@@ -434,7 +491,7 @@ def apply_run(a, rundir):
                     refuse(a, c, ent, whole)
                 else:
                     d = plan[key]
-                    why = check(a, d)
+                    why = check(a, d, c)
                     if why:
                         refuse(a, c, ent, why)
                     else:
@@ -453,6 +510,14 @@ def apply_run(a, rundir):
                 for _ in perform(ctx, a, rundir, c, ent):
                     write_json(statep, state)   # a step is recorded before the next
                 write_json(statep, state)
+        except Busy as e:
+            log("%s waits: %s" % (c["url"], e))
+            rc = 1
+            write_json(statep, state)
+            continue
+        except Permanent as e:
+            refuse(a, c, ent, str(e))
+            write_json(statep, state)
         except Exception as e:
             log("%s: %s" % (c["url"], e))
             rc = 1
