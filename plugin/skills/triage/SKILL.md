@@ -30,7 +30,7 @@ a separate job.
 ## 1. Facts first (deterministic)
 - Work in a fresh worktree of `origin/main`, never in someone's checkout:
   `git fetch origin && git worktree add -b spec/triage-<issue>-<topic> <dir> origin/main`.
-- Every forge operation goes through the forge CLI `"$NOODLEBOT_FORGE" <family> <op> --opt value` (JSON out; it fetches credentials itself; never print, echo or log a token). With no `NOODLEBOT_FORGE` (a run by hand), use `<plugin dir>/../scheduler/forge-cli.sh --repo <forge>:<owner/name>` in its place (for example `github:owner/name`).
+- Every forge operation goes through the forge CLI `"$NOODLEBOT_FORGE" <family> <op> --opt value` (JSON out; it fetches credentials itself; never print, echo or log a token). With no `NOODLEBOT_FORGE` (a run by hand), use `<plugin dir>/../scheduler/forge-cli.sh --repo <kind>:<owner/name>` in its place (for example `github:owner/name`).
 - Read the issue with its comments: `"$NOODLEBOT_FORGE" issue view --number <issue>` and `"$NOODLEBOT_FORGE" issue comments --number <issue>`. Follow its links (PRs, runs,
   logs) far enough to know what it is about.
 - Run `python3 -I <this skill's dir>/nodes.py --grep <term> ...` from the worktree root, with the

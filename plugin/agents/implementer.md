@@ -19,7 +19,7 @@ Commit with `feat(<ID>): …` or `fix(<ID>): …`; stage with `git add <paths>`,
 
 ## You must not
 - modify, delete or skip a test the RED commit added or relied on;
-- edit `SPEC.md`, `docs/graph.yaml`, `nodes/`, or the spec and instruction files the repository's AGENTS.md and its guard config name;
+- edit `SPEC.md`, `docs/graph.yaml`, `nodes/`, `AGENTS.md`, or the spec and instruction files the repository's AGENTS.md and its guard config name;
 - touch anything `AGENTS.md` forbids (a live checkout, a running loop, a configuration directory);
 - push, amend, rebase or reset; read or print secrets.
 
