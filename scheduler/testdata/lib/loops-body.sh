@@ -739,5 +739,55 @@ PATH=$oldpath
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
 fi
+if want S09; then
+echo "# S09-AC-5: start passes PICKUP, PICKUP_RUNS and PICKUP_CEILING to each loop (and no other PICKUP-like variable)"
+export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+unset PICKUP PICKUP_RUNS PICKUP_CEILING PICKUPX NOTPICKUP
+setup s09env
+cat >"$nb/scheduler/loop.sh" <<'EOT'
+#!/bin/sh
+name=${1#*/}
+mkdir -p "$HOME/seen"
+nb=$(cd "$(dirname "$0")/.." && pwd -P)
+mkdir -p "$nb/state/$name"
+exec 9>"$nb/state/$name/loop.lock"
+flock -n 9 || exit 1
+env >"$HOME/seen/$name.env"
+while [ ! -e "$HOME/STOP" ] && [ ! -e "$HOME/STOP-$name" ]; do sleep 0.2; done
+EOT
+chmod +x "$nb/scheduler/loop.sh"
+mkdir -p "$sc/bin"
+# a tmux whose started command runs with a server's older environment (without the settings)
+cat >"$sc/bin/tmux" <<'EOT'
+#!/bin/sh
+echo "$*" >>"$TMUXLOG"
+case $1 in
+new | new-session)
+	shift
+	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
+	setsid env -u PICKUP -u PICKUP_RUNS -u PICKUP_CEILING -u PICKUPX -u NOTPICKUP "$@" >/dev/null 2>&1 </dev/null &
+	exit 0 ;;
+esac
+exit 1
+EOT
+chmod +x "$sc/bin/tmux"
+oldpath=$PATH
+PATH=$sc/bin:$oldpath
+PICKUP=0 PICKUP_RUNS=2 PICKUP_CEILING=90% PICKUPX=1 NOTPICKUP=1 run start
+for n in alpha beta; do for _ in $(seq 50); do [ -s "$HOME/seen/$n.env" ] && break; sleep 0.1; done; done
+for n in alpha beta; do
+	ok "S09-AC-5:$n:PICKUP-reaches-the-loop" sh -c "grep -qx 'PICKUP=0' '$HOME/seen/$n.env'"
+	ok "S09-AC-5:$n:PICKUP_RUNS-reaches-the-loop" sh -c "grep -qx 'PICKUP_RUNS=2' '$HOME/seen/$n.env'"
+	ok "S09-AC-5:$n:PICKUP_CEILING-reaches-the-loop" sh -c "grep -qx 'PICKUP_CEILING=90%' '$HOME/seen/$n.env'"
+	no "S09-AC-5:$n:PICKUPX-not-passed" sh -c "grep -q '^PICKUPX=' '$HOME/seen/$n.env'"
+	no "S09-AC-5:$n:NOTPICKUP-not-passed" sh -c "grep -q '^NOTPICKUP=' '$HOME/seen/$n.env'"
+	ok "S09-AC-5:$n:NOODLEBOT_DATA-still-passed" sh -c "grep -q '^NOODLEBOT_DATA=' '$HOME/seen/$n.env'"
+done
+touch "$HOME/STOP"
+sleep 0.5
+PATH=$oldpath
+unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
+
+fi
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
