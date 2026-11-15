@@ -117,8 +117,8 @@ back for changing files outside the spec files (see RESUMING below). Nobody can 
      (before the push, not earlier). On exit 0 go on. On exit 1 it names each path outside the spec
      files as NOT SPEC <path>: remove those
      changes in a new commit and run it again, and stop if you cannot. On exit 2 stop. The
-     repository's spec checker must then report PROBLEMS 0 (AGENTS.md names it: scripts/check-spec.py,
-     or .claude/skills/node/check-spec.py in older checkouts). Only then push.
+     repository's spec checker must then report PROBLEMS 0 (AGENTS.md names it: scripts/check-spec.py
+     or another path). Only then push.
   4. Push the branch and open the PR with "$NOODLEBOT_FORGE" pr create. The body says what changes and quotes the
      question and the owner's answer it carries out.
   5. Remove the spec worktree (git worktree remove @WT@-spec). Write only the PR number to
