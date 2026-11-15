@@ -51,6 +51,9 @@ TESTS = \
 	scheduler/loop-s08.test.sh \
 	scheduler/loop-s08-caps.test.sh \
 	scheduler/loop-s08-ramp.test.sh \
+	scheduler/loop-s09.test.sh \
+	scheduler/loop-s09-off.test.sh \
+	scheduler/loop-s09-budget.test.sh \
 	scheduler/loop-s03.test.sh \
 	scheduler/loop-s01.test.sh \
 	scheduler/loop-s01-closed.test.sh \

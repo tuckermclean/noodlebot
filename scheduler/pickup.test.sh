@@ -389,5 +389,161 @@ find "$W" -path "$FK" -prune -o -path "$ST" -prune -o -path "$W/clone/.git" -pru
 ok "S09-AC-4: nothing was written outside the state folder (cwd, worktrees, clone, state root: the same files)" needrun 8 cmp -s "$AUX/fs0" "$AUX/fs1"
 ok "S09-AC-4: no session was started (the fake harness saw no start or resume, only small starts)" test "$(grep -cE '^(start|resume) ' "$AUX/harness.log")" = 0 -a "$(nsmall)" -ge 8
 
+# =================================================================================================================
+# S09-AC-5 (slice 3): the budget, the ceiling, the shared record. THE CONTRACT these cases fix:
+#
+# 3. The budget record is $ROOT/pickup.json, ROOT = $NOODLEBOT_DATA/state (the loop gives pickup.py its NOODLEBOT_DATA; in
+#    these cases it is the parent of --state, as in every runtime root), read and written under flock (a lock file beside it);
+#    all loops of the machine, whatever their repository, share it. WITHOUT NOODLEBOT_DATA pickup.py has no root: it keeps no
+#    record and reads no usage.json (no budget, no ceiling): the cases above ran so, and nothing may be written beside the
+#    state folder then (the line "nothing was written outside the state folder" of S09-AC-4 pins it). The cases below read
+#    nothing from the record's contents: only the runs that start (the fake harness's `small` calls) and what pickup.py prints.
+#    `pickup.py run`, with items, asks before it starts a run; it starts one only when all of this holds:
+#      - no window of $ROOT/usage.json (usage.py's file: {"windows": {"five_hour": {"resetsAt": epoch, "utilization": 0..1,
+#        "status": "allowed"|"allowed_warning"|"rejected"}, "seven_day": {...}}, "hold": bool, "reason": text}) whose
+#        resetsAt is still in the future has status "rejected" (a window "rejecting requests"; "allowed_warning" is not a
+#        rejection, either window), and none of them has utilization at or above the ceiling;
+#      - fewer than PICKUP_RUNS runs started in the current window (PICKUP_RUNS: a positive integer, default 12).
+#    The ceiling, PICKUP_CEILING (default 90%): "90%" or "90" (a number above 1) are percent, "0.9" (a number up to 1) a fraction.
+#    "At" the ceiling is over it: utilization 0.90 stops with the default. A window past its reset (resetsAt <= now) counts
+#    for nothing (a stale rejection or a stale 99% does not stop a run). "hold" and "reason" of usage.json (the pace holds) and
+#    the windows' projections are never read: a pace hold alone does not stop a run. No usage.json: no limit but the budget.
+#    The window of the budget is the "five_hour" window of usage.json, identified by its resetsAt (a different resetsAt is
+#    a new window and a count of 0); without it, the 5 hours from the first run counted (not tested: the file's contents are
+#    not part of this contract). Taking a run (the count) is one step under the lock: any number of loops asking at once
+#    start at most PICKUP_RUNS runs in all.
+#    With items and no run allowed, nothing starts and each item gets report.py's deterministic reply (its pending file's
+#    reply, signed), exactly as a refused item does (one reply each, the items handled, none retried); the refusal reason is
+#    on stderr. The FIRST such tick of a window (the first time the budget or a window said no, whatever the reason; recorded in
+#    pickup.json) prints one line on stdout, which the loop says in its status log, and no later tick of that window prints
+#    anything: "pickup: no run: <reason>", the reason holding the word "budget" (PICKUP_RUNS runs started), "ceiling"
+#    (a window at or above the ceiling) or "rejecting" (a window rejecting requests), lower or upper case. A new window says
+#    again. Ticks with no items print nothing and do not count.
+S5=$S9/B5
+mkdir -p "$S5"
+# b5world <root> <name>: a state folder state/<name> under $S5/<root>/ (the root's other states are its other "loops"), its fake forge
+b5world() {
+	mkdir -p "$S5/$1/state" "$S5/$1/cwd-$2" "$S5/$1/wt" "$S5/$1/clone"
+	cp -R "$T/state" "$S5/$1/state/$2"; cp -R "$T/forge" "$S5/$1/fk-$2"
+	mkdir -p "$S5/$1/state/$2/pickup/pending"
+}
+# b5pk <root> <name> <args...>: pickup.py as the loop runs it, over that state; the settings are the words of $B5ENV
+b5pk() {
+	r=$1; n=$2; shift 2
+	(cd "$S5/$r/cwd-$n" && env NOODLEBOT_DATA="$S5/$r" SCHED_HARNESS=fake FAKE_HARNESS_SMALL_SCRIPT="$S5/$r/ev-$n" FAKE_HARNESS_LOG="$S5/$r/h.log" $B5ENV \
+		python3 -I "$src/pickup.py" --repo "fake:$S5/$r/fk-$n" --state "$S5/$r/state/$n" --owner owner --clone "$S5/$r/clone" \
+		--worktrees "$S5/$r/wt" --version 9.9 --signature SIG-9 "$@")
+}
+# b5tick <root> <name> <id>: one owner comment (id) becomes pending and the pickup session would answer it with a note; one tick
+# (pickup.py run); its stdout is $S5/<root>/<name>.<id>.out, its stderr $S5/<root>/<name>.<id>.err
+b5tick() {
+	ST=$S5/$1/state/$2; pend9 "$3" owner 1 0
+	tool script "$S5/$1/ev-$2" "$(printf '[{"item": %s, "action": "note", "reason": "r"}]' "$3")"
+	b5pk "$1" "$2" run >"$S5/$1/$2.$3.out" 2>"$S5/$1/$2.$3.err"
+}
+# b5usage <root> <five util> <five status> <seven util> <seven status> <five reset in s> <hold: true|false>
+b5usage() {
+	python3 -I - "$S5/$1/state/usage.json" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY'
+import json, sys, time
+p, fu, fs, su, ss, off, hold = sys.argv[1:8]
+now = int(time.time())
+json.dump({"windows": {"five_hour": {"resetsAt": now + int(off), "utilization": float(fu), "status": fs},
+                       "seven_day": {"resetsAt": now + 6 * 86400, "utilization": float(su), "status": ss}},
+           "hold": hold == "true", "reason": "5-hour window projected to reach 95% before it resets (limit 90%)" if hold == "true" else ""},
+          open(p, "w"))
+PY
+}
+b5small() { n=$(grep -c '^small ' "$S5/$1/h.log" 2>/dev/null); echo "${n:-0}"; }
+b5handled() { grep -qx "$3" "$S5/$1/state/$2/pickup/handled" 2>/dev/null; }
+b5said() { n=$(grep -ci '^pickup: no run' "$S5/$1/$2.$3.out" 2>/dev/null); echo "${n:-0}"; }   # lines said by that tick
+b5replies() { tool count "$S5/$1/fk-$2" 13 "Not recorded as an answer"; }
+# case5 <tag> <settings> <five util> <five status> <seven util> <seven status> <five reset in s> <hold>: one world, one tick
+case5() {
+	( B5ENV=$2; b5world "c$1" w; [ "$3" = none ] || b5usage "c$1" "$3" "$4" "$5" "$6" "$7" "$8"; b5tick "c$1" w 9101 ) &
+}
+# the table: tag, settings, five util, status, seven util, status, reset in, hold
+case5 pace "PICKUP_RUNS=5" 0.5 allowed 0.8 allowed 3600 true
+case5 d91 "" 0.91 allowed 0.1 allowed 3600 false
+case5 d90 "" 0.90 allowed 0.1 allowed 3600 false
+case5 d89 "" 0.89 allowed 0.1 allowed 3600 false
+case5 sev "" 0.2 allowed 0.95 allowed 3600 false
+case5 p50hi "PICKUP_CEILING=50" 0.55 allowed 0.1 allowed 3600 false
+case5 p50lo "PICKUP_CEILING=50" 0.45 allowed 0.1 allowed 3600 false
+case5 pc50hi "PICKUP_CEILING=50%" 0.55 allowed 0.1 allowed 3600 false
+case5 f50hi "PICKUP_CEILING=0.5" 0.55 allowed 0.1 allowed 3600 false
+case5 f50lo "PICKUP_CEILING=0.5" 0.45 allowed 0.1 allowed 3600 false
+case5 rej5 "" 0.2 rejected 0.1 allowed 3600 false
+case5 rej7 "" 0.2 allowed 0.1 rejected 3600 false
+case5 warn7 "" 0.2 allowed 0.5 allowed_warning 3600 false
+case5 stalerej "" 0.99 rejected 0.1 allowed -60 false
+case5 nousage "" none
+# the window and the budget in one state: PICKUP_RUNS=2, a window, a new window, the ceiling in the new window
+(
+	B5ENV="PICKUP_RUNS=2"; b5world W w; b5usage W 0.2 allowed 0.1 allowed 3600 true
+	for i in 9101 9102 9103 9104; do b5tick W w $i; done
+	b5usage W 0.2 allowed 0.1 allowed 21600 true; b5tick W w 9105          # the five-hour window reset: a new one, count 0
+	b5usage W 0.95 allowed 0.1 allowed 21600 false; b5tick W w 9106; b5tick W w 9107   # the ceiling in the new window
+) &
+# the default budget (12 runs): thirteen ticks in one window
+(
+	B5ENV=""; b5world D w; b5usage D 0.2 allowed 0.1 allowed 3600 false
+	for i in 9101 9102 9103 9104 9105 9106 9107 9108 9109 9110 9111 9112 9113; do b5tick D w $i; done
+) &
+# twelve loops at once share one record: twelve states under one root, PICKUP_RUNS=5, all ticking at the same time
+(
+	B5ENV="PICKUP_RUNS=5"; for n in 1 2 3 4 5 6 7 8 9 10 11 12; do b5world P "s$n"; done; b5usage P 0.2 allowed 0.1 allowed 3600 false
+	for n in 1 2 3 4 5 6 7 8 9 10 11 12; do b5tick P "s$n" 9101 & done; wait
+) &
+# ... and six more times two at once, one run allowed in each root
+(
+	B5ENV="PICKUP_RUNS=1"
+	for k in 1 2 3 4 5 6; do b5world "Q$k" a; b5world "Q$k" b; b5usage "Q$k" 0.2 allowed 0.1 allowed 3600 false; done
+	for k in 1 2 3 4 5 6; do b5tick "Q$k" a 9101 & b5tick "Q$k" b 9101 & done; wait
+) &
+wait
+
+run5() { [ "$(b5small "c$1")" = 1 ] && b5handled "c$1" w 9101; }
+stop5() { # stop5 <tag> <word>: no run, the item handled and given report.py's reply once, one line said naming the reason
+	[ "$(b5small "c$1")" = 0 ] && b5handled "c$1" w 9101 && [ "$(b5replies "c$1" w)" = 1 ] && [ "$(b5said "c$1" w 9101)" = 1 ] &&
+		grep -qi "^pickup: no run.*$2" "$S5/c$1/w.9101.out"
+}
+ok "S09-AC-5: a pace hold alone (hold true with a pace reason, windows allowed and below the ceiling) does not stop a run" run5 pace
+ok "S09-AC-5: no usage.json at all: the run starts" run5 nousage
+ok "S09-AC-5: a window at 91% stops with the default ceiling (90%): no run, the item gets the deterministic reply, one line says so" stop5 d91 ceiling
+ok "S09-AC-5: a window at 90%: at the ceiling is over it" stop5 d90 ceiling
+ok "S09-AC-5: a window at 89% starts a run (default ceiling 90%)" run5 d89
+ok "S09-AC-5: the ceiling is any window's: the seven-day window at 95% stops a run" stop5 sev ceiling
+ok "S09-AC-5: PICKUP_CEILING=50 (percent): a window at 55% stops" stop5 p50hi ceiling
+ok "S09-AC-5: PICKUP_CEILING=50 (percent): a window at 45% does not" run5 p50lo
+ok "S09-AC-5: PICKUP_CEILING=50% (percent): a window at 55% stops" stop5 pc50hi ceiling
+ok "S09-AC-5: PICKUP_CEILING=0.5 (a fraction): a window at 55% stops" stop5 f50hi ceiling
+ok "S09-AC-5: PICKUP_CEILING=0.5 (a fraction): a window at 45% does not" run5 f50lo
+ok "S09-AC-5: a five-hour window rejecting requests (at 20%) stops a run" stop5 rej5 rejecting
+ok "S09-AC-5: a seven-day window rejecting requests stops a run" stop5 rej7 rejecting
+ok "S09-AC-5: a seven-day window that is only allowed_warning (at 50%) does not stop a run" run5 warn7
+ok "S09-AC-5: a window past its reset counts for nothing (a stale rejection at 99%): the run starts" run5 stalerej
+# W: PICKUP_RUNS=2: 9101 9102 run, 9103 9104 do not; the window resets: 9105 runs; the ceiling in the new window: 9106 9107 do not
+ok "S09-AC-5: PICKUP_RUNS=2: 3 runs in all (two in the first window, one in the next), no more" test "$(b5small W)" = 3
+ok "S09-AC-5: the third and fourth ticks of the first window start no run: their items are handled, with report.py's reply" \
+	sh -c 'for i in 9103 9104; do grep -qx $i "$1" || exit 1; done; [ "$(grep -c . "$2")" = 3 ]' _ "$S5/W/state/w/pickup/handled" "$S5/W/h.log"
+ok "S09-AC-5: ... four deterministic replies in all (9103, 9104, and the ceiling's 9106, 9107), one each" test "$(b5replies W w)" = 4
+ok "S09-AC-5: every item of W is handled (nothing retried)" sh -c 'for i in 9101 9102 9103 9104 9105 9106 9107; do grep -qx $i "$1" || exit 1; done; [ "$(grep -c . "$1")" = 7 ]' _ "$S5/W/state/w/pickup/handled"
+ok "S09-AC-5: the first such tick of the first window says so (budget), the next one says nothing" \
+	test "$(b5said W w 9103)" = 1 -a "$(b5said W w 9104)" = 0 -a "$(grep -ci 'budget' "$S5/W/w.9103.out")" = 1
+ok "S09-AC-5: the run of the new window (9105) says nothing" test "$(b5said W w 9105)" = 0 -a "$(b5small W)" = 3
+ok "S09-AC-5: the first such tick of the new window says so (ceiling) though one was said in the old one; the next says nothing" \
+	test "$(b5said W w 9106)" = 1 -a "$(b5said W w 9107)" = 0 -a "$(grep -ci 'ceiling' "$S5/W/w.9106.out")" = 1
+ok "S09-AC-5: PICKUP_RUNS unset: 12 runs in a window, the thirteenth tick starts none (gets the reply, one line says so)" \
+	sh -c '[ "$1" = 12 ] && [ "$2" = 1 ] && [ "$3" = 1 ]' _ "$(b5small D)" "$(b5replies D w)" "$(b5said D w 9113)"
+ok "S09-AC-5: twelve loops sharing one record at once, PICKUP_RUNS=5: exactly 5 runs in all, never more" test "$(b5small P)" = 5
+ok "S09-AC-5: ... the other seven items got the deterministic reply, all twelve are handled" \
+	sh -c 't=0; h=0; for n in 1 2 3 4 5 6 7 8 9 10 11 12; do c=$(python3 -I "$1" count "$2/P/fk-s$n" 13 "Not recorded as an answer"); t=$((t + c)); grep -qx 9101 "$2/P/state/s$n/pickup/handled" && h=$((h + 1)); done; [ "$t" = 7 ] && [ "$h" = 12 ]' _ "$T/tool.py" "$S5"
+ok "S09-AC-5: six times two loops at once, PICKUP_RUNS=1: one run in each root, never two" \
+	sh -c 'for k in 1 2 3 4 5 6; do [ "$(grep -c "^small " "$1/Q$k/h.log" 2>/dev/null)" = 1 ] || exit 1; done' _ "$S5"
+ok "S09-AC-5: ... and the other loop of each root got the deterministic reply, both handled" \
+	sh -c 'for k in 1 2 3 4 5 6; do a=$(python3 -I "$1" count "$2/Q$k/fk-a" 13 "Not recorded as an answer"); b=$(python3 -I "$1" count "$2/Q$k/fk-b" 13 "Not recorded as an answer"); [ $((a + b)) = 1 ] || exit 1; grep -qx 9101 "$2/Q$k/state/a/pickup/handled" && grep -qx 9101 "$2/Q$k/state/b/pickup/handled" || exit 1; done' _ "$T/tool.py" "$S5"
+ok "S09-AC-5: a budget record is written beside the states, not inside them (the state root's pickup.json)" test -s "$S5/P/state/pickup.json" -a -s "$S5/W/state/pickup.json"
+ok "S09-AC-5: no session was started by any of these ticks (no start or resume call)" sh -c '! cat "$1"/*/h.log 2>/dev/null | grep -qE "^(start|resume) "' _ "$S5"
+
 [ "$fails" -eq 0 ] || { echo "FAIL: $fails check(s) failed"; exit 1; }
 echo "all passed"
