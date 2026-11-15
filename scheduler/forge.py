@@ -167,7 +167,7 @@ def open(spec=None):  # noqa: A001 (the interface's name)
 
 
 def web_url(spec, kind, ref=None):
-    """The web URL of the repository or of one issue, PR or commit; no call for GitHub."""
+    """The web URL of the repository or of one issue, PR, commit or run; no call for GitHub."""
     name, path = parse(spec)
     if name == "github":
         return _load("github").web_url(path, kind, ref)
