@@ -741,9 +741,9 @@ start_triage() {
 	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; #$n is labelled but has used 2 starts; nothing started"; return 1; }
 	[ -d "$wt" ] || git -C "$clone" worktree add -q --detach "$wt" origin/main || { note "$saw; worktree for #$n failed"; return 1; }
 	site_sed
-	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
-		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	skill=$(python3 -I -B "$here/harness.py" skill-command triage "$n") || { note "$saw; #$n: the harness gave no skill command; not started"; return 1; }
+	sed "${ssed[@]}" -e "s|@CMD@|$(sedesc "$skill")|g" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-triage.md" >"$d/unattended.md"
 	launch "$wt" "$d" "$skill"
 	say "$saw; started triage of #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
@@ -859,11 +859,11 @@ start_update() {
 		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
 	fi
 	site_sed
-	sed "${ssed[@]}" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--update $n") || { note "$saw; PR #$n: the harness gave no skill command; not started"; return 1; }
+	sed "${ssed[@]}" -e "s|@CMD@|$(sedesc "$cmd")|g" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/$tmpl" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
 	[ -z "$nid" ] || echo "$nid" >"$d/node"
-	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--update $n") || { note "$saw; PR #$n: the harness gave no skill command; not started"; return 1; }
 	launch "$wt" "$d" "$cmd"
 	say "$saw; started update of PR #$n in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }

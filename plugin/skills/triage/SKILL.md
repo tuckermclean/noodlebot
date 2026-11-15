@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Fit one GitHub issue into a graph-regime repository's plan (docs/graph.yaml + nodes/<ID>-<name>.md) as a spec change - amend an unmerged node, add a follow-up or new node, or answer without a change. Produces a spec PR or an issue comment, never code or tests. Use for "/triage <issue>" or when asked where an issue belongs in the node graph.
+description: Fit one forge issue into a graph-regime repository's plan (docs/graph.yaml + nodes/<ID>-<name>.md) as a spec change - amend an unmerged node, add a follow-up or new node, or answer without a change. Produces a spec PR or an issue comment, never code or tests. Use for "/triage <issue>" or when asked where an issue belongs in the node graph.
 ---
 
 # /triage <issue number> [--dry-run]  |  /triage --update <PR> [--dry-run] (section 4)
@@ -30,7 +30,8 @@ a separate job.
 ## 1. Facts first (deterministic)
 - Work in a fresh worktree of `origin/main`, never in someone's checkout:
   `git fetch origin && git worktree add -b spec/triage-<issue>-<topic> <dir> origin/main`.
-- Read the issue with its comments: `gh issue view <issue> --comments`. Follow its links (PRs, runs,
+- Every forge operation goes through the forge CLI `"$NOODLEBOT_FORGE" <family> <op> --opt value` (JSON out; it fetches credentials itself; never print, echo or log a token).
+- Read the issue with its comments: `"$NOODLEBOT_FORGE" issue view --number <issue>` and `"$NOODLEBOT_FORGE" issue comments --number <issue>`. Follow its links (PRs, runs,
   logs) far enough to know what it is about.
 - Run `python3 -I <this skill's dir>/nodes.py --grep <term> ...` from the worktree root, with the
   paths, tools and words the issue is about as terms. It prints every node's state (merged, open PR,
@@ -81,12 +82,12 @@ a new open decision. Interactive: ask. Unattended: follow the run's instructions
 - Before the push, run the checker against `origin/main`:
   `python3 -I <this skill's dir>/../node/check-spec-diff.py origin/main HEAD`. On exit 1 it names the
   paths outside the spec files (`NOT SPEC <path>`): stop, and do not push. On exit 2 (git failed) stop too.
-- Push the branch and open the PR (`gh pr create`). Body: the placement and reasoning, the new or
+- Push the branch and open the PR (`"$NOODLEBOT_FORGE" pr create --head <branch> --base main --title <title> --body-file <file>`, the branch pushed with `"$NOODLEBOT_FORGE" branch push --path <dir> --branch <branch>`). Body: the placement and reasoning, the new or
   changed criteria, `Refs #<issue>`. Remove the worktree.
 - Comment on the issue: the placement in one or two sentences and the PR link. For placement 1, the
   comment is the whole result.
 
-**Closing keywords.** GitHub closes an issue when a PR description, or a commit message that reaches main, contains a
+**Closing keywords.** A forge closes an issue when a PR description, or a commit message that reaches main, contains a
 closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, with or
 without a colon) followed by its number. Write no closing keyword before an issue number
 (the loop closes the issues once the nodes are merged); write "issue #N" or "Refs #N", and never quote a spec's
@@ -134,7 +135,7 @@ Run by the loop for one of the bot's own open `spec/*` PRs that has new feedback
 3. A point that needs a judgment only the owner can make (a placement that is reasonable both ways, a principle or scope change) is not guessed: it goes to QUESTION.md with your recommendation (item 4 or 6 says when it is written).
 4. With `--dry-run`: no push, no PR edit, no reply, no thread resolved. Write `out/triage/pr-<N>/result.md` holding the commit, the checker's output and one reply per item, each naming the commit (or why nothing changed) and, for a fixed line comment, the thread it would resolve; and write QUESTION.md for the points of item 3, in the state folder the loop gives or, with none (a dry run by hand), next to result.md as `out/triage/pr-<N>/QUESTION.md`. Stop there.
 5. Otherwise push the branch and update the PR's title and body when its nodes or criteria changed.
-6. Reply to each point: a line comment in its own thread, every other point in one PR comment that links each of them. Each reply says what changed, with the commit, or why nothing did. Resolve the line threads you fixed (GitHub's GraphQL `resolveReviewThread`); leave the others open. Write no closing keyword before an issue number. Write QUESTION.md last, for the points of item 3.
+6. Reply to each point: a line comment in its own thread, every other point in one PR comment that links each of them. Each reply says what changed, with the commit, or why nothing did. Resolve the line threads you fixed (`"$NOODLEBOT_FORGE" pr resolve-thread --thread <id>`; reply in a thread with `pr reply`); leave the others open. Write no closing keyword before an issue number. Write QUESTION.md last, for the points of item 3.
 
 ## 6. Report
 End with: the issue, the placement, the PR (or comment) URL, the nodes touched, and anything the

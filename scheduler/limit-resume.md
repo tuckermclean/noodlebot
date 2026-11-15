@@ -5,3 +5,5 @@ The background agents, background commands and Monitors you had started were kil
 Check what they left: the files in the worktree, the commits, the CI runs. Re-dispatch only what you still need; do not repeat work that is already done.
 
 Then carry on with your task from where you were.
+
+The forge is still reached through "$NOODLEBOT_FORGE", the forge CLI, which fetches credentials itself.

@@ -1,7 +1,7 @@
 # Facts: tallyho
 
-Read offline from the directory; `issues.json` stood in for `gh issue list --state all` (it holds four
-open issues; no closed issues or merged PRs, there being no GitHub). No credential check: a dry run
+Read offline from the directory; `issues.json` stood in for the forge CLI's `issue list --state all` (it holds four
+open issues; no closed issues or merged PRs, there being no forge). No credential check: a dry run
 pushes nothing.
 
 - **Layout.** `bin/tallyho` calls `count_stream` from `lib/count.sh` for each file, or for stdin when no
