@@ -33,7 +33,7 @@ fi
 if grep -q 'QUESTION\.md' "$f"; then ok "A01-AC-3: SKILL.md mentions QUESTION.md"; else bad "A01-AC-3: SKILL.md does not mention QUESTION.md"; fi
 if grep -q 'ANSWER\.md' "$f"; then ok "A01-AC-3: SKILL.md mentions ANSWER.md"; else bad "A01-AC-3: SKILL.md does not mention ANSWER.md"; fi
 if grep -q 'spec/adopt' "$f"; then ok "A01-AC-3: SKILL.md names the branch spec/adopt"; else bad "A01-AC-3: SKILL.md does not name the branch spec/adopt"; fi
-if grep -Fq '"$NOODLEBOT_FORGE" pr create' "$f"; then ok "A01-AC-3: SKILL.md opens the PR with the forge CLI (\"\$NOODLEBOT_FORGE\" pr create)"; else bad "A01-AC-3: SKILL.md does not say '\"\$NOODLEBOT_FORGE\" pr create'"; fi
+if grep -Fq '<forge> pr create' "$f"; then ok "A01-AC-3: SKILL.md opens the PR with the forge CLI (<forge> pr create)"; else bad "A01-AC-3: SKILL.md does not say '<forge> pr create'"; fi
 q=$(grep -n 'QUESTION\.md' "$f" | head -n 1 | cut -d: -f1)
 d=$(grep -in '^#.*draft' "$f" | head -n 1 | cut -d: -f1)
 [ -n "$d" ] || d=$(grep -n 'nodes/<' "$f" | head -n 1 | cut -d: -f1)
