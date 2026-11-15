@@ -149,7 +149,7 @@ s3chk "S03-AC-3: it names state/archive/G01-out" s3promptF "state/archive/G01-ou
 s3chk "S03-AC-3: it names the clone's local branches" s3prompt 'local branch'
 s3chk "S03-AC-3: it keeps the rule for QUESTION.md (the node's file, and how the owner answers)" sh -c "grep -qF '$st6/node/G01/QUESTION.md' '$S03/sys.G01.1' && grep -qF 'write ANSWER.md next to this file' '$S03/sys.G01.1'"
 s3chk "S03-AC-3: it keeps the rule for WAITING-PR (the node's file)" s3promptF "$st6/node/G01/WAITING-PR"
-s3chk "S03-AC-3: it keeps the rules for GitHub access" sh -c "grep -qF '~/.config/noodlebot/token' '$S03/sys.G01.1' && grep -qF 'Never print, echo or log a token' '$S03/sys.G01.1'"
+s3chk "S03-AC-3: it keeps the rules for forge access" sh -c "grep -qF '\"\$NOODLEBOT_FORGE\"' '$S03/sys.G01.1' && grep -qF 'Never print, echo or log a token' '$S03/sys.G01.1'"
 s3chk "S03-AC-3: it keeps the rule for closing keywords" s3prompt 'closing keyword'
 s3chk "S03-AC-3: it has no unfilled placeholder" sh -c "[ -s '$S03/sys.G01.1' ] && ! grep -qE '@[A-Z]+@' '$S03/sys.G01.1'"
 

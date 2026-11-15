@@ -94,6 +94,8 @@ TESTS = \
 	scheduler/loop-g04-args.test.sh \
 	scheduler/loop-g04-e2e.test.sh \
 	scheduler/loop-g04-cap.test.sh \
+	scheduler/loop-R02-prompts.test.sh \
+	scheduler/loop-R02-node.test.sh \
 	scheduler/loop-g06-branch.test.sh \
 	scheduler/loop-g06-branch2.test.sh \
 	scheduler/loop-g06-question.test.sh \

@@ -85,7 +85,7 @@ s4stopped_is() { # <run> <reason regex>: the stopped file seen at that run's sta
 }
 s4resume() { # <run>: the rendered prompt carries the resume section
 	local f="$S04/rec/$1/prompt"
-	grep -qF 'git log origin/main..HEAD' "$f" 2>/dev/null && grep -qF 'gh run list --branch' "$f"
+	grep -qF 'git log origin/main..HEAD' "$f" 2>/dev/null && grep -qF '"$NOODLEBOT_FORGE" ci runs --branch' "$f"
 }
 s4patch() { ls "$st4/node/$1/leftover"/*.patch 2>/dev/null | head -1; }
 S04_LOOP_OUT=$tmp/s04-loop.out
@@ -111,7 +111,7 @@ s4ok "S04-AC-1: the stopped file is gone after the later session ends with QUEST
 s4ok "S04-AC-1: (E02, E03, E05, E06 too)" sh -c "for i in E02 E03 E05 E06; do [ -s '$S04/rec/'\$i'.2/stopped' ] && [ -e '$st4/node/'\$i'/QUESTION.md' ] && [ ! -e '$st4/node/'\$i'/stopped' ] || exit 1; done"
 s4ok "S04-AC-1: a node whose first session ends in QUESTION.md has no stopped file (E04)" test ! -e "$st4/node/E04/stopped"
 # AC-2: the rendered prompt
-s4ok "S04-AC-2: a restarted node with commits gets the resume section (git log origin/main..HEAD, gh run list --branch)" s4resume E01.2
+s4ok "S04-AC-2: a restarted node with commits gets the resume section (git log origin/main..HEAD, \"\$NOODLEBOT_FORGE\" ci runs --branch)" s4resume E01.2
 s4ok "S04-AC-2: it gives the reason from stopped: usage limit" grep -qF 'usage limit' "$S04/rec/E01.2/prompt"
 s4ok "S04-AC-2: it gives the number of commits past origin/main (3)" grep -Eq '(^|[^0-9.])3 commits?|commits?[^0-9]*[:=(] ?3([^0-9]|$)' "$S04/rec/E01.2/prompt"
 s4ok "S04-AC-2: (E02) the reason 'stopped (signal 15)' and 1 commit" sh -c "grep -qF 'stopped (signal 15)' '$S04/rec/E02.2/prompt' && grep -Eq '(^|[^0-9.])1 commit|commits?[^0-9]*[:=(] ?1([^0-9]|\$)' '$S04/rec/E02.2/prompt'"
@@ -122,7 +122,7 @@ s4ok "S04-AC-2: it tells the run to examine the patch, never commit it unexamine
 s4ok "S04-AC-2: it tells the run to keep the existing brief and not redo committed and reviewed slices" sh -c "grep -qi 'keep.*brief\|existing brief' '$S04/rec/E01.2/prompt' && grep -qi 'not redo\|never redo\|do not redo' '$S04/rec/E01.2/prompt'"
 s4ok "S04-AC-2: a restarted node with a clean worktree names no leftover patch (E03)" sh -c "! grep -qE 'leftover/|\.patch' '$S04/rec/E03.2/prompt'"
 s4ok "S04-AC-2: a node with out/node/<ID>/ but no commit gets the resume section (E05) with 'rc 4'" sh -c "$(declare -f s4resume); S04='$S04'; s4resume E05.2 && grep -qF 'rc 4' '$S04/rec/E05.2/prompt'"
-s4ok "S04-AC-2: a fresh node gets no resume section (E04)" sh -c "s4=$S04/rec/E04.1/prompt; [ -s \$s4 ] && ! grep -qF 'git log origin/main..HEAD' \$s4 && ! grep -qF 'gh run list' \$s4"
+s4ok "S04-AC-2: a fresh node gets no resume section (E04)" sh -c "s4=$S04/rec/E04.1/prompt; [ -s \$s4 ] && ! grep -qF 'git log origin/main..HEAD' \$s4 && ! grep -qF 'ci runs --branch' \$s4"
 s4ok "S04-AC-2: the first session of a node with commits made in no earlier run gets no resume section (E01 run 1)" sh -c "s4=$S04/rec/E01.1/prompt; [ -s \$s4 ] && ! grep -qF 'git log origin/main..HEAD' \$s4"
 # AC-3: leftover patch, reset
 s4ok "S04-AC-3: the dirty worktree's changes are in leftover/<UTC timestamp>.patch" sh -c "[ -n '$p1' ] && [ -s '$p1' ] && echo '$pb1' | grep -Eq '^[0-9]{8}T[0-9]{6}Z\.patch\$|^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.-]*Z.*\.patch\$|^[0-9TZ:-]+\.patch\$'"

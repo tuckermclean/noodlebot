@@ -58,7 +58,7 @@ prompt_checks() { # <id.run> <PR> <branch> <worktree> <FEEDBACK.md path> <comman
 	ok "G03-AC-6 ($1): every point gets a reply on the PR" grep -qiE 'repl(y|ies)' "$f"
 	ok "G03-AC-6 ($1): line threads that were fixed are resolved" grep -qiE 'resolv[a-z]* .*thread|thread.*resolv' "$f"
 	ok "G03-AC-6 ($1): keeps the rule for questions (QUESTION.md)" grep -qF 'QUESTION.md' "$f"
-	ok "G03-AC-6 ($1): keeps the GitHub access rule (a fresh App token per command, never printed)" sh -c "grep -qF 'GH_TOKEN=\$(~/.config/noodlebot/token o/up)' '$f' && grep -qF 'Never print, echo or log a token' '$f'"
+	ok "G03-AC-6 ($1): keeps the forge access rule (every forge operation through the forge CLI, a token never printed)" sh -c "grep -qF '\"\$NOODLEBOT_FORGE\"' '$f' && grep -qF 'Never print, echo or log a token' '$f'"
 	ok "G03-AC-6 ($1): keeps the closing-keyword rule" grep -qiE 'closing keyword' "$f"
 	ok "G03-AC-6 ($1): and writes no closing keyword before a number itself" sh -c "! grep -qiE '(clos(e|es|ed)|fix(es|ed)?|resolv(e|es|ed)):? +#[0-9]' '$f'"
 	ok "G03-AC-6 ($1): keeps the rule to never merge or approve" grep -qF 'Never merge, approve, push to main' "$f"
