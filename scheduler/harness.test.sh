@@ -384,6 +384,26 @@ ck "S09-AC-2: harness.small_capable() is True for Claude Code and the default fa
 	[ \"$(pycap SCHED_HARNESS=claude-code)\" = True ] && [ \"$(pycap SCHED_HARNESS=fake)\" = True ] && [ \"$(pycap SCHED_HARNESS=fake FAKE_HARNESS_SMALL=0)\" = False ]"
 ck "S09-AC-2: harness.small_start is a function of harness.py" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; sys.exit(0 if callable(getattr(harness, "small_start", None)) else 1)' "$src"
 
+echo "== S10-AC-1: the small start passes --no-session-persistence (no transcript), node starts and resumes are unchanged"
+s10=$tmp/S10; mkdir -p "$s10"
+# the fake claude's recorded arguments of the S09 block's Claude Code small start ($s9/cc.argv: one argument per line)
+ck "S10-AC-1: Claude Code small-start passes --no-session-persistence exactly once" sh -c "[ \"\$(grep -cx -- '--no-session-persistence' '$s9/cc.argv')\" = 1 ]"
+printf '%s\n' -p "Decide what each item is. ITEM-MARK-S09" "second line" "" --model haiku --tools "" --max-turns 1 --strict-mcp-config \
+	--disable-slash-commands --output-format stream-json --verbose >"$s10/small.today"
+grep -vx -- '--no-session-persistence' "$s9/cc.argv" >"$s10/small.rest" 2>/dev/null
+ck "S10-AC-1: Claude Code small-start passes every other argument it passed before, in the same order (the prompt, -p, --model haiku, --tools '', --max-turns 1, ...)" cmp "$s10/small.today" "$s10/small.rest"
+ck "S10-AC-1: Claude Code small-start has no other argument (the count is today's plus one)" sh -c "[ \"\$(wc -l <'$s10/small.today')\" = \"\$(( \$(wc -l <'$s9/cc.argv') - 1 ))\" ]"
+# a node session's start and resume over the same fake claude: no --no-session-persistence
+rec=$s10/rec; errf=$s10/err; d=$s10/node
+sess "" "$d" "$fx/resumed-1.jsonl" 0
+sess "" "$d" "$fx/resumed-2.jsonl" 0 sess-s10-1
+call 1 "$rec/argv" >"$s10/start.argv" 2>/dev/null; call 2 "$rec/argv" >"$s10/resume.argv" 2>/dev/null
+ck "S10-AC-1: a node session's start still calls claude -p with its system prompt, and has no --no-session-persistence" sh -c "
+	grep -qx -- '-p' '$s10/start.argv' && grep -qx -- '--append-system-prompt' '$s10/start.argv' && ! grep -qx -- '--no-session-persistence' '$s10/start.argv'"
+ck "S10-AC-1: a node session's resume still passes --resume <id> and the resume prompt, and has no --no-session-persistence" sh -c "
+	grep -qx -- '--resume' '$s10/resume.argv' && grep -qx -- 'sess-s10-1' '$s10/resume.argv' && grep -qx -- 'the resume prompt' '$s10/resume.argv' &&
+	! grep -qx -- '--no-session-persistence' '$s10/resume.argv'"
+
 echo
 [ "$fails" = 0 ] && { echo "all passed"; exit 0; }
 echo "$fails failed"; exit 1
