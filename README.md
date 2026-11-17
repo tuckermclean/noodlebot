@@ -1,270 +1,351 @@
 # noodlebot
 
-Automation that runs as the n00dl3b0t GitHub App (credentials in `~/.config/noodlebot/`, never in this repo).
+noodlebot builds a repository's planned work for you. It reads the repository's node graph (`docs/graph.yaml` and
+`nodes/`), starts an unattended agent session for each node that is ready, has it build the node test-first, and hands
+you the result as a **pull request** or a **question**. You review, answer and merge; the bot never merges. It runs on one
+machine (or in one container), for several repositories at once, as the GitHub App `n00dl3b0t`.
 
-- `scheduler/`: the node scheduler, one loop per repository. `scheduler/loops.sh start|stop|status`
-  runs them all over the repositories in `~/.config/noodlebot/repos` (one `[<forge>:]<path>` per line, `owner/name` = `github:owner/name`; `fake:<state folder>` is the test forge;
-  `#` comments allowed): `start` starts the loops not running, `stop` stops them via `~/STOP-<name>`
-  (sessions keep going), `status` prints a line per repository. It reads each loop's lock, sessions and
-  markers under the runtime root `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`), and `start`
-  passes that root, and every `USAGE_*` and `SCHED_*` variable, and `PICKUP`, `PICKUP_RUNS` and `PICKUP_CEILING`, set in its environment (for example `USAGE_7D_PACE=1 scheduler/loops.sh start`, which turns on the 7-day pace hold), to each loop, since a tmux server keeps its own environment. `start` refuses while
-  `~/STOP` exists and removes a stale `~/STOP-<name>`; it also refuses while a loop from before the
-  runtime move still holds `<checkout>/state/<name>/loop.lock`: stop it and run the move first
-  (`scheduler/move-runtime.sh`, below). The mechanism underneath, per repository:
-  `tmux new -d -s sched-<name> env NOODLEBOT_DATA=<root> ~/gitrepos/noodlebot/scheduler/loop.sh [<forge>:]<path>`.
-  `<name>` is the last component of `<path>`; an unknown forge exits 2. A forge lacking a capability (site, pin, resolve_threads, visibility) gets one status line `forge <name> lacks <capability>: <feature> off` per loop start and that feature is skipped.
-  Each repository has its own lock, state (`$NOODLEBOT_DATA/state/<name>/`), clone, worktrees and
-  status issue; `touch ~/STOP` stops every loop, `touch ~/STOP-<name>` one. `scheduler/status.sh [owner/name]` shows one repository.
-- `plugin/`: the bot's skills and agents, neutral about the harness and the forge and generic over repositories in
-  the graph regime (`docs/graph.yaml` + `nodes/<ID>-<name>.md`), plus a small Claude Code adapter
-  (`plugin/hooks/claude_code.py`, `hooks.json`, `.claude-plugin/`); with Claude Code, load with `claude --plugin-dir ~/gitrepos/noodlebot/plugin`.
-  `/noodlebot:node <ID>` builds a node test-first (the repository's part comes from its AGENTS.md,
-  "Building a node"); `/noodlebot:triage <issue> [--dry-run]` fits an issue into the graph as a spec PR.
-- `make test`: the ready-node, release-markers, status-issue, issue-label and end-to-end loop tests.
-- The loop reacts within seconds to local changes (your `ANSWER.md`, a session ending) and checks
-  GitHub every 60 s (PR merges). Only one loop runs at a time. Sessions run detached, so stopping or
-  restarting the loop never stops a session; a restarted loop takes over the running one.
+This page is for running it. How it is built: [`SPEC.md`](SPEC.md) (architecture and principles) and
+[`AGENTS.md`](AGENTS.md) (working on the code). [Where things are](#where-things-are) maps the folders.
+
+## Your part, day to day
+
+| Something to do | Where you see it | What you do |
+|---|---|---|
+| A node has a **question** | a comment on the unit's issue, a line in the daily log | Reply on that issue in plain words ([Answering a question](#answering-a-question)). |
+| A **node PR** is ready | a PR on `node/<ID>-<name>` | Review it. Comment to have the bot change it; merge it when it's right. |
+| A **spec PR** is ready | a PR on `spec/...` (from a question or a triaged issue) | Merge it, and the node is built (again) on the new spec. |
+| You want **something new built** | | Label an issue `noodlebot` ([Handing an issue to the bot](#handing-an-issue-to-the-bot)). |
+| A unit is **FAILED** | the daily log, `nbctl.py status` | Read why, fix the cause, delete the marker ([Troubleshooting](#troubleshooting)). |
+
+Everything else (starting sessions, resuming them after a usage limit or a restart, updating conflicting PRs, deploying
+its own new code) the loop does by itself.
 
 ## Watching it: the daily log
 
-Each repository gets one log issue a day, "noodlebot log <date>", labelled `noodlebot-status`
-(`scheduler/report.py`, run by the loop after each 60 s tick). Its first comment is the morning overview;
-its body is the status table (what waits on you, the running sessions with the latest narration, usage, the
-deployed commit); each start, end (with its total cost), release, merge and question is one line in its
-comments, so GitHub notifies you. At the first run on a new date it posts the day's summary on the old issue,
-closes it, opens the new one, links the two and tries to pin the new one. Closing today's issue is fine: the
-loop opens another. The open ones are here:
+Each repository gets one log issue a day, "noodlebot log <date>", labelled `noodlebot-status`:
 [open `noodlebot-status` issues](https://github.com/tuckermclean/noodlebot/issues?q=is%3Aissue+label%3Anoodlebot-status+is%3Aopen).
-Its failures go to `$NOODLEBOT_DATA/state/<repo>/report.log` and never stop the loop.
-Nothing in it is specific to one repository: `report.py --repo OWNER/NAME --state DIR`.
+
+- Its **body** is the status table: what waits on you, the running sessions with their latest narration, usage and the
+  deployed commit.
+- Its **comments** are the day: the morning overview first, then one line per start, end (with its cost), release,
+  merge and question, so GitHub notifies you.
+- At the first run on a new date the loop posts the day's summary on the old issue, closes it, opens the new one, links
+  the two and tries to pin the new one. Closing today's issue yourself is fine: the loop opens another.
+
+`scheduler/report.py` writes it after each 60 s tick. Its failures go to `state/<repo>/report.log` and never stop the
+loop.
+
+From a terminal:
+
+    scheduler/nbctl.py status                # throttle, deploy, one line per repository
+    scheduler/nbctl.py status <owner/name>   # one repository: sessions, what waits on you, nodes, open PRs
+    watch -n 10 scheduler/nbctl.py status <owner/name>
+    scheduler/nbctl.py events                # follow the events as they happen
+
+## Answering a question
+
+A session that needs a decision stops, and the loop posts the question as a comment on the unit's **home issue**:
+the issue named on the node spec's **Resolves:** line, or a "Build <ID> <name>" issue labelled `noodlebot-unit` that the
+loop opens for it.
+
+- **Reply on that issue in plain words** ("Q1 approve, Q2 as recommended"). Only the repository owner's comments count.
+  Your comment gets a +1 and becomes the unit's answer; within seconds the node starts again with 2 fresh starts and reads
+  every answer so far.
+- If several questions are open on the same issue, start with the ID (`B03: ...`). You can also reply on the daily log
+  issue, starting with the ID (or `#<N>:` for a triage).
+- **Locally**, write `ANSWER.md` next to the question:
+  `$NOODLEBOT_DATA/state/<repo>/node/<ID>/QUESTION.md` → `.../ANSWER.md`. Write it to a temporary name and `mv` it into
+  place, so the loop never reads half a file.
+
+If your answer approves a spec change, the session opens a `spec/<ID>-*` PR and the node waits for it. Merge the PR and
+within a minute the node starts again on the new spec.
+
+## Reviewing and merging PRs
+
+- **The bot never merges, approves or pushes to `main`.** You merge (squash).
+- **Comment or review on a bot PR** to have it changed: the loop collects your comments and reviews and starts a feedback
+  session for that PR, which pushes the change and replies.
+- A node PR that conflicts with `main` gets an update session by itself.
+- On every bot PR, each pushed head gets its CI result and a fresh review's verdict as comments on the home issue.
+- A merged node closes its home issue once every node resolving it is merged and nothing on it is still open.
 
 ## Handing an issue to the bot
 
-Add the `noodlebot` label to an issue. Only labels the repository owner adds count (the loop checks
-who added it, `scheduler/issues.py`). When no session is running, the loop triages it first
-(`/noodlebot:triage <N>`, state in `$NOODLEBOT_DATA/state/<repo>/issue/<N>/`): the result is a spec PR that fits the
-issue into the graph, or a comment that answers it. Then the label becomes `noodlebot-triaged`.
-Merge the spec PR and the new or amended node is built like any other.
+Add the `noodlebot` label to an issue. Only labels the repository owner adds count. The loop triages it when no other
+triage runs (`/noodlebot:triage <N>`): the result is a **spec PR** that fits the issue into the graph, or a **comment** that
+answers it, and the label becomes `noodlebot-triaged`. Merge the spec PR and the new or amended node is built like any
+other.
 
-Each issue the bot works on is its unit's home: the loop posts that unit's milestones there as comments,
-each starting with a `**Stage:**` line (a start or resume, a question, an answer received, the PR opened,
-the CI result per pushed head commit, the fresh-review verdicts, merged or closed without merging, FAILED;
-a triage's done). The home issue of a triage is the issue itself; of a node, the first issue on the
-**Resolves:** line of its spec, and a node with none gets a new "Build <ID> <name>" issue labelled
-`noodlebot-unit`. The PRs only say `Refs #N`; the loop closes an issue once every node
-resolving it is merged and no unit whose home it is has a question open (or answered but not yet released) or a
-follow-up in progress, and reopens it when a unit whose home it is asks a new question. A question shows on the status issue
-as a short pointer to its comment on the home issue.
+## Controlling it
 
-## Container
+| To | Run |
+|---|---|
+| Start every loop (and the API) | `scheduler/loops.sh start` |
+| See them | `scheduler/loops.sh status` |
+| Stop every loop | `scheduler/loops.sh stop`, or `touch ~/STOP` (sessions keep running) |
+| Stop one repository's loop | `touch ~/STOP-<name>` |
+| Let a FAILED node or issue start again | `rm` its `FAILED`, or the API's `DELETE .../failed` ([API](#api)) |
+| Start one node the throttle holds | `POST .../nodes/<ID>/release` ([API](#api)) |
+| Retry a rejected deploy, or roll back | `POST /v1/deploy/retry`, `POST /v1/deploy/rollback` ([API](#api)) |
 
-noodlebot also runs as one container: the image holds the toolchain (bash, git, gawk, python3 with PyYAML, `gh`, tmux,
-Node, the Claude Code CLI with its self-updater off, rootless podman) and a copy of noodlebot in `/opt/noodlebot`.
-`.github/workflows/image.yml` builds it from `container/Containerfile` and, on a push to `main`, pushes
-`ghcr.io/<owner>/<name>` (the repository's name in lowercase) tagged with the commit and `latest`. The package's
-visibility is for the owner to set. Build it yourself with
-`podman build -f container/Containerfile --build-arg REPO_URL=https://github.com/<owner>/<name>.git .` from a fresh full clone with its tags (the image's `/opt/noodlebot` is the build context, so its tags and its `.git` come
-from it). `.containerignore` keeps out what `.gitignore` ignores, `out/` and the config folder, but an untracked local file
-would enter a local build: build from a fresh clone.
+- **Stopping a loop never stops a session.** Sessions run detached; a restarted loop takes over the running ones.
+- `start` starts the loops that are not running and removes a stale `~/STOP-<name>`; it refuses while `~/STOP` exists.
+- Loops run in tmux sessions `sched-<name>` (the API in `sched-api`). Use `loops.sh`, not tmux, to start and stop them.
+- Only one loop runs per repository (a lock in its state folder). Each repository has its own lock, state, clone,
+  worktrees and log issue.
 
-- **The config folder** is `~/.config/noodlebot` as above: `repos`, the token script `token` (executable), the Claude
-  Code credential `oauth-token` and, optionally, `gitconfig`, which `~/.gitconfig` in the container includes so
-  that sessions commit with your identity. It is never part of the image; the container mounts it read-only, so
-  nothing may write into it. The user in the container is `noodlebot`, uid 1000: the folder and the token script
-  must be readable and executable for that uid.
-- **One host:** `container/compose.yaml` has one service, a named volume `noodlebot-home` at `/home/noodlebot`, the config
-  folder (`$NOODLEBOT_CONFIG`, default `~/.config/noodlebot`) read-only at `/home/noodlebot/.config/noodlebot`,
-  `restart: unless-stopped`, a stop grace period of 330 s (longer than `loops.sh stop`'s 300 s wait) and no published
-  port. Name your image in it (`ghcr.io/owner/name:latest`) or in an override file, then
-  `docker compose -f container/compose.yaml up -d` or `podman compose -f container/compose.yaml up -d`.
-- **A cluster:** `container/k8s/` holds a `kustomization.yaml` and a StatefulSet. Create the Secret by hand from the
-  config folder, `kubectl create secret generic noodlebot-config --from-file=$HOME/.config/noodlebot`, then
-  `kubectl apply -k container/k8s`. The Secret is mounted read-only with mode `0550` (the files belong to the pod's
-  `fsGroup`, which `noodlebot` is in, so it can run the token script). The `images:` entry of the kustomization names
-  another image. There is no Service: the API is a Unix socket on the volume (`kubectl exec ... nbctl`).
-- **One replica per runtime root.** The StatefulSet has `replicas: 1` and the volume is the runtime root
-  (`~/.local/share/noodlebot`) with the live checkout: one replica takes it, and two schedulers, or the container and
-  the machine's own loops, on the same `repos` start every session twice. Never scale it up.
-  The runtime root stays on the home volume, which is also where the image's `~/.config` (owned by `noodlebot`, empty
-  but for the read-only config folder mounted below it) lives: a fresh named volume starts with that folder from the
-  image, and a new PVC starts empty, so the StatefulSet's `home-config` init container (uid 1000, not privileged, the
-  same image) creates `~/.config` on it first.
-- **Nested rootless podman.** Sessions run `podman` as `noodlebot`, with no container-runtime socket mounted and
-  without `--privileged`. For that the compose file and the manifests carry these settings:
-  - `/dev/fuse` (compose `devices`): the storage driver is fuse-overlayfs. Kubernetes has no device field: the cluster
-    needs a FUSE device plugin that offers `/dev/fuse` to the pod, or set `STORAGE_DRIVER=vfs` (slow, no device).
-  - `label=disable` (compose `security_opt`): SELinux does not confine the container, which lets nested podman mount.
-  - `seccomp=unconfined` (compose `security_opt`) and `seccompProfile: Unconfined` (the pod's `securityContext`): the
-    default profile blocks the `mount` and `unshare` calls that creating a user namespace needs.
-  - `apparmor=unconfined` (compose `security_opt`) and `appArmorProfile: Unconfined` (the container's `securityContext`):
-    the same, for AppArmor hosts.
-  - `allowPrivilegeEscalation: true`: `newuidmap` and `newgidmap` have file capabilities (`cap_setuid` and
-    `cap_setgid`; not the setuid bit), which is a privilege gain too. They map the user's
-    65536 subordinate ids (the same range as `quay.io/podman/stable`, so it also works when the outer container is
-    itself rootless). In a pod with `hostUsers: false` this has not been tested: whether the runtime applies file
-    capabilities there is not verified.
-  - `systempaths=unconfined` (compose `security_opt`) and `procMount: Unmasked` (the container's `securityContext`):
-    Docker and Kubernetes mask parts of `/proc` in the container, which would stop nested podman from mounting a
-    `/proc` of its own. The trade-off: `systempaths=unconfined` removes the masked and read-only paths
-    (such as `/proc/kcore`, `/sys/firmware`, `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs`). Under
-    rootful Docker without userns-remap, root in the container is root on the host, so anything that gains root in the
-    container could write host kernel settings. Rootless Docker or Podman, or userns-remap, limits that for compose; in
-    the pod, `hostUsers: false` makes the container's root unprivileged on the node. Nested containers are not
-    affected: they get their own `/proc`, masked by nested podman. `procMount: Unmasked` needs `hostUsers: false` (the
-    pod's own user namespace), so the cluster must support user namespaces for pods and the field: the feature gates
-    `UserNamespacesSupport` and `ProcMountType` (both on by default from Kubernetes 1.33; with `ProcMountType` off the
-    API server silently drops the field), a runtime and a node kernel that support it.
-    The image's `containers.conf` does not bind the outer `/proc` into nested containers: that would expose it to
-    every nested container, whose root is uid 1000.
-  - The image's `/etc/containers/containers.conf` has no cgroup manager, the file events logger and the container's
-    network namespace, so nested podman needs no `/dev/net/tun`.
-  - Host requirements: Linux 5.14 or newer (the loop probes read the `ino:` line of `/proc/<pid>/fdinfo`, which older
-    kernels lack, so they would miss a running loop), unprivileged user namespaces allowed (on Ubuntu 24.04,
-    `sysctl kernel.apparmor_restrict_unprivileged_userns=0`), `/dev/fuse`, and a volume filesystem that supports the
-    overlay storage driver (not NFS).
-  - The image workflow's run of `container/compose.yaml` is the recorded check.
-- **Pod Security.** The `Unconfined` seccomp and AppArmor profiles are not allowed below the `privileged` Pod Security
-  level: the `baseline` level rejects those two profiles and `procMount: Unmasked`.
-  Put the namespace at `pod-security.kubernetes.io/enforce: privileged`
-  (the pod itself is still not `privileged: true` and mounts no socket).
-- **Deploys and updates.** Code deploys still go through `scheduler/deploy.sh` (D01) inside the container: the checkout on the volume
-  is tested, fast-forwarded and re-executed as on the machine. A new image (a new toolchain or Claude Code CLI) takes a
-  restart, which stops the running sessions (S04 resumes them). A repository whose builds need more tools gets a derived
-  image: `FROM ghcr.io/<owner>/<name>` plus the tools, and its own `ENTRYPOINT` left alone.
+## Setting it up
+
+You need: Linux, bash, git, gawk, python3 with PyYAML, `gh`, tmux, Node, the Claude Code CLI, and podman if the
+repositories' builds use containers. Or run [the container](#running-it-in-a-container), which has all of it.
+
+1. Clone noodlebot to `~/gitrepos/noodlebot`. This checkout is the **live checkout** the loops run from and deploy into:
+   don't work in it.
+2. Fill the config folder `~/.config/noodlebot/` (never part of any repository):
+
+   | File | What it is | Needed |
+   |---|---|---|
+   | `repos` | The repositories to build, one `[<forge>:]<path>` per line (`owner/name` means `github:owner/name`), `#` comments allowed. | yes |
+   | `token` | An executable that prints a GitHub App installation token for the repository it's given (`token owner/name`). | yes |
+   | `oauth-token` | The Claude Code credential the sessions use. | yes |
+   | `gitconfig` | Git identity for the container's sessions' commits. | container only |
+   | `deploy-ci` | Deploy on CI instead of local tests ([How it deploys itself](#how-it-deploys-itself)). | no |
+   | `gist`, `gist-token`, `site` | The status site ([Status site](#status-site)). | no |
+
+3. `scheduler/loops.sh start`, then `scheduler/loops.sh status`.
+
+At its first start in a repository the loop creates the labels `noodlebot`, `noodlebot-triaged`, `noodlebot-status` and
+`noodlebot-unit`.
+
+### Tuning
+
+Set these in the environment of `scheduler/loops.sh start`; it passes them to each loop (`USAGE_*`, `SCHED_*`, `PICKUP*`
+and `NOODLEBOT_DATA`), for example `SCHED_MAX=3 scheduler/loops.sh start`.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `NOODLEBOT_DATA` | `~/.local/share/noodlebot` | The runtime root ([Where things are](#where-things-are)). Every loop and tool must see the same one. |
+| `USAGE_5H_LIMIT` | `0.90` | **The throttle:** no new session starts while the 5-hour usage window is projected to pass this by its reset. Running sessions are never stopped. |
+| `USAGE_7D_PACE`, `USAGE_7D_MARGIN` | off, `0.10` | `USAGE_7D_PACE=1` also holds while the 7-day window is more than the margin ahead of pace. |
+| `SCHED_MAX` | `0` (no cap) | The most sessions a loop runs at once. |
+| `SCHED_RAMP`, `SCHED_START_GAP` | `1`, the tick | The start queue: new sessions start one per gap across all loops (triages, updates and resumes first). `SCHED_RAMP=0` starts every ready unit at once. |
+| `SCHED_STARVE` | `21600` | A unit waiting longer than this (seconds) goes first. |
+| `SCHED_TICK`, `SCHED_POLL` | `60`, `2` | Seconds between GitHub checks, and between local checks. |
+| `SCHED_HARNESS` | `claude-code` | The agent harness the sessions run in. |
+| `SCHED_THROTTLE`, `SCHED_REPORT`, `SCHED_SITE` | `1` | `0` turns off the throttle, the daily log, the status site. |
+| `PICKUP`, `PICKUP_RUNS`, `PICKUP_CEILING` | `1`, `12`, `90%` | The small-model step that places owner comments the log can't: on or off, runs per 5-hour window, no run above this usage. |
+
+## How it deploys itself
+
+Each loop tick runs `scheduler/deploy.sh`, which brings new commits on noodlebot's `main` into the live checkout:
+
+- A change to docs, specs or workflows only (`README.md`, `SPEC.md`, `AGENTS.md`, `docs/`, `nodes/`, `.github/`) is
+  fast-forwarded at once, with no check and no restart.
+- A runtime change is checked first, then fast-forwarded, and every loop restarts itself on the new code, keeping its
+  running sessions. A commit that fails its check is **rejected**: one status line, and the old code keeps running.
+- **The check** is local `make test`, unless `~/.config/noodlebot/deploy-ci` exists. Its first line,
+  `<owner/name> <workflow file> <branch>` (for example `owner/repo test.yml main`), names the CI to trust instead: the
+  deploy waits for that workflow's push run on the commit, deploys after it passes (and a short local syntax check),
+  and rejects the commit when it fails. The App behind `token` must be able to read that repository's Actions.
+- Each runtime deploy records the commit it replaced as the rollback point.
+
+`nbctl.py status` (or `GET /v1/deploy`) shows the deployed commit, the rollback point, the last deploy and the last
+rejection. To retry a rejected commit (for example after re-running its CI) or to roll back, use the deploy controls of
+the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state/<repo>/deploy.log`.
+
+## Troubleshooting
+
+| You see | It means | Do |
+|---|---|---|
+| `FAILED` on a node or issue | Its session exited twice without a PR or question, or its PR was closed without merging. The file says which. | Look at `state/<repo>/node/<ID>/session.stderr` and the reason, fix the cause, then delete `FAILED` (2 fresh starts). |
+| `hold: ...` in the status | The throttle: usage is projected past the limit. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
+| A session that hit the usage limit | It's resumed by itself after the reset. | Nothing. |
+| `not deployed: ... fails CI` / `make test` | A new noodlebot commit failed its check; the old code still runs. | Fix `main`, or re-run its CI and retry the deploy. |
+| A loop missing from `loops.sh status` | It stopped (a STOP file, or it crashed). | Remove `~/STOP` or `~/STOP-<name>` if you meant to restart; `scheduler/loops.sh start`. |
+| `nbctl.py`: "the API is not running" | The API isn't running. | `scheduler/loops.sh start`. |
+| Nothing new in the daily log | The log step failed (it never stops the loop). | `state/<repo>/report.log`. |
+
+Every loop writes `state/<repo>/status.log`, one line per event; it's the first place to look.
 
 ## Status site
 
-The loop can publish a status site for the repositories it watches. The files are sent to a public gist you make once by hand;
-the publisher never creates a gist.
+The loop can publish a status site for the repositories it watches. The files are sent to a public gist you make once by
+hand; the publisher never creates a gist.
 
-1. Create a public gist (any file will do; it is replaced by the first publish) and note its ID, the last part of its URL.
+1. Create a public gist (any file will do; the first publish replaces it) and note its ID, the last part of its URL.
 2. Make a token that can only touch gists: a classic token with only the `gist` scope, or a fine-grained token with only
    the Gists account permission (read and write).
 3. Put the ID in `~/.config/noodlebot/gist` and the token in `~/.config/noodlebot/gist-token`, both mode 0600.
-   An optional `~/.config/noodlebot/repos` lists the repositories to show, one `owner/name` per line (default: the loop's own).
 
-With either file missing the loop says `site off: no gist configured` once at start and publishes nothing. `SCHED_SITE=0`
-turns the publishing off. The token goes only to the publish command, never to a session; a failed publish is one status
-line (`site: publish failed (<status>)`), the details are in `state/<name>/site.log`, and `site: publishing again` follows
-the next success.
+With either file missing the loop says `site off: no gist configured` once at start and publishes nothing; `SCHED_SITE=0`
+turns publishing off. The gist token goes only to the publish command, never to a session. A failed publish is one status
+line (`site: publish failed (<status>)`), with details in `state/<repo>/site.log`; `site: publishing again` follows the next
+success.
 
-Links to the site: put its address on one line in `~/.config/noodlebot/site`, e.g. `https://<owner>.github.io/noodlebot/`.
-While that is a valid `https://` address (no spaces, quotes, parentheses or angle brackets), the loop publishes the site and the
-repository is public, the bot's status issue and its GitHub comments link each node's ID to the site. Otherwise the texts have
-no links; an invalid address is one status line (`status site links off: <reason>`).
+**Links to the site.** The log issue and the bot's comments link each node's ID to the site when the repository is public,
+the loop publishes the site, and `~/.config/noodlebot/site` holds its address on one line, e.g.
+`https://<owner>.github.io/noodlebot/`: a valid `https://` address (no spaces, quotes, parentheses or angle brackets).
+Otherwise the texts have no links; an invalid address is one status line (`status site links off: <reason>`).
 
-The front end in `site/` is a static page that reads the gist from the browser; `.github/workflows/pages.yml` deploys it to
-GitHub Pages when `site/**` changes on `main` (or by hand, with `workflow_dispatch`). To enable it:
+**The front end** in `site/` is a static page that reads the gist from the browser. `.github/workflows/pages.yml`
+deploys it to GitHub Pages when `site/**` changes on `main` (or by hand, with `workflow_dispatch`). To enable it:
 
 1. In the repository's Settings, Pages, set the source to GitHub Actions.
-2. In Settings, Secrets and variables, Actions, Variables, add the repository variable `NOODLEBOT_GIST_ID` with the gist's ID.
-   The workflow writes it to `site/config.json` and fails with a message while it is unset.
+2. In Settings, Secrets and variables, Actions, Variables, add the repository variable `NOODLEBOT_GIST_ID` with the
+   gist's ID. The workflow writes it to `site/config.json` and fails with a message while it is unset.
 
 The page also takes `?gist=<id>`, which wins over `config.json`.
 
 ## API
 
-An HTTP API over the runtime files, for dashboards and scripts (reads, and the controls below): `scheduler/api.py`, on the Unix socket
-`$NOODLEBOT_DATA/api.sock` (default `~/.local/share/noodlebot/api.sock`, mode 0600, so only you can use it).
-`scheduler/loops.sh start` and `stop` start and stop it with the loops (tmux session `sched-api`); `status` shows it.
-Every request is a GET or one of the controls below (any other write is a 405); every answer is JSON with `"version": 1`.
-
-- `/v1/repos`, `/v1/repos/<owner>/<name>`: the listed repositories and one in full.
-- `/v1/repos/<owner>/<name>/nodes`, `.../nodes/<ID>`, `.../sessions`, `.../prs`, `.../issues`.
-- `/v1/throttle`, `/v1/deploy`: the usage throttle and the last deploy.
-- `/v1/schema/<resource>`: the JSON schema of a resource.
-- `/v1/events`: a `text/event-stream` (not JSON) of events, each a line appended to a repository's `status.log`. `?repo=<owner>/<name>` limits it to one repository;
-  `?since=<cursor>` (or the `Last-Event-ID` header, which a browser's EventSource sends on reconnecting)
-  resumes after the event with that id, with a cursor per repository.
+An HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
+`$NOODLEBOT_DATA/api.sock` (mode 0600, so only you can use it). `loops.sh start` and `stop` start and stop it with the
+loops. Every answer is JSON with `"version": 1`.
 
     curl --unix-socket ~/.local/share/noodlebot/api.sock http://localhost/v1/repos
 
-### Controls
+**Reads** (GET):
 
-A control writes only a marker the loop or `deploy.sh` already reads, and, for the loop controls, a request record in
-`state/<name>/requests/`; the loop logs each record as one status-log event and removes it. A deploy request (retry,
-rollback) writes no record: the marker in `deploy/` is the request. The API starts no loop and signals no process. A
-valid request is answered 202 (schema `control`: what was written and when it is carried out), an unknown repository,
-node, issue or commit 404, a request with nothing to do 409; neither changes any file. Anyone who can use the socket can
-use the controls.
+- `/v1/repos`, `/v1/repos/<owner>/<name>`, and under it `/nodes`, `/nodes/<ID>`, `/sessions`, `/prs`, `/issues`.
+- `/v1/throttle`, `/v1/deploy`: the usage throttle; the deployed commit, rollback point, last deploy and rejections.
+- `/v1/schema/<resource>`: the JSON schema of a resource.
+- `/v1/events`: a `text/event-stream` of status-log events. `?repo=<owner>/<name>` limits it to one repository;
+  `?since=<cursor>` (or `Last-Event-ID`) resumes after an event.
 
-- Delete a node's or an issue's `FAILED` (the loop starts a ready node at its next tick):
+**Controls.** Each writes only a marker the loop or `deploy.sh` already reads, and is carried out at the loop's next
+tick or `deploy.sh`'s next run. They answer 202 when accepted, 404 for an unknown repository, node, issue or commit,
+409 when there's nothing to do. The loop logs each loop control as a status-log event.
 
-      curl --unix-socket ~/.local/share/noodlebot/api.sock -X DELETE http://localhost/v1/repos/<owner>/<name>/nodes/<ID>/failed
-      curl --unix-socket ~/.local/share/noodlebot/api.sock -X DELETE http://localhost/v1/repos/<owner>/<name>/issues/<N>/failed
+| Control | Request (under `/v1/repos/<owner>/<name>` unless it starts with `/v1/deploy`) |
+|---|---|
+| Delete a node's or an issue's `FAILED` | `DELETE /nodes/<ID>/failed`, `DELETE /issues/<N>/failed` |
+| Stop a repository's loop; allow it again | `PUT /stop`, `DELETE /stop` (`~/STOP-<name>`; allowing doesn't start it: `loops.sh start` does) |
+| Start one node the throttle holds, once | `POST /nodes/<ID>/release` |
+| Retry a rejected commit | `POST /v1/deploy/retry` with `{"sha": "<commit>"}` |
+| Roll back to the rollback point | `POST /v1/deploy/rollback` |
 
-- Stop a repository's loop (creates `~/STOP-<name>`; a running loop exits) and allow it again (removes it):
+For example:
 
-      curl --unix-socket ~/.local/share/noodlebot/api.sock -X PUT http://localhost/v1/repos/<owner>/<name>/stop
-      curl --unix-socket ~/.local/share/noodlebot/api.sock -X DELETE http://localhost/v1/repos/<owner>/<name>/stop
+    curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST -d '{"sha": "<commit>"}' http://localhost/v1/deploy/retry
 
-  Removing the STOP file does not start the loop: `scheduler/loops.sh start` does.
-- Let one node the throttle holds start once (writes `RELEASE`; the loop consumes it at its next tick and logs what it did):
+**`scheduler/nbctl.py`** is the API's command-line client (Python standard library only, no token, no `gh`).
+`--socket <path>` (before the command) uses another socket; with nothing listening it says so and exits 2.
 
-      curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST http://localhost/v1/repos/<owner>/<name>/nodes/<ID>/release
-
-- Retry a commit `deploy.sh` rejected (writes `deploy/retry`; a 409 if it is not rejected):
-
-      curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST -d '{"sha": "<commit>"}' http://localhost/v1/deploy/retry
-
-- Request a rollback to `deploy/previous` (writes `deploy/rollback-request`; a 409 if there is no rollback point):
-
-      curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST http://localhost/v1/deploy/rollback
-
-The loop carries out the first three at its next iteration or tick; `deploy.sh` carries out the retry and the rollback at
-its next run, which a loop makes, and logs a line for each.
-
-`deploy.sh` runs `make test` on each runtime commit before it deploys it, unless `~/.config/noodlebot/deploy-ci` exists. Its
-first line, `<owner/name> <workflow file> <branch>` (for example `owner/repo test.yml main`), names the repository whose CI is
-read, the workflow and the branch whose push runs count. The deploy then waits for that workflow's push run on the new commit:
-it deploys the commit once the run passed (after a short local syntax check) and rejects it when the run failed, and it never
-runs `make test`. The GitHub App behind `~/.config/noodlebot/token` must be able to read that repository's Actions. Without the
-file, the deploy runs `make test` as before.
-
-From another machine, forward the socket over SSH and use it there:
-
-    ssh -L /tmp/nb.sock:/home/<user>/.local/share/noodlebot/api.sock host
-    curl --unix-socket /tmp/nb.sock http://localhost/v1/repos
-
-If `/tmp/nb.sock` is left over from an earlier forward, set `StreamLocalBindUnlink yes` (in `ssh_config`, or `-o`).
-
-### The command line: `scheduler/nbctl.py`
-
-`scheduler/nbctl.py` is a client of the socket (Python standard library only). It reads no state file, calls no `gh` and
-needs no token, so it works over the forwarded socket too. It uses `$NOODLEBOT_DATA/api.sock`, or the path given with
-`--socket` (before the command). When nothing listens there, it says so in one line and exits 2: start the API with
-`scheduler/loops.sh start`.
-
-    scheduler/nbctl.py status                  # the throttle and the deploy, then one line per repository
-    scheduler/nbctl.py status <owner/name>     # one repository in detail
-    scheduler/nbctl.py events [--repo <owner/name>] [--since <cursor>]   # follow the events, one line each
+    scheduler/nbctl.py status [<owner/name>]
+    scheduler/nbctl.py events [--repo <owner/name>] [--since <cursor>]
     scheduler/nbctl.py get repos/<owner>/<name>/prs   # the JSON of /v1/<path>; exit 0 for 200, 1 for 404, 2 otherwise
 
-`nbctl.py status <owner/name>` replaces `scheduler/status.sh`: it shows the loop and STOP files, the last GitHub check, the
-status issue and the throttle, each running session (pid, age, log size, last write, last 4 actions, a node's commits,
-pending wakeup, background work, limit rejection), what waits on you (FAILED with its reason, QUESTION with its first line and
-the issue to answer on, answered, spec PRs), each node's state and the open PRs with their mergeable state. Keep it open next
-to htop with `watch -n 10 scheduler/nbctl.py status <owner/name>`. `status.sh` stays for now.
+**From another machine**, forward the socket over SSH (set `StreamLocalBindUnlink yes` if `/tmp/nb.sock` is left over):
 
-## Answering a node's question
+    ssh -L /tmp/nb.sock:/home/<user>/.local/share/noodlebot/api.sock host
+    scheduler/nbctl.py --socket /tmp/nb.sock status
 
-Reply on the unit's issue (the home issue where the loop posted the question), in plain words. Only the repository
-owner's comments count. No prefix is needed: your comment answers the one question open there, gets a +1
-and becomes that unit's `ANSWER.md` (a triage's too). Only if several questions are open on that issue, start with the ID
-(`B03: ...`). You can also still reply on the status issue (start with the ID, or `#<N>:` for a triage
-when more than one is waiting). A question is answered once, from whichever issue you replied on.
-Or, locally:
+## Running it in a container
 
-A session that hits a `/node` step 7 stop writes `$NOODLEBOT_DATA/state/<repo>/node/<ID>/QUESTION.md` and ends; the
-node is held. To answer, write `ANSWER.md` next to it, in plain words ("Q1 approve, Q2 as
-recommended"). Within seconds the loop moves both into `answered/`, gives the node 2 fresh starts
-and starts it again. The session reads every answer in `answered/` and carries on.
+The image holds the toolchain (bash, git, gawk, python3 with PyYAML, `gh`, tmux, Node, the Claude Code CLI with its
+self-updater off, rootless podman) and a copy of noodlebot in `/opt/noodlebot`. At start it puts the live checkout on the
+home volume, starts the loops, and stops them cleanly on SIGTERM.
 
-If your answer approves a spec change, the session opens a `spec/<ID>-*` PR, writes its number to
-`WAITING-PR` and ends. Merge that PR; within a minute the node starts again on the new spec.
-`scheduler/status.sh` shows which of these each node is waiting for.
-- `repos/`, `worktrees/` and `state/` are runtime directories under the runtime root `$NOODLEBOT_DATA`
-  (default `~/.local/share/noodlebot`), outside any checkout. Every loop, `status.sh` and
-  `move-runtime.sh` must see the same `NOODLEBOT_DATA`.
-- One-time move of an older installation (runtime folders inside the checkout): `touch ~/STOP`, wait
-  until no session runs, run `scheduler/move-runtime.sh ~/gitrepos/noodlebot`, start the loops again.
+**Get the image.** `.github/workflows/image.yml` builds `container/Containerfile` and, on a push to `main`, pushes
+`ghcr.io/<owner>/<name>` (the repository's name in lowercase) tagged with the commit and `latest`; the package's
+visibility is yours to set. Or build it from a fresh full clone with its tags (the build context becomes
+`/opt/noodlebot`, and an untracked local file would end up in it):
+
+    podman build -f container/Containerfile --build-arg REPO_URL=https://github.com/<owner>/<name>.git .
+
+**The config folder** is `~/.config/noodlebot` as in [Setting it up](#setting-it-up), plus, optionally, `gitconfig`, which
+the container's `~/.gitconfig` includes so sessions commit with your identity. It's mounted read-only and never part of
+the image. The container's user is `noodlebot`, uid 1000: the folder and the token script must be readable (and the
+script executable) by that uid.
+
+**On one host:** `container/compose.yaml` has one service with a named volume `noodlebot-home` at `/home/noodlebot`, the
+config folder (`$NOODLEBOT_CONFIG`, default `~/.config/noodlebot`) read-only at `/home/noodlebot/.config/noodlebot`,
+`restart: unless-stopped`, a stop grace period of 330 s (longer than `loops.sh stop`'s 300 s wait) and no published port.
+Name your image in it (or in an override file), then:
+
+    docker compose -f container/compose.yaml up -d     # or: podman compose -f container/compose.yaml up -d
+
+**On a cluster:** `container/k8s/` holds a `kustomization.yaml` and a StatefulSet. Create the Secret from the config
+folder, then apply:
+
+    kubectl create secret generic noodlebot-config --from-file=$HOME/.config/noodlebot
+    kubectl apply -k container/k8s
+
+The Secret is mounted read-only with mode `0550` (the files belong to the pod's `fsGroup`, which `noodlebot` is in, so it
+can run the token script). The kustomization's `images:` entry names another image. There is no Service: the API is the
+Unix socket on the volume (`kubectl exec ... nbctl`). The `home-config` init container (uid 1000, not privileged, the same
+image) creates `~/.config` on a new, empty PVC.
+
+**One replica per runtime root.** The StatefulSet has `replicas: 1`: the volume holds the runtime root and the live
+checkout, and two schedulers on the same `repos` (two replicas, or the container and the machine's own loops) start every
+session twice. Never scale it up.
+
+**Updates.** Code deploys go through `deploy.sh` inside the container, as on a machine. A new image (toolchain or Claude
+Code CLI) takes a restart, which stops running sessions; they resume afterwards. A repository whose builds need more
+tools gets a derived image: `FROM ghcr.io/<owner>/<name>` plus the tools, keeping its `ENTRYPOINT`.
+
+### Nested rootless podman
+
+Sessions run `podman` as `noodlebot`, with no container-runtime socket mounted and without `--privileged`. That takes
+these settings in the compose file and the manifests:
+
+| Setting | Why |
+|---|---|
+| `/dev/fuse` (compose `devices`) | The storage driver is fuse-overlayfs. Kubernetes has no device field: the cluster needs a FUSE device plugin that offers `/dev/fuse` to the pod, or set `STORAGE_DRIVER=vfs` (slow, no device). |
+| `label=disable` (compose `security_opt`) | SELinux doesn't confine the container, so nested podman can mount. |
+| `seccomp=unconfined` (compose), `seccompProfile: Unconfined` (pod `securityContext`) | The default profile blocks the `mount` and `unshare` calls a user namespace needs. |
+| `apparmor=unconfined` (compose), `appArmorProfile: Unconfined` (container `securityContext`) | The same, on AppArmor hosts. |
+| `allowPrivilegeEscalation: true` | `newuidmap` and `newgidmap` have file capabilities (`cap_setuid`, `cap_setgid`; not setuid), which is a privilege gain too. They map the user's 65536 subordinate ids (the same range as `quay.io/podman/stable`, so it also works when the outer container is rootless). Not tested in a pod with `hostUsers: false`. |
+| `systempaths=unconfined` (compose), `procMount: Unmasked` (container `securityContext`) | Docker and Kubernetes mask parts of `/proc`, which stops nested podman from mounting a `/proc` of its own. `procMount: Unmasked` needs `hostUsers: false` (the pod's own user namespace). |
+
+The trade-offs:
+
+- `systempaths=unconfined` removes the masked and read-only paths (such as `/proc/kcore`, `/sys/firmware`, `/proc/sys`,
+  `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs`). Under rootful Docker without userns-remap, root in the
+  container is root on the host, so anything that gains root in it could write host kernel settings. Rootless Docker or
+  Podman, or userns-remap, limits that for compose; in the pod, `hostUsers: false` makes the container's root
+  unprivileged on the node. Nested containers get their own `/proc`, masked by nested podman.
+- `procMount: Unmasked` needs the cluster to support user namespaces for pods: the feature gates
+  `UserNamespacesSupport` and `ProcMountType` (both on by default from Kubernetes 1.33; with `ProcMountType` off the API
+  server silently drops the field), and a runtime and node kernel that support it.
+- **Pod Security:** the `Unconfined` seccomp and AppArmor profiles and `procMount: Unmasked` are rejected below the
+  `privileged` level. Put the namespace at `pod-security.kubernetes.io/enforce: privileged` (the pod itself is still not
+  `privileged: true` and mounts no socket).
+- The image's `/etc/containers/containers.conf` has no cgroup manager, the file events logger and the container's network
+  namespace (so no `/dev/net/tun`), and doesn't bind the outer `/proc` into nested containers (that would expose it to
+  every nested container, whose root is uid 1000).
+
+**Host requirements:** Linux 5.14 or newer (the loop probes read the `ino:` line of `/proc/<pid>/fdinfo`), unprivileged
+user namespaces allowed (on Ubuntu 24.04, `sysctl kernel.apparmor_restrict_unprivileged_userns=0`), `/dev/fuse`, and a
+volume filesystem that supports the overlay storage driver (not NFS). The image workflow's run of
+`container/compose.yaml` is the recorded check.
+
+## Where things are
+
+| Path | What |
+|---|---|
+| `scheduler/loop.sh`, `loops.sh` | The loop (one per repository) and the script that starts and stops them all. |
+| `scheduler/deploy.sh` | Self-deploy of the live checkout. |
+| `scheduler/report.py`, `nbctl.py`, `api.py`, `status.sh` | The daily log, the terminal client, the API, the older terminal view. |
+| `scheduler/unattended*.md`, `pickup.md`, `limit-resume.md` | The prompts the sessions get. |
+| `scheduler/forge.py`, `forges/` | The forge interface and its GitHub and fake backends ([`forges/README.md`](scheduler/forges/README.md)). |
+| `scheduler/harness.py`, `harnesses/` | The agent-harness interface and its Claude Code backend ([`harnesses/README.md`](scheduler/harnesses/README.md)). |
+| `plugin/` | The skills every session loads (`/noodlebot:node <ID>`, `/noodlebot:triage <issue>`, `/noodlebot:adopt`) and their agents. With Claude Code: `claude --plugin-dir ~/gitrepos/noodlebot/plugin`. |
+| `container/` | The image, `compose.yaml`, `k8s/`. |
+| `site/` | The status site's front end. |
+| `docs/graph.yaml`, `nodes/` | noodlebot's own planned work, under the same regime as the repositories it builds. |
+| `make test` | Every test, offline, with fake `gh` and `claude`; CI runs it on every PR. |
+
+**Runtime**, outside any checkout, under `$NOODLEBOT_DATA` (default `~/.local/share/noodlebot`):
+
+| Path | What |
+|---|---|
+| `repos/<name>` | The scheduler's own clone of each repository. |
+| `worktrees/<name>/<ID>`, `pr-<N>` | One worktree per node session or PR update. |
+| `state/<name>/` | `status.log`, `deploy.log`, `report.log`, `site.log`; per unit `node/<ID>/`, `issue/<N>/`, `pr/<N>/` with the session's logs and the markers `QUESTION.md`, `ANSWER.md`, `FAILED`, `WAITING-PR`, and `answered/` for the questions already answered. |
+| `deploy/` | The deployed and rollback commits, rejections, retry and rollback requests. |
+| `api.sock` | The API. |
+
+An older installation kept `repos/`, `worktrees/` and `state/` inside the checkout. Move them once: `touch ~/STOP`, wait
+until no session runs, `scheduler/move-runtime.sh ~/gitrepos/noodlebot`, then `scheduler/loops.sh start`.
