@@ -26,8 +26,9 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
   - the skill's text: it reads `inventory.py`'s output instead of every file, asks for the gate command, the
     out-of-scope paths and the areas (each with a recommendation); before the owner confirms the gate, section 1 runs
     only a command the repository's CI, Makefile or package scripts already run, in the clone or worktree (a dry run:
-    its temporary copy), and no other; it runs the confirmed gate once (section 3), records `known_red`, drafts
-    `nodes: []`, and runs `check-regime.py` and `check-coverage.py` before the PR;
+    its temporary copy), and no other; it runs the confirmed gate once (section 3), records `known_red`, drafts an
+    `AGENTS.md` section naming the gate command and a quick gate, drafts `nodes: []`, and runs `check-regime.py` and
+    `check-coverage.py` before the PR;
   - the recorded dry run under `example-baseline/`, made from `testdata/baseline/repo/` (a small repository with a
     vendored folder, which the test creates at run time and adds with `git add -f`, and one failing test) and
     `testdata/baseline/ANSWER.md`: its `docs/graph.yaml` has `nodes: []`, a `gate` with a `fail_pattern` and a
@@ -50,17 +51,18 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
 3. **The baseline.** After the answers, the skill runs the gate command once in the clone. It records in
    `gate.fail_pattern` a regular expression matching the lines the command prints for a failure (section 1 may run the
    proposed command once to see its output, so the pattern is proposed with the gate command; when the output still
-   does not make it plain, one follow-up question asks for it). Before the owner confirms the gate, section 1 runs only
-   a command the repository's own CI, Makefile or package scripts already run, in the adoption's clone or worktree (a
-   dry run: its temporary copy); any other command waits for the confirmation, and the baseline is the confirmed
-   command's run, and each failing test in `gate.known_red` as its full name
-   as such a line prints it (the text A05 matches). The pattern matches only lines that name a failing test (a
-   summary line that names none is not matched), so that in the baseline run every matched line contains a
+   does not make it plain, one follow-up question asks for it), and records each failing test in `gate.known_red` as
+   its full name as such a line prints it (the text A05 matches). The pattern matches only lines that name a failing
+   test (a summary line that names none is not matched), so that in the baseline run every matched line contains a
    `known_red` entry, and at least one line is matched when the command exits non-zero: the baseline passes A05's
-   rule. A command that cannot run here stops the run with a question: an adoption needs a gate that runs.
-   *A06-AC-2.*
-4. **The first PR** drafts `SPEC.md`, the `AGENTS.md` "Building a node" section (with the gate command and the rules
-   for `owns` and `known_red`), `.noodlebot/roles.yaml` where the guard's defaults do not fit, and `docs/graph.yaml`
+   rule. A command that cannot run here stops the run with a question: an adoption needs a gate that runs. Before the
+   owner confirms the gate, section 1 runs only a command the repository's own CI, Makefile or package scripts already
+   run, in the adoption's clone or worktree (a dry run: its temporary copy); any other command waits for the
+   confirmation, and the baseline is the confirmed command's run. *A06-AC-1, A06-AC-2.*
+4. **The first PR** drafts `SPEC.md`, the `AGENTS.md` "Building a node" section (with the gate command as the whole
+   suite, which runs in CI on the PR; a quick gate that a session runs locally instead: the red targets and the test
+   files of what a change touches, run through the gate's own runner where it takes a list of files; and the rules for
+   `owns` and `known_red`), `.noodlebot/roles.yaml` where the guard's defaults do not fit, and `docs/graph.yaml`
    with the template, `gate`, `out_of_scope`, `adoption: {areas}` and `nodes: []`. Open issues become nodes once the
    code is mapped (A07). `check-regime.py` and `check-coverage.py` must report `PROBLEMS 0` before the push: every
    tracked file is a regime file, out of scope, or in an area. The PR is `spec/adopt`, as today. *A06-AC-2,
@@ -70,7 +72,7 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
 
 ## Gate
 - **A06-AC-1** — The skill reads the inventory instead of every file and asks for the gate command, the out-of-scope paths and the areas, each with a recommendation; before the gate is confirmed it runs only a command the repository's CI, Makefile or package scripts already run, in the clone or worktree (a dry run: its temporary copy). *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
-- **A06-AC-2** — The skill runs the confirmed gate once (section 3), records a `fail_pattern` and each failing test's full name in `known_red`, stops with a question when the gate cannot run, and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
+- **A06-AC-2** — The skill runs the confirmed gate once (section 3), records a `fail_pattern` and each failing test's full name in `known_red`, stops with a question when the gate cannot run, drafts an `AGENTS.md` "Building a node" section naming the gate command (run in CI) and a quick gate (run locally), and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 - **A06-AC-3** — The recorded dry run under `example-baseline/` gives a graph with `nodes: []` whose `known_red` names the fixture's failing test; the test runs its `gate.command` in a copy of the fixture, applies `fail_pattern`, and finds at least one matched line, each containing a `known_red` entry; and laid over the fixture repository as the Tests say, `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`; the checks of `example/` still pass. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 
 ## Risks

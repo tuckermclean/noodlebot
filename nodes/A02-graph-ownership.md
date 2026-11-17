@@ -15,7 +15,6 @@ explorer's `site/explorer/graph.js`, `site/explorer/view.js` and `site/style.css
 `scheduler/site.test.sh`, `site/site.test.sh`, `site/test/views.test.mjs` and `site/test/explorer-graph.test.mjs`; in `plugin/skills/node/SKILL.md`, the deps precondition, with its case in
 `plugin/skills/node/skill.test.sh`; in `plugin/skills/triage/`, the state column of `nodes.py` and the placement rules of
 `SKILL.md` for imported and pinned nodes and for `owns`, with their cases in `plugin/skills/triage/nodes.test.sh`.
-**Resolves:** #139
 
 ## Purpose
 After this node `docs/graph.yaml` can describe a repository's existing code, not only the work still to build. A node
@@ -41,8 +40,7 @@ nodes as done. noodlebot's own graph, which uses none of the new fields, is chec
   chain, and in the repositories card's count.
 - `plugin/skills/node/skill.test.sh` (extended): the deps precondition accepts an imported or pinned dep.
 - `plugin/skills/triage/nodes.test.sh` (extended): `nodes.py` shows `imported` and `pinned`; the skill's rules never
-  amend an imported or pinned node and give a new node `owns` in a graph with ownership, only for added paths
-  no other node's glob and no `out_of_scope` glob matches.
+  amend an imported or pinned node and give a new node `owns` in a graph with ownership.
 
 ## Changes
 1. **One matcher.** `plugin/skills/node/owns.py` matches root-relative paths against globs: `*` matches within one path
@@ -81,7 +79,7 @@ nodes as done. noodlebot's own graph, which uses none of the new fields, is chec
    - The node skill's precondition accepts a dep that is merged, imported or pinned.
    - Triage's `nodes.py` shows `imported` and `pinned`, and its rules treat them as done: work on their code is a new
      node depending on them, never a change to an imported or pinned node's criteria, Purpose or `owns` (its header
-     row's Unlocks is kept in sync as for any node). In a graph with ownership the new node is placed: depending on the nodes whose files it changes and the nodes whose globs match the paths it will add files at (test folders included), with `owns` only for added paths no other node's glob and no `out_of_scope` glob matches (a path out of scope stays out of scope).
+     row's Unlocks is kept in sync as for any node). In a graph with ownership the new node is placed: depending on the nodes whose files it changes and the nodes whose globs match the paths it will add files at (test folders included), with `owns` only for added paths no existing glob matches.
    - The API's node state, `report.py`'s start clause (`start_info` and `ready_next` use a done set of merged, imported
      and pinned nodes; `merged_ids`, which feeds the PR-merged events, is unchanged), and the site (its explorer and its
      repositories card) show `imported` and `pinned` and count them as done.
@@ -94,7 +92,7 @@ nodes as done. noodlebot's own graph, which uses none of the new fields, is chec
 - **A02-AC-2** — `owns.py` matches `*`, `**`, a trailing `/`, a folder name and a literal path as change 1 says, and lists the regime's own files from the **Spec files:** line or the default. *Verify:* `sh plugin/skills/node/check-regime.test.sh`.
 - **A02-AC-3** — The existing fixture cases give the same output and exit code as before this node, and this repository's graph, which has none of the new fields, reports `PROBLEMS 0` with exit 0. *Verify:* `sh plugin/skills/node/check-regime.test.sh` and `python3 -I plugin/skills/node/check-regime.py`.
 - **A02-AC-4** — `ready.py` never prints an imported or pinned node and treats it as merged for its dependants; the API, `report.py`'s start clause (with `merged_ids` unchanged), and the site's explorer and repositories card show the two states and count them as done. *Verify:* `sh scheduler/ready.test.sh`, `sh scheduler/api.test.sh`, `sh scheduler/report.test.sh`, `sh scheduler/site.test.sh` and `sh site/site.test.sh`.
-- **A02-AC-5** — The node skill accepts an imported or pinned dep, and triage shows the two states, never amends such a node, and gives new nodes `owns` in a graph with ownership only for added paths no other node's glob and no `out_of_scope` glob matches. *Verify:* `sh plugin/skills/node/skill.test.sh` and `sh plugin/skills/triage/nodes.test.sh`.
+- **A02-AC-5** — The node skill accepts an imported or pinned dep, and triage shows the two states, never amends such a node, and gives new nodes `owns` in a graph with ownership. *Verify:* `sh plugin/skills/node/skill.test.sh` and `sh plugin/skills/triage/nodes.test.sh`.
 
 ## Risks
 - `owns.py`'s glob rules are this regime's own, not `.gitignore`'s or `fnmatch`'s; its tests pin them, and every

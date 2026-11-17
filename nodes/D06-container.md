@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D01, D02, M01 | S11 | L |
+| now | D01, D02, M01 | M02, S11 | L |
 
 **Owns:** `container/` (the `Containerfile`, the entrypoint `container/entrypoint.sh`, `container/compose.yaml`, the Kubernetes manifests `container/k8s/`, the tests `container/entrypoint.test.sh` and `container/container.test.sh` with their fixtures `container/testdata/`), their lines in the `Makefile`'s `TESTS`, the build-context ignore file `.containerignore`, the image workflow `.github/workflows/image.yml`, the README's container section, the `container/` lines of `SPEC.md` §2 and `AGENTS.md` ("Where things are"), the lock probes `held()` in `scheduler/loops.sh`, `scheduler/site.py` and `scheduler/api.py` (change 8), and their new test `scheduler/loops-pidns.test.sh` with its line in the `Makefile`'s `TESTS`.
 **Resolves:** #91
