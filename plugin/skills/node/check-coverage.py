@@ -6,7 +6,7 @@
 Without --ref the graph and AGENTS.md are the working tree's, the files `git ls-files`, the merged
 subjects `git log` at HEAD. With --ref REV all four come from that commit. Matching is owns.py's.
 Each file must be owned by exactly one node, or be matched by an out_of_scope glob, or by an adoption
-area's globs, or be one of the regime's own files (owns.regime_files; those are skipped).
+area's globs, or be one of the regime's own files (owns.regime_files; those are exempt only from the unowned problem).
 Problems, one line each:
 - a file no node owns that is not exempt, out of scope or in an area;
 - a file two nodes own (both named);
@@ -35,15 +35,18 @@ def git(root, *args, check=True):
 
 def main():
     a = sys.argv[1:]
+    for opt in ("--root", "--ref"):
+        if opt in a and a.index(opt) + 1 >= len(a):
+            raise RuntimeError("%s needs a value" % opt)
     root = a[a.index("--root") + 1] if "--root" in a else "."
     ref = a[a.index("--ref") + 1] if "--ref" in a else None
     if ref:
         graph = git(root, "show", ref + ":docs/graph.yaml")
-        files = git(root, "ls-tree", "-r", "--name-only", ref).splitlines()
+        files = [x for x in git(root, "ls-tree", "-r", "-z", "--name-only", ref).split("\0") if x]
         agents = git(root, "show", ref + ":AGENTS.md", check=False)
     else:
         graph = open(os.path.join(root, "docs/graph.yaml")).read()
-        files = git(root, "ls-files").splitlines()
+        files = [x for x in git(root, "ls-files", "-z").split("\0") if x]
         p = os.path.join(root, "AGENTS.md")
         agents = open(p).read() if os.path.exists(p) else ""
     subjects = git(root, "log", "--format=%s", ref or "HEAD", check=False).splitlines()
@@ -59,8 +62,6 @@ def main():
     exempt = set(owns.regime_files(agents, tree))
     problems = []
     for f in tree:
-        if f in exempt:
-            continue
         who = sorted({n["id"] for n in nodes for gl in n.get("owns") or [] if owns.match(gl, f, tree)})
         outs = [("out_of_scope " + gl) for gl in oos if owns.match(gl, f, tree)]
         outs += [("adoption area " + nm) for nm, gl in areas if owns.match(gl, f, tree)]
@@ -68,7 +69,7 @@ def main():
             problems.append("%s: owned by %s" % (f, " and ".join(who)))
         if who and outs:
             problems.append("%s: owned by %s and also in %s" % (f, " and ".join(who), ", ".join(sorted(set(outs)))))
-        if not who and not outs:
+        if not who and not outs and f not in exempt:
             problems.append("%s: no node owns it, and it is not out of scope or in an adoption area" % f)
     for n in nodes:
         st = n.get("status", "planned")
