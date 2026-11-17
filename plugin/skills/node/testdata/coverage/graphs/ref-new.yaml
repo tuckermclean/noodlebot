@@ -1,0 +1,3 @@
+template: {headings: [Purpose, Gate]}
+nodes:
+  - {id: A01, name: core, track: done, status: imported, deps: [], owns: ['src/core/**']}
