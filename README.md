@@ -19,12 +19,13 @@ check that proves it is done. From then on, noodlebot runs on its own:
   comment on, and accept or turn down. Nothing becomes part of the project until you accept it. When a job needs a
   decision only you can make, it stops and asks you in plain words, and carries on once you answer.
 - **The work checks itself.** Each job writes its tests first (small programs that prove the job is done), builds
-  until they pass, and is reviewed by a second agent before it reaches you. Every pull request is tested again
-  automatically, and you see the result.
-- **It keeps you informed.** One short log a day, as a GitHub issue, says what started, what finished, what it cost
+  until they pass, and is reviewed by a second agent before it reaches you. If the project runs automatic checks on
+  every change (*CI*), each pull request is tested again and you see the result.
+- **It keeps you informed.** One short log a day, as a GitHub *issue* (a discussion thread on the project's page), says what started, what finished, what it cost
   and what is waiting on you, and GitHub notifies you of each step.
-- **It stays within your AI plan.** It watches your usage and stops starting new work before you hit your limit, so
-  you can still use your AI yourself.
+- **It paces itself against your AI plan.** It watches your usage and stops starting new work before it uses up your
+  5-hour allowance, so you keep some for yourself. Pacing the weekly allowance as well is a setting
+  ([Tuning](#tuning)).
 
 You spend your time on the decisions only you can make, not on typing code or minding agents.
 
@@ -45,8 +46,9 @@ approve. One machine can do this for several projects at once. noodlebot is buil
 
 ## What you'll need
 
-- A **GitHub** repository for each project, and a **GitHub App** for noodlebot to act as (here, `n00dl3b0t`).
-  The App can propose changes but never accept them.
+- A **GitHub** repository (the project's home on GitHub: its code, history, issues and pull requests) for each
+  project, and a **GitHub App** for noodlebot to act as (here, `n00dl3b0t`). noodlebot uses it to propose changes and
+  never accepts them; protecting the `main` branch makes GitHub enforce that too.
 - An **AI plan** for the agents (it runs Claude Code sessions today).
 - A **Linux machine** that stays on, or a container host ([Setting it up](#setting-it-up)).
 - **The plan:** a `docs/graph.yaml` and a `nodes/` folder in the project. For a project without one, the
@@ -60,7 +62,7 @@ The rest of this page is for running it. How noodlebot is built is in [`SPEC.md`
 | Something to do | Where you see it | What you do |
 |---|---|---|
 | A node has a **question** | a comment on the node's issue, and a line in the daily log | Reply on that issue in plain words ([Answering a question](#answering-a-question)). |
-| A **node PR** is ready (finished work) | a pull request on a `node/<ID>-<name>` branch | Review it. Comment to have the bot change it; merge it when it's right. |
+| A **node PR** is ready (finished work) | a pull request on a `node/<ID>-...` branch | Review it. Comment to have the bot change it; merge it when it's right. |
 | A **spec PR** is ready (a change to the plan) | a pull request on a `spec/...` branch, from a question or a labelled issue | Merge it, and the node is built (again) to the new plan. |
 | You want **something new built** | | Label an issue `noodlebot` ([Handing an issue to the bot](#handing-an-issue-to-the-bot)). |
 | A node is **FAILED** (it gave up) | the daily log, `nbctl.py status` | Read why, fix the cause, delete the marker ([Troubleshooting](#troubleshooting)). |
@@ -81,7 +83,8 @@ Each repository gets one log issue a day, "noodlebot log <date>", labelled `nood
   the two and tries to pin the new one. Closing today's issue yourself is fine: the loop opens another.
 
 `scheduler/report.py` writes it after each 60 s tick. Its failures go to `state/<name>/report.log` and never stop the
-loop.
+loop. (`state/` is in the runtime root, `~/.local/share/noodlebot`; `<name>`, here and below, is the repository's name,
+the part after the `/`.)
 
 From a terminal:
 
@@ -93,7 +96,7 @@ From a terminal:
 ## Answering a question
 
 A session that needs a decision stops, and the loop posts the question as a comment on the unit's **home issue**. For
-a node that is the first issue on its spec's **Resolves:** line, or a "Build <ID> <name>" issue labelled `noodlebot-unit`
+a node that is the first issue on its spec's **Resolves:** line, or a "Build <ID> ..." issue labelled `noodlebot-unit`
 that the loop opens for it; for a triage it is the labelled issue itself. A new question reopens a closed home issue.
 
 - **Reply on that issue in plain words** ("Q1 approve, Q2 as recommended"). Only the repository owner's comments count.
@@ -101,7 +104,8 @@ that the loop opens for it; for a triage it is the labelled issue itself. A new 
   starts again with 2 fresh starts, at its turn in the start queue and unless the throttle holds, and reads every
   answer so far. A local `ANSWER.md` (below) is taken within seconds.
 - If several questions are open on the same issue, start with the ID (`B03: ...`). You can also reply on the daily log
-  issue, starting with the ID (or `#<N>:` for a triage).
+  issue, starting with the ID (or `#<N>:` for a triage). A question is answered once, from whichever issue you
+  replied on.
 - **Locally**, write `ANSWER.md` next to the question:
   `$NOODLEBOT_DATA/state/<name>/node/<ID>/QUESTION.md` → `.../ANSWER.md`. Write it to a temporary name and `mv` it into
   place, so the loop never reads half a file.
@@ -112,7 +116,7 @@ the node starts again on the new spec at its next turn (the log says so when it 
 ## Reviewing and merging PRs
 
 - **The bot never merges, approves or pushes to `main`.** You merge (squash).
-- **Comment or review on a bot PR** to have it changed: the loop collects your comments and reviews and starts a feedback
+- **Comment or review on a bot PR** (as the repository owner) to have it changed: the loop collects your comments and reviews and starts a feedback
   session for that PR, which pushes the change and replies.
 - A node PR that conflicts with `main` gets an update session by itself.
 - On a node PR, each pushed head gets its CI result and a fresh review's verdict as comments on the node's home issue.
@@ -203,7 +207,8 @@ Each loop tick runs `scheduler/deploy.sh`, which brings new commits on noodlebot
 - Each runtime deploy records the commit it replaced as the rollback point.
 
 `nbctl.py status` shows the deployed commit, the rollback point, the rejected commits and the last failure;
-`GET /v1/deploy` also has the last deploy. To retry a rejected commit (for example after re-running its CI) or to roll back, use the deploy controls of
+`GET /v1/deploy` also has the last deploy. A rollback marks the commit it left as rejected, so it stays out until you
+retry it. To retry a rejected commit (for example after re-running its CI) or to roll back, use the deploy controls of
 the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state/<name>/deploy.log`.
 
 ## Troubleshooting
@@ -211,7 +216,7 @@ the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state
 | You see | It means | Do |
 |---|---|---|
 | `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why and what to do. | Do what the file says (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (2 fresh starts). |
-| `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is rejected, or (with `USAGE_7D_PACE=1`) the week is ahead of pace. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
+| `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is past its warning or limit (the weekly warning excepted), or (with `USAGE_7D_PACE=1`) the week is ahead of pace. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
 | A session that hit the usage limit | It's resumed by itself after the reset. | Nothing. |
 | `not deployed: ... fails CI` / `make test` | A new noodlebot commit failed its check; the old code still runs. | Fix `main`, or re-run its CI and retry the deploy. |
 | `loop not running` in `loops.sh status` | It stopped (a STOP file, or it crashed). | Remove `~/STOP` if it exists, then `scheduler/loops.sh start` (it removes a stale `~/STOP-<name>` itself). |
@@ -253,7 +258,8 @@ The page also takes `?gist=<id>`, which wins over `config.json`.
 
 An HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
 `$NOODLEBOT_DATA/api.sock` (mode 0600, so only you can use it). `loops.sh start` and `stop` start and stop it with the
-loops. Every answer is JSON with `"version": 1`, except the event stream.
+loops. Every answer is JSON with `"version": 1`, except the event stream and the schemas. Anyone who can use the socket
+(including through a forwarded copy) can use the controls; any other write is a 405.
 
     curl --unix-socket ~/.local/share/noodlebot/api.sock http://localhost/v1/repos
 
