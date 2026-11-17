@@ -3,6 +3,7 @@
 # could still end in a successful run. Prints one line per problem, then `PROBLEMS <n>`; exit 1 if n > 0.
 #   python3 -I scheduler/check-ci-workflow.py [<workflow>]
 # The expected env values repeat D08-AC-1's; change them here when the CI budgets change.
+import fnmatch
 import os
 import re
 import sys
@@ -12,15 +13,27 @@ EXPECT = {"TEST_FILE_BUDGET": "60", "TEST_BUDGET": "360", "SITE_TESTS": "require
 IF_RE = re.compile(r"^(?:\$\{\{\s*)?github\.event_name\s*==\s*(?:'([^']*)'|\"([^\"]*)\")\s*(?:\}\})?$")
 
 
+def glob_main(pats):
+    """True when main matches any GitHub branch glob in pats (a ! pattern excludes)."""
+    hit = False
+    for p in pats:
+        p = str(p)
+        neg = p.startswith("!")
+        g = p[1:] if neg else p
+        if fnmatch.fnmatchcase("main", g.replace("**", "*")):
+            hit = not neg
+    return hit
+
+
 def is_make_test(run):
     if not isinstance(run, str):
         return False
     for seg in re.split(r"[;&|\n()]", run):
         toks = seg.split()
-        if any(t.endswith("runtests.sh") for t in toks):
+        if any(os.path.basename(t) == "runtests.sh" for t in toks):
             return True
         for i, t in enumerate(toks):
-            if t == "make" and "test" in toks[i + 1:]:
+            if os.path.basename(t) in ("make", "gmake") and "test" in toks[i + 1:]:
                 return True
     return False
 
@@ -58,11 +71,11 @@ def check(wf):
     else:
         v = trig["push"]
         br = v.get("branches") if isinstance(v, dict) else None
-        if br is not None and "main" not in (br if isinstance(br, list) else [br]):
+        if br is not None and not glob_main(br if isinstance(br, list) else [br]):
             out.append("workflow: push is not triggered for branch main")
         if isinstance(v, dict) and "branches-ignore" in v:
             ign = v["branches-ignore"]
-            if "main" in (ign if isinstance(ign, list) else [ign]):
+            if glob_main(ign if isinstance(ign, list) else [ign]):
                 out.append("workflow: push ignores branch main")
 
     wf_env = wf.get("env")
@@ -117,7 +130,7 @@ def check(wf):
                 want = dict(EXPECT)
                 if e == "pull_request":
                     want["TEST_BUDGET_ENFORCE"] = "1"
-                for k in sorted(list(want) + ["TEST_BUDGET_ENFORCE"]):
+                for k in sorted(set(want) | {"TEST_BUDGET_ENFORCE"}):
                     val = env.get(k)
                     sv = None if val is None else str(val)
                     if sv is not None and "${{" in sv:
