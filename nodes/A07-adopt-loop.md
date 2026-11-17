@@ -6,7 +6,8 @@
 
 **Owns:** in `scheduler/loop.sh`, the adoption state read from `origin/main`, the adoption units (when one starts, its
 worktree and state, its end), triage waiting during an adoption, and the skill and template used for updates and
-feedback of `spec/adopt*` PRs; the session template `scheduler/unattended-adopt.md` (new); the adoption kind in `scheduler/turn.py`;
+feedback of `spec/adopt*` PRs, and the throttle's view of adoption sessions in `scheduler/usage.py` (with its case
+in `scheduler/usage.test.sh`), `scheduler/status.sh` and `scheduler/loops.sh`; the session template `scheduler/unattended-adopt.md` (new); the adoption kind in `scheduler/turn.py`;
 the adoption home issue ("Adopt <name>", created as unit home issues are) and its answers in `scheduler/report.py`; in `plugin/skills/adopt/SKILL.md`, the `--area
 <name>`, `--plan`, `--update <N>` and `--feedback <N>` modes; the recorded `--area` dry run under
 `plugin/skills/adopt/example-area/`; the new test `scheduler/loop-a07.test.sh` and its line in the `Makefile`'s
@@ -33,10 +34,12 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
   - a graph with `adoption` and no area left: one `adopt/plan` session; after its PR is merged (no `adoption`), nothing;
   - an adoption PR closed without merging: that unit held by `FAILED` naming the PR;
   - owner feedback on a `spec/adopt-<name>` PR, and that PR conflicting with main: a session in `pr/<N>/` as today,
-    rendered from `unattended-adopt.md` with `--feedback` or `--update`, not a triage;
+    rendered from `unattended-feedback.md` or `unattended-update.md` with `/noodlebot:adopt --feedback|--update <N>`,
+    not a triage, after the unit's own worktree has been removed so the PR's branch can be checked out;
   - a labelled issue while an adoption is in progress: `issues.py` not asked, one status-log line; triaged after the
     adoption ends;
   - an adoption unit and a triage share the one slot;
+  - a running adoption session counted by `usage.py` (in `scheduler/usage.test.sh`);
   - the loop running from a checkout without `unattended-adopt.md`: no adoption start, one status-log line, the tick
     carries on;
   - end to end with the fake forge: scaffold, area one, area two and plan, each PR merged by the fake, ending with a
@@ -61,8 +64,10 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
    At most one adoption session runs at a time, in the triage's slot, through the start queue. *A07-AC-1, A07-AC-2.*
 2. **The unit.** Its state is `state/<name>/adopt/<key>/` with the usual markers (a question holds it until it is
    answered; its PR is waited for with `WAITING-PR`; a PR closed without merging writes `FAILED`). Its session works
-   in `worktrees/<name>/adopt-<key>`, on `spec/adopt` (scaffold) or `spec/adopt-<key>` from `origin/main`, removed once
-   the PR is merged or closed. Its milestones and questions go to one issue, "Adopt <name>", labelled
+   in `worktrees/<name>/adopt-<key>`, on `spec/adopt` (scaffold) or `spec/adopt-<key>` from `origin/main`. The worktree
+   is removed when the session ends (its branch is pushed by then), so an update or feedback session of its PR can
+   check the branch out. The throttle (`usage.py`), `status.sh` and `loops.sh status` count adoption sessions like
+   other sessions. Its milestones and questions go to one issue, "Adopt <name>", labelled
    `noodlebot-unit`, which `report.py` creates as it creates other units' home issues; since one adoption unit is open
    at a time, an owner reply there answers it.
    *A07-AC-2.*
@@ -77,12 +82,13 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
    `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`, `check-spec-diff.py` passes, and one spec PR
    `spec/adopt-<name>` is opened. It writes no code and no tests. *A07-AC-3.*
 4. **The plan** (`--plan`). The session reads the open issues (closed ones as history), turns each into a planned node
-   or a criterion of one (deps on the imported nodes whose code it changes, `owns` for the files it will add,
-   **Resolves:** the issue), removes `adoption` from the graph, and opens `spec/adopt-plan`, with the same checks.
+   or a criterion of one (placed as A02 says: deps on the nodes whose files it changes and on the nodes that own the
+   folders where it will add files, `owns` only for added paths no existing glob matches; **Resolves:** the issue), removes `adoption` from the graph, and opens `spec/adopt-plan`, with the same checks.
    *A07-AC-3.*
 5. **Updates and feedback** on `spec/adopt*` PRs (a conflict with main, the owner's comments and reviews) keep their
-   state in `pr/<N>/` as for any spec PR (`feedback.py` and the pickup step unchanged), but the session is rendered
-   from `unattended-adopt.md` and runs `/noodlebot:adopt --update <N>` or `--feedback <N>` instead of a triage.
+   state in `pr/<N>/` as for any spec PR (`feedback.py` and the pickup step unchanged) and are rendered from the
+   existing `unattended-update.md` and `unattended-feedback.md`, with `@CMD@` set to `/noodlebot:adopt --update <N>`
+   or `--feedback <N>` instead of the triage's.
    *A07-AC-4.*
 6. **Triage waits** while the graph is missing or has `adoption`: the loop does not ask `issues.py` for a triage and
    logs one line. A labelled issue is triaged once the adoption ends (the plan session read it already, and the triage
@@ -95,7 +101,7 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
 - **A07-AC-1** — A repository with no graph gets one `adopt/scaffold` session in its own worktree whose prompt names the repository and the skill, none while its spec PR is open, and none (one log line) when the template is missing. *Verify:* `bash scheduler/loop-a07.test.sh`.
 - **A07-AC-2** — Areas are mapped one at a time in list order, the next only after the previous area's PR is merged, then one plan session; a question holds a unit and an owner reply on the "Adopt <name>" issue answers it; a PR closed without merging fails it. *Verify:* `bash scheduler/loop-a07.test.sh` and `sh scheduler/report.test.sh`.
 - **A07-AC-3** — The recorded `--area` dry run writes imported nodes that together own exactly the area's files, removes the area from the graph, and passes `check-regime.py` and `check-coverage.py`; the `--plan` text turns open issues into planned nodes and removes `adoption`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
-- **A07-AC-4** — Feedback on and a conflict of a `spec/adopt*` PR start the adoption unit with `--feedback` or `--update`, not a triage. *Verify:* `bash scheduler/loop-a07.test.sh`.
+- **A07-AC-4** — Feedback on and a conflict of a `spec/adopt*` PR start a session in `pr/<N>/` from the feedback or update template running `/noodlebot:adopt --feedback` or `--update`, not a triage, on the PR's branch, which the adoption unit's removed worktree no longer holds; the throttle counts adoption sessions. *Verify:* `bash scheduler/loop-a07.test.sh`.
 - **A07-AC-5** — A labelled issue is not triaged while an adoption is in progress, and is triaged after it. *Verify:* `bash scheduler/loop-a07.test.sh`.
 - **A07-AC-6** — With the fake forge, a repository goes from no graph through the first PR, two area PRs and the plan PR to a graph without `adoption` that `check-regime.py` and `check-coverage.py` pass, and an `origin/main` that does not resolve starts no adoption. *Verify:* `bash scheduler/loop-a07.test.sh`.
 

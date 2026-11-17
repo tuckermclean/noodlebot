@@ -27,7 +27,8 @@ dep criterion the node itself changes is not pinned: the node's own criterion su
    node's **Changes** and the deps' `owns`). A criterion whose behaviour the node keeps is pinned; one the node changes
    is superseded by the node's own criterion that states the new behaviour (change 5), and is not pinned. *A08-AC-1.*
 2. **The commit.** A tester writes the pins: a commit with the subject `pin(<ID>): …` that touches only test and
-   fixture paths (new test files placed as A05 allows, under the dep's folders or the node's own `owns`) and carries
+   fixture paths (new test files placed as A05 allows: under a folder a dep owns, or in the node's own `owns` only where no other node's
+   glob matches) and carries
    one `Pin-Mutation: <DEP>-AC-<n>: <path>: <what is broken> -> <the case that fails>` trailer per pinned criterion,
    naming the criterion it pins. The tester
    returns each mutation as a diff in its handoff; it does not edit the code. *A08-AC-1.*

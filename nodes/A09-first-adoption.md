@@ -33,6 +33,7 @@ or its template is fixed here, test-first.
 - **A09-AC-2** — The record holds every adoption PR's link, the areas and their nodes, the gate, the questions, and `check-regime.py` and `check-coverage.py` reporting `PROBLEMS 0` on the final `main`; each fix to the skill or template has its case. *Verify:* `plugin/skills/adopt/first-adoption.md` and `sh plugin/skills/adopt/adopt.test.sh`.
 
 ## Risks
-- The run takes as long as the owner's merges: one PR per area. The node's session waits with its question or its
-  `WAITING-PR` between them, and may need several starts.
+- The run takes as long as the owner's merges: one PR per area. The node's session waits between them with a
+  `QUESTION.md` only (a `WAITING-PR` would name another repository's PR, which this repository's loop cannot track),
+  and may need several starts.
 - The chosen repository's code is read by sessions; the owner chooses one whose contents may be.

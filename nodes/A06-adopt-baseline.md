@@ -41,7 +41,8 @@ yet. Mapping the areas into imported nodes is A07's work.
 2. **The questions** keep today's (scope, priorities, what is done, principles, open decisions) and add three, each
    with a recommendation: the gate command (proposed from CI, the Makefile or the package scripts); the paths to
    leave out of scope, with reasons (proposed from the inventory's candidates); and the areas (the inventory's
-   proposal, which the owner may rename, merge or split). *A06-AC-1.*
+   proposal, which the owner may rename, merge or split). A candidate the owner keeps in scope goes into an area.
+   *A06-AC-1.*
 3. **The baseline.** After the answers, the skill runs the gate command once in the clone. It records in
    `gate.fail_pattern` a regular expression matching the lines the command prints for a failure (asked for with the
    gate command when the output does not make it plain), and each failing test in `gate.known_red` as its full name
@@ -53,7 +54,8 @@ yet. Mapping the areas into imported nodes is A07's work.
    code is mapped (A07). `check-regime.py` and `check-coverage.py` must report `PROBLEMS 0` before the push: every
    tracked file is a regime file, out of scope, or in an area. The PR is `spec/adopt`, as today. *A06-AC-2,
    A06-AC-3.*
-5. **The dry run** does the same offline into its output folder, the gate run included. *A06-AC-3.*
+5. **The dry run** does the same offline into its output folder, the gate run included: it copies the input
+   repository to a temporary folder first and runs the gate there, so nothing is written into the input. *A06-AC-3.*
 
 ## Gate
 - **A06-AC-1** — The skill reads the inventory instead of every file and asks for the gate command, the out-of-scope paths and the areas, each with a recommendation. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
