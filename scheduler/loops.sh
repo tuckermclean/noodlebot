@@ -215,7 +215,7 @@ stop)
 	if [ -e "$nb/scheduler/api.py" ]; then
 		if held "$root/api.lock"; then
 			case $hpid in '' | *[!0-9]* | 0) hpid=0 ;; esac
-			if [ "$hpid" -le 0 ] || ! tr '\0' ' ' <"/proc/$hpid/cmdline" 2>/dev/null | grep -q 'scheduler/api\.py'; then
+			if [ "$hpid" -le 0 ] || ! tr '\0' ' ' 2>/dev/null <"/proc/$hpid/cmdline" | grep -q 'scheduler/api\.py'; then
 				echo "api: lock holder (pid $hpid) is not the API server; not signalled" >&2
 				rc=1
 			elif [ "$rc" != 0 ]; then

@@ -160,7 +160,9 @@ TESTS = \
 	scheduler/pickup.test.sh \
 	scheduler/pickup-retry.test.sh \
 	scheduler/pickup-window.test.sh \
+	scheduler/pickup-s10.test.sh \
 	scheduler/forge.test.sh \
+	scheduler/quiet-reads.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
 	scheduler/runtests-d08.test.sh \

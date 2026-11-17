@@ -3,7 +3,7 @@
 # add an override file that names the image. The config folder (repos, token, oauth-token, optional gitconfig)
 # is the host's ~/.config/noodlebot, or the folder in $NOODLEBOT_CONFIG; it is mounted read-only.
 # The settings under devices and security_opt are what rootless podman nested in this container needs
-# (README, section "Container"); the container is not privileged and mounts no container-runtime socket.
+# (README, section "Running it in a container"); the container is not privileged and mounts no container-runtime socket.
 services:
   noodlebot:
     image: ghcr.io/owner/name:latest
