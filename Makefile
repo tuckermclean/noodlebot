@@ -113,6 +113,7 @@ TESTS = \
 	scheduler/loop-a07-resume.test.sh \
 	scheduler/loop-a07-release.test.sh \
 	scheduler/loop-a07-reorder.test.sh \
+	scheduler/loop-a07-e2e.test.sh \
 	scheduler/loop-g04-cap.test.sh \
 	scheduler/loop-R02-prompts.test.sh \
 	scheduler/loop-R02-node.test.sh \
