@@ -121,5 +121,28 @@ mk base; edit src/c/x.txt; fin
 to=nosuchcommit; chk "A05-AC-1: an unknown commit exits 2" 2; to=HEAD
 from=nosuchcommit; chk "A05-AC-1: an unknown <from> exits 2" 2; from=main
 
+# ---- main moving on after the branch's last merge of it (the diff is from the merge base)
+mk base; edit src/c/x.txt; fin
+gt checkout -q main; add src/b/late.txt; gt add -A && gt commit -qm "main moves again"; gt checkout -q node
+edit src/c/y.txt; gt add -A && gt commit -qm "node again"
+chk "A05-AC-1: a file only main gained after the branch's last merge of it (owned by another node) is not judged" 0 -- "src/b/late.txt" "NOT OWNED"
+
+# ---- the regime's exempt files are read at <from>: a branch cannot widen them
+# mkx: like mk base, but AGENTS.md carries a Spec files line (SPEC.md, docs/graph.yaml, nodes/, misc/z.txt)
+mkx() { mk base; cp "$fx/agents-spec.md" "$r/AGENTS.md"; gt add -A && gt commit -qm "spec files line" && gt checkout -q main && gt merge -q --ff-only node && gt checkout -q node; }
+mkx; sed 's|`misc/z.txt`|`misc/z.txt`, `src/d/`|' "$r/AGENTS.md" >"$r/AGENTS.new" && mv "$r/AGENTS.new" "$r/AGENTS.md"; edit src/d/y.txt; edit src/c/x.txt; fin
+chk "A05-AC-1: a branch adding a folder another node owns to the Spec files line does not exempt it (NOT OWNED, owner A04)" 1 "NOT OWNED src/d/y.txt (owner: A04)"
+mkx; edit misc/z.txt; edit src/c/x.txt; fin
+chk "A05-AC-1: a file on the Spec files line at <from> (misc/z.txt) is exempt" 0 -- "NOT OWNED"
+mkx; edit misc/z.txt; sed 's|`misc/z.txt`|`src/d/`|' "$r/AGENTS.md" >"$r/AGENTS.new" && mv "$r/AGENTS.new" "$r/AGENTS.md"; fin
+chk "A05-AC-1: a branch dropping a file from the Spec files line is still exempt for it (read at <from>)" 0 -- "NOT OWNED src/d" "NOT OWNED misc/z.txt"
+
+# ---- an unknown node ID (in neither graph)
+mk base; edit src/c/x.txt; fin
+out=$(python3 -I "$src/check-owns-diff.py" --repo "$r" A99 main HEAD 2>&1); crc=$?
+if [ "$crc" -eq 2 ] && [ -f "$src/check-owns-diff.py" ] && printf '%s\n' "$out" | grep -qF "unknown node" && ! printf '%s\n' "$out" | grep -qF "NOT OWNED"; then
+	echo "PASS: A05-AC-1: an unknown node ID prints unknown node and exits 2, no NOT OWNED lines"
+else echo "FAIL: A05-AC-1: an unknown node ID: want exit 2, line unknown node, no NOT OWNED; got exit $crc: $out"; fails=$((fails + 1)); fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all check-owns-diff checks"
