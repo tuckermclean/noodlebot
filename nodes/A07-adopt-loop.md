@@ -18,7 +18,7 @@ clone (for runs by hand only; a loop run works in the checkout its prompt names)
 `TEST_FILE_BUDGET`, the end-to-end run in its own file) and their lines in the `Makefile`'s
 `TESTS`, with its fixtures under `scheduler/testdata/`; their cases in `scheduler/turn.test.sh`,
 `scheduler/report.test.sh` and `plugin/skills/adopt/adopt.test.sh`.
-**Resolves:** #139
+**Resolves:** #139, #151
 
 ## Purpose
 After this node the loop adopts a repository by itself, from the first PR to a complete graph. A repository on the
@@ -105,7 +105,7 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
    `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`, `check-spec-diff.py` passes, and one spec PR
    `spec/adopt-<name>` is opened. It writes no code and no tests. *A07-AC-3.*
 4. **The plan** (`--plan`). The session reads the open issues (closed ones as history), turns each into a planned node
-   or a criterion of one (placed as A02 says: deps on the nodes whose files it changes and on the nodes whose globs match the paths it
+   or a criterion of one (placed as A02 and A05 say: deps on the nodes whose files it changes and on the nodes whose globs match the paths it
    will add files at, `owns` only for added paths no other node's glob and no `out_of_scope` glob matches; **Resolves:** the issue), removes `adoption` from the graph, and opens `spec/adopt-plan`, with the same checks.
    *A07-AC-3.*
 5. **Updates and feedback** on `spec/adopt*` PRs (a conflict with main, the owner's comments and reviews) keep their

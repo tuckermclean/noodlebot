@@ -162,6 +162,7 @@ TESTS = \
 	scheduler/quick-gate.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
+	scheduler/runtests-d08.test.sh \
 	container/entrypoint.test.sh \
 	container/container.test.sh
 
