@@ -1,25 +1,72 @@
 # noodlebot
 
-noodlebot builds a repository's planned work for you. It reads the repository's node graph (`docs/graph.yaml` and
-`nodes/`), starts an unattended agent session for each node that is ready, has it build the node test-first, and hands
-you the result as a **pull request** or a **question**. You review, answer and merge; the bot never merges. It runs on one
-machine (or in one container), for several repositories at once, as the GitHub App `n00dl3b0t`.
+**noodlebot turns a written plan for a piece of software into working, tested code, while you do something else.**
+You decide what gets built and approve every change. AI agents do the building, around the clock.
 
-This page is for running it. How it is built: [`SPEC.md`](SPEC.md) (architecture and principles) and
-[`AGENTS.md`](AGENTS.md) (working on the code). [Where things are](#where-things-are) maps the folders.
+## Why you'd want it
+
+Building software is mostly a long list of small jobs: add this feature, fix that, make this faster. Each job is quick
+to describe but takes hours of someone's careful work. AI coding agents can now do much of that work, but used directly
+they need a person beside them, starting each task, watching it, and checking the result. The person becomes the
+bottleneck again.
+
+noodlebot removes that babysitting. You write the plan once, as a list of small jobs, each with a description and a
+check that proves it is done. From then on, noodlebot runs on its own:
+
+- **It works through the list by itself**, day and night. It starts a job as soon as the jobs it depends on are
+  finished, runs several at once, and picks up where it left off after an interruption.
+- **Every result waits for your approval.** A finished job arrives as a *pull request*: a proposed change you can read,
+  comment on, and accept or turn down. Nothing becomes part of the project until you accept it. When a job needs a
+  decision only you can make, it stops and asks you in plain words, and carries on once you answer.
+- **The work checks itself.** Each job writes its tests first (small programs that prove the job is done), builds
+  until they pass, and is reviewed by a second agent before it reaches you. Every pull request is tested again
+  automatically, and you see the result.
+- **It keeps you informed.** One short log a day, as a GitHub issue, says what started, what finished, what it cost
+  and what is waiting on you, and GitHub notifies you of each step.
+- **It stays within your AI plan.** It watches your usage and stops starting new work before you hit your limit, so
+  you can still use your AI yourself.
+
+You spend your time on the decisions only you can make, not on typing code or minding agents.
+
+## How it works
+
+The plan lives in the project itself, as a set of short documents. Each document describes one job (a *node*): what
+it must do, how to check it, and which other nodes it depends on. noodlebot then repeats one cycle:
+
+1. **Pick.** It finds every node whose dependencies are finished.
+2. **Build.** It starts an AI session on each one, in its own private copy of the project.
+3. **Hand over.** The session either opens a pull request with the finished, tested work, or asks you a question.
+4. **You decide.** You answer the question or review the pull request. To accept it, you *merge* it.
+5. **Repeat.** Your merge finishes that node, which may unlock others, and the cycle carries on.
+
+New ideas don't need a full plan. Label an ordinary GitHub issue `noodlebot`, and it drafts the new node for you to
+approve. One machine can do this for several projects at once. noodlebot is built this way itself: its own plan is in
+`docs/graph.yaml` and `nodes/`.
+
+## What you'll need
+
+- A **GitHub** repository for each project, and a **GitHub App** for noodlebot to act as (here, `n00dl3b0t`).
+  The App can propose changes but never accept them.
+- An **AI plan** for the agents (it runs Claude Code sessions today).
+- A **Linux machine** that stays on, or a container host ([Setting it up](#setting-it-up)).
+- **The plan:** a `docs/graph.yaml` and a `nodes/` folder in the project. For a project without one, the
+  `/noodlebot:adopt` skill drafts it from the code and your answers.
+
+The rest of this page is for running it. How noodlebot is built is in [`SPEC.md`](SPEC.md) (design) and
+[`AGENTS.md`](AGENTS.md) (working on its code).
 
 ## Your part, day to day
 
 | Something to do | Where you see it | What you do |
 |---|---|---|
-| A node has a **question** | a comment on the unit's issue, a line in the daily log | Reply on that issue in plain words ([Answering a question](#answering-a-question)). |
-| A **node PR** is ready | a PR on `node/<ID>-<name>` | Review it. Comment to have the bot change it; merge it when it's right. |
-| A **spec PR** is ready | a PR on `spec/...` (from a question or a triaged issue) | Merge it, and the node is built (again) on the new spec. |
+| A node has a **question** | a comment on the node's issue, and a line in the daily log | Reply on that issue in plain words ([Answering a question](#answering-a-question)). |
+| A **node PR** is ready (finished work) | a pull request on a `node/<ID>-<name>` branch | Review it. Comment to have the bot change it; merge it when it's right. |
+| A **spec PR** is ready (a change to the plan) | a pull request on a `spec/...` branch, from a question or a labelled issue | Merge it, and the node is built (again) to the new plan. |
 | You want **something new built** | | Label an issue `noodlebot` ([Handing an issue to the bot](#handing-an-issue-to-the-bot)). |
-| A unit is **FAILED** | the daily log, `nbctl.py status` | Read why, fix the cause, delete the marker ([Troubleshooting](#troubleshooting)). |
+| A node is **FAILED** (it gave up) | the daily log, `nbctl.py status` | Read why, fix the cause, delete the marker ([Troubleshooting](#troubleshooting)). |
 
-Everything else (starting sessions, resuming them after a usage limit or a restart, updating conflicting PRs, deploying
-its own new code) the loop does by itself.
+noodlebot does everything else by itself: it starts sessions, resumes them after a usage limit or a restart, updates
+pull requests that clash with newer work, and installs its own updates.
 
 ## Watching it: the daily log
 
