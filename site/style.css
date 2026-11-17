@@ -19,6 +19,8 @@
   --shadow-color: rgba(20, 30, 50, 0.08);
   --on-state: #14181d;
   --state-merged: #9ad29a;
+  --state-imported: #a8c8e8;
+  --state-pinned: #c4b5a0;
   --state-running: #6fb1e8;
   --state-failed: #e57373;
   --state-question: #f2c14e;
@@ -68,6 +70,8 @@
     --shadow-color: rgba(0, 0, 0, 0.4);
     --on-state: #10141a;
     --state-merged: #7fbf7f;
+    --state-imported: #86abd0;
+    --state-pinned: #ab9c86;
     --state-running: #5aa3de;
     --state-failed: #e06666;
     --state-question: #e0b040;

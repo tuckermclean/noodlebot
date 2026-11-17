@@ -1,0 +1,12 @@
+# Fixture for ready.test.sh (A02): an adopted graph. A02 is imported and A03 pinned (both done by declaration),
+# A01 and A05 are planned (no status = planned), A04 depends on both adopted nodes, A06 on A04.
+apiVersion: themonolith/v1
+kind: DependencyGraph
+gate: {command: make test, fail_pattern: "^FAIL", known_red: []}
+nodes:
+  - {id: A01, name: first-node, deps: [], track: now}
+  - {id: A02, name: imported-node, deps: [], track: done, status: imported, owns: ["src/imported/**"]}
+  - {id: A03, name: pinned-node, deps: [A02], track: done, status: pinned, owns: ["src/pinned/**"]}
+  - {id: A04, name: after-adopted, deps: [A02, A03], track: now, status: planned}
+  - {id: A05, name: after-planned, deps: [A01], track: now}
+  - {id: A06, name: last-node, deps: [A04], track: now}

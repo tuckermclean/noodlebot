@@ -3,7 +3,7 @@
 
   python3 -I <skill dir>/nodes.py [--grep TERM]...      (run from the repository root)
 
-State comes from the node branches' PRs (`node/<ID>-<name>`): merged, open #N, or none; a squash commit
+State comes from the node branches' PRs (`node/<ID>-<name>`): merged, open #N, or none; a node whose graph `status` is imported or pinned shows that instead; a squash commit
 subject "<ID> <name>: ..." on HEAD also counts as merged (run it on a fresh checkout of main). --grep lists,
 for each term, the nodes whose spec mentions it (case-insensitive), most mentions first. The PR list comes from the
 forge interface: in a session, $NOODLEBOT_FORGE (the wrapper scheduler/forge-cli.sh, which holds the token script) is run
@@ -197,6 +197,8 @@ def main():
         specs[n["id"]] = open(p).read() if os.path.exists(p) else ""
         owns = re.search(r"^\*\*Owns:\*\*\s*(.*)$", specs[n["id"]], re.M)
         st = "?" if state is None else state.get(n["id"], "none")
+        if n.get("status") in ("imported", "pinned"):
+            st = n["status"]
         print("%s %-22s %-11s track=%-8s deps=%-20s unlocks=%s" % (
             n["id"], n["name"], st, n.get("track", "-"), ",".join(n.get("deps", [])) or "-",
             ",".join(unlocks[n["id"]]) or "-"))

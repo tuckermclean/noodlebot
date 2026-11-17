@@ -51,6 +51,8 @@
       "type": "string",
       "enum": [
        "merged",
+       "imported",
+       "pinned",
        "pr-open",
        "running",
        "idle-limit",

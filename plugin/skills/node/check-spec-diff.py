@@ -57,6 +57,11 @@ def usage():
     return 2
 
 
+def in_spec(p, spec):
+    """A path is a spec file when it equals an entry or lies under an entry ending in "/"."""
+    return any(p == s or (s.endswith("/") and p.startswith(s)) for s in spec)
+
+
 def main(argv):
     repo, allow, pos = ".", [], []
     i = 0
@@ -97,7 +102,7 @@ def main(argv):
         source += ", plus --allow"
 
     def inside(p):
-        return any(p == s or (s.endswith("/") and p.startswith(s)) for s in spec)
+        return in_spec(p, spec)
 
     outside = []
     for p in diff.split("\0"):

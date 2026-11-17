@@ -5,7 +5,7 @@
 | now | none | A03, A04 | L |
 
 **Owns:** `plugin/skills/node/owns.py` (new: the one glob matcher and the list of the regime's own files that every ownership
-tool uses),
+tool uses), its shared spec-file rule `in_spec` in `plugin/skills/node/check-spec-diff.py` (behaviour unchanged),
 `plugin/skills/node/check-regime.py` (the new fields), `plugin/skills/node/check-regime.test.sh` and its fixtures under
 `plugin/skills/node/testdata/regime/`; in `scheduler/ready.py`, imported and pinned nodes as done, with their cases in
 `scheduler/ready.test.sh` and its new fixture `scheduler/testdata/graph-adopted.yaml`; the node states `imported` and `pinned` in `scheduler/api.py` and its node schema under

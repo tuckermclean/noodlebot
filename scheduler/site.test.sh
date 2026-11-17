@@ -808,5 +808,40 @@ else fail "U03-AC-4 site: a node whose WAITING-PR is in merged-prs.txt is ready 
 if u3is "$u3/outh" Z02 waiting-pr && u3is "$u3/outo" Z02 waiting-pr; then pass "U03-AC-4 site: a node whose spec PR is still open keeps waiting-pr (throttle holding and open)"
 else fail "U03-AC-4 site: a node whose spec PR is still open keeps waiting-pr (got '$(u3state "$u3/outh" Z02)' and '$(u3state "$u3/outo" Z02)')"; fi
 
+# ---- A02-AC-4: imported and pinned nodes have their own state in the repository file, and count as done for their dependants
+# Own small runtime root (A02/data, repository acme/adopt): X01 PR-merged, X02 imported, X03 pinned, X04 depends on both adopted
+# nodes (ready), X05 on an imported and an unmerged node (waits for the unmerged one only).
+a2=$tmp/A02
+mkdir -p "$a2/data/state/adopt/node" "$a2/data/repos" "$a2/data/deploy"
+cat >"$a2/data/state/adopt/graph.yaml" <<'GRAPH'
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - {id: X01, track: now, name: merged-one, deps: [], summary: "PR merged"}
+  - {id: X02, track: done, name: imported-one, deps: [], summary: "Imported", status: imported, owns: ["src/a/**"]}
+  - {id: X03, track: done, name: pinned-one, deps: [X02], summary: "Pinned", status: pinned, owns: ["src/b/**"]}
+  - {id: X04, track: now, name: after-adopted, deps: [X02, X03], summary: "Ready"}
+  - {id: X05, track: now, name: mixed-deps, deps: [X02, X06, X03], summary: "Waits"}
+  - {id: X06, track: now, name: unmerged-one, deps: [X01], summary: "Ready too"}
+GRAPH
+echo public >"$a2/data/state/adopt/visibility"
+printf '61 node/X01-merged-one\n' >"$a2/data/state/adopt/merged-prs.tsv"; printf '61\n' >"$a2/data/state/adopt/merged-prs.txt"
+: >"$a2/data/state/adopt/open-prs.tsv"; : >"$a2/data/state/adopt/open-prs.txt"; : >"$a2/data/state/adopt/subjects.txt"
+echo acme/adopt >"$a2/repos"
+mkdir -p "$a2/out"
+(cd "$tmp/cwd" && NOODLEBOT_DATA=$a2/data python3 -I "$src/site.py" build --data-root "$a2/data" --repos "$a2/repos" --out "$a2/out" --now 1700001000 --throttle "open: usage is fine" >"$a2/out.log" 2>&1 </dev/null)
+a2node() { # <ID> <python expr over n>: true when the node of the build satisfies the expression
+	python3 -I -c 'import json,sys; n = next(n for n in json.load(open(sys.argv[1] + "/repo.acme.adopt.json"))["nodes"] if n["id"] == sys.argv[2]); print(eval(sys.argv[3]))' "$a2/out" "$1" "$2" 2>/dev/null
+}
+a2is() { # <ID> <expr> <what>
+	if [ "$(a2node "$1" "$2")" = True ]; then pass "A02-AC-4 site: $1 $3"
+	else fail "A02-AC-4 site: $1 $3 (got $(a2node "$1" "n['state'], n['waiting_for']"); log: $(head -c 200 "$a2/out.log"))"; fi
+}
+a2is X01 "n['state'] == 'merged'" "a PR-merged node is merged"
+a2is X02 "n['state'] == 'imported' and n['waiting_for'] == []" "an imported node has the state imported"
+a2is X03 "n['state'] == 'pinned' and n['waiting_for'] == []" "a pinned node has the state pinned"
+a2is X04 "n['state'] == 'ready' and n['waiting_for'] == []" "with imported and pinned deps only is ready"
+a2is X05 "n['state'] == 'waiting' and n['waiting_for'] == ['X06']" "waits for its planned dep only, not for the imported and pinned deps"
+a2is X06 "n['state'] == 'ready'" "after a merged dep is ready"
+
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"
