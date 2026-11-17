@@ -87,7 +87,7 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
     question.
   - If the answer does not settle a blocking question, or contradicts itself, write a new
     QUESTION.md that says exactly what is still open, and end the run.
-- SMALL SPEC AMENDMENTS (the node skill's step 7: this node's spec only, apart from the graph changes named next, every criterion's meaning
+- SMALL SPEC AMENDMENTS (the node skill's step 7: this node's spec only, apart from the graph and dep changes named next, every criterion's meaning
   intact, such as a clearer Verify line, or a path added to this node's own Owns) need no question and no spec PR: commit
   them on the node branch and list them in the PR under "Spec amendments". In a graph with `owns` or a `gate`, adding, correcting or removing a glob of this node's own `owns` (and its Owns paragraph), an added glob only for paths no other node's glob and no `out_of_scope` glob matches; removing a `known_red` entry the change makes pass; and removing a dep's glob that the change (a deleted or moved file) leaves matching nothing, unless it is the dep's last glob (that takes a spec PR), are small amendments too: name them in the PR's Spec amendments. Without `owns` and `gate` nothing changes. A dep amendment for a pin is a small amendment too: replacing `unpinned` in a pinned dep criterion with the pin's test; replacing a changed dep criterion's Verify with `superseded by <ID>-AC-<n>`; and setting the dep's `status` to `pinned` in the graph when no `unpinned` criterion is left. Name them in the PR's Spec amendments.
 - SPEC CHANGES. A spec PR changes only the repository's spec files: the paths the checker
