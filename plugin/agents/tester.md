@@ -16,12 +16,12 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 
 ## RED must be valid
 - the red target exits non-zero, runs to its end, and reports each failure on its own line; a crash of the harness itself, or a missing subject turned into a pass, is not valid;
-- every other test still passes (the repository's quick test gate, run locally, apart from your red target).
+- every other test still passes (the repository's quick test gate, run locally, apart from your red target). With a `gate` in the graph, a run of the tests passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry; a non-zero exit with no matched line fails, and an empty `known_red` or no `fail_pattern` means it must exit 0. The evidence lists each failing line with the `known_red` entry it matched.
 
 If a new test already passes, stop and report `already_satisfied` with the evidence. If a criterion is ambiguous or contradicts the spec, stop and report it.
 
 ## You must not
-- write or change implementation, or change or remove any line of a test an earlier slice or node committed (you may add cases);
+- write or change implementation, or change or remove any line of a test an earlier slice or node committed (you may add cases), or of a test an imported or pinned node's criteria name in their Verify (frozen like an earlier node's tests: add cases, never change or remove one without the owner's approval);
 - edit `SPEC.md`, `docs/graph.yaml`, `nodes/`, `AGENTS.md`, or the spec and instruction files the repository's AGENTS.md and its guard config name;
 - touch anything `AGENTS.md` forbids (a live checkout, a running loop, a configuration directory);
 - push, amend, rebase or reset; read or print secrets.
