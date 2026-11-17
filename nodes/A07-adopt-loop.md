@@ -32,7 +32,8 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
   file), with the fake forge and harness:
   - an `origin/main` that does not resolve (a failed fetch): no adoption session, one status-log line;
   - a repository with no graph on `origin/main`: one adoption session (`adopt/scaffold`) in its own worktree, its
-    prompt naming the repository and the skill; no second start while its spec PR is open; a question holds it, and
+    prompt naming the repository, the skill and its worktree as the checkout to work in; no second start while its
+    spec PR is open; a question holds it, and
     the owner's reply on the "Adopt <name>" issue becomes its `ANSWER.md` and starts it again;
   - a graph with two areas: one session for the first area, its prompt naming the area, its globs and the inventory
     command; nothing for the second area while the first area's PR is open or its unit is held; after that PR is
@@ -47,32 +48,35 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
   - an adoption unit and a triage share the one slot;
   - a running adoption session counted by `usage.py` (in `scheduler/usage.test.sh`) and listed by `status.sh` and
     `loops.sh status`;
-  - an area whose PR was merged after the tick's fetch (its unit's `WAITING-PR` names a merged PR, the area still in the
-    fetched graph): no second session, one status-log line, until the area leaves the graph on `origin/main`;
-  - the "Adopt <name>" issue closed once the plan PR is merged;
+  - a scaffold, an area and a plan unit whose PR was merged after the tick's fetch (its `WAITING-PR` names a merged PR,
+    the fetched graph not showing it yet): no second session, one status-log line, until `origin/main` shows it;
   - the loop running from a checkout without `unattended-adopt.md`: no adoption start, one status-log line, the tick
     carries on;
   - end to end with the fake forge: scaffold, area one, area two and plan, each PR merged by the fake, ending with a
     graph without `adoption` that `check-regime.py` and `check-coverage.py` pass.
 - `scheduler/turn.test.sh` (extended): the adoption kind goes with triages in the start queue.
 - `scheduler/report.test.sh` (extended): the "Adopt <name>" issue (labelled `noodlebot-unit`) gets each adoption unit's
-  milestones and questions, and an owner reply there is recorded as the open unit's answer.
-- `plugin/skills/adopt/adopt.test.sh` (extended): the `--area`, `--plan`, `--update` and `--feedback` modes' text, and
+  milestones and questions; an owner reply there is recorded as the open unit's answer; the issue is closed once the
+  plan PR is merged.
+- `plugin/skills/adopt/adopt.test.sh` (extended): the `--area`, `--plan`, `--update` and `--feedback` modes' text, that a run
+  whose prompt names a checkout works there and makes no clone, and
   the recorded `--area` dry run under `example-area/` (A06's `testdata/baseline/` fixture with `example-baseline/`'s
-  drafts), whose imported nodes together own exactly the area's files; laid over the fixture repository and committed
+  drafts), whose imported nodes together own exactly the area's files not put out of scope; laid over the fixture repository and committed
   as in A06's test, `check-regime.py` and `check-coverage.py` pass.
 
 ## Changes
 1. **The adoption state.** Each tick, before the triage step, the loop reads `docs/graph.yaml` at `origin/main` (as it
    already reads YAML for spec-PR clashes). When `origin/main` does not resolve, nothing about adoption starts and one
    line is logged:
-   - no graph (`origin/main` resolves and has no `docs/graph.yaml`): the unit `adopt/scaffold` (`/noodlebot:adopt <repo>`, A06), unless an open `spec/adopt` PR exists;
+   - no graph (`origin/main` resolves and has no `docs/graph.yaml`): the unit `adopt/scaffold` (`/noodlebot:adopt
+     <repo>`, A06);
    - `adoption` with areas: the unit `adopt/<name>` for the first area in the list (`/noodlebot:adopt --area <name>`);
-     nothing starts while that area has an open `spec/adopt-<name>` PR, its unit is held (a question, `FAILED`), or its
-     unit's `WAITING-PR` names a merged PR while the area is still in the graph (the next fetch catches up; one log
-     line);
    - `adoption` with no area left: the unit `adopt/plan` (`/noodlebot:adopt --plan`);
    - otherwise there is no adoption.
+   Nothing starts for a unit while its PR (`spec/adopt`, `spec/adopt-<name>`, `spec/adopt-plan`) is open, while it is
+   held (a question, `FAILED`), or while its `WAITING-PR` names a merged PR that the fetched `origin/main` does not show
+   yet (scaffold: still no graph; area: the area still listed; plan: `adoption` still present): one log line, and the
+   next fetch catches up.
    At most one adoption session runs at a time, in the triage's slot, through the start queue. *A07-AC-1, A07-AC-2.*
 2. **The unit.** Its state is `state/<name>/adopt/<key>/` with the usual markers (a question holds it until it is
    answered; its PR is waited for with `WAITING-PR`; a PR closed without merging writes `FAILED`). Its session works
@@ -87,7 +91,7 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
 3. **Mapping an area** (`--area <name>`). The session runs `inventory.py --json --glob <glob>` for each of the area's
    globs and reads the area's files (it may read others to understand them, but maps only these). It writes one or
    more imported nodes:
-   - each node owns part of the area's files (together, all of them, each file once);
+   - each node owns part of the area's files (together, all of the area's files not put out of scope, each once);
    - its spec describes what the code does: Purpose, the existing tests under Tests, "none: imported" under Changes,
      and criteria of current behaviour, each *Verify* naming the existing test that shows it or reading `unpinned`;
    - deps on the already-mapped nodes whose code it relies on;
@@ -112,9 +116,9 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
    `QUESTION.md`. It never merges. A checkout without the template starts no adoption and logs it once. *A07-AC-1.*
 
 ## Gate
-- **A07-AC-1** — A repository with no graph gets one `adopt/scaffold` session in its own worktree whose prompt names the repository and the skill, none while its spec PR is open, and none (one log line) when the template is missing. *Verify:* each `bash scheduler/loop-a07*.test.sh`.
-- **A07-AC-2** — Areas are mapped one at a time in list order, the next only after the previous area's PR is merged, then one plan session; a question holds a unit and an owner reply on the "Adopt <name>" issue answers it; a PR closed without merging fails it; an area whose PR merged after the fetch starts no second session; the "Adopt <name>" issue is closed after the plan PR merges. *Verify:* each `bash scheduler/loop-a07*.test.sh` and `sh scheduler/report.test.sh`.
-- **A07-AC-3** — The recorded `--area` dry run writes imported nodes that together own exactly the area's files, removes the area from the graph, and passes `check-regime.py` and `check-coverage.py`; the `--plan` text turns open issues into planned nodes and removes `adoption`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
+- **A07-AC-1** — A repository with no graph gets one `adopt/scaffold` session in its own worktree whose prompt names the repository, the skill and its worktree as the checkout, none while its spec PR is open, and none (one log line) when the template is missing. *Verify:* each `bash scheduler/loop-a07*.test.sh`.
+- **A07-AC-2** — Areas are mapped one at a time in list order, the next only after the previous area's PR is merged, then one plan session; a question holds a unit and an owner reply on the "Adopt <name>" issue answers it; a PR closed without merging fails it; a unit (scaffold, area or plan) whose PR merged after the fetch starts no second session; the "Adopt <name>" issue is closed after the plan PR merges. *Verify:* each `bash scheduler/loop-a07*.test.sh` and `sh scheduler/report.test.sh`.
+- **A07-AC-3** — The recorded `--area` dry run writes imported nodes that together own exactly the area's files not put out of scope, removes the area from the graph, and passes `check-regime.py` and `check-coverage.py`; the `--plan` text turns open issues into planned nodes and removes `adoption`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 - **A07-AC-4** — Feedback on and a conflict of a `spec/adopt*` PR start a session in `pr/<N>/` from the feedback or update template running `/noodlebot:adopt --feedback` or `--update`, not a triage, on the PR's branch, which the adoption unit's removed worktree no longer holds; the throttle counts adoption sessions and `status.sh` and `loops.sh status` list them. *Verify:* each `bash scheduler/loop-a07*.test.sh` and `sh scheduler/usage.test.sh`.
 - **A07-AC-5** — A labelled issue is not triaged while an adoption is in progress, and is triaged after it. *Verify:* each `bash scheduler/loop-a07*.test.sh`.
 - **A07-AC-6** — With the fake forge, a repository goes from no graph through the first PR, two area PRs and the plan PR to a graph without `adoption` that `check-regime.py` and `check-coverage.py` pass, and an `origin/main` that does not resolve starts no adoption. *Verify:* each `bash scheduler/loop-a07*.test.sh`.

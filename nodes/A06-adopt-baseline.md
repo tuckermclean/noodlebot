@@ -23,7 +23,7 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
 ## Tests
 - `plugin/skills/adopt/adopt.test.sh` (extended):
   - the skill's text: it reads `inventory.py`'s output instead of every file, asks for the gate command, the
-    out-of-scope paths and the areas (each with a recommendation), runs the gate once, records `known_red`, drafts
+    out-of-scope paths and the areas (each with a recommendation), runs the confirmed gate once (section 3), records `known_red`, drafts
     `nodes: []`, and runs `check-regime.py` and `check-coverage.py` before the PR;
   - the recorded dry run under `example-baseline/`, made from `testdata/baseline/repo/` (a small repository with a
     vendored folder, which the test creates at run time and adds with `git add -f`, and one failing test) and
@@ -64,13 +64,15 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
 
 ## Gate
 - **A06-AC-1** — The skill reads the inventory instead of every file and asks for the gate command, the out-of-scope paths and the areas, each with a recommendation. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
-- **A06-AC-2** — The skill runs the gate once, records a `fail_pattern` and each failing test's full name in `known_red`, stops with a question when the gate cannot run, and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
+- **A06-AC-2** — The skill runs the confirmed gate once (section 3), records a `fail_pattern` and each failing test's full name in `known_red`, stops with a question when the gate cannot run, and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 - **A06-AC-3** — The recorded dry run under `example-baseline/` gives a graph with `nodes: []` whose `known_red` names the fixture's failing test; the test runs its `gate.command` in a copy of the fixture, applies `fail_pattern`, and finds at least one matched line, each containing a `known_red` entry; and laid over the fixture repository as the Tests say, `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`; the checks of `example/` still pass. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 
 ## Risks
-- The gate runs the repository's own command on the scheduler's machine. The command is the one the owner confirmed,
-  and it runs in the adoption's clone, never in a checkout someone works in.
-- A flaky suite gives an unstable `known_red`; the skill runs the gate once, and a later node that sees a listed
+- The gate runs the repository's own command on the scheduler's machine. Before the owner confirms it, section 1 may
+  run only a command the repository's own CI, Makefile or package scripts already run, in the adoption's clone or
+  worktree (a dry run: its temporary copy); any other command waits for the owner's confirmation, and the baseline is
+  the confirmed command's run.
+- A flaky suite gives an unstable `known_red`; the skill runs the confirmed gate once, and a later node that sees a listed
   failure pass removes it (A05).
 - A repository too small to split gets one area covering everything.
 - A frozen check of `adopt.test.sh` allows "noodlebot" in the adopt skill only as `/noodlebot:<skill>` and
