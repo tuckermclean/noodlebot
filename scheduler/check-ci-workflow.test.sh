@@ -177,4 +177,35 @@ bad "push trigger removed" "$tmp/f14.yml" - - 'push'
 defaults; ON_PR=''; mk "$tmp/f15.yml"
 bad "pull_request trigger removed" "$tmp/f15.yml" - - 'pull_request'
 
+# --- added after review: count and expression problems, one line per problem, push globs, a make path
+# lines <name> <file> <regex>: some problem line matches the regex (case-insensitive), exit 1.
+has_line() {
+	run "$2"
+	if [ "$rc" -eq 1 ] && grep -v '^PROBLEMS ' "$tmp/out" | grep -Eiq -e "$3"; then
+		pass "D10-AC-2: $1: exit 1, a problem line matches /$3/"
+	else
+		fail "D10-AC-2: $1: no problem line matching /$3/ (exit $rc): $(head -c 300 "$tmp/out" | tr '\n' '|')"
+	fi
+}
+
+has_line "f13: the per-event count is reported" "$tmp/f13.yml" 'exactly one.*(pull_request|push)|(pull_request|push).*exactly one'
+has_line "f10: TEST_FILE_BUDGET expression named as unreadable" "$tmp/f10.yml" 'TEST_FILE_BUDGET.*(expression|cannot be read)|(expression|cannot be read).*TEST_FILE_BUDGET'
+
+run "$tmp/f08.yml"
+if [ "$rc" -eq 1 ] && grep -qx 'PROBLEMS 1' "$tmp/out"; then
+	pass "D10-AC-2: f08: each problem printed once (PROBLEMS 1)"
+else
+	fail "D10-AC-2: f08: expected exit 1 and PROBLEMS 1, got exit $rc: $(head -c 300 "$tmp/out" | tr '\n' '|')"
+fi
+
+defaults; ON_PUSH="  push:
+    branches: ['**']"; mk "$tmp/g1.yml"
+ok "push to main by the glob '**'" "$tmp/g1.yml"
+defaults; ON_PUSH="  push:
+    branches: ['main*']"; mk "$tmp/g2.yml"
+ok "push to main by the glob 'main*'" "$tmp/g2.yml"
+
+defaults; PUSH_RUN='/usr/bin/make test'; mk "$tmp/m1.yml"
+bad "run: /usr/bin/make test is a make test step, not exactly make test" "$tmp/m1.yml" unit '(push)' 'run'
+
 [ "$fails" -eq 0 ]
