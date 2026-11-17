@@ -148,5 +148,57 @@ adline=$(printf '%s\n' "$st" | grep 'adopt/wrapy' | grep -i 'merge')
 ok "A07-AC-2: the status issue lists the adoption unit waiting on its PR (precondition)" test -n "$adline"
 ok "A07-AC-2: and does not say that it resumes after the merge (the next unit starts)" sh -c "! printf '%s' \"\$1\" | grep -qi resum" _ "$adline"
 
+# S2+S4 re-review: the loop releases a unit's WAITING-PR into answered/<ts>-SPEC-PR in the tick its merged PR shows on the
+# fetched graph, before report.py runs; the merge is still reported (the plan unit closes the issue, a unit gets its milestone)
+rel() { d=$1/adopt/$2; mkdir -p "$d/answered"; mv "$d/WAITING-PR" "$d/answered/20260601T000000Z-$3"; }
+s5=$tmp/A07/state-rel-plan
+mkdir -p "$s5/adopt"
+: >"$s5/status.log"; : >"$s5/merged-prs.tsv"; : >"$s5/merged-prs.txt"
+urun "$s5"; urun "$s5"
+mkdir -p "$s5/adopt/plan"
+ev "started adopt/plan in /wt, pid 8, start 1 of 2" "$s5"
+urun "$s5"; urun "$s5"
+echo 41 >"$s5/adopt/plan/WAITING-PR"
+urun "$s5"; urun "$s5"
+h5=$(cut -d' ' -f1 "$s5/adopt/plan/issue" 2>/dev/null)
+ok "A07-AC-2: released plan: the plan unit's issue file exists and the issue is open (precondition)" test "$(ustateof "${h5:-0}")" = open
+rel "$s5" plan SPEC-PR
+echo "41 spec/adopt-plan" >>"$s5/merged-prs.tsv"; echo 41 >>"$s5/merged-prs.txt"
+for i in 1 2 3; do urun "$s5"; done
+ok "A07-AC-2: the plan PR merged and its WAITING-PR released as answered/<ts>-SPEC-PR: the Adopt issue is closed within 3 runs" test "$(ustateof "${h5:-0}")" = closed
+ok "A07-AC-2: released plan: exactly one closing comment" test "$(ucount "${h5:-0}" 'closing this issue')" = 1
+for i in 1 2 3; do urun "$s5"; done
+ok "A07-AC-2: released plan: still one closing comment and closed after more runs" sh -c "[ \"\$1\" = 1 ] && [ \"\$2\" = closed ]" _ "$(ucount "${h5:-0}" 'closing this issue')" "$(ustateof "${h5:-0}")"
+
+s6=$tmp/A07/state-rel-area
+mkdir -p "$s6/adopt"
+: >"$s6/status.log"; : >"$s6/merged-prs.tsv"; : >"$s6/merged-prs.txt"
+urun "$s6"; urun "$s6"
+mkdir -p "$s6/adopt/wrapz"
+ev "started adopt/wrapz in /wt, pid 9, start 1 of 2" "$s6"
+urun "$s6"; urun "$s6"
+h6=$(cut -d' ' -f1 "$s6/adopt/wrapz/issue" 2>/dev/null)
+echo 42 >"$s6/adopt/wrapz/WAITING-PR"
+urun "$s6"; urun "$s6"
+rel "$s6" wrapz SPEC-PR
+echo "42 spec/adopt-wrapz" >>"$s6/merged-prs.tsv"; echo 42 >>"$s6/merged-prs.txt"
+for i in 1 2 3; do urun "$s6"; done
+ok "A07-AC-2: an area whose WAITING-PR was released as answered/<ts>-SPEC-PR after its PR merged still gets its merged milestone, once" test "$(ucount "${h6:-0}" '(?i)#42.*merged|merged.*#42')" = 1
+
+s7=$tmp/A07/state-rel-closed
+mkdir -p "$s7/adopt"
+: >"$s7/status.log"; : >"$s7/merged-prs.tsv"; : >"$s7/merged-prs.txt"
+urun "$s7"; urun "$s7"
+mkdir -p "$s7/adopt/wrapw"
+ev "started adopt/wrapw in /wt, pid 10, start 1 of 2" "$s7"
+urun "$s7"; urun "$s7"
+h7=$(cut -d' ' -f1 "$s7/adopt/wrapw/issue" 2>/dev/null)
+echo 43 >"$s7/adopt/wrapw/WAITING-PR"
+urun "$s7"; urun "$s7"
+rel "$s7" wrapw SPEC-PR-CLOSED
+echo 43 >>"$s7/closed-unmerged-prs.txt"
+for i in 1 2 3; do urun "$s7"; done
+ok "A07-AC-2: a unit whose answered/ holds <ts>-SPEC-PR-CLOSED is never reported as merged" test "$(ucount "${h7:-0}" '(?i)#43.*merged|merged.*#43')" = 0
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report-a07 checks"
