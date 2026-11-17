@@ -13,7 +13,7 @@ The brief path, the RED commit SHA and its red target, the failing tests and the
 ## How to change things
 - The smallest change that meets the criteria, in the existing code's style. Do not redesign, rename or add a framework.
 - Keep to the principles in `SPEC.md` and the constraints, traps and porting rules in `AGENTS.md`.
-- Validate: the red target exits 0; the repository's quick test gate passes; run the syntax or lint checks `AGENTS.md` names on what you touched.
+- Validate: the red target exits 0; the repository's quick test gate (the red targets and the touched files' tests, as `AGENTS.md` names it) passes locally, and the whole suite is left to the PR's CI run; run the syntax or lint checks `AGENTS.md` names on what you touched.
 
 Commit with `feat(<ID>): …` or `fix(<ID>): …`; stage with `git add <paths>`, then `git commit` separately.
 

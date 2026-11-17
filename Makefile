@@ -162,6 +162,7 @@ TESTS = \
 	scheduler/pickup-window.test.sh \
 	scheduler/pickup-s10.test.sh \
 	scheduler/forge.test.sh \
+	scheduler/quick-gate.test.sh \
 	scheduler/quiet-reads.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \

@@ -261,4 +261,61 @@ grep -i 'deps' "$sk" | grep -i 'merged' | head -n 1 >"$a02_pre"
 if grep -qi 'imported' "$a02_pre"; then ok "A02-AC-5: the deps precondition accepts an imported dep"; else bad "A02-AC-5: the deps precondition does not accept an imported dep"; fi
 if grep -qi 'pinned' "$a02_pre"; then ok "A02-AC-5: the deps precondition accepts a pinned dep"; else bad "A02-AC-5: the deps precondition does not accept a pinned dep"; fi
 g05c "A02-AC-5: the precondition names merged, imported and pinned deps together and says to stop when one is missing" "$sk" 3 'deps' 'merged' 'imported' 'pinned' 'stop'
+
+
+# ---------- D09-AC-2: the quick gate runs locally, the whole suite's evidence is the PR's CI run ----------
+# The skill's GREEN check (step 3), local runs (step 5), update procedure (its step 4) and feedback procedure (its step 3), and
+# the plugin's tester, implementer and reviewer run the quick gate the repository's AGENTS.md names, locally, and take the
+# whole suite's evidence from the PR's CI run; no text tells a session to run the whole suite (a bare `make test`, or
+# "the repository's test entry point" as what is run). The update section keeps `make test` (G02-AC-4): in the form
+# `make test TESTS="<files>"`, which is the quick gate, not the whole suite.
+d09="$tmp/D09"; mkdir -p "$d09"
+pa="$src/../../agents"
+g05_sec "$sk" '^## 3[.]' "$d09/s3.md"
+g05_sec "$sk" '^## 5[.]' "$d09/s5.md"
+g05_sec "$sk" '^## .*--update' "$d09/upd.md"
+g05_sec "$sk" '^## 8[.]' "$d09/s8.md"
+# d09_whole <file> <label>: no line runs the whole suite: a bare make test (no TESTS=), or, with <strict> = 1, 'test entry point'.
+d09_whole() { # d09_whole <label> <file> <strict>
+	d09_hits=$(awk -v strict="$3" '
+		{ low = tolower($0); rest = $0; bare = 0
+		  if (strict == 1 && low ~ /test entry point/) bare = 1
+		  while (match(rest, /make test/)) {
+			after = substr(rest, RSTART + RLENGTH)
+			if (after !~ /^[ \t]+TESTS=/ && after !~ /^[-A-Za-z0-9_]/) bare = 1
+			rest = after
+		  }
+		  if (bare && low !~ /(never|do not|does not|not run|without|instead)|(^|[^a-z])ci([^a-z]|$)/) print NR ": " $0
+		}' "$2")
+	if [ -z "$d09_hits" ]; then ok "$1"; else bad "$1 (line $(printf '%s' "$d09_hits" | head -n 1 | cut -c1-120))"; fi
+}
+for d09s in s3 s5 upd s8; do
+	if [ -s "$d09/$d09s.md" ]; then ok "D09-AC-2: section $d09s found"; else bad "D09-AC-2: section $d09s not found"; fi
+done
+g05c "D09-AC-2: the skill says the quick test gate is the one the repository's AGENTS.md names, run locally" "$sk" 4 'quick (test )?gate' 'agents\.md' 'local'
+g05c "D09-AC-2: the skill says the whole suite's evidence is the PR's CI run, recorded in the evidence table" "$sk" 5 'whole suite|whole test suite' 'ci run' 'evidence'
+g05c "D09-AC-2: GREEN (step 3) runs the quick gate locally" "$d09/s3.md" 3 'quick (test )?gate' 'local'
+g05c "D09-AC-2: GREEN (step 3) takes the whole suite from the PR's CI run" "$d09/s3.md" 5 'whole suite|whole test suite' '(^|[^a-z])ci([^a-z]|$)'
+g05c "D09-AC-2: local runs (step 5) run the quick gate the repository's AGENTS.md names" "$d09/s5.md" 4 'local' 'quick (test )?gate' 'agents\.md'
+g05c "D09-AC-2: local runs (step 5) leave the whole suite to the PR's CI run" "$d09/s5.md" 5 'whole suite|whole test suite' 'ci run|pr.s ci'
+g05c "D09-AC-2: the update procedure runs the quick gate and the red targets" "$d09/upd.md" 5 'quick (test )?gate' 'red target'
+g05c "D09-AC-2: the update procedure runs the quick gate for the files the merge touched" "$d09/upd.md" 5 'quick (test )?gate' 'touched|changed'
+g05c "D09-AC-2: the update procedure takes the whole suite's result from the PR's CI run after the push, said on the PR" "$d09/upd.md" 6 'whole suite|whole test suite' '(^|[^a-z])ci([^a-z]|$)' 'push|after' 'pr|comment'
+g05c "D09-AC-2: the feedback procedure runs the quick gate and the red targets" "$d09/s8.md" 5 'quick (test )?gate' 'red target'
+g05c "D09-AC-2: the feedback procedure takes the whole suite's result from the PR's CI run" "$d09/s8.md" 6 'whole suite|whole test suite' '(^|[^a-z])ci([^a-z]|$)'
+d09_whole "D09-AC-2: SKILL.md tells no session to run a bare make test (make test TESTS=\"<files>\" is the quick gate)" "$sk" 0
+d09_whole "D09-AC-2: the update procedure does not run 'the repository's test entry point' or a bare make test" "$d09/upd.md" 1
+d09_whole "D09-AC-2: the feedback procedure does not run 'the repository's test entry point' or a bare make test" "$d09/s8.md" 1
+d09_whole "D09-AC-2: GREEN (step 3) runs no whole suite" "$d09/s3.md" 1
+d09_whole "D09-AC-2: local runs (step 5) run no whole suite" "$d09/s5.md" 1
+for d09a in tester implementer reviewer; do
+	if [ -f "$pa/$d09a.md" ]; then
+		g05c "D09-AC-2: plugin $d09a names the quick gate" "$pa/$d09a.md" 400 'quick (test )?gate'
+		d09_whole "D09-AC-2: plugin $d09a tells no session to run the whole suite" "$pa/$d09a.md" 1
+	else bad "D09-AC-2: plugin/agents/$d09a.md is missing"; fi
+done
+g05c "D09-AC-2: the reviewer's GREEN re-run is the quick gate, and the whole suite's evidence is the PR's CI run" "$pa/reviewer.md" 400 'quick (test )?gate' 'whole suite|whole test suite' '(^|[^a-z])ci([^a-z]|$)'
+g05c "D09-AC-2: the tester adds a new test file to the list of test files AGENTS.md names" "$pa/tester.md" 3 'new test file' 'list' 'test files' 'agents\.md'
+if grep -Eiq 'wired into the repository.s quick test gate' "$pa/tester.md"; then bad "D09-AC-2: the tester still says a new test file is 'wired into the repository's quick test gate'"; else ok "D09-AC-2: the tester no longer says a new test file is wired into the quick test gate"; fi
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
