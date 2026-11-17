@@ -85,6 +85,28 @@ def web_url(repo, kind, ref):
             _forge = _load_forge()
     return _forge.web_url(repo, kind, ref)
 CHECKOUT = os.path.dirname(HERE)
+_checkout_repo = []
+
+
+def checkout_repo():
+    """owner/name of the live checkout's repository, read once from its origin remote (local git, no forge call, no token)
+    through the GitHub backend's own URL parsing; None when unreadable (no origin, or no backend knows the URL)."""
+    global _forge
+    with _forge_lock:
+        if not _checkout_repo:
+            repo = None
+            try:
+                r = subprocess.run(["git", "-C", CHECKOUT, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20)
+                if r.returncode == 0 and r.stdout.strip():
+                    if _forge is None:
+                        _forge = _load_forge()
+                    repo = _forge._load("github").repo_of_remote(r.stdout.strip())
+            except Exception:
+                repo = None
+            _checkout_repo.append(repo)
+        return _checkout_repo[0]
+
+
 SCHEMAS = os.path.join(HERE, "api-schema", "v1")
 VERSION = 1
 
@@ -680,7 +702,8 @@ def tail_lines(path, chunk=65536, cap=1 << 20, limit=32 << 20):
 
 
 def last_status_lines():
-    """The latest 'deployed ' and 'not deployed: ' lines over every listed repository's status.log."""
+    """The latest 'deployed ' and 'not deployed: ' lines over every listed repository's status.log. Their repo is the live
+    checkout's repository (its origin remote), the repository of the loop whose log holds the line when that is unreadable."""
     # a failed deploy: "... fails make test", "... make test timed out or was killed N times", "... fails CI: ..." or "... fails the smoke check: ..."
     found = {"deployed ": None, "not deployed: ": None}
     for repo in repo_list():
@@ -698,6 +721,10 @@ def last_status_lines():
                         todo.discard(k)
                         if found[k] is None or t > found[k]["time"]:
                             found[k] = {"repo": repo, "time": t, "line": redact(text)}
+    mine = checkout_repo()
+    for v in found.values():
+        if v and mine:
+            v["repo"] = mine
     return found["deployed "], found["not deployed: "]
 
 
