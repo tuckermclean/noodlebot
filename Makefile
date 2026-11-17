@@ -33,6 +33,7 @@ TESTS = \
 	scheduler/turn-took.test.sh \
 	scheduler/turn-place.test.sh \
 	plugin/skills/node/check-regime.test.sh \
+	plugin/skills/node/check-coverage.test.sh \
 	scheduler/deploy.test.sh \
 	scheduler/deploy-d04.test.sh \
 	scheduler/deploy-d07.test.sh \
@@ -158,6 +159,7 @@ TESTS = \
 	scheduler/pickup.test.sh \
 	scheduler/pickup-retry.test.sh \
 	scheduler/pickup-window.test.sh \
+	scheduler/pickup-s10.test.sh \
 	scheduler/forge.test.sh \
 	scheduler/quick-gate.test.sh \
 	site/site.test.sh \

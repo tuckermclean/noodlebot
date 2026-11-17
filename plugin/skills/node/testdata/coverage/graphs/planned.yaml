@@ -1,0 +1,4 @@
+template: {headings: [Purpose, Gate]}
+nodes:
+  - {id: A01, name: core, track: done, status: imported, deps: [], owns: ['src/core/**', 'src/x.py']}
+  - {id: A02, name: next, track: now, status: planned, deps: [A01], owns: ['src/new/**']}
