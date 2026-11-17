@@ -9,7 +9,7 @@ node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is
   the scheduler removes @WT@; after any other end it keeps it and resets it at the next start.
 - Never change a frozen test or fixture line (a line in the repository's frozen test and fixture paths already on
   either side, or a test an imported or pinned node's criteria name in their Verify) and never change a spec file (the repository's main spec, its node specs, its graph and the other
-  files its AGENTS.md or the node skill's step 7 name). The exception is the `owns` globs and `known_red` entries: a conflict in those is resolved without a question by applying both sides' changes, each line taking the side that changed it. A line both sides changed (the same glob or entry, changed differently) is not resolved: git merge --abort, write QUESTION.md and end the run. When the resolution would, or when you cannot settle a conflict from the code and tests,
+  files its AGENTS.md or the node skill's step 7 name). The exception is the `owns` globs and `known_red` entries: a conflict in those is resolved without a question by applying both sides' changes, each line taking the side that changed it. A line both sides changed (the same glob or entry, changed differently) is not resolved: git merge --abort, write QUESTION.md and end the run. When the resolution would change a frozen test or fixture line, or a spec file beyond those `owns` and `known_red` lines, or when you cannot settle a conflict from the code and tests,
   do not guess and push nothing: leave the branch as it was, write your question to @DIR@/QUESTION.md
   (what conflicts, the choices, what you recommend), and end the run. The scheduler starts you again
   once the owner has answered.
