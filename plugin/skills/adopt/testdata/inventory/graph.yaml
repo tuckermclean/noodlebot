@@ -1,0 +1,6 @@
+# Fixture graph, copied to docs/graph.yaml in the temporary repository by inventory.test.sh.
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+out_of_scope:
+  - {glob: "legacy/", reason: "old code nobody maintains"}
+nodes:
+  - {id: X01, track: now, name: core, deps: [], status: imported, owns: ["src/core/"], summary: "The core package"}

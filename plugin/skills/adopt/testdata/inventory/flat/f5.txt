@@ -1,0 +1,5 @@
+flat file 5 line 1
+flat file 5 line 2
+flat file 5 line 3
+flat file 5 line 4
+flat file 5 line 5
