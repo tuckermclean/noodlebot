@@ -4,14 +4,14 @@
 |---|---|---|---|
 | now | D03 | none | M |
 
-**Owns:** in `scheduler/runtests.sh`, how a test file is started (in a process group of its own) and how its processes
-are stopped (after the file ends, when the runner stops it, and when the runner itself is stopped or killed), the
-watcher, and the header comment's lines on them; `scheduler/runtests-d11.test.sh` (new) and its line in the
+**Owns:** in `scheduler/runtests.sh`, how a test file is started (with `setsid`, in a process group of its own) and how
+its processes are stopped (after the file ends, when the runner stops it, and when the runner itself is stopped or
+killed), the watcher, and the header comment's lines on them; `scheduler/runtests-d11.test.sh` (new) and its line in the
 `Makefile`'s `TESTS`; in `scheduler/testdata/lib/`, a shared way to start a background fixture (in `common.sh` or a new
 helper file) and the lines of the shared helpers that start or stop background fixtures (the `setsid ... &` starts and
-the EXIT trap of `loops-body.sh`, the fake `tmux`'s start in it, and the like in the other helpers), never a check, an
-expected value, a wait or a setting a fixture is started with; the read of the starts and the record of the runs, in the
-node's PR and under `out/node/D11/`.
+the EXIT trap of `loops-body.sh`, the fake `tmux`'s start in it, and the like in the other helpers), each existing line
+only with the owner's approval (change 4), and never a check, an expected value, a wait or a setting a fixture is
+started with; the read of the starts and the record of the runs, in the node's PR and under `out/node/D11/`.
 **Resolves:** #153
 
 ## Purpose
@@ -31,41 +31,58 @@ The shared helpers start each long-running fixture so that it ends with its test
   file makes its own `mktemp -d` folder and starts long-running processes there: one with plain `&`, one with
   `setsid ... &`, and one through the shared start helper, which itself starts a process with `setsid ... &`. Then it
   ends in one of the ways a test file ends: it exits without its cleanup, exits non-zero partway (a crash), or is killed
-  with KILL from outside. The runner itself is also sent TERM partway, and killed with KILL together with its process
-  group; in the TERM case the runner runs in a process group of its own with a sentinel process in that group that no
-  test file started, and the sentinel must still be running afterwards. Each case then waits, up to 10 seconds, until no
-  process names a fake file's folder in its command line or working directory. It reads `/proc` for this, not
-  `pgrep -f`, which also matches the test's own shell. A fake file that uses the shared start helper is also run alone
-  (`sh <file>`) and killed with TERM, and again with KILL; its fixture, and the process the fixture started with
-  `setsid`, must be gone within 10 seconds. A start through the helper is checked to leave `$!` as the fixture's own
-  pid, a child of the test shell that the shell can `kill` and `wait` for, and `x=$(<start through the helper>; echo ok)`
-  must return within a few seconds. The runner's `TIME`, `FAILED`, `SLOW` and `TOTAL` lines and its exit status are
-  checked to be as D03 made them. The scenarios run concurrently, so the file takes about 15 seconds (one 10-second wait
-  and a TERM-then-KILL grace), under `TEST_FILE_BUDGET` (30 s locally, 60 s in CI).
+  with KILL from outside. The runner itself is also sent TERM partway, and killed with KILL together with its process group.
+  In both of these cases the runner runs in a process group of its own, started with `setsid` from a wrapper shell, so
+  that signalling its group never reaches the test file or an outer runner. In the TERM case that group also holds a
+  sentinel process: a child of the wrapper shell, not of the runner, that no test file started; the sentinel must still
+  be running afterwards. A fake file that leaves no process behind is also run, and the runner ends within 2 seconds of
+  it: the stopping adds no wait when nothing is left. Each case then waits, up to 10 seconds, until no process names a
+  fake file's folder in its command line or working directory. It reads `/proc` for this, not `pgrep -f`, which also
+  matches the test's own shell. A fake file that uses the shared start helper is also run alone (`sh <file>`) and killed
+  with TERM, and again with KILL; its fixture, and the process the fixture started with `setsid`, must be gone within 10
+  seconds. A start through the helper is checked to leave `$!` as the fixture's own pid, a child of the test shell that
+  the shell can `kill` and `wait` for, and `x=$(<start through the helper>; echo ok)` must return within a few seconds.
+  In that check the fixture's own stdin, stdout and stderr are redirected (`</dev/null >/dev/null 2>&1`, as the shared
+  helpers' starts do), so that the check measures the helper and its watch: a fixture that inherits stdout keeps any
+  `$(...)` open, helper or not. The runner's `TIME`, `FAILED`, `SLOW` and `TOTAL` lines and its exit status are checked
+  to be as D03 made them. The scenarios run concurrently, so the file takes about 15 seconds (one 10-second wait and a
+  TERM-then-KILL grace), under `TEST_FILE_BUDGET` (30 s locally, 60 s in CI).
 - `scheduler/runtests.test.sh` (D03-AC-4) and the test files that source the changed helpers pass unchanged.
 
 ## Changes
 1. **The read.** The PR lists every place where a test file or a shared helper under `scheduler/testdata/lib/` starts a
    background process: file, line, how the process is started (`&`, `setsid`, a fake `tmux`), and what ends it today
-   (an EXIT trap, a `pkill -f "$tmp/..."`, nothing). Known so far: `scheduler/site.test.sh`'s fake sessions (the script
-   written at line 54, started at lines 151 and 152) and its lock holder (line 154), ended only by its EXIT trap (cleanup
-   at lines 25–30, `trap cleanup EXIT` at line 31); `scheduler/testdata/lib/api-setup.sh`'s lock holder (line 30, a
-   `flock ... sh -c 'while :; do sleep 1; done'` whose child outlives `flock`); and `loops-body.sh`'s fake `tmux`
-   (line 27), its `start_loop` and `start_session` (lines 72 and 78) and the runtime-root and no-newline fixtures (lines
-   236, 245 and 364), all ended only by its EXIT trap (line 9). The read marks as exempt, with the reason, each start
-   that stays as it is: a short-lived start the test waits for (`api-common.sh`'s `ended()`, line 29;
-   `loops-body.sh`'s dead-pid `sh -c : &`, lines 154 and 410) and a helper of the test shell itself
-   (`report-fakegh.sh`'s watchdog, the subshell ending at line 58; `loop-s09.sh`'s ticker, line 91). *D11-AC-4.*
-2. **The runner stops what a file started.** `scheduler/runtests.sh` starts each file in a process group of its own
-   (with `set -m` around the start, or with `setsid`), so that a file's group holds only that file's processes and never
-   the runner, `make` or the caller; it signals only its files' groups and marked processes, never its own group. It
-   also marks each file it starts with something every descendant inherits, even across `setsid`, so it can find them
-   all. For example, it can put a per-file variable in the environment and read it from `/proc/<pid>/environ`, or give
-   the file its own `TMPDIR` so that its `mktemp -d` folders are under one folder. When the file ends (passing, failing,
-   crashing or killed), the runner stops every process that still carries the file's mark: TERM, then KILL for those
-   still there a few seconds later. When the runner stops a file on its own INT, TERM or HUP, it does the same for the
-   file's own process group and every marked process. The runner's output, its `TIME`, `FAILED`, `SLOW` and `TOTAL`
-   lines and its exit status do not change. *D11-AC-1, D11-AC-2.*
+   (an EXIT trap, a `pkill -f "$tmp/..."`, nothing). Known so far (line numbers as of `main` at `deb92c1`):
+   - `scheduler/site.test.sh`'s fake sessions (the script written at line 54, started at lines 151 and 152) and its lock
+     holder (line 154), ended only by its EXIT trap (cleanup at lines 25–30, `trap cleanup EXIT` at line 31);
+   - `scheduler/testdata/lib/api-common.sh`'s `live()` (line 26), a fake session ended by the cleanup that waits on
+     `$pids`;
+   - `scheduler/testdata/lib/api-setup.sh`'s lock holder (line 30, a `flock ... sh -c 'while :; do sleep 1; done'` whose
+     child outlives `flock`) and its API server (`start_server`, line 90);
+   - `scheduler/testdata/lib/loops-body.sh`'s fake `tmux` (line 27) and its second fake `tmux` (line 528), its
+     `start_loop` and `start_session` (lines 72 and 78), the runtime-root and no-newline fixtures (lines 236, 245 and
+     364), and its other loop, session, lock, API server and `env -u` starts (lines 373, 387, 458, 612, 664, 715 and
+     768), all ended only by its EXIT trap (line 9);
+   - `scheduler/testdata/lib/report-w05.sh`'s fake session (line 47);
+   - the loop starts in `loop-s07.sh` (line 148), `loop-g01.sh`, `loop-s01.sh` and `loop-g02.sh`.
+
+   The read marks as exempt, with the reason, each start that stays as it is: a short-lived start the test waits for
+   (`api-common.sh`'s `ended()`, line 29; `loops-body.sh`'s dead-pid `sh -c : &`, lines 154 and 410) and a helper of the
+   test shell itself (`report-fakegh.sh`'s watchdog, the subshell ending at line 58; `loop-s09.sh`'s ticker, line 91).
+   *D11-AC-4.*
+2. **The runner stops what a file started.** `scheduler/runtests.sh` starts each file in a process group of its own with
+   `setsid` (for example `setsid -w "$sh" "$2"` inside `work`), so that a file's group holds only that file's processes
+   and never the runner, `make` or the caller. It does not use `set -m`: `dash` without a terminal prints "can't access
+   tty; job control turned off" on the runner's stderr and leaves the job in the runner's group. The runner signals only
+   its files' groups and marked processes, never its own group. It also marks each file it starts with something every
+   descendant inherits, even across `setsid`, so it can find them all. For example, it can put a per-file variable in
+   the environment and read it from `/proc/<pid>/environ`, or give the file its own `TMPDIR` so that its `mktemp -d`
+   folders are under one folder. When the file ends (passing, failing, crashing or killed), the runner stops every
+   process that still carries the file's mark: TERM, then KILL for those still there a few seconds later. The stopping
+   does not slow the suite: it runs in the background, or it waits only when it signalled something, so a file that
+   leaves nothing behind adds no time to its `TIME` line or to `TOTAL`. When the runner stops a file on its own INT,
+   TERM or HUP, it does the same for the file's own process group and every marked process. The runner's output, its
+   `TIME`, `FAILED`, `SLOW` and `TOTAL` lines and its exit status do not change. *D11-AC-1, D11-AC-2.*
 3. **The runner killed.** When the runner is killed with KILL, with or without its process group (a session being
    stopped), a watcher it starts outside its own process group sees it gone and stops every marked process of the
    run. The watcher then exits, and it exits as well when the run ends normally, so it never outlives the run by more
@@ -78,7 +95,9 @@ The shared helpers start each long-running fixture so that it ends with its test
      that `kill "$p"; wait "$p"` (such as `loop-s03.test.sh` at line 252) or wait on a list of pids (`api-common.sh`'s
      cleanup, line 11) work unchanged.
    - The helper and the watch it starts hold none of the caller's stdin, stdout or stderr, so `x=$(<start> ...)` and a
-     pipe reading the test's output do not wait for the fixture.
+     pipe reading the test's output do not wait for the helper or the watch. The fixture's own stdio is the caller's to
+     redirect, as the shared helpers' starts already do (`</dev/null >/dev/null 2>&1`): a fixture that inherits stdout
+     keeps a `$(...)` open, helper or not.
    - The watch finds the test file's shell through an exported variable, not its parent, so that it also works for a
      fixture started from a process that is not the test shell's child, such as the fake `tmux` scripts that the loops
      under test run.
@@ -89,34 +108,43 @@ The shared helpers start each long-running fixture so that it ends with its test
      `loop-g01.sh`, `loop-s01.sh` and `loop-g02.sh` do.
    - The fixture also has a hard lifetime (an upper bound in seconds, well over `TEST_FILE_BUDGET`).
 
-   The shared helpers start every long-running fixture the read lists through it, `loops-body.sh`'s starts among them;
-   the starts the read marks exempt stay as they are and are covered by the runner (changes 2 and 3). A start in a
-   frozen `*.test.sh` file, such as `site.test.sh`'s fake sessions, moves to the helper only as a frozen-test change that
-   the owner approves on the PR first. Without that approval, the start stays as it is and is covered by the runner but
-   not when the file runs alone. *D11-AC-3, D11-AC-4.*
+   The shared helpers start every long-running fixture the read lists through it, `loops-body.sh`'s starts among them,
+   wherever the owner approves the line change (below); the starts the read marks exempt stay as they are and are
+   covered by the runner (changes 2 and 3).
+ Every existing line of a `*.test.sh` file and of `scheduler/testdata/` is frozen, the shared helpers included. A start
+on such a line (`site.test.sh`'s fake sessions, `loops-body.sh`'s starts and its EXIT trap at line 9, `loop-s07.sh`'s
+start at line 148, the loop starts of `loop-g01.sh`, `loop-s01.sh` and `loop-g02.sh`, and the other starts the read
+lists) moves to the helper only as a frozen-line change that the owner approves first: the session asks for it as a
+question, line by line, and the approval is quoted in the PR. This spec grants no such approval. A new helper file and
+lines added to an existing one need none. Without that approval, the start stays as it is, and it is covered by the
+runner but not when its file runs alone. *D11-AC-3, D11-AC-4.*
 5. **Recorded runs.** On the scheduler's machine, `TEST_JOBS=2 make test TESTS="<the files the read lists as starting
    background fixtures>"` runs once to the end and once stopped partway with TERM sent to `make`, which passes it on to
    its child, the runner. These runs check the files that start fixtures, as D09's quick gate runs a chosen set of files
-   rather than the whole suite. Each run has `TMPDIR` set to a folder of its own, so that every scratch folder of the run
-   is under that folder. Ten seconds after each run ends, the list of processes that name that folder in their command
-   line, working directory or open file descriptors (`/proc/<pid>/fd`), or that hold that `TMPDIR` in their environment
-   (`/proc/<pid>/environ`), is recorded under `out/node/D11/` and is empty. The PR holds a summary of both runs: each
-   run's exit status, its `TOTAL` line and the empty process list. *D11-AC-5.*
+   rather than the whole suite. Each run has `TMPDIR` set to a folder of its own, so that every scratch folder of the
+   run is under that folder. `TMPDIR` is set only on the run's command (`TMPDIR=<folder> TEST_JOBS=2 make test ...`),
+   never exported in the shell that checks for leaks, and the check leaves out its own process and its children, so that
+   it never matches itself. Ten seconds after each run ends, the list of processes that name that folder in their
+   command line, working directory or open file descriptors (`/proc/<pid>/fd`), or that hold that `TMPDIR` in their
+   environment (`/proc/<pid>/environ`), is recorded under `out/node/D11/` and is empty. The PR holds a summary of both
+   runs: each run's exit status, its `TOTAL` line and the empty process list. *D11-AC-5.*
 
 ## Gate
 - **D11-AC-1** — When a test file run by `scheduler/runtests.sh` ends in any way (passing, failing partway, or killed with KILL from outside) and leaves background processes it started (with `&` or with `setsid`), none of them remains 10 seconds later. The runner's `TIME`, `FAILED`, `SLOW` and `TOTAL` lines and its exit status are unchanged. *Verify:* `sh scheduler/runtests-d11.test.sh`.
 - **D11-AC-2** — When `scheduler/runtests.sh` is sent TERM partway, or is killed with KILL together with its process group, no process that its running test files started (also those started with `setsid`) remains 10 seconds later, and no process of the runner remains either. Sent TERM, the runner signals only its test files' process groups and the processes they started: a process in the runner's own process group that no test file started is still running afterwards. *Verify:* `sh scheduler/runtests-d11.test.sh`.
-- **D11-AC-3** — A fixture started through the shared start helper runs in its own session and, with the processes it starts in sessions of their own, ends within 10 seconds after the shell of the test file that started it ends, also when the file runs alone (`sh <file>`) and is killed with TERM or with KILL. After a start through the helper, `$!` is the fixture's pid, a child of the test shell, and a command substitution around the start returns without waiting for the fixture. The shared helpers under `scheduler/testdata/lib/` start every long-running fixture the read lists through it. *Verify:* `sh scheduler/runtests-d11.test.sh`, and the fresh reviewer's check that every long-running fixture the read lists in `scheduler/testdata/lib/` starts through the helper, and that each start the read marks exempt is a short-lived start the test waits for or a helper of the test shell itself.
-- **D11-AC-4** — The PR records the read (every background start in the test files and shared helpers, with what ends it before and after the node, and the exempt starts with their reasons). Every changed line of an existing `*.test.sh` file is listed as a frozen-test change with the owner's approval on the PR. No check, expected value, pattern or wait in `scheduler/*.test.sh` or `scheduler/testdata/` is changed, loosened or removed. *Verify:* the record in the PR, and the fresh reviewer's check of `git diff <base>..HEAD` over the test paths.
-- **D11-AC-5** — On the scheduler's machine, `TEST_JOBS=2 make test TESTS="<the files the read lists as starting background fixtures>"` runs with `TMPDIR` set to a folder of its own, once to the end and once stopped partway with TERM sent to `make`. Ten seconds after each run ends, no process names that folder in its command line, working directory or open file descriptors, or holds that `TMPDIR` in its environment. *Verify:* the recorded process lists and run logs under `out/node/D11/`, and the summary of both runs in the PR (exit status, `TOTAL` line and the empty process list).
+- **D11-AC-3** — A fixture started through the shared start helper runs in its own session and, with the processes it starts in sessions of their own, ends within 10 seconds after the shell of the test file that started it ends, also when the file runs alone (`sh <file>`) and is killed with TERM or with KILL. After a start through the helper, `$!` is the fixture's pid, a child of the test shell, and a command substitution around the start returns without waiting for the fixture. The shared helpers under `scheduler/testdata/lib/` start every long-running fixture the read lists through it, except the starts on frozen lines whose change the owner has not approved, which the PR lists. *Verify:* `sh scheduler/runtests-d11.test.sh`, and the fresh reviewer's check that every long-running fixture the read lists in `scheduler/testdata/lib/` starts through the helper, and that each start the read marks exempt is a short-lived start the test waits for or a helper of the test shell itself.
+- **D11-AC-4** — The PR records the read (every background start in the test files and shared helpers, with what ends it before and after the node, and the exempt starts with their reasons). Every changed or removed existing line of a `*.test.sh` file or of a file under `scheduler/testdata/` is listed in the PR as a frozen-line change, with the owner's approval of that line quoted, and each such change only moves a start to the shared start helper or changes how an EXIT trap stops fixtures. No check, no expected value or pattern a check compares against, and no wait in `scheduler/*.test.sh` or `scheduler/testdata/` is changed, loosened or removed. *Verify:* the record in the PR, and the fresh reviewer's check of `git diff <base>..HEAD` over the test paths.
+- **D11-AC-5** — On the scheduler's machine, `TEST_JOBS=2 make test TESTS="<the files the read lists as starting background fixtures>"` runs with `TMPDIR` set to a folder of its own on the run's command only, once to the end and once stopped partway with TERM sent to `make`. Ten seconds after each run ends, no process names that folder in its command line, working directory or open file descriptors, or holds that `TMPDIR` in its environment, leaving out the checking process and its children. *Verify:* the recorded process lists and run logs under `out/node/D11/`, and the summary of both runs in the PR (exit status, `TOTAL` line and the empty process list).
 
 ## Risks
 - Whatever mark the runner or the helper uses can be lost. A test that clears the environment (`env -i`) loses an
   environment mark, and a test that sets its own `TMPDIR` or writes outside `mktemp` loses a folder mark. The read
   (change 1) names such tests, and a process the mark misses is caught only by the helper's watch.
-- The starts the read marks exempt (a test shell's own helpers such as `loop-s09.sh`'s ticker) and the starts left in
-  frozen `*.test.sh` files without the owner's approval are covered only under the runner, not when their file runs
-  alone and is killed.
+- The starts the read marks exempt (a test shell's own helpers such as `loop-s09.sh`'s ticker) and the starts left on
+  frozen lines (in `*.test.sh` files or under `scheduler/testdata/`) without the owner's approval are covered only under
+  the runner, not when their file runs alone and is killed.
+- Stopping a file's processes after every file must not slow the suite: the TERM-then-KILL grace runs in the
+  background or only when something was signalled (change 2), since D08 fails pull requests over the time budgets.
 - Stopping the processes of a file that has ended must not reach another file's processes, or the processes of
   another `make test` running at the same time (several sessions run tests at once). The mark is per file and per run,
   never a pattern such as `/tmp/tmp.*`.
