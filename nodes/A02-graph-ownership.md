@@ -9,7 +9,7 @@ tool uses),
 `plugin/skills/node/check-regime.py` (the new fields), `plugin/skills/node/check-regime.test.sh` and its fixtures under
 `plugin/skills/node/testdata/regime/`; in `scheduler/ready.py`, imported and pinned nodes as done, with their cases in
 `scheduler/ready.test.sh` and its new fixture `scheduler/testdata/graph-adopted.yaml`; the node states `imported` and `pinned` in `scheduler/api.py` and its node schema under
-`scheduler/api-schema/`, in `scheduler/report.py`'s `merged_ids` and `start_info`, in `scheduler/site.py`, and in the
+`scheduler/api-schema/`, in `scheduler/report.py`'s start clause (`start_info`, `ready_next`; `merged_ids` keeps meaning "PR merged"), in `scheduler/site.py`, and in the
 explorer's `site/explorer/graph.js`, `site/explorer/view.js` and `site/style.css`, and in the repositories card of
 `site/views.js`, with their cases (and any new fixtures) in `scheduler/api.test.sh`, `scheduler/report.test.sh`,
 `scheduler/site.test.sh`, `site/site.test.sh`, `site/test/views.test.mjs` and `site/test/explorer-graph.test.mjs`; in `plugin/skills/node/SKILL.md`, the deps precondition, with its case in
@@ -36,7 +36,7 @@ nodes as done. noodlebot's own graph, which uses none of the new fields, is chec
   fixture and its cases are unchanged): an imported and a pinned node are never printed, with or without markers, and a
   planned node whose deps are imported or pinned is ready.
 - The existing API, report and site tests (extended): an imported and a pinned node have their own state, count as
-  done in the API, in `report.py`'s `merged_ids` and start clause, in the explorer's remaining work and longest
+  done in the API, in `report.py`'s start clause (a separate done set; `merged_ids` unchanged), in the explorer's remaining work and longest
   chain, and in the repositories card's count.
 - `plugin/skills/node/skill.test.sh` (extended): the deps precondition accepts an imported or pinned dep.
 - `plugin/skills/triage/nodes.test.sh` (extended): `nodes.py` shows `imported` and `pinned`; the skill's rules never
@@ -77,8 +77,9 @@ nodes as done. noodlebot's own graph, which uses none of the new fields, is chec
    - The node skill's precondition accepts a dep that is merged, imported or pinned.
    - Triage's `nodes.py` shows `imported` and `pinned`, and its rules treat them as done: work on their code is a new
      node depending on them, never a change to an imported or pinned node's criteria, Purpose or `owns` (its header
-     row's Unlocks is kept in sync as for any node). In a graph with ownership the new node is placed: depending on the nodes whose files it changes and the nodes that own the folders where it will add files (test folders included), with `owns` only for added paths no existing glob matches.
-   - The API's node state, `report.py`'s `merged_ids` and start clause, and the site (its explorer and its
+     row's Unlocks is kept in sync as for any node). In a graph with ownership the new node is placed: depending on the nodes whose files it changes and the nodes whose globs match the paths it will add files at (test folders included), with `owns` only for added paths no existing glob matches.
+   - The API's node state, `report.py`'s start clause (`start_info` and `ready_next` use a done set of merged, imported
+     and pinned nodes; `merged_ids`, which feeds the PR-merged events, is unchanged), and the site (its explorer and its
      repositories card) show `imported` and `pinned` and count them as done.
    *A02-AC-4, A02-AC-5.*
 5. **Nothing changes for a graph without the fields.** No `status` means `planned`; a graph with no new field gives the
@@ -88,7 +89,7 @@ nodes as done. noodlebot's own graph, which uses none of the new fields, is chec
 - **A02-AC-1** — The valid adopted fixture, whose **Owns:** paragraphs wrap, reports `PROBLEMS 0`, and each problem of change 3 is named on its own line with exit 1. *Verify:* `sh plugin/skills/node/check-regime.test.sh`.
 - **A02-AC-2** — `owns.py` matches `*`, `**`, a trailing `/`, a folder name and a literal path as change 1 says, and lists the regime's own files from the **Spec files:** line or the default. *Verify:* `sh plugin/skills/node/check-regime.test.sh`.
 - **A02-AC-3** — The existing fixture cases give the same output and exit code as before this node, and this repository's graph, which has none of the new fields, reports `PROBLEMS 0` with exit 0. *Verify:* `sh plugin/skills/node/check-regime.test.sh` and `python3 -I plugin/skills/node/check-regime.py`.
-- **A02-AC-4** — `ready.py` never prints an imported or pinned node and treats it as merged for its dependants; the API, `report.py`'s `merged_ids` and start clause, and the site's explorer and repositories card show the two states and count them as done. *Verify:* `sh scheduler/ready.test.sh`, `sh scheduler/api.test.sh`, `sh scheduler/report.test.sh`, `sh scheduler/site.test.sh` and `sh site/site.test.sh`.
+- **A02-AC-4** — `ready.py` never prints an imported or pinned node and treats it as merged for its dependants; the API, `report.py`'s start clause (with `merged_ids` unchanged), and the site's explorer and repositories card show the two states and count them as done. *Verify:* `sh scheduler/ready.test.sh`, `sh scheduler/api.test.sh`, `sh scheduler/report.test.sh`, `sh scheduler/site.test.sh` and `sh site/site.test.sh`.
 - **A02-AC-5** — The node skill accepts an imported or pinned dep, and triage shows the two states, never amends such a node, and gives new nodes `owns` in a graph with ownership. *Verify:* `sh plugin/skills/node/skill.test.sh` and `sh plugin/skills/triage/nodes.test.sh`.
 
 ## Risks

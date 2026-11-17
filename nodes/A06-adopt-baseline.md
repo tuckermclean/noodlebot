@@ -46,8 +46,11 @@ yet. Mapping the areas into imported nodes is A07's work.
 3. **The baseline.** After the answers, the skill runs the gate command once in the clone. It records in
    `gate.fail_pattern` a regular expression matching the lines the command prints for a failure (asked for with the
    gate command when the output does not make it plain), and each failing test in `gate.known_red` as its full name
-   as such a line prints it (the text A05 matches). A
-   command that cannot run here stops the run with a question: an adoption needs a gate that runs. *A06-AC-2.*
+   as such a line prints it (the text A05 matches). The pattern matches only lines that name a failing test (a
+   summary line that names none is not matched), so that in the baseline run every matched line contains a
+   `known_red` entry, and at least one line is matched when the command exits non-zero: the baseline passes A05's
+   rule. A command that cannot run here stops the run with a question: an adoption needs a gate that runs.
+   *A06-AC-2.*
 4. **The first PR** drafts `SPEC.md`, the `AGENTS.md` "Building a node" section (with the gate command and the rules
    for `owns` and `known_red`), `.noodlebot/roles.yaml` where the guard's defaults do not fit, and `docs/graph.yaml`
    with the template, `gate`, `out_of_scope`, `adoption: {areas}` and `nodes: []`. Open issues become nodes once the
@@ -60,7 +63,7 @@ yet. Mapping the areas into imported nodes is A07's work.
 ## Gate
 - **A06-AC-1** — The skill reads the inventory instead of every file and asks for the gate command, the out-of-scope paths and the areas, each with a recommendation. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 - **A06-AC-2** — The skill runs the gate once, records a `fail_pattern` and each failing test's full name in `known_red`, stops with a question when the gate cannot run, and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
-- **A06-AC-3** — The recorded dry run under `example-baseline/` gives a graph with `nodes: []` whose `known_red` names the fixture's failing test, and laid over the fixture repository as the Tests say, `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`; the checks of `example/` still pass. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
+- **A06-AC-3** — The recorded dry run under `example-baseline/` gives a graph with `nodes: []` whose `known_red` names the fixture's failing test; the test runs its `gate.command` in a copy of the fixture, applies `fail_pattern`, and finds at least one matched line, each containing a `known_red` entry; and laid over the fixture repository as the Tests say, `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`; the checks of `example/` still pass. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 
 ## Risks
 - The gate runs the repository's own command on the scheduler's machine. The command is the one the owner confirmed,

@@ -40,8 +40,9 @@ that fixes an inherited failure takes it off the list. In a repository without o
    `git diff --name-status <from>...<to>` (from their merge base, so files merged in from main are not the node's).
    Run as `<ID> origin/main HEAD`. It reads the node's deps from the graph at `<from>`, so a branch cannot widen them,
    and its own `owns` from the graph at `<to>`. Each changed path must match the node's own `owns` or a direct dep's;
-   an added path must match its own `owns` or lie under a dep's; a deleted path is judged by its old path, a renamed
-   one by both. The regime's own files are exempt, as in A04. It prints the globs it used, then one
+   an added path must match its own `owns` or a direct dep's glob; a deleted path is judged by its old path, a renamed
+   one by both. The regime's own files are exempt, as in A04. It imports A02's `owns.py`, putting its own folder on
+   `sys.path` (it runs under `python3 -I`). It prints the globs it used, then one
    `NOT OWNED <path> (owner: <ID or none>)` line per other path, and exits 0, 1, or 2 when git fails. A graph without
    ownership prints `no ownership declared` and exits 0. The regime's own files come from A02's `owns.py`.
    *A05-AC-1.*
@@ -69,7 +70,7 @@ that fixes an inherited failure takes it off the list. In a repository without o
    an earlier node's tests: a node may add cases, not change or remove one, without the owner's approval. *A05-AC-3.*
 
 ## Gate
-- **A05-AC-1** — `check-owns-diff.py` passes a node's own and its deps' files and an added file under a dep's folder, names a non-dep's file and an uncovered new file with their owner, ignores files merged in from main, reads deps at `<from>`, exempts the regime's files, and exits 0 with `no ownership declared` on a graph without ownership. *Verify:* `sh plugin/skills/node/check-owns-diff.test.sh`.
+- **A05-AC-1** — `check-owns-diff.py` passes a node's own and its deps' files and an added file a dep's glob matches, names a non-dep's file and a new file no own or dep glob matches with their owner, ignores files merged in from main, reads deps at `<from>`, exempts the regime's files, and exits 0 with `no ownership declared` on a graph without ownership. *Verify:* `sh plugin/skills/node/check-owns-diff.test.sh`.
 - **A05-AC-2** — The node skill and the reviewer require both checks before a PR in a repository with ownership, with their outputs as evidence, and send a `NOT OWNED` path through the owner's approval. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 - **A05-AC-3** — Wherever the skill, the tester, the implementer, the reviewer and the update template require the tests to pass, a gate run passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry (a non-zero exit with no matched line fails), with the matches as evidence; the skill and both session templates allow the three amendments of change 3, resolve their conflicts by keeping both sides, and freeze the tests imported nodes name. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 

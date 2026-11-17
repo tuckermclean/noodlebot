@@ -27,7 +27,8 @@ ownership (noodlebot's own) passes unchanged.
 1. **Compare.** `python3 -I plugin/skills/node/check-coverage.py [--root DIR] [--ref REV]` reads the graph and lists
    the tracked files at the working tree (`git ls-files`), or both at `REV` with `--ref` (`git show REV:docs/graph.yaml`,
    `git ls-tree -r --name-only REV`), and matches each file against every node's `owns`, the `out_of_scope` globs and
-   the pending `adoption` areas' globs, with A02's matcher. *A04-AC-1.*
+   the pending `adoption` areas' globs, with A02's matcher (it puts its own folder on `sys.path` to import `owns.py`,
+   as it runs under `python3 -I`). *A04-AC-1.*
 2. **The regime's own files are exempt**, as A02's `owns.py` lists them (the spec files of the **Spec files:** line or
    the default, plus `AGENTS.md` and `.noodlebot/roles.yaml`). Nothing else is skipped by name: vendored and generated folders are left out only through
    `out_of_scope`. *A04-AC-1.*
