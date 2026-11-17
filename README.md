@@ -80,7 +80,7 @@ Each repository gets one log issue a day, "noodlebot log <date>", labelled `nood
 - At the first run on a new date the loop posts the day's summary on the old issue, closes it, opens the new one, links
   the two and tries to pin the new one. Closing today's issue yourself is fine: the loop opens another.
 
-`scheduler/report.py` writes it after each 60 s tick. Its failures go to `state/<repo>/report.log` and never stop the
+`scheduler/report.py` writes it after each 60 s tick. Its failures go to `state/<name>/report.log` and never stop the
 loop.
 
 From a terminal:
@@ -92,21 +92,22 @@ From a terminal:
 
 ## Answering a question
 
-A session that needs a decision stops, and the loop posts the question as a comment on the unit's **home issue**:
-the issue named on the node spec's **Resolves:** line, or a "Build <ID> <name>" issue labelled `noodlebot-unit` that the
-loop opens for it.
+A session that needs a decision stops, and the loop posts the question as a comment on the unit's **home issue**. For
+a node that is the first issue on its spec's **Resolves:** line, or a "Build <ID> <name>" issue labelled `noodlebot-unit`
+that the loop opens for it; for a triage it is the labelled issue itself. A new question reopens a closed home issue.
 
 - **Reply on that issue in plain words** ("Q1 approve, Q2 as recommended"). Only the repository owner's comments count.
-  Your comment gets a +1 and becomes the unit's answer; within seconds the node starts again with 2 fresh starts and reads
-  every answer so far.
+  Your comment gets a +1 and becomes the unit's answer within about a minute (the next GitHub check). The node then
+  starts again with 2 fresh starts, at its turn in the start queue and unless the throttle holds, and reads every
+  answer so far. A local `ANSWER.md` (below) is taken within seconds.
 - If several questions are open on the same issue, start with the ID (`B03: ...`). You can also reply on the daily log
   issue, starting with the ID (or `#<N>:` for a triage).
 - **Locally**, write `ANSWER.md` next to the question:
-  `$NOODLEBOT_DATA/state/<repo>/node/<ID>/QUESTION.md` → `.../ANSWER.md`. Write it to a temporary name and `mv` it into
+  `$NOODLEBOT_DATA/state/<name>/node/<ID>/QUESTION.md` → `.../ANSWER.md`. Write it to a temporary name and `mv` it into
   place, so the loop never reads half a file.
 
 If your answer approves a spec change, the session opens a `spec/<ID>-*` PR and the node waits for it. Merge the PR and
-within a minute the node starts again on the new spec.
+the node starts again on the new spec at its next turn (the log says so when it has to wait).
 
 ## Reviewing and merging PRs
 
@@ -114,7 +115,7 @@ within a minute the node starts again on the new spec.
 - **Comment or review on a bot PR** to have it changed: the loop collects your comments and reviews and starts a feedback
   session for that PR, which pushes the change and replies.
 - A node PR that conflicts with `main` gets an update session by itself.
-- On every bot PR, each pushed head gets its CI result and a fresh review's verdict as comments on the home issue.
+- On a node PR, each pushed head gets its CI result and a fresh review's verdict as comments on the node's home issue.
 - A merged node closes its home issue once every node resolving it is merged and nothing on it is still open.
 
 ## Handing an issue to the bot
@@ -139,6 +140,8 @@ other.
 - **Stopping a loop never stops a session.** Sessions run detached; a restarted loop takes over the running ones.
 - `start` starts the loops that are not running and removes a stale `~/STOP-<name>`; it refuses while `~/STOP` exists.
 - Loops run in tmux sessions `sched-<name>` (the API in `sched-api`). Use `loops.sh`, not tmux, to start and stop them.
+- A forge that lacks a feature the loop uses (the site, pinning, resolving threads, visibility) gets one status line
+  per loop start, `forge <name> lacks <capability>: <feature> off`, and that feature is skipped.
 - Only one loop runs per repository (a lock in its state folder). Each repository has its own lock, state, clone,
   worktrees and log issue.
 
@@ -168,7 +171,8 @@ At its first start in a repository the loop creates the labels `noodlebot`, `noo
 ### Tuning
 
 Set these in the environment of `scheduler/loops.sh start`; it passes them to each loop (`USAGE_*`, `SCHED_*`, `PICKUP*`
-and `NOODLEBOT_DATA`), for example `SCHED_MAX=3 scheduler/loops.sh start`.
+and `NOODLEBOT_DATA`), for example `USAGE_7D_PACE=1 scheduler/loops.sh start`. Only loops that `start` launches get
+them: a running loop keeps its settings, so `scheduler/loops.sh stop` first, then start with the new ones.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -187,33 +191,34 @@ and `NOODLEBOT_DATA`), for example `SCHED_MAX=3 scheduler/loops.sh start`.
 
 Each loop tick runs `scheduler/deploy.sh`, which brings new commits on noodlebot's `main` into the live checkout:
 
-- A change to docs, specs or workflows only (`README.md`, `SPEC.md`, `AGENTS.md`, `docs/`, `nodes/`, `.github/`) is
+- A change to docs, specs or workflows only (`README.md`, `SPEC.md`, `AGENTS.md`, `CLAUDE.md`, `docs/`, `nodes/`, `.github/`) is
   fast-forwarded at once, with no check and no restart.
 - A runtime change is checked first, then fast-forwarded, and every loop restarts itself on the new code, keeping its
   running sessions. A commit that fails its check is **rejected**: one status line, and the old code keeps running.
-- **The check** is local `make test`, unless `~/.config/noodlebot/deploy-ci` exists. Its first line,
-  `<owner/name> <workflow file> <branch>` (for example `owner/repo test.yml main`), names the CI to trust instead: the
+- **The check** is local `make test`, unless `~/.config/noodlebot/deploy-ci` holds a line
+  `<owner/name> <workflow file> <branch>` (for example `owner/repo test.yml main`; a malformed line deploys nothing).
+  That line names the CI to trust instead: the
   deploy waits for that workflow's push run on the commit, deploys after it passes (and a short local syntax check),
   and rejects the commit when it fails. The App behind `token` must be able to read that repository's Actions.
 - Each runtime deploy records the commit it replaced as the rollback point.
 
-`nbctl.py status` (or `GET /v1/deploy`) shows the deployed commit, the rollback point, the last deploy and the last
-rejection. To retry a rejected commit (for example after re-running its CI) or to roll back, use the deploy controls of
-the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state/<repo>/deploy.log`.
+`nbctl.py status` shows the deployed commit, the rollback point, the rejected commits and the last failure;
+`GET /v1/deploy` also has the last deploy. To retry a rejected commit (for example after re-running its CI) or to roll back, use the deploy controls of
+the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state/<name>/deploy.log`.
 
 ## Troubleshooting
 
 | You see | It means | Do |
 |---|---|---|
-| `FAILED` on a node or issue | Its session exited twice without a PR or question, or its PR was closed without merging. The file says which. | Look at `state/<repo>/node/<ID>/session.stderr` and the reason, fix the cause, then delete `FAILED` (2 fresh starts). |
-| `hold: ...` in the status | The throttle: usage is projected past the limit. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
+| `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why and what to do. | Do what the file says (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (2 fresh starts). |
+| `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is rejected, or (with `USAGE_7D_PACE=1`) the week is ahead of pace. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
 | A session that hit the usage limit | It's resumed by itself after the reset. | Nothing. |
 | `not deployed: ... fails CI` / `make test` | A new noodlebot commit failed its check; the old code still runs. | Fix `main`, or re-run its CI and retry the deploy. |
-| A loop missing from `loops.sh status` | It stopped (a STOP file, or it crashed). | Remove `~/STOP` or `~/STOP-<name>` if you meant to restart; `scheduler/loops.sh start`. |
+| `loop not running` in `loops.sh status` | It stopped (a STOP file, or it crashed). | Remove `~/STOP` if it exists, then `scheduler/loops.sh start` (it removes a stale `~/STOP-<name>` itself). |
 | `nbctl.py`: "the API is not running" | The API isn't running. | `scheduler/loops.sh start`. |
-| Nothing new in the daily log | The log step failed (it never stops the loop). | `state/<repo>/report.log`. |
+| Nothing new in the daily log | The log step failed (it never stops the loop). | `state/<name>/report.log`. |
 
-Every loop writes `state/<repo>/status.log`, one line per event; it's the first place to look.
+Every loop writes `state/<name>/status.log`, one line per event; it's the first place to look.
 
 ## Status site
 
@@ -225,10 +230,10 @@ hand; the publisher never creates a gist.
    the Gists account permission (read and write).
 3. Put the ID in `~/.config/noodlebot/gist` and the token in `~/.config/noodlebot/gist-token`, both mode 0600.
 
-With either file missing the loop says `site off: no gist configured` once at start and publishes nothing; `SCHED_SITE=0`
+With either file missing the loop says `status site off: no gist configured` once and publishes nothing; `SCHED_SITE=0`
 turns publishing off. The gist token goes only to the publish command, never to a session. A failed publish is one status
-line (`site: publish failed (<status>)`), with details in `state/<repo>/site.log`; `site: publishing again` follows the next
-success.
+line (`status site: publish failed (<status>)`), with details in `state/<name>/site.log`; `status site: publishing again`
+follows the next success.
 
 **Links to the site.** The log issue and the bot's comments link each node's ID to the site when the repository is public,
 the loop publishes the site, and `~/.config/noodlebot/site` holds its address on one line, e.g.
@@ -248,7 +253,7 @@ The page also takes `?gist=<id>`, which wins over `config.json`.
 
 An HTTP API over the runtime files, for dashboards and scripts: `scheduler/api.py`, on the Unix socket
 `$NOODLEBOT_DATA/api.sock` (mode 0600, so only you can use it). `loops.sh start` and `stop` start and stop it with the
-loops. Every answer is JSON with `"version": 1`.
+loops. Every answer is JSON with `"version": 1`, except the event stream.
 
     curl --unix-socket ~/.local/share/noodlebot/api.sock http://localhost/v1/repos
 
@@ -257,11 +262,12 @@ loops. Every answer is JSON with `"version": 1`.
 - `/v1/repos`, `/v1/repos/<owner>/<name>`, and under it `/nodes`, `/nodes/<ID>`, `/sessions`, `/prs`, `/issues`.
 - `/v1/throttle`, `/v1/deploy`: the usage throttle; the deployed commit, rollback point, last deploy and rejections.
 - `/v1/schema/<resource>`: the JSON schema of a resource.
-- `/v1/events`: a `text/event-stream` of status-log events. `?repo=<owner>/<name>` limits it to one repository;
+- `/v1/events`: a `text/event-stream` (not JSON) of status-log events. `?repo=<owner>/<name>` limits it to one repository;
   `?since=<cursor>` (or `Last-Event-ID`) resumes after an event.
 
-**Controls.** Each writes only a marker the loop or `deploy.sh` already reads, and is carried out at the loop's next
-tick or `deploy.sh`'s next run. They answer 202 when accepted, 404 for an unknown repository, node, issue or commit,
+**Controls.** Each writes only a marker the loop or `deploy.sh` already reads (and, for the loop's controls, a request
+record in `state/<name>/requests/`), and is carried out at the loop's next tick or `deploy.sh`'s next run. The API starts
+no loop and signals no process. They answer 202 when accepted, 404 for an unknown repository, node, issue or commit,
 409 when there's nothing to do. The loop logs each loop control as a status-log event.
 
 | Control | Request (under `/v1/repos/<owner>/<name>` unless it starts with `/v1/deploy`) |
@@ -272,9 +278,15 @@ tick or `deploy.sh`'s next run. They answer 202 when accepted, 404 for an unknow
 | Retry a rejected commit | `POST /v1/deploy/retry` with `{"sha": "<commit>"}` |
 | Roll back to the rollback point | `POST /v1/deploy/rollback` |
 
-For example:
+In full (with `S=~/.local/share/noodlebot/api.sock` and `R=http://localhost/v1/repos/<owner>/<name>`):
 
-    curl --unix-socket ~/.local/share/noodlebot/api.sock -X POST -d '{"sha": "<commit>"}' http://localhost/v1/deploy/retry
+    curl --unix-socket $S -X DELETE $R/nodes/<ID>/failed
+    curl --unix-socket $S -X DELETE $R/issues/<N>/failed
+    curl --unix-socket $S -X PUT $R/stop
+    curl --unix-socket $S -X DELETE $R/stop
+    curl --unix-socket $S -X POST $R/nodes/<ID>/release
+    curl --unix-socket $S -X POST -d '{"sha": "<commit>"}' http://localhost/v1/deploy/retry
+    curl --unix-socket $S -X POST http://localhost/v1/deploy/rollback
 
 **`scheduler/nbctl.py`** is the API's command-line client (Python standard library only, no token, no `gh`).
 `--socket <path>` (before the command) uses another socket; with nothing listening it says so and exits 2.
@@ -363,7 +375,7 @@ The trade-offs:
   namespace (so no `/dev/net/tun`), and doesn't bind the outer `/proc` into nested containers (that would expose it to
   every nested container, whose root is uid 1000).
 
-**Host requirements:** Linux 5.14 or newer (the loop probes read the `ino:` line of `/proc/<pid>/fdinfo`), unprivileged
+**Host requirements:** Linux 5.14 or newer (the loop probes read the `ino:` line of `/proc/<pid>/fdinfo`; older kernels would miss a running loop), unprivileged
 user namespaces allowed (on Ubuntu 24.04, `sysctl kernel.apparmor_restrict_unprivileged_userns=0`), `/dev/fuse`, and a
 volume filesystem that supports the overlay storage driver (not NFS). The image workflow's run of
 `container/compose.yaml` is the recorded check.
@@ -374,9 +386,9 @@ volume filesystem that supports the overlay storage driver (not NFS). The image 
 |---|---|
 | `scheduler/loop.sh`, `loops.sh` | The loop (one per repository) and the script that starts and stops them all. |
 | `scheduler/deploy.sh` | Self-deploy of the live checkout. |
-| `scheduler/report.py`, `nbctl.py`, `api.py`, `status.sh` | The daily log, the terminal client, the API, the older terminal view. |
+| `scheduler/report.py`, `nbctl.py`, `api.py` | The daily log, the terminal client, the API. `status.sh` is the older terminal view, replaced by `nbctl.py status`. |
 | `scheduler/unattended*.md`, `pickup.md`, `limit-resume.md` | The prompts the sessions get. |
-| `scheduler/forge.py`, `forges/` | The forge interface and its GitHub and fake backends ([`forges/README.md`](scheduler/forges/README.md)). |
+| `scheduler/forge.py`, `forges/` | The forge interface and its GitHub backend (the fake forge for tests is in `scheduler/testdata/forge/`) ([`forges/README.md`](scheduler/forges/README.md)). |
 | `scheduler/harness.py`, `harnesses/` | The agent-harness interface and its Claude Code backend ([`harnesses/README.md`](scheduler/harnesses/README.md)). |
 | `plugin/` | The skills every session loads (`/noodlebot:node <ID>`, `/noodlebot:triage <issue>`, `/noodlebot:adopt`) and their agents. With Claude Code: `claude --plugin-dir ~/gitrepos/noodlebot/plugin`. |
 | `container/` | The image, `compose.yaml`, `k8s/`. |
@@ -391,8 +403,9 @@ volume filesystem that supports the overlay storage driver (not NFS). The image 
 | `repos/<name>` | The scheduler's own clone of each repository. |
 | `worktrees/<name>/<ID>`, `pr-<N>` | One worktree per node session or PR update. |
 | `state/<name>/` | `status.log`, `deploy.log`, `report.log`, `site.log`; per unit `node/<ID>/`, `issue/<N>/`, `pr/<N>/` with the session's logs and the markers `QUESTION.md`, `ANSWER.md`, `FAILED`, `WAITING-PR`, and `answered/` for the questions already answered. |
-| `deploy/` | The deployed and rollback commits, rejections, retry and rollback requests. |
+| `deploy/` | Self-deploy's records: the rollback point (`previous`), rejected commits, tries, and the retry and rollback requests. The deployed commit is the live checkout's `HEAD`. |
 | `api.sock` | The API. |
 
 An older installation kept `repos/`, `worktrees/` and `state/` inside the checkout. Move them once: `touch ~/STOP`, wait
-until no session runs, `scheduler/move-runtime.sh ~/gitrepos/noodlebot`, then `scheduler/loops.sh start`.
+until no session runs, `scheduler/move-runtime.sh ~/gitrepos/noodlebot`, then `scheduler/loops.sh start`. Until then,
+`start` refuses while a loop from before the move still holds `<checkout>/state/<name>/loop.lock`.
