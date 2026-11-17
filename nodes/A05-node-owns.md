@@ -17,7 +17,7 @@ SMALL SPEC AMENDMENTS rule, and the same both-sides exception in the MERGE CONFL
 `scheduler/unattended.md` and `scheduler/unattended-followup.md`; their cases in
 `plugin/skills/node/skill.test.sh`; the `owns` placement rule of `plugin/skills/triage/SKILL.md` (the `out_of_scope`
 case), with its case in `plugin/skills/triage/nodes.test.sh`.
-**Resolves:** #139
+**Resolves:** #139, #151
 
 ## Purpose
 After this node a node built in an adopted repository stays inside the code it is about. Its PR changes only the files
@@ -79,7 +79,9 @@ that fixes an inherited failure takes it off the list. In a repository without o
    GREEN, the reviewer's re-run, an update's or a feedback session's test run), and the CI run of `gate.command` on the
    PR. A run passes when it exits 0; or when it exits non-zero, `fail_pattern` matches at least one line of its output,
    and each matched line contains a `known_red` entry. With an empty `known_red` (or no `fail_pattern`) it must exit 0;
-   a non-zero exit with no matched line (a crash, a missing tool) fails. The evidence lists each failing line with the
+   a non-zero exit with no matched line (a crash, a missing tool) fails. `fail_pattern` is written for `gate.command`'s
+   output, so a local quick gate whose output it cannot read (another command, another output format) passes only on
+   exit 0; A06 asks the owner before drafting such a quick gate. The evidence lists each failing line with the
    entry it matched. A failing line no entry matches is the node's to fix. The CI run is judged from its log, so a CI
    job red only with `known_red` failures is not a parity problem; the evidence table records it that way. A05 changes
    how a run is judged, not which runs a session makes: it does not make a session run `gate.command` locally; the whole
