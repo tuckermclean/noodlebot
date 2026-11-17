@@ -98,10 +98,27 @@ def candidate_folder(path):
     return None
 
 
+GENERATED_RE = re.compile(r"@generated|(?:auto-?)?generated (?:by|from)|this file (?:is|was) (?:auto-?)?generated"
+                          r"|do not edit", re.I)
+DOC_START = re.compile(r"""^[rRuUbB]?(\"\"\"|\'\'\')""")
+
+
 def is_generated(text):
+    """A usual generated-file marker on a comment or docstring line among the first five lines."""
+    in_doc = None
     for line in text.split("\n", 5)[:5]:
         s = line.strip()
-        if s.startswith(COMMENT_START) and re.search(r"generated", s, re.I):
+        m = DOC_START.match(s)
+        if m and in_doc is None:
+            in_doc = m.group(1)
+            commentish = True
+            if s.count(in_doc) >= 2:
+                in_doc = None
+        else:
+            commentish = in_doc is not None or s.startswith(COMMENT_START)
+            if in_doc is not None and in_doc in s:
+                in_doc = None
+        if commentish and GENERATED_RE.search(s):
             return True
     return False
 
@@ -215,7 +232,7 @@ def sh_links(source, text, tracked):
 
 # ---------- ownership ----------
 def load_ownership(root):
-    """(owned globs, True when the graph names any ownership)."""
+    """The owned globs of docs/graph.yaml: a list, empty without a graph. An unreadable graph exits 2."""
     path = os.path.join(root, "docs", "graph.yaml")
     if not os.path.isfile(path):
         return []
@@ -223,17 +240,19 @@ def load_ownership(root):
         import yaml
         with open(path) as f:
             g = yaml.safe_load(f)
-    except Exception as e:  # a broken graph is no ownership; the failure is logged, not fatal
+    except Exception as e:
         print("inventory.py: cannot read docs/graph.yaml: %s" % e, file=sys.stderr)
-        return []
+        sys.exit(2)
+    if not isinstance(g, dict):
+        print("inventory.py: docs/graph.yaml is not a mapping", file=sys.stderr)
+        sys.exit(2)
     globs = []
-    if isinstance(g, dict):
-        for n in g.get("nodes") or []:
-            if isinstance(n, dict):
-                globs += [x for x in (n.get("owns") or []) if isinstance(x, str)]
-        for o in g.get("out_of_scope") or []:
-            if isinstance(o, dict) and isinstance(o.get("glob"), str):
-                globs.append(o["glob"])
+    for n in g.get("nodes") or []:
+        if isinstance(n, dict):
+            globs += [x for x in (n.get("owns") or []) if isinstance(x, str)]
+    for o in g.get("out_of_scope") or []:
+        if isinstance(o, dict) and isinstance(o.get("glob"), str):
+            globs.append(o["glob"])
     return globs
 
 
@@ -274,6 +293,22 @@ def split_folder(folder, files, lines, limit, force=False):
     return out
 
 
+def cover(paths, inside, prefix=""):
+    """The largest folders whose tracked files are all in the area, and single files only where needed."""
+    if prefix and all(p in inside for p in paths):
+        return [prefix]
+    out, subs = [], {}
+    for p in paths:
+        rest = p[len(prefix):]
+        if "/" in rest:
+            subs.setdefault(rest.split("/", 1)[0], []).append(p)
+        elif p in inside:
+            out.append(p)
+    for name in sorted(subs):
+        out += cover(subs[name], inside, prefix + name + "/")
+    return out
+
+
 def propose_areas(files, lines, links, tracked_tree, limit):
     parts = split_folder("", sorted(files), lines, limit, force=True)
     parts.sort(key=lambda p: p[1][0])
@@ -285,10 +320,7 @@ def propose_areas(files, lines, links, tracked_tree, limit):
             name, k = "%s-%d" % (base, k), k + 1
         names.add(name)
         inside = set(fs)
-        if whole and label and all(t in inside for t in tracked_tree if t.startswith(label + "/")):
-            globs = [label + "/"]
-        else:
-            globs = list(fs)
+        globs = cover(sorted(tracked_tree), inside)
         areas.append({"name": name, "globs": globs, "files": fs, "lines": sum(lines[f] for f in fs)})
     where = {f: i for i, a in enumerate(areas) for f in a["files"]}
     deps = [set() for _ in areas]
@@ -383,7 +415,9 @@ def build(root, glob, limit):
         "entrypoints": [x for x in uniq(entry) if keep(x["path"])],
         "tests": [p for p in tests if keep(p)],
         "ci": [p for p in ci if keep(p)],
-        "candidates": [c for c in sorted(cands, key=lambda c: c["path"]) if keep(c["path"])],
+        "candidates": [c for c in sorted(cands, key=lambda c: c["path"])
+                       if keep(c["path"]) or (c["path"].endswith("/")
+                                              and any(p.startswith(c["path"]) and keep(p) for p in paths))],
         "links": [{"source": s, "kind": k, "raw": r, "target": t} for s, k, r, t in links],
         "unowned": [p for p in unowned if keep(p)],
         "areas": areas,
@@ -437,13 +471,17 @@ def areas_text(areas):
 
 def main(argv):
     ap = argparse.ArgumentParser(prog="inventory.py", description="Summarise a repository and propose areas.")
-    ap.add_argument("checkout", nargs="+", help="the repository (extra paths are ignored)")
+    ap.add_argument("checkout", nargs="+", help="the repository (a repeated identical path is accepted)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--glob")
     ap.add_argument("--unowned", action="store_true")
     ap.add_argument("--areas", action="store_true")
     ap.add_argument("--max-lines", type=int, default=DEFAULT_MAX_LINES)
     a = ap.parse_args(argv)
+    first = os.path.realpath(a.checkout[0])
+    for extra in a.checkout[1:]:
+        if os.path.realpath(extra) != first:
+            ap.error("unexpected extra argument: %s" % extra)
     d = build(a.checkout[0], a.glob, max(1, a.max_lines))
     if a.json:
         print(json.dumps(d, indent=1))
