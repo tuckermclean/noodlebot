@@ -8,10 +8,11 @@
 its processes are stopped (after the file ends, when the runner stops it, and when the runner itself is stopped or
 killed), the watcher, and the header comment's lines on them; `scheduler/runtests-d11.test.sh` (new) and its line in the
 `Makefile`'s `TESTS`; in `scheduler/testdata/lib/`, a shared way to start a background fixture (in `common.sh` or a new
-helper file) and the lines of the shared helpers that start or stop background fixtures (the `setsid ... &` starts and
-the EXIT trap of `loops-body.sh`, the fake `tmux`'s start in it, and the like in the other helpers), each existing line
-only with the owner's approval (change 4), and never a check, an expected value, a wait or a setting a fixture is
-started with; the read of the starts and the record of the runs, in the node's PR and under `out/node/D11/`.
+helper file); as D03 (its change 7) did, this spec allows, for this node only, changing exactly the existing lines of
+the frozen test paths that change 4 names (the starts of long-running fixtures in the shared helpers and in
+`scheduler/site.test.sh`, and `loops-body.sh`'s EXIT trap), each only in the way change 4 says, and never a check, an
+expected value or pattern, a wait or a setting a fixture is started with; the read of the starts and the record of
+the runs, in the node's PR and under `out/node/D11/`.
 **Resolves:** #153
 
 ## Purpose
@@ -108,16 +109,28 @@ The shared helpers start each long-running fixture so that it ends with its test
      `loop-g01.sh`, `loop-s01.sh` and `loop-g02.sh` do.
    - The fixture also has a hard lifetime (an upper bound in seconds, well over `TEST_FILE_BUDGET`).
 
-   The shared helpers start every long-running fixture the read lists through it, `loops-body.sh`'s starts among them,
-   wherever the owner approves the line change (below); the starts the read marks exempt stay as they are and are
-   covered by the runner (changes 2 and 3).
- Every existing line of a `*.test.sh` file and of `scheduler/testdata/` is frozen, the shared helpers included. A start
-on such a line (`site.test.sh`'s fake sessions, `loops-body.sh`'s starts and its EXIT trap at line 9, `loop-s07.sh`'s
-start at line 148, the loop starts of `loop-g01.sh`, `loop-s01.sh` and `loop-g02.sh`, and the other starts the read
-lists) moves to the helper only as a frozen-line change that the owner approves first: the session asks for it as a
-question, line by line, and the approval is quoted in the PR. This spec grants no such approval. A new helper file and
-lines added to an existing one need none. Without that approval, the start stays as it is, and it is covered by the
-runner but not when its file runs alone. *D11-AC-3, D11-AC-4.*
+   The test files and shared helpers start every long-running fixture the read lists through it; the starts the read
+   marks exempt stay as they are and are covered by the runner (changes 2 and 3).
+
+   Every existing line of a `*.test.sh` file and of `scheduler/testdata/` is frozen, the shared helpers included. As
+   D03 did (its change 7), this spec allows, for this node only, changing exactly these existing lines (line numbers as
+   of `main` at `deb92c1`); merging this spec is the owner's approval of them:
+   - `scheduler/testdata/lib/loops-body.sh`: the EXIT trap at line 9, and the starts at lines 27, 72, 78, 236, 245,
+     364, 373, 387, 458, 528, 612, 664, 715 and 768;
+   - `scheduler/testdata/lib/api-common.sh:26` (`live()`), `api-setup.sh:30` (the lock holder) and `:90`
+     (`start_server`), and `report-w05.sh:47`;
+   - `scheduler/testdata/lib/loop-s07.sh:148`, and the loop starts in `loop-g01.sh` (line 267), `loop-s01.sh` (line 67)
+     and `loop-g02.sh` (line 145);
+   - `scheduler/site.test.sh`'s starts at lines 151, 152 and 154.
+
+   Each of these lines changes in one way only. A start line moves its start into the start helper and keeps every
+   setting on the line (its command, arguments, redirections, environment and what it does with `$!`). The
+   EXIT trap changes only in how it stops fixtures. No check, no expected value or pattern a check compares against,
+   and no wait changes, and D11-AC-4's diff check enforces that. Any other existing line of the frozen paths (a start
+   the read finds beyond those named here, say) changes only with the owner's approval of that line, asked for one
+   line at a time; without it, the start stays as it is, the PR lists it, and the runner covers it but not when its
+   file runs alone. A new helper file and lines added to an existing one need no approval. The PR lists every changed
+   existing line and quotes this approval (or, for a line not named here, the owner's own). *D11-AC-3, D11-AC-4.*
 5. **Recorded runs.** On the scheduler's machine, `TEST_JOBS=2 make test TESTS="<the files the read lists as starting
    background fixtures>"` runs once to the end and once stopped partway with TERM sent to `make`, which passes it on to
    its child, the runner. These runs check the files that start fixtures, as D09's quick gate runs a chosen set of files
@@ -132,17 +145,21 @@ runner but not when its file runs alone. *D11-AC-3, D11-AC-4.*
 ## Gate
 - **D11-AC-1** — When a test file run by `scheduler/runtests.sh` ends in any way (passing, failing partway, or killed with KILL from outside) and leaves background processes it started (with `&` or with `setsid`), none of them remains 10 seconds later. The runner's `TIME`, `FAILED`, `SLOW` and `TOTAL` lines and its exit status are unchanged. *Verify:* `sh scheduler/runtests-d11.test.sh`.
 - **D11-AC-2** — When `scheduler/runtests.sh` is sent TERM partway, or is killed with KILL together with its process group, no process that its running test files started (also those started with `setsid`) remains 10 seconds later, and no process of the runner remains either. Sent TERM, the runner signals only its test files' process groups and the processes they started: a process in the runner's own process group that no test file started is still running afterwards. *Verify:* `sh scheduler/runtests-d11.test.sh`.
-- **D11-AC-3** — A fixture started through the shared start helper runs in its own session and, with the processes it starts in sessions of their own, ends within 10 seconds after the shell of the test file that started it ends, also when the file runs alone (`sh <file>`) and is killed with TERM or with KILL. After a start through the helper, `$!` is the fixture's pid, a child of the test shell, and a command substitution around the start returns without waiting for the fixture. The shared helpers under `scheduler/testdata/lib/` start every long-running fixture the read lists through it, except the starts on frozen lines whose change the owner has not approved, which the PR lists. *Verify:* `sh scheduler/runtests-d11.test.sh`, and the fresh reviewer's check that every long-running fixture the read lists in `scheduler/testdata/lib/` starts through the helper, and that each start the read marks exempt is a short-lived start the test waits for or a helper of the test shell itself.
-- **D11-AC-4** — The PR records the read (every background start in the test files and shared helpers, with what ends it before and after the node, and the exempt starts with their reasons). Every changed or removed existing line of a `*.test.sh` file or of a file under `scheduler/testdata/` is listed in the PR as a frozen-line change, with the owner's approval of that line quoted, and each such change only moves a start to the shared start helper or changes how an EXIT trap stops fixtures. No check, no expected value or pattern a check compares against, and no wait in `scheduler/*.test.sh` or `scheduler/testdata/` is changed, loosened or removed. *Verify:* the record in the PR, and the fresh reviewer's check of `git diff <base>..HEAD` over the test paths.
+- **D11-AC-3** — A fixture started through the shared start helper runs in its own session and, with the processes it starts in sessions of their own, ends within 10 seconds after the shell of the test file that started it ends, also when the file runs alone (`sh <file>`) and is killed with TERM or with KILL. After a start through the helper, `$!` is the fixture's pid, a child of the test shell, and a command substitution around the start returns without waiting for the fixture. Every long-running fixture the read lists in the shared helpers under `scheduler/testdata/lib/` and in `scheduler/site.test.sh` starts through it, except a start on an existing frozen line that change 4 does not name and the owner has not approved one line at a time, which the PR lists. *Verify:* `sh scheduler/runtests-d11.test.sh`, and the fresh reviewer's check that every long-running fixture the read lists starts through the helper, each start change 4 names among them, and that each start the read marks exempt is a short-lived start the test waits for or a helper of the test shell itself.
+- **D11-AC-4** — The PR records the read (every background start in the test files and shared helpers, with what ends it before and after the node, and the exempt starts with their reasons). Every changed or removed existing line of a `*.test.sh` file or of a file under `scheduler/testdata/` is listed in the PR as a frozen-line change and is either a line change 4 names, with change 4's approval quoted, or a line the owner approved on its own, with that approval quoted. Each such change only moves a start to the shared start helper, keeping every setting on the line, or changes how `loops-body.sh`'s EXIT trap stops fixtures. No check, no expected value or pattern a check compares against, and no wait in `scheduler/*.test.sh` or `scheduler/testdata/` is changed, loosened or removed. *Verify:* the record in the PR, and the fresh reviewer's check of `git diff <base>..HEAD` over the test paths.
 - **D11-AC-5** — On the scheduler's machine, `TEST_JOBS=2 make test TESTS="<the files the read lists as starting background fixtures>"` runs with `TMPDIR` set to a folder of its own on the run's command only, once to the end and once stopped partway with TERM sent to `make`. Ten seconds after each run ends, no process names that folder in its command line, working directory or open file descriptors, or holds that `TMPDIR` in its environment, leaving out the checking process and its children. *Verify:* the recorded process lists and run logs under `out/node/D11/`, and the summary of both runs in the PR (exit status, `TOTAL` line and the empty process list).
 
 ## Risks
 - Whatever mark the runner or the helper uses can be lost. A test that clears the environment (`env -i`) loses an
   environment mark, and a test that sets its own `TMPDIR` or writes outside `mktemp` loses a folder mark. The read
   (change 1) names such tests, and a process the mark misses is caught only by the helper's watch.
-- The starts the read marks exempt (a test shell's own helpers such as `loop-s09.sh`'s ticker) and the starts left on
-  frozen lines (in `*.test.sh` files or under `scheduler/testdata/`) without the owner's approval are covered only under
-  the runner, not when their file runs alone and is killed.
+- The starts the read marks exempt (a test shell's own helpers such as `loop-s09.sh`'s ticker), and any start the read
+  finds on a frozen line that change 4 does not name and the owner does not approve, are covered only under the
+  runner, not when their file runs alone and is killed.
+- The node that spec PR #167 adds for issue #166 (D12 there, not yet merged) also changes `loops-body.sh`'s EXIT trap at line 9: it guards the
+  `mktemp -d` line before it (line 8) and the trap's `pkill -f "$tmp/"`, which ran as `pkill -f "/"` when `$tmp` was
+  empty. Whichever of the two nodes merges second keeps both changes: that node's guards, and D11's change of how the trap stops
+  fixtures, which never signals by a pattern or path that can be empty or `/`.
 - Stopping a file's processes after every file must not slow the suite: the TERM-then-KILL grace runs in the
   background or only when something was signalled (change 2), since D08 fails pull requests over the time budgets.
 - Stopping the processes of a file that has ended must not reach another file's processes, or the processes of
