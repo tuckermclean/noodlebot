@@ -11,10 +11,10 @@ in the `Makefile`'s `TESTS`, its fixtures under `plugin/skills/node/testdata/own
 imported tests, and the gate's pass condition wherever the skill requires the
 repository's tests to pass (GREEN, the `--update` step that stops on a failing test, the feedback steps); the same in
 `plugin/agents/tester.md`, `plugin/agents/implementer.md` and `plugin/agents/reviewer.md` (its checks and its GREEN
-re-run); the gate's pass condition and the exception for the amendments' lines in the spec-file rule of
-`scheduler/unattended-node-update.md`; the `owns` and `known_red` lines of the
-SMALL SPEC AMENDMENTS rule, and the same both-sides exception in the MERGE CONFLICTS rule, in
-`scheduler/unattended.md` and `scheduler/unattended-followup.md`; their cases in
+re-run); the gate's pass condition, the freezing of imported tests and the exception for the amendments' lines in the
+spec-file rule of `scheduler/unattended-node-update.md`; the `owns` and `known_red` lines of the
+SMALL SPEC AMENDMENTS rule, and the same both-sides exception and the freezing of imported tests in the MERGE CONFLICTS
+rule, in `scheduler/unattended.md` and `scheduler/unattended-followup.md`; their cases in
 `plugin/skills/node/skill.test.sh`; the `owns` placement rule of `plugin/skills/triage/SKILL.md` (the `out_of_scope`
 case), with its case in `plugin/skills/triage/nodes.test.sh`.
 **Resolves:** #139, #151
