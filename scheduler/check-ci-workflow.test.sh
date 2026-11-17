@@ -208,4 +208,51 @@ ok "push to main by the glob 'main*'" "$tmp/g2.yml"
 defaults; PUSH_RUN='/usr/bin/make test'; mk "$tmp/m1.yml"
 bad "run: /usr/bin/make test is a make test step, not exactly make test" "$tmp/m1.yml" unit '(push)' 'run'
 
+
+# --- feedback slice: one line per step, balanced braces in if:, push filtered off main
+cat >"$tmp/h1.yml" <<'EOF'
+name: ci
+"on":
+  pull_request:
+  push:
+    branches: [main]
+env:
+  SITE_TESTS: required
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    continue-on-error: false
+    env:
+      TEST_FILE_BUDGET: ${{ vars.X }}
+      TEST_BUDGET: 360
+    steps:
+      - uses: actions/checkout@v1
+      - name: make test (both)
+        run: make test
+EOF
+run "$tmp/h1.yml"
+n=$(grep -v '^PROBLEMS ' "$tmp/out" | grep -Ei 'TEST_FILE_BUDGET.*(expression|cannot be read)|(expression|cannot be read).*TEST_FILE_BUDGET' | wc -l | tr -d ' ')
+if [ "$rc" -eq 1 ] && [ "$n" -eq 1 ]; then
+	pass "D10-AC-2: h1: the expression problem of a no-if step is printed once"
+else
+	fail "D10-AC-2: h1: expected exit 1 and one TEST_FILE_BUDGET expression line, got exit $rc and $n: $(head -c 300 "$tmp/out" | tr '\n' '|')"
+fi
+
+defaults; PUSH_IF="\${{ github.event_name == 'push'"; mk "$tmp/h2.yml"
+bad "if: with an opening brace only" "$tmp/h2.yml" unit '(push)' 'if|cannot be read'
+defaults; PUSH_IF="github.event_name == 'push' }}"; mk "$tmp/h3.yml"
+bad "if: with a closing brace only" "$tmp/h3.yml" unit '(push)' 'if|cannot be read'
+
+defaults; ON_PUSH="  push:
+    tags: ['v*']"; mk "$tmp/h4.yml"
+has_line "push with only tags" "$tmp/h4.yml" 'workflow:.*push|push.*workflow:'
+defaults; ON_PUSH="  push:
+    branches: [main]
+    paths: ['src/**']"; mk "$tmp/h5.yml"
+has_line "push with paths" "$tmp/h5.yml" 'workflow:.*push|push.*workflow:'
+defaults; ON_PUSH="  push:
+    branches: [main]
+    paths-ignore: ['docs/**']"; mk "$tmp/h6.yml"
+has_line "push with paths-ignore" "$tmp/h6.yml" 'workflow:.*push|push.*workflow:'
+
 [ "$fails" -eq 0 ]
