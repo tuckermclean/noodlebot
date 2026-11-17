@@ -36,6 +36,7 @@
 #   repos/<name>             a clone of the repository, used only by the scheduler (never the owner's checkout)
 #   worktrees/<name>/<ID>    one worktree per node, on node/<ID>-<name>
 #   worktrees/<name>/pr-<N>  one worktree per update of a spec PR or a node PR, or per spec-PR feedback session, on the PR's branch
+#   worktrees/<name>/adopt-<key>  one worktree per adoption unit, on spec/adopt (scaffold) or spec/adopt-<key>, from origin/main
 #   state/<name>/            status.log, heartbeat, report.json/report.log (the GitHub status issue); node/<ID>/{session.jsonl,session.stderr,unattended.md,
 #                            session.pid,session.rc,starts} and the markers ready.py reads:
 #                            QUESTION.md, ANSWER.md (the owner's), WAITING-PR, FAILED, SPEC-PR-SCOPE (the loop's: the spec PR
@@ -50,6 +51,11 @@
 #                            issue/<N>/ (a triage) and pr/<N>/ (an update of a spec PR or a node PR, or a spec-PR feedback: also from, done,
 #                            and node, the node ID, for a node PR's update) hold the same files; a node PR's question moves into its answered/
 #                            once the PR is no longer open (pr_gone)
+#                            adopt/<key>/ (the adoption unit: scaffold, an area's name or plan; the same files, MERGE-SEEN is the loop's: the PR
+#                            WAITING-PR names was merged and the fetched origin/main did not show it in the tick that saw it) holds
+#                            the one adoption session, in the triage's slot. Each tick reads docs/graph.yaml at origin/main: no graph is
+#                            scaffold, adoption with areas is the first area, adoption with no area is plan; a triage waits while the
+#                            graph is missing or has adoption. The unit's worktree is removed once it wrote WAITING-PR or FAILED.
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # At the start of every iteration (before the ~/STOP check) it logs each API request record under
@@ -109,7 +115,7 @@ if top=$(git -C "$probe" rev-parse --show-toplevel 2>/dev/null); then
 	exit 2
 fi
 mkdir -p "$root" || exit 2
-mkdir -p "$state/node" "$state/issue" "$state/pr" "$wtroot"
+mkdir -p "$state/node" "$state/issue" "$state/pr" "$state/adopt" "$wtroot"
 # git worktree list prints resolved paths: free_branch and branch_behind_origin compare them with this one
 wtroot_p=$(cd "$wtroot" && pwd -P) || exit 2
 start_head=$(git -C "$nb" rev-parse -q --verify HEAD 2>/dev/null || true)
@@ -357,12 +363,14 @@ except Exception as e:
 # (a node ID or an issue number), or is a node feedback prompt on node/<key>; guards against pid reuse.
 alive() {
 	kill -0 "$1" 2>/dev/null || return 1
-	local cmd
+	local cmd key=$2
 	cmd=$(tr '\0' ' ' 2>/dev/null <"/proc/$1/cmdline")
+	# an adoption unit's key is its state folder (an absolute path, which is in the command line before the prompt)
+	case $2 in /*) [ -z "$match_tpl" ] || key=$(printf '%s' "$2" | sed 's/[][\.*^$+?(){}|]/\\&/g') ;; esac
 	# a node's feedback prompt ends in the PR number, so it is recognised by the node's state folder
 	[ -z "$fb_node_re" ] || ! grep -qE "run-session\.sh [^ ]+ [^ ]*/node/$2 $fb_node_re( |\$)" <<<"$cmd" || return 0
 	if [ -n "$match_tpl" ]; then   # the harness's pattern, asked once per loop start: no python run per check
-		grep -Eq -- "${match_tpl//@UNIT@/$2}" <<<"$cmd"
+		grep -Eq -- "${match_tpl//@UNIT@/$key}" <<<"$cmd"
 	else
 		python3 -I -B "$here/harness.py" matches "$2" "$cmd"
 	fi
@@ -476,6 +484,7 @@ ended() {
 	if [ "$(cat "$d/session.kind" 2>/dev/null)" = feedback ]; then feedback_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
+	if [ "$(basename "$(dirname "$d")")" = adopt ]; then adopt_ended "$d" "$saw" "$rc"; return; fi
 	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; session $id ended (rc $rc), held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
@@ -553,6 +562,33 @@ triage_ended() {
 	fi
 }
 
+# adopt_ended <dir> <saw> <rc>: an adoption unit's session is gone. Its worktree goes once the unit wrote WAITING-PR (its
+# branch is pushed by then) or FAILED, so that an update or feedback session of its PR can check the branch out; on any
+# other end it stays for the resume (a usage limit, a stop, a question).
+adopt_ended() {
+	local d=$1 saw=$2 rc=$3 k
+	k=$(basename "$d")
+	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; adopt_unwt "$k"; say "$saw; adopt/$k ended (rc $rc), held by FAILED"
+	elif [ -e "$d/QUESTION.md" ]; then set_starts "$d" 0; rm -f "$d/stopped"; say "$saw; adopt/$k ended (rc $rc) with QUESTION.md"
+	elif [ -s "$d/WAITING-PR" ]; then
+		set_starts "$d" 0; rm -f "$d/stopped"; adopt_unwt "$k"
+		say "$saw; adopt/$k ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR"); its worktree is removed"
+	elif bg_cut_off "$d"; then
+		record_stop "$d" "$rc"; not_counted "$d"
+		say "$saw; adopt/$k ended (rc $rc) with its background work cut off; start not counted"
+	elif [ "$rc" != 0 ] && limit_exit "$d"; then
+		record_stop "$d" "$rc"; not_counted "$d"
+		say "$saw; adopt/$k stopped by the usage limit (rc $rc); start not counted, it starts again when the throttle opens"
+	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
+		echo "$(date -u +%FT%TZ) second exit (rc $rc) with no PR and no QUESTION.md" >"$d/FAILED"
+		set_starts "$d" 0; adopt_unwt "$k"
+		say "$saw; adopt/$k ended (rc $rc), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
+	else say "$saw; adopt/$k ended (rc $rc), no PR, no QUESTION.md; may start again"
+	fi
+}
+# adopt_unwt <key>: remove the unit's worktree (its branch stays).
+adopt_unwt() { git -C "$clone" worktree remove --force "$wtroot/adopt-$1" 2>/dev/null; rm -rf "$wtroot/adopt-$1" 2>/dev/null; git -C "$clone" worktree prune 2>/dev/null; return 0; }
+
 # update_ended <dir> <saw> <rc>: an update session (of a spec PR, or of a bot's node PR: pr/<N>/node) is
 # gone. rc 0: its worktree goes and the main and PR-head commits it started from are kept (done); the PR
 # is not started again until one moves (a commit it did not push is dropped: the branch goes back to origin). A
@@ -613,6 +649,7 @@ task_name() {
 	case $(basename "$(dirname "$1")") in
 	issue) echo "#$(basename "$1")" ;;
 	pr) echo "PR #$(basename "$1")" ;;
+	adopt) echo "adopt/$(basename "$1")" ;;
 	*) basename "$1" ;;
 	esac
 }
@@ -732,6 +769,124 @@ launch() {
 	pid=$! node=${3##* }
 	echo "$pid" >"$2/session.pid"
 	set_starts "$2" $(($(starts_of "$2") + 1))
+}
+
+# The adoption (A07). Each tick adopt_step reads docs/graph.yaml at origin/main: origin/main not resolving starts nothing (said
+# once); no graph is the unit adopt/scaffold; `adoption` with areas the unit of the first area; `adoption` with no area
+# the unit adopt/plan; otherwise there is no adoption. adopt_on=1 while there is one (a triage then waits).
+declare -A adopt_said=()
+# asay <tag> <text>: say it once until asay_clear <tag> (not note: that would alternate with the other notes).
+asay() { [ -z "${adopt_said[$1]:-}" ] || return 0; say "$2"; adopt_said[$1]=1; }
+asay_clear() { unset "adopt_said[$1]"; return 0; }
+# adopt_graph: sets adopt_mode (nogo: origin/main does not resolve; scaffold; area; plan; none; bad: the graph cannot be read),
+# adopt_key (scaffold, the area's name or plan), adopt_br (the unit's branch) and adopt_globs (an area's globs, tab separated).
+adopt_graph() {
+	local out
+	adopt_mode=none adopt_key='' adopt_globs='' adopt_br=''
+	git -C "$clone" rev-parse -q --verify 'origin/main^{commit}' >/dev/null 2>&1 || { adopt_mode=nogo; return 0; }
+	if ! git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.adopt.yaml" 2>/dev/null; then
+		adopt_mode=scaffold adopt_key=scaffold adopt_br=spec/adopt; return 0
+	fi
+	grep -q '^adoption:' "$state/graph.adopt.yaml" || return 0
+	out=$(python3 -I -c '
+import sys, yaml
+a = (yaml.safe_load(open(sys.argv[1])) or {}).get("adoption") or {}
+areas = a.get("areas") or [] if isinstance(a, dict) else []
+if areas:
+    x = areas[0]
+    print("\t".join(["area", str(x["name"])] + [str(g) for g in (x.get("globs") or [])]))
+else:
+    print("plan")' "$state/graph.adopt.yaml" 2>/dev/null) || { adopt_mode=bad; return 0; }
+	case $out in
+	area*) adopt_mode=area adopt_key=$(printf '%s' "$out" | cut -f2) adopt_globs=$(printf '%s' "$out" | cut -f3-) adopt_br=spec/adopt-$adopt_key ;;
+	plan) adopt_mode=plan adopt_key=plan adopt_br=spec/adopt-plan ;;
+	*) adopt_mode=bad ;;
+	esac
+}
+
+# adopt_fail <dir> <key> <saw> <text>: hold the unit by FAILED; its WAITING-PR and MERGE-SEEN move into answered/, so that
+# deleting FAILED starts it again.
+adopt_fail() {
+	local ts
+	ts=$(date -u +%Y%m%dT%H%M%SZ)
+	echo "$(date -u +%FT%TZ) $4; delete this file to start the unit again" >"$1/FAILED"
+	mkdir -p "$1/answered" && [ ! -e "$1/WAITING-PR" ] || mv "$1/WAITING-PR" "$1/answered/$ts-SPEC-PR"
+	rm -f "$1/MERGE-SEEN" "$1/SPEC-PR-CHECKED"
+	say "$3; adopt/$2: $4; wrote FAILED"
+}
+
+# adopt_step <saw>: the adoption's state of this tick, and the unit that is due (wanted in the start queue, or started
+# when there is none), in the triage's slot.
+adopt_step() {
+	local saw=$1 d br key pr what
+	adopt_on=0
+	adopt_graph
+	case $adopt_mode in
+	nogo) asay nogo "$saw; adoption not started: origin/main does not resolve"; return 0 ;;
+	bad) asay bad "$saw; adoption not started: docs/graph.yaml on origin/main cannot be read"; return 0 ;;
+	none) asay_clear nogo; asay_clear bad; asay_clear tpl; return 0 ;;
+	esac
+	asay_clear nogo; asay_clear bad
+	adopt_on=1
+	key=$adopt_key br=$adopt_br d=$state/adopt/$key
+	[ -e "$d/session.pid" ] && return 0   # running
+	[ -e "$d/FAILED" ] && return 0
+	[ -e "$d/QUESTION.md" ] && [ ! -e "$d/ANSWER.md" ] && return 0
+	awk -v b="$br" '$2 == b { f = 1 } END { exit !f }' "$state/open-prs.tsv" && return 0   # its PR is open
+	if [ -s "$d/WAITING-PR" ]; then
+		pr=$(tr -d '[:space:]' <"$d/WAITING-PR")
+		if grep -qxF "$pr" "$state/merged-prs.txt"; then
+			case $adopt_mode in scaffold) what="origin/main has no graph" ;; area) what="the area is still listed" ;; *) what="adoption is still present" ;; esac
+			if [ "$(cat "$d/MERGE-SEEN" 2>/dev/null)" = "$pr" ]; then
+				adopt_fail "$d" "$key" "$saw" "PR #$pr did not take its step ($what on the fetched origin/main)"
+			else
+				echo "$pr" >"$d/MERGE-SEEN"
+				say "$saw; adopt/$key: PR #$pr merged, but the fetched origin/main does not show it yet ($what); held for this tick"
+			fi
+		elif grep -qxF "$pr" "$state/closed-unmerged-prs.txt"; then
+			adopt_fail "$d" "$key" "$saw" "PR #$pr was closed without merging"
+		fi
+		return 0
+	fi
+	[ -r "$here/unattended-adopt.md" ] || { asay tpl "$saw; adoption not started: no unattended-adopt.md in this checkout, nothing to start a session from"; return 0; }
+	asay_clear tpl
+	[ -z "$triaging" ] && ! full || return 0
+	if [ "$ramp" = 1 ]; then want "adopt-$key" adopt - "$d" "adopt|$key"
+	else start_adopt "$key" "$saw" && { live+=("$pid $d"); triaging=adopt-$key; }; fi
+	return 0
+}
+
+# start_adopt <key> <saw>: the adoption unit's session (/noodlebot:adopt in worktrees/<name>/adopt-<key>, on spec/adopt or
+# spec/adopt-<key> from origin/main); a worktree an earlier session left is kept for its resume. Uses adopt_mode, adopt_br and
+# adopt_globs of this tick.
+start_adopt() {
+	local key=$1 saw=$2 d=$state/adopt/$1 wt=$wtroot/adopt-$1 br=$adopt_br released skill tag inv='' g
+	[ -r "$here/unattended-adopt.md" ] || { asay tpl "$saw; adoption not started: no unattended-adopt.md in this checkout, nothing to start a session from"; return 1; }
+	mkdir -p "$d"
+	released=$(sh "$here/release-markers.sh" "$d" "$state/closed-unmerged-prs.txt") || { note "$saw; releasing adopt/$key's markers failed"; return 1; }
+	if [ -n "$released" ]; then set_starts "$d" 0; rm -f "$d/MERGE-SEEN"; say "$saw; adopt/$key: $(echo "$released" | paste -sd';')"; fi
+	[ "$(starts_of "$d")" -lt 2 ] || { note "$saw; adopt/$key has used 2 starts; nothing started"; return 1; }
+	if [ ! -d "$wt" ]; then
+		free_branch "$br" "$wt" "$saw; adopt/$key" 'pr-*' || return 1
+		git -C "$clone" worktree add -q -B "$br" "$wt" origin/main || { note "$saw; worktree for adopt/$key failed"; return 1; }
+	fi
+	case $adopt_mode in
+	scaffold) tag=SCAFFOLD; skill=$(python3 -I -B "$here/harness.py" skill-command adopt "$repo") ;;
+	area) tag=AREA; skill=$(python3 -I -B "$here/harness.py" skill-command adopt "--area $key") ;;
+	*) tag=PLAN; skill=$(python3 -I -B "$here/harness.py" skill-command adopt "--plan") ;;
+	esac || { note "$saw; adopt/$key: the harness gave no skill command; not started"; return 1; }
+	while IFS= read -r g; do
+		[ -z "$g" ] || inv="$inv${inv:+; }python3 -I $nb/plugin/skills/adopt/inventory.py --json --glob '$g' $wt"
+	done < <(printf '%s\n' "$adopt_globs" | tr '\t' '\n')
+	site_sed
+	sed "${ssed[@]}" -e "s|^@$tag@ ||" -e '/^@\(SCAFFOLD\|AREA\|PLAN\)@ /d' \
+		-e "s|@CMD@|$(sedesc "$skill")|g" -e "s|@UNIT@|$(sedesc "$key")|g" -e "s|@AREA_NAME@|$(sedesc "$key")|g" \
+		-e "s|@GLOBS@|$(sedesc "$(printf '%s' "$adopt_globs" | sed 's/\t/, /g')")|g" -e "s|@INVENTORY@|$(sedesc "$inv")|g" \
+		-e "s|@PLUGIN@|$(sedesc "$nb/plugin")|g" -e "s|@BRANCH@|$(sedesc "$br")|g" -e "s|@REPO@|$(sedesc "$repo")|g" \
+		-e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
+		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-adopt.md" >"$d/unattended.md"
+	launch "$wt" "$d" "$skill"
+	say "$saw; started adopt/$key in $wt, pid $pid, start $(starts_of "$d") of 2${turn_note:+; $turn_note}"
 }
 
 # start_triage <N> <saw>: triage issue N (/noodlebot:triage) in a worktree of origin/main.
@@ -1382,6 +1537,7 @@ start_turn() {
 	case $t in
 	triage) start_triage "$a" "$2" && live+=("$pid $a") && triaging=$a ;;
 	update) start_update "$a" "$b" "$c" "$d" "$2" "$e" && live+=("$pid $a") && { [ -n "$e" ] || triaging=$a; } ;;
+	adopt) start_adopt "$a" "$2" && live+=("$pid $state/adopt/$a") && triaging=adopt-$a ;;
 	node) start_node "$a" "$b" "$2" "$c" && started[$a]=1 ;;   # started: tick's, for the RELEASE lines
 	resume) resume_idle "$2" "$a" ;;
 	fbnode) start_feedback node "$a" "$b" "$c" "$2" ;;
@@ -1396,7 +1552,7 @@ start_turn() {
 queue_round() {
 	local saw=$1 f d out key tries=0 targs=(--root "$root" --repo "$rtname") keep=()
 	for d in "${wdir[@]}"; do keep+=("$d"); done
-	for f in "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting; do
+	for f in "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting "$state"/adopt/*/waiting; do
 		# a failed issues.py next says nothing about the issues: their records stay
 		[ "$inext_failed" = 1 ] && [[ $f == */issue/* ]] && continue
 		[ -e "$f" ] && [[ " ${keep[*]} " != *" $(dirname "$f") "* ]] && rm -f "$f"
@@ -1453,7 +1609,7 @@ open='' merged='' tick_forge='' live=() throttled=0 listed=0 fb_failed=0 fb_pid=
 # or ready.py, or SCHED_RAMP=0) must not leave an old list in the order, holding the other loops: it goes.
 tick() {
 	listed=0
-	[ "$ramp" = 1 ] || rm -f "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting   # no queue: nothing waits
+	[ "$ramp" = 1 ] || rm -f "$state"/node/*/waiting "$state"/issue/*/waiting "$state"/pr/*/waiting "$state"/adopt/*/waiting   # no queue: nothing waits
 	tick_run
 	[ "$listed" = 1 ] || rm -f "$state/waiting.json"
 }
@@ -1533,13 +1689,14 @@ tick_run() {
 
 	# Running sessions: recorded in pid files, so this works after a restart too.
 	live=()
-	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
+	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid "$state"/adopt/*/session.pid; do
 		[ -e "$f" ] || continue
 		id=$(basename "$(dirname "$f")") p=$(cat "$f")
+		[[ $f == */adopt/* ]] && id=$(dirname "$f")   # an adoption unit is found by its state folder
 		if alive "$p" "$id"; then
 			[[ $f == */node/* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
 			live+=("$p $id")
-			{ [[ $f == */issue/* ]] || { [[ $f == */pr/* ]] && [ ! -e "$(dirname "$f")/node" ]; }; } && triaging=$id
+			{ [[ $f == */issue/* ]] || [[ $f == */adopt/* ]] || { [[ $f == */pr/* ]] && [ ! -e "$(dirname "$f")/node" ]; }; } && triaging=$id
 		else ended "$(dirname "$f")" "$saw"; fi
 	done
 	followup_done "$saw"
@@ -1567,7 +1724,10 @@ tick_run() {
 	local n inext_failed=0
 	# While the throttle holds, the labelled issues are still listed (issues.json stays current for the report's queued
 	# milestone); nothing starts because of it.
-	if { [ -z "$triaging" ] && ! full; } || [ "$throttled" = 1 ]; then
+	adopt_step "$saw"
+	if [ "$adopt_on" = 1 ]; then
+		asay triage "$saw; triage waits: the adoption of this repository is not finished (docs/graph.yaml on origin/main is missing or has adoption)"
+	elif asay_clear triage; { [ -z "$triaging" ] && ! full; } || [ "$throttled" = 1 ]; then
 		if n=$(python3 -I -S "$here/issues.py" next --repo "$repo" --state "$state" --owner "$owner" 2>>"$state/report.log"); then
 			if [ -z "$n" ] || full || [ -n "$triaging" ]; then :
 			elif [ "$ramp" = 1 ]; then want "#$n" triage - "$state/issue/$n" "triage|$n"   # a candidate for the slot, not holding it
@@ -1646,7 +1806,11 @@ tick_run() {
 	done <"$state/open-prs.tsv"
 
 	# Every ready node that has no session yet, in graph order (SCHED_MAX caps the sessions; 0: none).
-	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.yaml" || { note "no graph on origin/main"; return; }
+	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.yaml" || {
+		note "no graph on origin/main"
+		[ "$ramp" = 1 ] && [ "${#wlist[@]}" -gt 0 ] && queue_round "$saw"   # the adoption's scaffold unit waits in the queue
+		return
+	}
 	git -C "$clone" log --format=%s origin/main >"$state/subjects.txt"
 	local args=() ready
 	spec_scope "$saw"
@@ -1729,7 +1893,8 @@ tick_run() {
 		local l=() e k
 		for e in "${live[@]}"; do
 			k=${e#* }
-			if [ -d "$state/pr/$k" ] && [ ! -d "$state/node/$k" ]; then k="PR #$k"
+			if [[ $k == "$state"/adopt/* ]]; then k="adopt/${k##*/}"
+			elif [ -d "$state/pr/$k" ] && [ ! -d "$state/node/$k" ]; then k="PR #$k"
 			elif [ -d "$state/issue/$k" ] && [ ! -d "$state/node/$k" ]; then k="#$k"; fi
 			l+=("$k (pid ${e%% *})")
 		done
@@ -1739,7 +1904,7 @@ tick_run() {
 
 # fingerprint: the markers and exit files under node/, issue/ and pr/; a change means "look again now".
 fingerprint() {
-	find "$state/node" "$state/issue" "$state/pr" "$state/requests" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
+	find "$state/node" "$state/issue" "$state/pr" "$state/adopt" "$state/requests" -maxdepth 2 -type f \( -name QUESTION.md -o -name ANSWER.md -o -name WAITING-PR \
 		-o -name FAILED -o -name session.rc -o -name RELEASE -o -path '*/requests/*.json' \) -printf '%p %T@\n' 2>/dev/null | sort | cksum
 }
 
