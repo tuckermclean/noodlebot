@@ -40,16 +40,15 @@ it must do, how to check it, and which other nodes it depends on. noodlebot then
 4. **You decide.** You answer the question or review the pull request. To accept it, you *merge* it.
 5. **Repeat.** Your merge finishes that node, which may unlock others, and the cycle carries on.
 
-New ideas don't need a full plan. Label an ordinary GitHub issue `noodlebot`, and it proposes a change to the plan for
-you to approve (or answers the issue, if no change is needed). One machine can do this for several projects at once. noodlebot is built this way itself: its own plan is in
+New ideas don't need a full plan. Label an ordinary GitHub issue `noodlebot`, and it proposes a change to the plan
+for you to approve (or answers the issue, if no change is needed). One machine can do this for several projects at once. noodlebot is built this way itself: its own plan is in
 `docs/graph.yaml` and `nodes/`.
 
 ## What you'll need
 
 - A **GitHub** repository (the project's home on GitHub: its code, history, issues and pull requests) for each
   project, and a **GitHub App** for noodlebot to act as (here, `n00dl3b0t`). noodlebot uses it to propose changes and
-  never accepts them. A branch-protection rule on `main` (the accepted version of the project) that requires a pull
-  request with an approving review makes GitHub enforce that too.
+  never accepts them.
 - An **AI plan** for the agents (it runs Claude Code sessions today).
 - A **Linux machine** that stays on, or a server that runs containers (apps packaged with everything they need), such
   as Docker, Podman or Kubernetes ([Setting it up](#setting-it-up)).
