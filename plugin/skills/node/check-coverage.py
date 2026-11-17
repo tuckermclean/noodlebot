@@ -35,11 +35,17 @@ def git(root, *args, check=True):
 
 def main():
     a = sys.argv[1:]
-    for opt in ("--root", "--ref"):
-        if opt in a and a.index(opt) + 1 >= len(a):
-            raise RuntimeError("%s needs a value" % opt)
-    root = a[a.index("--root") + 1] if "--root" in a else "."
-    ref = a[a.index("--ref") + 1] if "--ref" in a else None
+    opts = {}
+    i = 0
+    while i < len(a):
+        if a[i] not in ("--root", "--ref"):
+            raise RuntimeError("unknown argument %s" % a[i])
+        if i + 1 >= len(a):
+            raise RuntimeError("%s needs a value" % a[i])
+        opts[a[i]] = a[i + 1]
+        i += 2
+    root = opts.get("--root", ".")
+    ref = opts.get("--ref")
     if ref:
         graph = git(root, "show", ref + ":docs/graph.yaml")
         files = [x for x in git(root, "ls-tree", "-r", "-z", "--name-only", ref).split("\0") if x]
