@@ -152,6 +152,67 @@ rt() {  # rt <name> <agents file> <want...>
 rt "A02-AC-2: the regime's own files come from the Spec files line, plus AGENTS.md and roles.yaml" "$tmp/agents-with.md" AGENTS.md .noodlebot/roles.yaml docs/spec.md plans/a.md plans/b/c.md
 rt "A02-AC-2: without a Spec files line the default is SPEC.md, docs/graph.yaml and nodes/" "$tmp/agents-without.md" SPEC.md docs/graph.yaml nodes/N01-x.md AGENTS.md .noodlebot/roles.yaml
 
+# ---- A02-AC-2 (slice S1b): spec files read as check-spec-diff.py reads them (literal, or folder with a trailing /)
+mkdir -p "$tmp/A02"
+printf '# Agents\n\n## Building a node\n\n- **Spec files:** `plans`, `docs/*.md`, `sub/`\n' >"$tmp/A02/agents-lit.md"
+saved_tracked=$tracked
+tracked='SPEC.md
+AGENTS.md
+.noodlebot/roles.yaml
+plans/a.md
+docs/a.md
+docs/*.md
+sub/x.md
+sub/deep/y.md
+subx/z.md'
+rt "A02-AC-2: a Spec files entry without a trailing slash is a literal path, not a folder" "$tmp/A02/agents-lit.md" AGENTS.md .noodlebot/roles.yaml 'docs/*.md' sub/x.md sub/deep/y.md
+# A02-AC-2: and it agrees with check-spec-diff.py itself on a scratch repository (every tracked file changed after the base)
+cat >"$tmp/A02/xchk.py" <<'PYEOF'
+import subprocess, sys
+src, agents_file, repo = sys.argv[1:4]
+sys.path.insert(0, src)
+import owns
+files = [f for f in subprocess.run(["git", "-C", repo, "ls-files"], capture_output=True, text=True, check=True).stdout.split("\n") if f]
+mine = set(owns.regime_files(open(agents_file).read(), files))
+r = subprocess.run([sys.executable, "-I", src + "/check-spec-diff.py", "--repo", repo, "HEAD~1", "HEAD"], capture_output=True, text=True)
+sd = set(l[len("NOT SPEC "):] for l in r.stdout.split("\n") if l.startswith("NOT SPEC "))
+theirs = (set(files) - sd) | {"AGENTS.md", ".noodlebot/roles.yaml"}
+print("agree" if mine == theirs and r.returncode in (0, 1) else "differ: only owns %s, only check-spec-diff %s, rc %s" % (sorted(mine - theirs), sorted(theirs - mine), r.returncode))
+PYEOF
+g="git -c user.name=t -c user.email=t@t"
+rm -rf "$tmp/A02/repo" && mkdir -p "$tmp/A02/repo"
+(cd "$tmp/A02/repo" && git init -q . && printf '%s\n' "$tracked" | while IFS= read -r p; do mkdir -p "$(dirname "$p")"; echo x >"$p"; done && cp "$tmp/A02/agents-lit.md" AGENTS.md && git add -A && $g commit -qm base && find . -path ./.git -prune -o -type f ! -name AGENTS.md -exec sh -c 'echo y >>"$1"' _ {} \; && git add -A && $g commit -qm touch) >/dev/null 2>&1
+xo=$(python3 -I "$tmp/A02/xchk.py" "$src" "$tmp/A02/agents-lit.md" "$tmp/A02/repo" 2>&1 | tail -n 1)
+if [ "$xo" = agree ]; then echo "PASS: A02-AC-2: regime_files agrees with check-spec-diff.py on a scratch repository"; else echo "FAIL: A02-AC-2: regime_files vs check-spec-diff.py: $xo"; fails=$((fails + 1)); fi
+tracked=$saved_tracked
+# performance
+cat >"$tmp/A02/perf.py" <<'PYEOF'
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import owns
+mode = sys.argv[2]
+N = 20000
+files = ["src/d%d/f%d.py" % (i % 200, i) for i in range(N - 6)] + ["SPEC.md", "AGENTS.md", ".noodlebot/roles.yaml", "docs/graph.yaml", "nodes/N01-x.md", "plans/a.md"]
+t = time.time()
+if mode == "regime":
+    dflt = {"SPEC.md", "AGENTS.md", ".noodlebot/roles.yaml", "docs/graph.yaml", "nodes/N01-x.md"}
+    got = set(owns.regime_files("# A\n\n## Building a node\n\nnone\n", files))
+    ok = got == dflt
+    got = set(owns.regime_files("# A\n\n## Building a node\n\n- **Spec files:** `plans/`, `SPEC.md`\n", files))
+    ok = ok and got == {"plans/a.md", "SPEC.md", "AGENTS.md", ".noodlebot/roles.yaml"}
+    print(("right" if ok else "wrong set") + " %.1fs" % (time.time() - t))
+else:
+    hits = sum(1 for p in files if owns.match("src/d7", p, files))
+    lit = sum(1 for p in files if owns.match(p, p, files))
+    print(("right" if hits == 100 - 0 and lit == N else "wrong %d %d" % (hits, lit)) + " %.1fs" % (time.time() - t))
+PYEOF
+pc() {  # pc <name> <mode> <seconds>
+	pout=$(timeout "$3" python3 -I "$tmp/A02/perf.py" "$src" "$2" 2>&1); prc=$?
+	if [ "$prc" -eq 0 ] && [ "${pout%% *}" = right ]; then echo "PASS: $1 ($pout)"; else echo "FAIL: $1: exit $prc (124 = over ${3}s): $pout"; fails=$((fails + 1)); fi
+}
+pc "A02-AC-2: regime_files on 20000 tracked paths is linear (default and Spec files line, right set)" regime 8
+pc "A02-AC-2: match with wildcard-free globs for 20000 paths against one files list is linear" match 6
+
 # ---- A02-AC-3: this repository's graph (none of the new fields) is still clean
 repo=$(cd "$src/../../.." && pwd -P)
 out=$(cd "$repo" && python3 -I "$src/check-regime.py" 2>&1); rc=$?
