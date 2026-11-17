@@ -475,4 +475,25 @@ g08c "A08-AC-2 strict: the skill: a pin's test lines are frozen like a RED commi
 # finding 6: the tester's keeps/pinned bullet
 g08c "A08-AC-1 strict: the tester: a criterion whose behaviour the node keeps is pinned, with a test that passes today" "$a05/tester.md" 1 'a criterion whose behaviour the node keeps is pinned: write a test that passes today'
 
+# --- A08 strict cases 2 (fresh-review 2 findings 1-4): one clause each, tied to its own wording in a 1-line window ---
+# finding 1: the skill's keeps -> pinned bullet and its superseded, not pinned bullet with the owner's approval
+g08c "A08-AC-1 strict2: the skill: a criterion whose behaviour the node keeps is pinned, a tester writes a test that pins today's behaviour" "$g08/skill.md" 1 'a criterion whose behaviour the node keeps is pinned: a tester writes a test that pins today.s behaviour'
+g08c "A08-AC-1 strict2: the skill: a criterion the node changes is superseded, not pinned, the node's own criterion states the new behaviour" "$g08/skill.md" 1 'a criterion the node changes is superseded, not pinned' 'the node.s own criterion states the new behaviour'
+g08c "A08-AC-1 strict2: the skill: a superseded criterion's frozen test is changed on the node branch only with the owner's approval, asked for at step 7 and recorded in the answer" "$g08/skill.md" 1 'superseded, not pinned' 'a change to a frozen test, made on the node branch only with the owner.s approval, asked for at step 7 and recorded in the answer'
+# finding 2: the tester's sentence on the superseded criterion's frozen test
+g08c "A08-AC-1 strict2: the tester: a superseded criterion's frozen test is changed only with the owner's approval, recorded in the brief and the answer, without it never changed" "$a05/tester.md" 1 'its frozen test is changed to the new behaviour only with the owner.s approval, recorded in the brief and the answer; without it, never change it'
+# finding 3: the middle run of the skill's three-run check
+g08c "A08-AC-2 strict2: the skill's three runs: with the patch applied the named case fails" "$g08/skill.md" 1 'with the patch applied the named case fails'
+# finding 4: the minor clauses
+g08c "A08-AC-1 strict2: the skill takes the unpinned criteria from the node's Changes and the deps' owns" "$g08/skill.md" 1 'unpinned. criteria of the node.s imported deps' '[(]from the node.s [*][*]changes[*][*] and the deps. .owns.[)]'
+g08c "A08-AC-1 strict2: the skill: a pin's new test file only at a path a dep's glob matches, or in the node's own owns where no other node's glob and no out_of_scope glob matches" "$g08/skill.md" 1 'touches only test and fixture paths [(]a new test file only at a path a dep.s glob matches, or in the node.s own .owns. where no other node.s glob and no .out_of_scope. glob matches[)]'
+g08c "A08-AC-1 strict2: the skill: one Pin-Mutation trailer per pinned criterion, naming it" "$g08/skill.md" 1 'carries one .pin-mutation: <dep>-ac-<n>: .*trailer per pinned criterion, naming it'
+g08c "A08-AC-1 strict2: the tester: one Pin-Mutation trailer per pinned criterion, naming it" "$a05/tester.md" 1 'carries one .pin-mutation: <dep>-ac-<n>: .*trailer per pinned criterion, naming it'
+g08c "A08-AC-3 strict2: the skill --update step 2: the owns globs, known_red entries and dep pin, superseded and status lines of step 7's amendments are no question, step 3 resolves them" "$a05/upd.md" 1 'except the .owns. globs, .known_red. entries and dep pin, superseded and status lines of step 7.s amendments, which step 3 resolves'
+g08c "A08-AC-3 strict2: unattended-node-update.md: a resolution changing a spec file beyond those owns, known_red and dep amendment lines is a question" "$a05/nu-spec.md" 1 'or a spec file beyond those .owns., .known_red. and dep amendment lines'
+g08c "A08-AC-2 strict2: the reviewer checks each pin commit's paths (test and fixture only) and its Pin-Mutation trailers, one per pinned criterion, naming it" "$a05/reviewer.md" 1 'check its paths [(]test and fixture paths only[)] and its .pin-mutation:. trailers [(]one per pinned criterion, naming it[)]'
+g08c "A08-AC-2 strict2: the reviewer reads each mutation with its failing case, a mutation too gentle to matter is a finding" "$a05/reviewer.md" 1 'read each mutation with its failing case: a mutation too gentle to matter is a finding'
+g08c "A08-AC-2 strict2: the reviewer checks the pinned and superseded choices against the node's Changes and the deps' owns, a missed pin is a finding" "$a05/reviewer.md" 1 'check the choices of pinned and superseded criteria against the node.s [*][*]changes[*][*] and the deps. .owns.; a missed pin is a finding'
+g08c "A08-AC-2 strict2: the reviewer checks the dep amendments: the pin named, superseded by <ID>-AC-<n> for a changed one, status pinned only when no unpinned criterion is left" "$a05/reviewer.md" 1 'check the dep amendments in the spec amendments: the pin named in the criterion, .superseded by <id>-ac-<n>. for a changed one, and the dep.s .status. set to .pinned. only when no .unpinned. criterion is left'
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
