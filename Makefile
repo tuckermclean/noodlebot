@@ -106,6 +106,9 @@ TESTS = \
 	scheduler/loop-a07-late-plan.test.sh \
 	scheduler/loop-a07-triage.test.sh \
 	scheduler/loop-a07-slot.test.sh \
+	scheduler/loop-a07-feedback.test.sh \
+	scheduler/loop-a07-update.test.sh \
+	scheduler/loop-a07-list.test.sh \
 	scheduler/loop-g04-cap.test.sh \
 	scheduler/loop-R02-prompts.test.sh \
 	scheduler/loop-R02-node.test.sh \
