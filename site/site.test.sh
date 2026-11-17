@@ -34,7 +34,7 @@ if [ "${SITE_TEST_GATE_ONLY:-}" = 1 ]; then
 	exit 0
 fi
 
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 cleanup() { chmod -R u+rwX "$tmp" 2>/dev/null; rm -rf "$tmp"; }
 trap cleanup EXIT
 

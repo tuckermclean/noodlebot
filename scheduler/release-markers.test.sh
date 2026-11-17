@@ -6,7 +6,7 @@ set -u
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root" || exit 2
 rel=scheduler/release-markers.sh
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }

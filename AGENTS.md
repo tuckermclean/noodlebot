@@ -75,3 +75,7 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
   that checkout on `origin/main`.
 - **Closing keywords** ("closes #N" and the like) in a PR body or a commit message reaching `main` close
   the issue on merge.
+- **`mktemp -d` leaves its variable empty when it fails**, and `set -u` does not catch it. A test makes its
+  scratch folder with `<var>=$(mktemp -d) && [ -d "$<var>" ] || exit 1` before it sets a trap. A cleanup
+  never runs `pkill -f`, `kill` or `rm -rf` with a pattern or path that can be empty or `/`.
+  `scheduler/scratch-guard.test.sh` checks the first rule.

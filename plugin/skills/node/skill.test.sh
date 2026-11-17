@@ -5,7 +5,7 @@
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 sk="$src/SKILL.md"
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 d="$tmp/G02"; mkdir -p "$d"
 fails=0

@@ -4,7 +4,7 @@
 #   sh scheduler/version.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'kill $(cat "$tmp"/*.holder 2>/dev/null) 2>/dev/null; rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }

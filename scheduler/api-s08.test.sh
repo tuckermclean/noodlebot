@@ -4,7 +4,7 @@
 #   bash scheduler/api-s08.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }

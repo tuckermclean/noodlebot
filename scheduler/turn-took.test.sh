@@ -7,7 +7,7 @@
 # The helpers are in testdata/lib/turn-common.sh.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 . "$src/testdata/lib/turn-common.sh"
