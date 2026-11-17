@@ -48,11 +48,11 @@ you to approve (or answers the issue, if no change is needed). One machine can d
 
 - A **GitHub** repository (the project's home on GitHub: its code, history, issues and pull requests) for each
   project, and a **GitHub App** for noodlebot to act as (here, `n00dl3b0t`). noodlebot uses it to propose changes and
-  never accepts them. Turning on GitHub's branch protection for `main` (the accepted version of the project) makes GitHub
-  enforce that too.
+  never accepts them. A branch-protection rule on `main` (the accepted version of the project) that requires a pull
+  request with an approving review makes GitHub enforce that too.
 - An **AI plan** for the agents (it runs Claude Code sessions today).
-- A **Linux machine** that stays on, or a server that runs containers (packaged apps, such as Docker or Kubernetes)
-  ([Setting it up](#setting-it-up)).
+- A **Linux machine** that stays on, or a server that runs containers (apps packaged with everything they need), such
+  as Docker, Podman or Kubernetes ([Setting it up](#setting-it-up)).
 - **The plan:** a `docs/graph.yaml` and a `nodes/` folder in the project. For a project without one, the
   `/noodlebot:adopt` command (run in Claude Code) drafts it from the code and your answers.
 
@@ -217,7 +217,7 @@ the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state
 
 | You see | It means | Do |
 |---|---|---|
-| `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why (some also say what to do). | Do what the file says, if anything (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (2 fresh starts). |
+| `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why (some also say what to do). | Do what the file says, if anything (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (a session gets 2 fresh starts; a spec PR is checked again). |
 | `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is past its warning or limit (the weekly warning excepted), or (with `USAGE_7D_PACE=1`) the week is ahead of pace. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
 | A session that hit the usage limit | It's resumed by itself after the reset. | Nothing. |
 | `not deployed: ... fails CI` / `make test` | A new noodlebot commit failed its check; the old code still runs. | Fix `main`, or re-run its CI and retry the deploy. |
