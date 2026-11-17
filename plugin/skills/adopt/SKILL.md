@@ -35,7 +35,7 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
 - Read the README, any `AGENTS.md`/`CLAUDE.md` and docs, the build and CI files, and how to build,
   test and lint (Makefile, package scripts, workflow steps). Note which commands the repository runs.
 - Of the repository's own commands (build, test, lint, its scripts), before the owner confirms the
-  gate run only one its CI, Makefile or package scripts already run (for example the one test command), and only in the clone or worktree (a dry
+  gate, run only one that its CI, Makefile or package scripts already run (for example the one test command), and only in the clone or worktree (a dry
   run: its temporary copy, see "Dry run"). Run it to see its output, so that the `fail_pattern` is
   proposed together with the gate command. Any other command of the repository's waits until the owner has confirmed the
   gate in the answers; never run one earlier. A command that cannot run here (heavy install, a
@@ -75,19 +75,25 @@ Put it in the run's output folder, `out/adopt/<name>/QUESTION.md`, relative to t
 skill is run from (the `--out <dir>` of a dry run: `<dir>/QUESTION.md`), and tell the owner where it is.
 Unattended, the run's own instructions for questions win. **Then stop**: no drafts before the owner's
 `ANSWER.md` exists (next to `QUESTION.md`, or the file given by `--answers`). On resume, read `ANSWER.md`; a question it leaves open
-becomes an open decision with your default, not a guess presented as settled.
+becomes an open decision with your default, not a guess presented as settled. A follow-up question
+(section 3) is appended to `QUESTION.md`, numbered after the earlier ones, and the run stops again: it
+resumes past that question only when the answers file (the owner's newer `ANSWER.md`, or the
+`--answers` file) answers it, never on the earlier answers alone.
 
 ## 3. The baseline and the drafts of the first PR
 Only after `ANSWER.md`. Order: the baseline, then the graph, then the other drafts, so they agree.
 - **The baseline.** Run the confirmed gate command once in the clone (a dry run: its temporary copy) and
   keep its output in `FACTS.md`. If the gate cannot run here (it needs something the machine lacks, or
-  it does not start), stop the run with a question to the owner: an adoption needs a gate that runs.
+  it does not start), append a question to `QUESTION.md` (numbered after the earlier ones, with a recommendation) and stop;
+  on resume read its answer from `ANSWER.md` (the owner's newer answer, or the `--answers` file). An
+  adoption needs a gate that runs. Unattended, the run's own instructions for questions win.
   Record in `gate.fail_pattern` a regular expression matching the lines the command prints for a
   failure, and only those lines that name a failing test: a summary line that names none is not
   matched. Record each failing test in `gate.known_red` by its full name, as such a line prints it.
   In the baseline run every matched line then contains a `known_red` entry, and at least one line is
   matched when the command exits non-zero. When the output still does not make the pattern plain, ask
-  one follow-up question for it and stop. A passing gate has an empty `known_red`.
+  one follow-up question for it (appended to `QUESTION.md` with a recommendation, answered in
+  `ANSWER.md` or the `--answers` file on resume) and stop. A passing gate has an empty `known_red`.
 - **`docs/graph.yaml`**: `template: {headings: [Purpose, Tests, Changes, Gate, Risks]}` (or the
   repository's own list), `gate: {command, fail_pattern, known_red}`, `out_of_scope:` (a `glob` and a
   `reason` each, from the answers), `adoption: {areas: [{name, globs}]}` from the answers, and `nodes: []`.
@@ -134,11 +140,15 @@ Run `python3 -I <plugin dir>/skills/node/check-regime.py --root <dir>` and
 fixing the drafts (not the checkers), and before the push. `check-coverage.py` needs a git repository
 whose tracked files are the ones to cover: in a real run the clone, with the drafts committed on
 `spec/adopt`; in a dry run lay the drafts over the temporary copy and commit them there (never in the
-input). Also check the drafted `AGENTS.md` commands exist, and that the quick gate runs.
+input). The gate run happens in that same tree, so stage and commit only the drafted paths (`SPEC.md`,
+`AGENTS.md`, `docs/graph.yaml`, and `.noodlebot/roles.yaml` when drafted), e.g. `git add -- <those paths>`,
+never `git add -A`. Files the gate run left behind (caches, `node_modules`, build output) are not part of
+the PR: if they would otherwise be committed, remove them (e.g. `git clean`) first. Also check the drafted `AGENTS.md` commands exist, and that the quick gate runs.
 
 ## 5. The PR
 - One commit on `spec/adopt`, subject `Spec: adopt the repository into the graph regime`, body: what
-  was drafted and the owner's answers it carries out.
+  was drafted and the owner's answers it carries out. It holds only the drafted paths (`git add -- <paths>`,
+  never `git add -A`); files the gate run left behind are not in it.
 - Before the push, run the checker against origin/main (origin/<default branch> where that is not main):
   `python3 -I <plugin dir>/skills/node/check-spec-diff.py --allow AGENTS.md --allow .noodlebot/roles.yaml origin/main HEAD`
   (drop `--allow .noodlebot/roles.yaml` when section 3 drafted no such file). Both are outside the
@@ -159,7 +169,8 @@ With `--dry-run`, run sections 1 to 4 offline against a local directory or a clo
 - First copy the input directory to a temporary folder, with its `.git` (tracked files included).
   If the input is not a git repository of its own (a subfolder of another repository, like
   `testdata/repo/`), `git init` the copy and commit its files with `git add -f` (so files an outer
-  ignore list would hide are kept) before anything runs.
+  ignore list would hide are kept) before anything runs. That `-f` is for this first commit only: the
+  drafts are later staged by path, never with `git add -A` or `-f` (see section 4).
   Every command the skill runs (the section 1 command, the inventory, the gate run of section 3, the
   checkers) runs in that copy, and the drafts are laid over the copy and committed there for
   `check-coverage.py`. Nothing is written into the input.
