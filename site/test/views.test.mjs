@@ -430,4 +430,24 @@ test('W03-AC-1 the repositories view lists each repository with a link to its ro
     const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     for (const s of ['imported', 'pinned']) assert.match(css, new RegExp(`--state-${s}:\\s*#[0-9a-fA-F]{3,8}`), `--state-${s} is defined`);
   });
+
+  test('A02-AC-4 the card says done, not merged, when the nodes include an imported or pinned node', async () => {
+    const { views, d, ctx } = await withNodes(NODES());
+    const m = card(views.renderRepos(d, ctx), 'acme/alpha').match(/<p class="count">([^<]*)<\/p>/);
+    assert.ok(m, 'a count line');
+    assert.equal(m[1].trim(), '4 of 6 done');
+    assert.ok(!/merged/.test(m[1]), `no "merged" in the count: ${m[1]}`);
+    for (const only of ['imported', 'pinned']) {
+      const x = await withNodes([mkn('M1', [], 'merged'), mkn('X1', ['M1'], only), mkn('W1', ['X1'], 'waiting')]);
+      const mm = card(x.views.renderRepos(x.d, x.ctx), 'acme/alpha').match(/<p class="count">([^<]*)<\/p>/);
+      assert.equal(mm[1].trim(), '2 of 3 done', `a graph with only a ${only} node`);
+    }
+  });
+
+  test('A02-AC-4 the card still says "N of M merged", unchanged, when no node is imported or pinned', async () => {
+    const { views, d, ctx } = await withNodes([mkn('M1', [], 'merged'), mkn('R1', ['M1'], 'ready'), mkn('W1', ['R1'], 'waiting')]);
+    const m = card(views.renderRepos(d, ctx), 'acme/alpha').match(/<p class="count">([^<]*)<\/p>/);
+    assert.ok(m, 'a count line');
+    assert.equal(m[1], '1 of 3 merged');
+  });
 }

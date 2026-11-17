@@ -549,7 +549,7 @@ ok "A02-AC-4: start_info: a node whose deps are imported and pinned is ready (no
 out=$(repyA "print(report.start_info(st, 'D02'))" 2>&1)
 ok "A02-AC-4: start_info: a node with an imported, a pinned and an unmerged dep waits, naming the unmerged dep only" sh -c "printf '%s\n' \"\$1\" | grep -q \"^('wait'\" && printf '%s\n' \"\$1\" | grep -q 'Z01' && ! printf '%s\n' \"\$1\" | grep -qE 'I01|P01'" _ "$out"
 ok "A02-AC-4: ready_next lists no imported or pinned node and names the dependants of adopted nodes, in graph order" test "$(repyA "print(report.ready_next(argparse.Namespace(state=st), set()))" 2>&1)" = "['D01 after-adopted', 'Z01 plain-one']"
-ok "A02-AC-4: ready_next with an open PR for D01 skips it" test "$(repyA "print(report.ready_next(argparse.Namespace(state=st), {'D01'}))" 2>&1)" = "['Z01 plain-one']"
+ok "A02-AC-4: ready_next with an open PR for Z01 skips it" test "$(repyA "print(report.ready_next(argparse.Namespace(state=st), {'Z01'}))" 2>&1)" = "['D01 after-adopted']"
 clauseA() { python3 -I "$src/report.py" --repo owner/repo --state "$sA" --worktrees "$tmp/worktrees/repo" --clause "$1" 2>&1; }
 ok "A02-AC-4: the clause for an answered node whose deps are imported and pinned says it resumes within seconds" says "resumes within seconds" "$(clauseA D01)"
 ok "A02-AC-4: the clause for D02 waits for Z01 and does not name the imported or pinned dep" sh -c "c=\$(python3 -I '$src/report.py' --repo owner/repo --state '$sA' --worktrees '$tmp/worktrees/repo' --clause D02 2>&1); printf '%s\n' \"\$c\" | grep -q 'Z01' && ! printf '%s\n' \"\$c\" | grep -qE 'I01|P01|within seconds'"
