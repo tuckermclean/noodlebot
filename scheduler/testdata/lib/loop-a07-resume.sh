@@ -2,7 +2,7 @@
 #   a07r_claude      replace the fake claude: a first run writes a system/init line (session id sid-<key>) and a rejected
 #                    five_hour rate_limit_event whose reset is 300 s past, then sleeps (the session is idle by the usage
 #                    limit); a run with --resume logs "<key> resume <sid> | <prompt>" to $A07/resume.log, opens the unit's
-#                    PR (as loop-a07.sh's claude) and writes WAITING-PR, exit 0. The key is the area of "--area <name>".
+#                    PR (as loop-a07.sh's claude) and writes WAITING-PR, exit 0. The key is the unit worktree's name without "adopt-"; the first run writes runs.<key> (1).
 #   a07r_wait_idle   the unit's log ends with the rejection
 #   a07r_graph_bad   a broken YAML document on origin/main with a top-level `adoption:` line (docs/graph.yaml)
 #   a07r_answered <key> <suffix>   the unit's answered/ holds a file <ts>-<suffix> (exactly that suffix)
@@ -15,15 +15,17 @@ for a in "$@"; do
 	case $prev in -p) prompt=$a ;; --resume) sid=$a ;; esac
 	prev=$a
 done
-case "$prompt" in "/noodlebot:adopt --area "*) k=${prompt#/noodlebot:adopt --area }; k=${k%% *} ;; *) k=other ;; esac
+k=$(basename "$(pwd -P)"); k=${k#adopt-}
 if [ -n "$sid" ]; then
-	echo "$k resume $sid | $prompt" >>"$A07_DIR/resume.log"
+	printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$sid"
+	echo "$k resume $sid | $(printf '%s' "$prompt" | tr '\n' ' ')" >>"$A07_DIR/resume.log"
 	d=$A07_STATE/adopt/$k
 	python3 "$A07_DIR/forge.py" pr "$A07_FK" 23 "spec/adopt-$k"
 	echo 23 >"$d/WAITING-PR"
 	exit 0
 fi
 echo "$k run 1 $prompt" >>"$A07_DIR/claude.log"
+echo 1 >"$A07_DIR/runs.$k"
 t=$(( $(date +%s) - 300 ))
 printf '{"type":"system","subtype":"init","session_id":"sid-%s"}\n' "$k"
 printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%s,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":%s,"status":"rejected"}}},"session_id":"sid-%s"}\n' "$t" "$t" "$k"
