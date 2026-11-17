@@ -211,8 +211,9 @@ instructions for questions win.
 1. Run `python3 -I <plugin dir>/skills/adopt/inventory.py --json --glob <glob> <checkout>` for each of the area's globs
    and read the area's files. You may read other files to understand them, but you map only the area's files.
 2. Write one or more imported nodes (`status: imported`, `track: done`, in `docs/graph.yaml`, each with a
-   `nodes/<ID>-<name>.md`; take each ID from the `next free:` line of `python3 -I <plugin dir>/skills/triage/nodes.py`, run from the checkout, as triage does. A node of a letter already in use takes that letter's next free number. When no letter is in use (the graph has `nodes: []`) or the area has none yet, pick for the area an unused capital letter (an ID is one capital letter and two digits, as `check-regime.py` requires) and number its nodes `<L>01`, `<L>02`, ...; the first area's letter is new, and each later area gets its own new letter, never one that `nodes.py` or the graph shows in use). Each node:
-   - owns part of the area's files, as `owns` globs: together the nodes own all of the area's files except those you
+   `nodes/<ID>-<name>.md`; take each ID from the `next free:` line of `python3 -I <plugin dir>/skills/triage/nodes.py`, run from the checkout, as triage does. A node of a letter already in use takes that letter's next free number. Pick a new letter only when `nodes.py` exits 0. When it exits 1 and reports the open spec PRs' IDs as unknown (`no next free ID`), it cannot tell which letters the open PRs took: end the run without a PR, as triage does; a later start tries again. When no letter is in use (the graph has `nodes: []`) or the area has none yet, pick for the area an unused capital letter (an ID is one capital letter and two digits, as `check-regime.py` requires) and number its nodes `<L>01`, `<L>02`, ...; the first area's letter is new, and each later area gets its own new letter, never one that `nodes.py` or the graph shows in use). Each node:
+   - owns part of the area's files, as `owns` globs, each of them also written in backticks on the spec's **Owns:** line
+     (`check-regime.py` reports an `owns` glob missing from that line; the header row must match): together the nodes own all of the area's files except those you
      put out of scope, and each file once (no overlap between nodes);
    - has a spec that says what the code does, with the template's headings: Purpose; Tests, the existing tests;
      Changes, the single line "none: imported"; Gate, criteria of the current behaviour, each with a *Verify:*
@@ -223,8 +224,8 @@ instructions for questions win.
    into a further `out_of_scope` entry, with a glob and a reason; such a file is then not owned by any node.
    Keep the other areas, the existing `out_of_scope` entries and the gate unchanged.
 4. Run `python3 -I <plugin dir>/skills/node/check-regime.py` and `check-coverage.py` until both report
-   `PROBLEMS 0`. Commit, then (it compares commits) run `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`
-   until it passes (exit 0), fixing the drafts, not the checkers, and committing each fix.
+   `PROBLEMS 0`; a problem outside the area (a file no area covers, say) is a `QUESTION.md`, never an ownership change outside the area. Commit, then (it compares commits) run `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`
+   until it passes (exit 0), fixing the drafts, not the checkers, and committing each fix; exit 2 (git failed) stops the run, as in section 5.
 5. Push `spec/adopt-<name>` and open one spec PR (one PR for the area, as in section 5), body: the
    nodes, what each owns, the criteria marked `unpinned`, any new out_of_scope entry; `Refs #N` for issues the
    nodes touch, no closing keyword. End with a `WAITING-PR` marker in the state folder as the prompt says. You write no code and no
@@ -268,8 +269,10 @@ Run by the loop for one of the adoption's own open spec PRs (`spec/adopt`, `spec
   comment the findings on the PR, `git reset --hard origin/<branch>` and end. Then push the branch and comment on the PR with what was merged.
 - **`--feedback <N>`**: read `FEEDBACK.md` in the state folder (each item has its kind, URL, author, body, and for a
   line comment its file, line and thread). Change the PR's specs as it asks, as one new commit (never an
-  amend, a rebase or a force push), keeping the area's files owned once each; rerun the checkers until
-  they pass. A point only the owner can decide goes to QUESTION.md with your recommendation, written last.
+  amend, a rebase or a force push), keeping the area's files owned once each; run the same checks as `--update` (`check-regime.py`, `check-coverage.py`, commit, then
+  `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`, with `--allow AGENTS.md [--allow .noodlebot/roles.yaml]`
+  before the refs for the `spec/adopt` PR) until they pass; a coverage problem outside the PR's area is a `QUESTION.md`, never an ownership change
+  outside the area, and check-spec-diff exit 2 (git failed) stops the run. A point only the owner can decide goes to QUESTION.md with your recommendation, written last.
   Push the branch, update the PR's title and body if its nodes changed, and reply to each point: a
   line comment in its own thread, the others in one PR comment; each reply says what changed, with the commit,
   or why nothing did. Resolve the line threads you fixed.
