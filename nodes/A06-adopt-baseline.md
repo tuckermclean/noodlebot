@@ -10,7 +10,7 @@ adoption PR (section 3), its checks (section 4) and the dry run; the new recorde
 `plugin/skills/adopt/testdata/baseline/` (`repo/` and `ANSWER.md`); their cases in `plugin/skills/adopt/adopt.test.sh`.
 The existing fixture `plugin/skills/adopt/testdata/repo/` and worked example `plugin/skills/adopt/example/` stay as they
 are.
-**Resolves:** #139
+**Resolves:** #139, #151
 
 ## Purpose
 After this node the first step of an adoption is small, checkable and honest about the repository's health. Instead of
@@ -28,7 +28,8 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
     only a command the repository's CI, Makefile or package scripts already run, in the clone or worktree (a dry run:
     its temporary copy), and no other; it runs the confirmed gate once (section 3), records `known_red`, drafts an
     `AGENTS.md` section naming the gate command and a quick gate, drafts `nodes: []`, and runs `check-regime.py` and
-    `check-coverage.py` before the PR;
+    `check-coverage.py` before the PR; it drafts a quick gate only through the gate's own runner, and a quick gate that
+    would run another command or print another output format is a question to the owner, with a recommendation;
   - the recorded dry run under `example-baseline/`, made from `testdata/baseline/repo/` (a small repository with a
     vendored folder, which the test creates at run time and adds with `git add -f`, and one failing test) and
     `testdata/baseline/ANSWER.md`: its `docs/graph.yaml` has `nodes: []`, a `gate` with a `fail_pattern` and a
@@ -67,6 +68,12 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
    code is mapped (A07). `check-regime.py` and `check-coverage.py` must report `PROBLEMS 0` before the push: every
    tracked file is a regime file, out of scope, or in an area. The PR is `spec/adopt`, as today. *A06-AC-2,
    A06-AC-3.*
+   **The quick gate's output.** A05 judges the quick gate's runs with `fail_pattern`, which is written for
+   `gate.command`'s output. A quick gate that does not run through the gate's own runner (the runner takes no list of
+   files, or another command or output format would be used) may print lines `fail_pattern` cannot read, and A05 then
+   passes it only on exit 0. The skill does not draft such a quick gate on its own: it asks the owner, in section 2's
+   questions or as change 3's follow-up question, with a recommendation (for example the whole gate as the quick gate,
+   or a quick gate whose failure lines the pattern matches), and drafts the answer. *A06-AC-4.*
 5. **The dry run** does the same offline into its output folder, the gate run included: it copies the input
    repository to a temporary folder first and runs the gate there, so nothing is written into the input. *A06-AC-3.*
 
@@ -74,6 +81,7 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
 - **A06-AC-1** — The skill reads the inventory instead of every file and asks for the gate command, the out-of-scope paths and the areas, each with a recommendation; before the gate is confirmed it runs only a command the repository's CI, Makefile or package scripts already run, in the clone or worktree (a dry run: its temporary copy). *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 - **A06-AC-2** — The skill runs the confirmed gate once (section 3), records a `fail_pattern` and each failing test's full name in `known_red`, stops with a question when the gate cannot run, drafts an `AGENTS.md` "Building a node" section naming the gate command (run in CI) and a quick gate (run locally), and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 - **A06-AC-3** — The recorded dry run under `example-baseline/` gives a graph with `nodes: []` whose `known_red` names the fixture's failing test; the test runs its `gate.command` in a copy of the fixture, applies `fail_pattern`, and finds at least one matched line, each containing a `known_red` entry; and laid over the fixture repository as the Tests say, `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`; the checks of `example/` still pass. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
+- **A06-AC-4** — The skill drafts a quick gate only through the gate's own runner, whose output `fail_pattern` reads; a quick gate that would run another command or print another output format is a question to the owner, with a recommendation, not a draft. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 
 ## Risks
 - The gate runs the repository's own command on the scheduler's machine; change 3 limits what runs before the owner
