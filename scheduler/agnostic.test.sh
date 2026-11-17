@@ -575,5 +575,49 @@ if [ -z "$r02_hit" ]; then pass "R02-AC-2: limit-resume.md names no harness tool
 else fail "R02-AC-2: limit-resume.md names a harness tool (line:text):
 $r02_hit"; fi
 
+# ---- S11 change 1 (S11-AC-1): no session template (scheduler/unattended*.md, scheduler/limit-resume.md) names a forge;
+# a forge's name planted in a copy of a template fails the check, naming file and line.
+s11_forge_scan() { # <root>: file:line:text of each forge name in a session template under <root>
+	(cd "$1" && for f in scheduler/unattended*.md scheduler/limit-resume.md; do
+		[ -f "$f" ] && grep -nEi -e 'GitHub|GitLab|Gitea|Forgejo' "$f" | sed "s#^#$f:#"
+	done)
+}
+s11_n=0
+for s11_f in "$root"/scheduler/unattended*.md "$root"/scheduler/limit-resume.md; do [ -f "$s11_f" ] && s11_n=$((s11_n + 1)); done
+if [ "$s11_n" -ge 2 ]; then pass "S11-AC-1: the scan finds the session templates ($s11_n)"; else fail "S11-AC-1: the scan finds $s11_n session templates"; fi
+s11_hit=$(s11_forge_scan "$root")
+if [ -z "$s11_hit" ]; then pass "S11-AC-1: no session template names a forge"
+else fail "S11-AC-1: a session template names a forge (file:line:text):
+$s11_hit"; fi
+S11="$tmp/S11"
+mkdir -p "$S11/scheduler"
+cp "$root"/scheduler/unattended*.md "$root"/scheduler/limit-resume.md "$S11/scheduler/" 2>/dev/null
+for s11_t in "$S11"/scheduler/*.md; do # the scratch copies start without a forge name, whatever the tree holds
+	sed 's/ on GitHub for why\./ for why./' "$s11_t" >"$S11/s11_x" && mv "$S11/s11_x" "$s11_t"
+done
+s11_hit=$(s11_forge_scan "$S11")
+if [ -z "$s11_hit" ]; then pass "S11-AC-1: the scratch copy without a forge name is clean"
+else fail "S11-AC-1: the scratch copy is flagged before planting: $s11_hit"; fi
+for s11_t in unattended.md unattended-followup.md limit-resume.md; do
+	[ -f "$S11/scheduler/$s11_t" ] || { fail "S11-AC-1: scratch copy of $s11_t missing"; continue; }
+	s11_ln=$(($(wc -l <"$S11/scheduler/$s11_t") + 1))
+	printf 'Read the PR comments on GitHub for why.\n' >>"$S11/scheduler/$s11_t"
+	s11_hit=$(s11_forge_scan "$S11")
+	case $s11_hit in
+	"scheduler/$s11_t:$s11_ln:"*) pass "S11-AC-1: a planted 'on GitHub' fails the check, naming scheduler/$s11_t:$s11_ln" ;;
+	*) fail "S11-AC-1: planted 'on GitHub' in $s11_t not named at line $s11_ln (got: $s11_hit)" ;;
+	esac
+	sed '$d' "$S11/scheduler/$s11_t" >"$S11/s11_x" && mv "$S11/s11_x" "$S11/scheduler/$s11_t"
+done
+for s11_name in GitLab Gitea Forgejo; do
+	printf 'See it on %s.\n' "$s11_name" >>"$S11/scheduler/unattended-followup.md"
+	s11_hit=$(s11_forge_scan "$S11")
+	case $s11_hit in
+	scheduler/unattended-followup.md:*"$s11_name"*) pass "S11-AC-1: a planted $s11_name fails the check" ;;
+	*) fail "S11-AC-1: a planted $s11_name was not found (got: $s11_hit)" ;;
+	esac
+	sed '$d' "$S11/scheduler/unattended-followup.md" >"$S11/s11_x" && mv "$S11/s11_x" "$S11/scheduler/unattended-followup.md"
+done
+
 [ "$fails" = 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"

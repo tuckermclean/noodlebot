@@ -1,4 +1,4 @@
-# kubectl apply -k container/k8s   (README, section "Container")
+# kubectl apply -k container/k8s   (README, section "Running it in a container")
 # Create the Secret first, from the config folder: kubectl create secret generic noodlebot-config --from-file=...
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

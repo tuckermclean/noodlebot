@@ -180,7 +180,7 @@ do_deploy() {
 read_ci() {
 	ci_on=; ci_repo=; ci_wf=; ci_branch=; ci_line=
 	[ -s "$HOME/.config/noodlebot/deploy-ci" ] || return 0
-	read -r ci_line <"$HOME/.config/noodlebot/deploy-ci" 2>/dev/null || [ -n "$ci_line" ] || {
+	read -r ci_line 2>/dev/null <"$HOME/.config/noodlebot/deploy-ci" || [ -n "$ci_line" ] || {
 		echo "deploy-ci: cannot read $HOME/.config/noodlebot/deploy-ci" >&2
 		return 2
 	}
@@ -238,7 +238,7 @@ else:
     if any(not x or any(c.isspace() for c in x) for x in f):
         raise ValueError("bad run")
     print(" ".join(f))
-' "$new" <"$ci_dir/out" 2>/dev/null 9>&-) || ci_err="gh gave an answer that does not parse"
+' "$new" 2>/dev/null <"$ci_dir/out" 9>&-) || ci_err="gh gave an answer that does not parse"
 	rm -rf "$ci_dir"
 	[ -z "$ci_err" ] || return 1
 	set -- $ci_res
