@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Fit one forge issue into a graph-regime repository's plan (docs/graph.yaml + nodes/<ID>-<name>.md) as a spec change - amend an unmerged node, add a follow-up or new node, or answer without a change. Produces a spec PR or an issue comment, never code or tests. Use for "/triage <issue>" or when asked where an issue belongs in the node graph.
+description: Fit one forge issue into a graph-regime repository's plan (docs/graph.yaml + nodes/<ID>-<name>.md) as a spec change - amend a planned node, add a follow-up or new node, or answer without a change. Produces a spec PR or an issue comment, never code or tests. Use for "/triage <issue>" or when asked where an issue belongs in the node graph.
 ---
 
 # /triage <issue number> [--dry-run]  |  /triage --update <PR> [--dry-run] (section 4)
@@ -16,7 +16,7 @@ comment; write your result to `out/triage/<issue>/result.md` and print it. With 
 
 ## The graph regime (what every such repository has)
 - `docs/graph.yaml`: `nodes:` with `id` (letter + two digits), `name`, `deps`, `track`, `summary`,
-  and optionally `decisions` (open decisions the owner settles first).
+  and optionally `decisions` (open decisions the owner settles first), `status` (`imported` or `pinned`) and `owns` (globs).
 - `nodes/<ID>-<name>.md`: one spec per node, following the repository's template, with acceptance
   criteria `<ID>-AC-<n>` (each with *Verify*, numbered from 1, never reused) and an **Owns:** line.
 - A spec checker that must report no problems after any spec change, and branch conventions:
@@ -46,7 +46,7 @@ Pick the first that holds, and write down why the earlier ones do not:
    PR**: add criteria (next free AC numbers), the matching Tests and Changes items, and Risks.
    A node with an open PR or a running session is in flight: do not move its goalposts; use 3.
 3. **Follow-up node** when the area belongs to a merged, imported or pinned node, or to one in flight: a new node with
-   that node in its `deps`. Such a node's spec is history; never add criteria to it.
+   that node in its `deps`. A merged, imported or pinned node's spec is history; never add criteria to it.
 4. **New node** when nothing owns the area.
 
 Imported and pinned nodes (a graph `status` of `imported` or `pinned`) are done, like merged ones. Work on
