@@ -19,7 +19,7 @@ ownership (noodlebot's own) passes unchanged.
   `testdata/coverage/`: fully owned; one file no one owns; one file two nodes own through different globs (`src/*.py`
   and `src/x.py`); an imported node's glob that matches nothing; a planned node's glob that matches nothing, before and
   after a commit whose subject marks it merged; a file covered only by a pending adoption area; an `out_of_scope`
-  entry; the regime files (`SPEC.md`, `AGENTS.md`, `docs/graph.yaml`, `nodes/*.md`, `.noodlebot/roles.yaml`) owned by
+  entry; a file both owned and matched by `out_of_scope`, and one both owned and in a pending area; the regime files (`SPEC.md`, `AGENTS.md`, `docs/graph.yaml`, `nodes/*.md`, `.noodlebot/roles.yaml`) owned by
   no node; a **Spec files:** line naming a further file; a graph with no ownership; `--ref` on a commit whose files and
   graph differ from the working tree.
 
@@ -34,7 +34,7 @@ ownership (noodlebot's own) passes unchanged.
    `out_of_scope`. *A04-AC-1.*
 3. **Problems**, one per line, then `PROBLEMS <n>` and exit 1 when n > 0, in `check-regime.py`'s shape: a file no node
    owns that is neither exempt, out of scope nor in a pending area; a file two nodes own (both named, whatever their
-   glob strings); a glob of an imported or pinned node, or of a merged planned node, that matches no file. A planned
+   glob strings); a file a node owns that an `out_of_scope` glob or a pending area also matches (both named); a glob of an imported or pinned node, or of a merged planned node, that matches no file. A planned
    node counts as merged when a line of `git log --format=%s` at the judged commit starts with `<ID> <name>:` (its
    squash subject); one not merged may name files it will create. *A04-AC-2.*
 4. **No ownership, no problem.** A graph with no `owns`, `out_of_scope` or `adoption` prints `no ownership declared`
@@ -42,7 +42,7 @@ ownership (noodlebot's own) passes unchanged.
 
 ## Gate
 - **A04-AC-1** — A fully owned fixture, one with out-of-scope files, one with pending areas and one whose regime files no node owns report `PROBLEMS 0`, and `--ref` judges that commit's graph and files. *Verify:* `sh plugin/skills/node/check-coverage.test.sh`.
-- **A04-AC-2** — An unowned file, a file two nodes own through different globs, an imported node's glob matching nothing and a merged planned node's glob matching nothing are each named on their own line with exit 1; an unmerged planned node's glob matching nothing is not a problem. *Verify:* `sh plugin/skills/node/check-coverage.test.sh`.
+- **A04-AC-2** — An unowned file, a file two nodes own through different globs, a file both owned and out of scope or in a pending area, an imported node's glob matching nothing and a merged planned node's glob matching nothing are each named on their own line with exit 1; an unmerged planned node's glob matching nothing is not a problem. *Verify:* `sh plugin/skills/node/check-coverage.test.sh`.
 - **A04-AC-3** — A graph without ownership prints `no ownership declared` and `PROBLEMS 0`, and this repository's graph passes. *Verify:* `sh plugin/skills/node/check-coverage.test.sh` and `python3 -I plugin/skills/node/check-coverage.py`.
 
 ## Risks
