@@ -49,6 +49,14 @@ Pick the first that holds, and write down why the earlier ones do not:
    that node in its `deps`. A merged node's spec is history; never add criteria to it.
 4. **New node** when nothing owns the area.
 
+Imported and pinned nodes (a graph `status` of `imported` or `pinned`) are done, like merged ones. Work on
+their code is a new node that depends on them (3). Never change an imported or pinned node's criteria,
+Purpose or `owns`; only its header row's Unlocks is kept in sync, as for any node.
+
+In a graph with ownership (nodes with `owns` globs), a new node depends on the nodes whose files it
+changes and on the nodes whose globs match the paths it will add files at, test folders included. Give it
+`owns` only for added paths that no existing glob matches.
+
 For a new node: the ID for the letter family whose nodes do similar work from the `next free:` line of
 `nodes.py`'s output (one line, every letter in use, e.g. `next free: S05 T02`; it counts `main` and every open `spec/*` PR, so two PRs never take one
 ID; never pick a number from `ids in use`).
