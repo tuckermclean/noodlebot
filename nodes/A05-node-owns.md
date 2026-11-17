@@ -13,9 +13,10 @@ repository's tests to pass (GREEN, the `--update` step that stops on a failing t
 `plugin/agents/tester.md`, `plugin/agents/implementer.md` and `plugin/agents/reviewer.md` (its checks and its GREEN
 re-run); the gate's pass condition and the exception for the amendments' lines in the spec-file rule of
 `scheduler/unattended-node-update.md`; the `owns` and `known_red` lines of the
-SMALL SPEC AMENDMENTS rule, and the same keep-both-sides exception in the MERGE CONFLICTS rule, in
+SMALL SPEC AMENDMENTS rule, and the same both-sides exception in the MERGE CONFLICTS rule, in
 `scheduler/unattended.md` and `scheduler/unattended-followup.md`; their cases in
 `plugin/skills/node/skill.test.sh`.
+**Resolves:** #139
 
 ## Purpose
 After this node a node built in an adopted repository stays inside the code it is about. Its PR changes only the files
@@ -36,7 +37,8 @@ that fixes an inherited failure takes it off the list. In a repository without o
   without ownership (`no ownership declared`, exit 0); an unknown commit (exit 2).
 - `plugin/skills/node/skill.test.sh` (extended): the skill's and the reviewer's text name the two checks (coverage
   judged against `origin/main`), the gate's pass condition including a non-zero exit with no matched line, its
-  evidence, the three amendments and their conflict resolution, and the freezing of imported tests, in the skill, the
+  evidence, the three amendments (an added own glob only for paths no other node's glob and no `out_of_scope` glob matches) and their conflict
+  resolution (both sides' changes applied, each line from the side that changed it), and the freezing of imported tests, in the skill, the
   agents and the templates.
 
 ## Changes
@@ -60,10 +62,11 @@ that fixes an inherited failure takes it off the list. In a repository without o
 3. **The amendments.** In step 7's small-amendment rule and the templates' SMALL SPEC AMENDMENTS, these are small
    amendments in the node PR, named in its **Spec amendments** section, and the graph changes a node PR may make:
    adding, correcting or removing a glob of the node's own `owns` (and its **Owns:** paragraph), an added glob only for
-   paths no other node's glob matches; removing a `known_red` entry its change makes pass; and removing a dep's glob
+   paths no other node's glob and no `out_of_scope` glob matches; removing a `known_red` entry its change makes pass; and removing a dep's glob
    that the node's change (a deleted or moved file) leaves matching nothing, unless it is the dep's last glob (that
-   takes a spec PR, since an imported node needs one). A conflict with `main` in these lines is resolved by keeping
-   both sides, without a question, in the skill's `--update` step, in `unattended-node-update.md`'s spec-file rule
+   takes a spec PR, since an imported node needs one). A conflict with `main` in these lines is resolved by
+   applying both sides' changes, each line taking the side that changed it (so a `known_red` entry or a glob one side removed
+   stays removed, and one side's addition is kept), without a question, in the skill's `--update` step, in `unattended-node-update.md`'s spec-file rule
    and in the MERGE CONFLICTS rule of `unattended.md` and `unattended-followup.md` (a node merging `origin/main` into
    its branch) alike. *A05-AC-3.*
 4. **The baseline.** Where the graph has a `gate`, "the repository's tests pass" means, everywhere the skill, the
@@ -83,7 +86,7 @@ that fixes an inherited failure takes it off the list. In a repository without o
 ## Gate
 - **A05-AC-1** — `check-owns-diff.py` passes a node's own and its deps' files and an added file a dep's glob matches, names a non-dep's file and a new file no own or dep glob matches with their owner and an own glob matching nothing, accepts deletions under a dep glob the branch removes, ignores files merged in from main, reads deps at `<from>`, exempts the regime's files, and exits 0 with `no ownership declared` on a graph without ownership. *Verify:* `sh plugin/skills/node/check-owns-diff.test.sh`.
 - **A05-AC-2** — The node skill and the reviewer require both checks before a PR in a repository with ownership, with their outputs as evidence, and send a `NOT OWNED` path through the owner's approval. *Verify:* `sh plugin/skills/node/skill.test.sh`.
-- **A05-AC-3** — Wherever the skill, the tester, the implementer, the reviewer and the update template require the tests to pass, a gate run passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry (a non-zero exit with no matched line fails), with the matches as evidence; CI runs are judged by the same rule; the skill and both session templates allow the amendments of change 3, and the skill, `unattended-node-update.md` and the MERGE CONFLICTS rule of both build templates resolve their conflicts by keeping both sides, and freeze the tests imported nodes name. *Verify:* `sh plugin/skills/node/skill.test.sh`.
+- **A05-AC-3** — Wherever the skill, the tester, the implementer, the reviewer and the update template require the tests to pass, a gate run passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry (a non-zero exit with no matched line fails), with the matches as evidence; CI runs are judged by the same rule; the skill and both session templates allow the amendments of change 3 (an added own glob only for paths no other node's glob and no `out_of_scope` glob matches), and the skill, `unattended-node-update.md` and the MERGE CONFLICTS rule of both build templates resolve their conflicts by applying both sides' changes, each line taking the side that changed it, and freeze the tests imported nodes name. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 
 ## Risks
 - Direct deps only: a node that needs a file of a dep's dep lists that node as a dep too, which keeps the graph honest

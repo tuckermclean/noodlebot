@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D04 | none | M |
+| now | D04 | P04 | M |
 
 **Owns:** in `scheduler/deploy.sh`: reading `~/.config/noodlebot/deploy-ci`, the CI gate (the workflow run read with the GitHub App token, its outcomes and the record of a waiting sha `deploy/waiting`), the smoke check, their status and stderr lines and their lines in the header comment; `scheduler/deploy-d07.test.sh` (new) and its line in the `Makefile`'s `TESTS`; in `scheduler/api.py`: the CI and smoke-check rejection lines among the failed deploys of `last_status_lines`; `scheduler/api-d07.test.sh` (new) and its line in the `Makefile`'s `TESTS`; the `deploy-ci` paragraph of the README.
 **Resolves:** #106
