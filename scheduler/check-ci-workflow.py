@@ -10,7 +10,8 @@ import sys
 
 EVENTS = ("pull_request", "push")
 EXPECT = {"TEST_FILE_BUDGET": "60", "TEST_BUDGET": "360", "SITE_TESTS": "required"}
-IF_RE = re.compile(r"^(?:\$\{\{\s*)?github\.event_name\s*==\s*(?:'([^']*)'|\"([^\"]*)\")\s*(?:\}\})?$")
+_EQ = r"github\.event_name\s*==\s*(?:'([^']*)'|\"([^\"]*)\")"
+IF_RE = re.compile(r"^(?:\$\{\{\s*" + _EQ + r"\s*\}\}|" + _EQ + r")$")
 
 
 def glob_main(pats):
@@ -46,7 +47,7 @@ def step_events(step):
     m = IF_RE.match(cond.strip()) if isinstance(cond, str) else None
     if not m:
         return None
-    ev = m.group(1) if m.group(1) is not None else m.group(2)
+    ev = next(g for g in m.groups() if g is not None)
     return {ev} & set(EVENTS)
 
 
@@ -77,6 +78,11 @@ def check(wf):
             ign = v["branches-ignore"]
             if glob_main(ign if isinstance(ign, list) else [ign]):
                 out.append("workflow: push ignores branch main")
+        if isinstance(v, dict):
+            if ("tags" in v or "tags-ignore" in v) and "branches" not in v and "branches-ignore" not in v:
+                out.append("workflow: push has tags but no branches, it does not run on a push to main")
+            if "paths" in v or "paths-ignore" in v:
+                out.append("workflow: push has paths, it may not run on a push to main")
 
     wf_env = wf.get("env")
     if wf_env is not None and not isinstance(wf_env, dict):
@@ -125,6 +131,7 @@ def check(wf):
             for lvl in (wf_env, job_env, step_env):
                 if isinstance(lvl, dict):
                     env.update({str(k): v for k, v in lvl.items()})
+            expr_seen = set()
             for e in sorted(evs):
                 runs[e].append(jid)
                 want = dict(EXPECT)
@@ -134,7 +141,9 @@ def check(wf):
                     val = env.get(k)
                     sv = None if val is None else str(val)
                     if sv is not None and "${{" in sv:
-                        out.append("%s: %s is an expression (%s), cannot be read" % (pre, k, sv))
+                        if k not in expr_seen:
+                            out.append("%s: %s is an expression (%s), cannot be read" % (pre, k, sv))
+                        expr_seen.add(k)
                     elif k in want:
                         if sv != want[k]:
                             out.append("%s: %s is %s on %s, must be %s" % (pre, k, sv, e, want[k]))
