@@ -1,0 +1,5 @@
+{
+  "name": "web",
+  "main": "web/index.js",
+  "bin": {"tool": "web/cli.js"}
+}
