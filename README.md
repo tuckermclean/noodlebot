@@ -217,7 +217,7 @@ the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state
 
 | You see | It means | Do |
 |---|---|---|
-| `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why (some also say what to do). | Do what the file says, if anything (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (a session gets 2 fresh starts; a spec PR is checked again). |
+| `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why (some also say what to do). | Do what the file says, if anything (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (usually the unit gets 2 fresh starts; a spec PR is checked again). |
 | `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is past its warning or limit (the weekly warning excepted), or (with `USAGE_7D_PACE=1`) the week is ahead of pace. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
 | A session that hit the usage limit | It's resumed by itself after the reset. | Nothing. |
 | `not deployed: ... fails CI` / `make test` | A new noodlebot commit failed its check; the old code still runs. | Fix `main`, or re-run its CI and retry the deploy. |
