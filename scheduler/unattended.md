@@ -17,7 +17,7 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   paths, committed by an earlier RED commit or node, or named in the Verify of an imported or pinned node's criteria) or a spec file. The spec files are the paths the
   checker check-spec-diff.py lists: those on the **Spec files:** line of the repository's AGENTS.md, or
   its default list when AGENTS.md has no such line. For those, git merge --abort, write QUESTION.md and
-  end the run. A conflict in `owns` globs or `known_red` entries is resolved without a question by applying both sides' changes, each line taking the side that changed it. A line both sides changed (the same glob or entry, changed differently) is not resolved: write QUESTION.md. After resolving, rerun the quick test gate the repository's AGENTS.md names and every red target of this node, and list
+  end the run, except the `owns` globs and `known_red` entries: a conflict in those is resolved without a question by applying both sides' changes, each line taking the side that changed it. A line both sides changed (the same glob or entry, changed differently) is not resolved: git merge --abort, write QUESTION.md and end the run. After resolving, rerun the quick test gate the repository's AGENTS.md names and every red target of this node, and list
   each resolved file in the PR under Deviations.
 @RESUME-BEGIN@
 - RESUMING AFTER A STOP. This branch already has work (commits past origin/main: @COMMITS@), and the
@@ -87,7 +87,7 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
     question.
   - If the answer does not settle a blocking question, or contradicts itself, write a new
     QUESTION.md that says exactly what is still open, and end the run.
-- SMALL SPEC AMENDMENTS (the node skill's step 7: this node's spec only, every criterion's meaning
+- SMALL SPEC AMENDMENTS (the node skill's step 7: this node's spec only, apart from the graph changes named next, every criterion's meaning
   intact, such as a clearer Verify line, or a path added to this node's own Owns) need no question and no spec PR: commit
   them on the node branch and list them in the PR under "Spec amendments". In a graph with `owns` or a `gate`, adding, correcting or removing a glob of this node's own `owns` (and its Owns paragraph), an added glob only for paths no other node's glob and no `out_of_scope` glob matches; removing a `known_red` entry the change makes pass; and removing a dep's glob that the change (a deleted or moved file) leaves matching nothing, unless it is the dep's last glob (that takes a spec PR), are small amendments too: name them in the PR's Spec amendments. Without `owns` and `gate` nothing changes.
 - SPEC CHANGES. A spec PR changes only the repository's spec files: the paths the checker

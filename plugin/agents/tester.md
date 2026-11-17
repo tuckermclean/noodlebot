@@ -16,7 +16,7 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 
 ## RED must be valid
 - the red target exits non-zero, runs to its end, and reports each failure on its own line; a crash of the harness itself, or a missing subject turned into a pass, is not valid;
-- every other test still passes (the repository's quick test gate, run locally, apart from your red target). With a `gate` in the graph, a run of the tests passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry; a non-zero exit with no matched line fails, and an empty `known_red` or no `fail_pattern` means it must exit 0. The evidence lists each failing line with the `known_red` entry it matched.
+- every other test still passes (the repository's quick test gate, run locally, apart from your red target). With a `gate` in the graph, a run of the tests passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry; a non-zero exit with no matched line fails, and an empty `known_red` or no `fail_pattern` means it must exit 0. The evidence lists each failing line with the `known_red` entry it matched. A local quick gate whose output `fail_pattern` cannot read passes only on exit 0.
 
 If a new test already passes, stop and report `already_satisfied` with the evidence. If a criterion is ambiguous or contradicts the spec, stop and report it.
 
