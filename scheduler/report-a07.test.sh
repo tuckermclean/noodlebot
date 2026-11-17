@@ -91,5 +91,62 @@ run3
 ok "A07-AC-2: the Adopt issue is closed once the plan PR is merged" test "$(ustateof "$h")" = closed
 ok "A07-AC-2: and there is still only one Adopt issue" test "$(adopts)" = 1
 
+# S4 review 1 (F1): the plan PR merges after report.json was lost; the Adopt issue is still closed, once
+s2=$tmp/A07/state-lost
+mkdir -p "$s2/adopt"
+: >"$s2/status.log"
+urun "$s2"; urun "$s2"
+mkdir -p "$s2/adopt/plan"
+ev "started adopt/plan in /wt, pid 5, start 1 of 2" "$s2"
+urun "$s2"; urun "$s2"
+echo 31 >"$s2/adopt/plan/WAITING-PR"
+urun "$s2"
+h2=$(cut -d' ' -f1 "$s2/adopt/plan/issue" 2>/dev/null)
+ok "A07-AC-2: the plan unit's start wrote its issue file (precondition of the lost-report.json cases)" test -n "$h2"
+rm -f "$s2/report.json"
+echo "31 spec/adopt-plan" >>"$s/merged-prs.tsv"; echo 31 >>"$s/merged-prs.txt"
+echo "31 spec/adopt-plan" >>"$s2/merged-prs.tsv"; echo 31 >>"$s2/merged-prs.txt"
+run3_2() { urun "$s2"; urun "$s2"; urun "$s2"; }
+run3_2
+ok "A07-AC-2: the Adopt issue is closed within 3 runs of the plan PR's merge although report.json was lost after the plan unit started" test "$(ustateof "${h2:-0}")" = closed
+ok "A07-AC-2: and exactly one closing comment was posted" test "$(ucount "${h2:-0}" 'closing this issue')" = 1
+rm -f "$s2/report.json"
+run3_2
+ok "A07-AC-2: a report.json lost after the issue was closed posts no second closing comment" test "$(ucount "${h2:-0}" 'closing this issue')" -le 1
+ok "A07-AC-2: and the issue stays closed" test "$(ustateof "${h2:-0}")" = closed
+
+# S4 review 1 (F4): a WAITING-PR first seen already merged gets no "waits for you to merge" milestone
+s3=$tmp/A07/state-merged
+mkdir -p "$s3/adopt"
+: >"$s3/status.log"; : >"$s3/merged-prs.tsv"; : >"$s3/merged-prs.txt"
+urun "$s3"; urun "$s3"
+mkdir -p "$s3/adopt/wrapx"
+ev "started adopt/wrapx in /wt, pid 6, start 1 of 2" "$s3"
+urun "$s3"; urun "$s3"
+h3=$(cut -d' ' -f1 "$s3/adopt/wrapx/issue" 2>/dev/null)
+echo 32 >"$s3/adopt/wrapx/WAITING-PR"; echo "32 spec/adopt-wrapx" >>"$s3/merged-prs.tsv"; echo 32 >>"$s3/merged-prs.txt"
+for i in 1 2 3; do urun "$s3"; done
+ok "A07-AC-2: an adoption PR first seen already merged gets no 'waits for you to merge' comment" test "$(ucount "${h3:-0}" '(?i)waits? for you')" = 0
+ok "A07-AC-2: and its merge is posted once" test "$(ucount "${h3:-0}" '(?i)#32.*merged|merged.*#32')" = 1
+
+# F4 (open PR): the waiting milestone once
+s4=$tmp/A07/state-open
+mkdir -p "$s4/adopt"
+: >"$s4/status.log"; : >"$s4/merged-prs.tsv"; : >"$s4/merged-prs.txt"
+urun "$s4"; urun "$s4"
+mkdir -p "$s4/adopt/wrapy"
+ev "started adopt/wrapy in /wt, pid 7, start 1 of 2" "$s4"
+urun "$s4"; urun "$s4"
+h4=$(cut -d' ' -f1 "$s4/adopt/wrapy/issue" 2>/dev/null)
+echo 33 >"$s4/adopt/wrapy/WAITING-PR"
+for i in 1 2 3; do urun "$s4"; done
+ok "A07-AC-2: an adoption PR that is open gets the waiting milestone exactly once over three runs" test "$(ucount "${h4:-0}" '(?i)#33.*waits? for you')" = 1
+
+# F3: the status issue does not say an adoption unit waiting on its PR resumes
+st=$(uq "[i['body'] for i in db['issues'].values() if 'noodlebot-status' in i['labels']][0]")
+adline=$(printf '%s\n' "$st" | grep 'adopt/wrapy' | grep -i 'merge')
+ok "A07-AC-2: the status issue lists the adoption unit waiting on its PR (precondition)" test -n "$adline"
+ok "A07-AC-2: and does not say that it resumes after the merge (the next unit starts)" sh -c "! printf '%s' \"\$1\" | grep -qi resum" _ "$adline"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report-a07 checks"
