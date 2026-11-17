@@ -672,9 +672,10 @@ stop_idle() {
 resume_idle() {
 	local saw=$1 only=${2:-} k f d p id rs reset sid a wt nl e name pr why
 	[ "$throttled" = 1 ] && [ "$ramp" != 1 ] && return
-	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid; do
+	for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/pr/*/session.pid "$state"/adopt/*/session.pid; do
 		[ -e "$f" ] || continue
 		d=$(dirname "$f") id=$(basename "$d") p=$(cat "$f")
+		[[ $f == */adopt/* ]] && id=$d   # an adoption unit is found by its state folder
 		alive "$p" "$id" || continue
 		rs=$(idle_by_limit "$d") || continue
 		read -r reset sid <<<"$rs"
@@ -682,7 +683,7 @@ resume_idle() {
 		[ "$(cat "$d/resumed" 2>/dev/null)" = "$reset" ] && continue
 		# without resume the session is not a waiting unit: it is ended below as a limit exit, restarting as a new start
 		if [ "$ramp" = 1 ] && [ -z "$only" ] && has_cap resume; then
-			case $d in "$state"/issue/*) k="#$id" ;; "$state"/pr/*) k="PR#$id" ;; *) k=$id ;; esac
+			case $d in "$state"/issue/*) k="#$id" ;; "$state"/pr/*) k="PR#$id" ;; "$state"/adopt/*) k="adopt-$(basename "$d")" ;; *) k=$id ;; esac
 			want "$k" resumed - "$d" "resume|$d"
 			continue
 		fi
@@ -703,7 +704,7 @@ resume_idle() {
 			say "$saw; session $name was idle by the usage limit and could not be resumed: $why"
 			: >"$d/force-limit"
 			ended "$d" "$saw"
-			[ "$triaging" = "$id" ] && triaging=''
+			{ [ "$triaging" = "$id" ] || [ "$triaging" = "adopt-$(basename "$d")" ]; } && triaging=''
 			[ -n "$only" ] && return 1
 			continue
 		fi
@@ -784,9 +785,14 @@ adopt_graph() {
 	local out
 	adopt_mode=none adopt_key='' adopt_globs='' adopt_br=''
 	git -C "$clone" rev-parse -q --verify 'origin/main^{commit}' >/dev/null 2>&1 || { adopt_mode=nogo; return 0; }
-	if ! git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.adopt.yaml" 2>/dev/null; then
-		adopt_mode=scaffold adopt_key=scaffold adopt_br=spec/adopt; return 0
+	if ! git -C "$clone" cat-file -e origin/main:docs/graph.yaml 2>/dev/null; then
+		# only a missing file means scaffold; a git failure starts nothing
+		if [ -z "$(git -C "$clone" ls-tree --name-only origin/main -- docs/graph.yaml 2>/dev/null || echo ERR)" ]; then
+			adopt_mode=scaffold adopt_key=scaffold adopt_br=spec/adopt
+		else adopt_mode=giterr; fi
+		return 0
 	fi
+	git -C "$clone" show origin/main:docs/graph.yaml >"$state/graph.adopt.yaml" 2>/dev/null || { adopt_mode=giterr; return 0; }
 	grep -q '^adoption:' "$state/graph.adopt.yaml" || return 0
 	out=$(python3 -I -c '
 import sys, yaml
@@ -798,7 +804,9 @@ if areas:
 else:
     print("plan")' "$state/graph.adopt.yaml" 2>/dev/null) || { adopt_mode=bad; return 0; }
 	case $out in
-	area*) adopt_mode=area adopt_key=$(printf '%s' "$out" | cut -f2) adopt_globs=$(printf '%s' "$out" | cut -f3-) adopt_br=spec/adopt-$adopt_key ;;
+	area*) adopt_mode=area adopt_key=$(printf '%s' "$out" | cut -f2) adopt_globs=$(printf '%s' "$out" | cut -f3-) adopt_br=spec/adopt-$adopt_key
+		# an area named plan or scaffold would share the folder (and branch) of the plan or scaffold unit: refused
+		case $adopt_key in plan | scaffold) adopt_mode=refuse ;; esac ;;
 	plan) adopt_mode=plan adopt_key=plan adopt_br=spec/adopt-plan ;;
 	*) adopt_mode=bad ;;
 	esac
@@ -810,9 +818,29 @@ adopt_fail() {
 	local ts
 	ts=$(date -u +%Y%m%dT%H%M%SZ)
 	echo "$(date -u +%FT%TZ) $4; delete this file to start the unit again" >"$1/FAILED"
-	mkdir -p "$1/answered" && [ ! -e "$1/WAITING-PR" ] || mv "$1/WAITING-PR" "$1/answered/$ts-SPEC-PR"
+	mkdir -p "$1/answered"
+	if [ -e "$1/WAITING-PR" ]; then   # as release-markers.sh names it: closed without merging, else merged
+		if grep -qxF "$(tr -d '[:space:]' <"$1/WAITING-PR")" "$state/closed-unmerged-prs.txt" 2>/dev/null; then mv "$1/WAITING-PR" "$1/answered/$ts-SPEC-PR-CLOSED"
+		else mv "$1/WAITING-PR" "$1/answered/$ts-SPEC-PR"; fi
+	fi
 	rm -f "$1/MERGE-SEEN" "$1/SPEC-PR-CHECKED"
 	say "$3; adopt/$2: $4; wrote FAILED"
+}
+
+# adopt_release_done <current key>: a unit the adoption has moved past (its step taken) keeps no WAITING-PR or MERGE-SEEN:
+# they move into answered/ (as SPEC-PR) unless the unit is running or held by FAILED.
+adopt_release_done() {
+	local u ts
+	ts=$(date -u +%Y%m%dT%H%M%SZ)
+	for u in "$state"/adopt/*/; do
+		u=${u%/}
+		[ -d "$u" ] && [ "$(basename "$u")" != "$1" ] || continue
+		[ -e "$u/session.pid" ] || [ -e "$u/FAILED" ] && continue
+		[ -e "$u/WAITING-PR" ] || [ -e "$u/MERGE-SEEN" ] || continue
+		if [ -e "$u/WAITING-PR" ]; then mkdir -p "$u/answered"; mv "$u/WAITING-PR" "$u/answered/$ts-SPEC-PR"; fi
+		rm -f "$u/MERGE-SEEN" "$u/SPEC-PR-CHECKED"
+	done
+	return 0
 }
 
 # adopt_step <saw>: the adoption's state of this tick, and the unit that is due (wanted in the start queue, or started
@@ -823,12 +851,15 @@ adopt_step() {
 	adopt_graph
 	case $adopt_mode in
 	nogo) asay nogo "$saw; adoption not started: origin/main does not resolve"; return 0 ;;
-	bad) asay bad "$saw; adoption not started: docs/graph.yaml on origin/main cannot be read"; return 0 ;;
-	none) asay_clear nogo; asay_clear bad; asay_clear tpl; return 0 ;;
+	giterr) asay giterr "$saw; adoption not started: git could not tell whether origin/main has docs/graph.yaml"; return 0 ;;
+	bad) adopt_on=1; asay bad "$saw; adoption not started: docs/graph.yaml on origin/main cannot be read"; return 0 ;;
+	refuse) adopt_on=1; asay bad "$saw; adoption not started: the area '$adopt_key' in docs/graph.yaml has a name the adoption uses for its own unit (plan, scaffold); rename it"; return 0 ;;
+	none) asay_clear nogo; asay_clear giterr; asay_clear bad; asay_clear tpl; adopt_release_done ''; return 0 ;;
 	esac
-	asay_clear nogo; asay_clear bad
+	asay_clear nogo; asay_clear giterr; asay_clear bad
 	adopt_on=1
 	key=$adopt_key br=$adopt_br d=$state/adopt/$key
+	adopt_release_done "$key"
 	[ -e "$d/session.pid" ] && return 0   # running
 	[ -e "$d/FAILED" ] && return 0
 	[ -e "$d/QUESTION.md" ] && [ ! -e "$d/ANSWER.md" ] && return 0
@@ -876,7 +907,7 @@ start_adopt() {
 	*) tag=PLAN; skill=$(python3 -I -B "$here/harness.py" skill-command adopt "--plan") ;;
 	esac || { note "$saw; adopt/$key: the harness gave no skill command; not started"; return 1; }
 	while IFS= read -r g; do
-		[ -z "$g" ] || inv="$inv${inv:+; }python3 -I $nb/plugin/skills/adopt/inventory.py --json --glob '$g' $wt"
+		[ -z "$g" ] || inv="$inv${inv:+; }python3 -I $nb/plugin/skills/adopt/inventory.py --json --glob '${g//\'/\'\\\'\'}' $wt"
 	done < <(printf '%s\n' "$adopt_globs" | tr '\t' '\n')
 	site_sed
 	sed "${ssed[@]}" -e "s|^@$tag@ ||" -e '/^@\(SCAFFOLD\|AREA\|PLAN\)@ /d' \

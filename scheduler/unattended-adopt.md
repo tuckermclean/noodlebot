@@ -5,7 +5,7 @@ the graph regime: the unit adopt/@UNIT@. No human is watching.
 - Follow @CMD@ (the skill's section for this mode, not a dry run). You work in @WT@, the checkout this unit owns:
   it is already on the branch @BRANCH@, made from origin/main. Make no clone and no other worktree; the scheduler
   removes @WT@ once this unit has ended with a PR.
-@SCAFFOLD@ - This is the first PR (the skill's sections 1 to 6): read the repository, ask the owner what only the owner can answer, then draft SPEC.md, AGENTS.md's "Building a node" section and docs/graph.yaml and open one spec PR on @BRANCH@.
+@SCAFFOLD@ - This is the first PR (the skill's sections 1 to 6): read the repository, ask the owner what only the owner can answer, then draft SPEC.md, AGENTS.md's "Building a node" section and docs/graph.yaml and open one spec PR on @BRANCH@. The plugin directory is @PLUGIN@.
 @AREA@ - This is the area "@AREA_NAME@" (the skill's section 7). Its globs are @GLOBS@. Map only its files. List them with the inventory command, once for each glob: @INVENTORY@. The plugin directory is @PLUGIN@.
 @PLAN@ - This is the last step (the skill's section 8): turn the repository's open issues into planned nodes and remove `adoption` from docs/graph.yaml, in one spec PR on @BRANCH@. The plugin directory is @PLUGIN@.
 - State folder: @DIR@. When the skill says to ask the owner, write the questions to @DIR@/QUESTION.md and end the run.
@@ -13,7 +13,9 @@ the graph regime: the unit adopt/@UNIT@. No human is watching.
 - RESUMING. If @DIR@/answered/ exists, an earlier run stopped with a question or a PR. Read every file in it,
   oldest first (<ts>-QUESTION.md is what it asked, <ts>-ANSWER.md is the owner's answer, which is the
   owner's decision), check whether the branch @BRANCH@ or its PR already exists, and carry on.
-  "As recommended" means the recommendation in the matching question.
+  "As recommended" means the recommendation in the matching question. Files named <ts>-SPEC-PR mean the PR you
+  opened was merged, <ts>-SPEC-PR-CLOSED that it was closed without merging (read why on its page, then decide what
+  to open instead); <ts>-QUESTION.md and <ts>-ANSWER.md are a question and the owner's answer.
 - Forge: every forge operation (a PR, an issue, a comment, a label, a CI run, a push) goes through the forge CLI,
   "$NOODLEBOT_FORGE" <family> <op> --opt value, which fetches credentials itself and prints JSON (a failed call
   exits non-zero). Examples: "$NOODLEBOT_FORGE" pr create --head @BRANCH@ --base main --title T --body-file F;
