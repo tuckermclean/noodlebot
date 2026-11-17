@@ -449,4 +449,30 @@ for g08p in "skill --update step|$a05/upd.md" "unattended-node-update.md spec-fi
 	g08c "A08-AC-3: $g08_who: when both sides change the same criterion's Verify or set the same dep's status differently, QUESTION.md is written" "$g08_f" 10 'both sides' 'same' 'verify' 'status' 'differently' 'question[.]md'
 done
 
+# --- A08 strict cases (fresh-review findings 1-6): each is tied to text only the A08 clause has, in a 1-2 line window ---
+# finding 1: the both-sides resolution of the dep amendments, with the wording of that clause (not A05's owns/known_red sentence)
+g08c "A08-AC-3 strict: skill --update step: the dep amendments' conflict (superseded by <ID>-AC-<n>) is resolved by applying both sides' changes, each line taking the side that changed it, with no question" "$a05/upd.md" 1 'superseded by <id>-ac-<n>' 'resolved the same way: apply both sides. changes, each line taking the side that changed it, with no question'
+for g08p in "unattended-node-update.md spec-file rule|$a05/nu-spec.md" "unattended.md MERGE CONFLICTS|$a05/u-merge.md" "unattended-followup.md MERGE CONFLICTS|$a05/f-merge.md"; do
+	g08_who=${g08p%%|*}; g08_f=${g08p#*|}
+	g08c "A08-AC-3 strict: $g08_who: the dep amendments' conflict (superseded by <ID>-AC-<n>) is resolved by applying both sides' changes, each line taking the side that changed it, with no question" "$g08_f" 1 'superseded by <id>-ac-<n>' 'status.{1,4} apply both sides. changes, each line taking the side that changed it, with no question'
+done
+# finding 2: both sides changing the same criterion's Verify or setting the dep's status differently is a QUESTION
+for g08p in "skill --update step|$a05/upd.md" "unattended-node-update.md spec-file rule|$a05/nu-spec.md" \
+	"unattended.md MERGE CONFLICTS|$a05/u-merge.md" "unattended-followup.md MERGE CONFLICTS|$a05/f-merge.md"; do
+	g08_who=${g08p%%|*}; g08_f=${g08p#*|}
+	g08c "A08-AC-3 strict: $g08_who: both sides changing the same criterion's Verify or setting the same dep's status differently is not resolved, QUESTION.md is written" "$g08_f" 1 'same criterion.s .{0,2}verify.{0,2} or set the same dep.s .status. differently' 'not resolved' 'question[.]md'
+done
+# finding 3: naming the pin's test in place of unpinned is a small amendment
+for g08p in "skill step 7|$a05/s7.md" "unattended.md SMALL SPEC AMENDMENTS|$a05/u-small.md" "unattended-followup.md SMALL SPEC AMENDMENTS|$a05/f-small.md"; do
+	g08_who=${g08p%%|*}; g08_f=${g08p#*|}
+	g08c "A08-AC-3 strict: $g08_who: replacing 'unpinned' in a pinned dep criterion with the pin's test is a small amendment" "$g08_f" 2 'replacing .unpinned. in a pinned dep criterion with the pin.s test' 'small amendment'
+done
+# finding 4: the reviewer's three runs and frozen pin lines
+g08c "A08-AC-2 strict: the reviewer checks pin-<n>.log: pass at the pin commit, the named case fails with the patch applied, they pass again with it reverted" "$a05/reviewer.md" 1 'pin-<n>[.]log.{1,3}: the three runs show the pinned cases pass at the pin commit, the named case fails with the patch applied and they pass again with it reverted'
+g08c "A08-AC-2 strict: the reviewer: a pin's test lines are frozen like RED lines, a changed or removed one without the owner's recorded approval is a finding" "$a05/reviewer.md" 1 'pin.s test lines are frozen like red lines' 'changed or removed one without the owner.s recorded approval is a finding'
+# finding 5: the skill's own frozen pin lines sentence
+g08c "A08-AC-2 strict: the skill: a pin's test lines are frozen like a RED commit's, a later commit may add cases, never change or remove one without the owner's approval" "$g08/skill.md" 1 'pin.s test lines are frozen like a red commit.s: a later commit may add cases, never change or remove one without the owner.s approval'
+# finding 6: the tester's keeps/pinned bullet
+g08c "A08-AC-1 strict: the tester: a criterion whose behaviour the node keeps is pinned, with a test that passes today" "$a05/tester.md" 1 'a criterion whose behaviour the node keeps is pinned: write a test that passes today'
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
