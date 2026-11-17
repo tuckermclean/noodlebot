@@ -13,12 +13,12 @@ The brief path, the RED commit SHA and its red target, the failing tests and the
 ## How to change things
 - The smallest change that meets the criteria, in the existing code's style. Do not redesign, rename or add a framework.
 - Keep to the principles in `SPEC.md` and the constraints, traps and porting rules in `AGENTS.md`.
-- Validate: the red target exits 0; the repository's quick test gate (the red targets and the touched files' tests, as `AGENTS.md` names it) passes locally, and the whole suite is left to the PR's CI run; run the syntax or lint checks `AGENTS.md` names on what you touched.
+- Validate: the red target exits 0; the repository's quick test gate (the red targets and the touched files' tests, as `AGENTS.md` names it) passes locally, and the whole suite is left to the PR's CI run; run the syntax or lint checks `AGENTS.md` names on what you touched. With a `gate` in the graph, a run of the tests passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry; a non-zero exit with no matched line fails, and an empty `known_red` or no `fail_pattern` means it must exit 0. The evidence lists each failing line with the `known_red` entry it matched. A local quick gate whose output `fail_pattern` cannot read passes only on exit 0.
 
 Commit with `feat(<ID>): …` or `fix(<ID>): …`; stage with `git add <paths>`, then `git commit` separately.
 
 ## You must not
-- modify, delete or skip a test the RED commit added or relied on;
+- modify, delete or skip a test the RED commit added or relied on, or one an imported or pinned node's criteria name in their Verify (frozen like an earlier node's tests);
 - edit `SPEC.md`, `docs/graph.yaml`, `nodes/`, `AGENTS.md`, or the spec and instruction files the repository's AGENTS.md and its guard config name;
 - touch anything `AGENTS.md` forbids (a live checkout, a running loop, a configuration directory);
 - push, amend, rebase or reset; read or print secrets.

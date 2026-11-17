@@ -1,0 +1,9 @@
+template: {headings: [Purpose, Gate]}
+out_of_scope:
+  - {glob: 'vendor/**', reason: third party code}
+gate: {command: 'sh t.sh', fail_pattern: '^FAIL', known_red: []}
+nodes:
+  - {id: A01, name: lib, track: done, status: imported, summary: the lib, deps: [], owns: ['src/a/**', 'src/old/**']}
+  - {id: A02, name: mid, track: done, status: imported, summary: the mid, deps: [], owns: ['src/b/**']}
+  - {id: A03, name: node, track: now, status: planned, summary: the node, deps: [A01], owns: ['src/c/**']}
+  - {id: A04, name: other, track: now, status: planned, summary: the other, deps: [], owns: ['src/d/**']}

@@ -44,7 +44,8 @@
    ],
    "properties": {
     "repo": {
-     "type": "string"
+     "type": "string",
+     "description": "owner/name of the live checkout's repository (its origin remote), the loop's repository whose status log holds the line when the origin is unreadable"
     },
     "time": {
      "type": "integer"
@@ -66,7 +67,8 @@
    ],
    "properties": {
     "repo": {
-     "type": "string"
+     "type": "string",
+     "description": "owner/name of the live checkout's repository (its origin remote), the loop's repository whose status log holds the line when the origin is unreadable"
     },
     "time": {
      "type": "integer"
