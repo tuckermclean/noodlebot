@@ -394,4 +394,59 @@ for a05p in "skill|$sk" "tester|$a05/tester.md" "implementer|$a05/implementer.md
 	g05c "A05-AC-3: $a05_who: the tests an imported or pinned node's criteria name in their Verify are frozen like an earlier node's" "$a05_f" 6 'imported' 'pinned' 'verify' 'frozen' 'criteri'
 done
 
+# ---------- A08-AC-1 / A08-AC-2 / A08-AC-3: pin commits, their checks, the dep amendments and their conflict resolution ----------
+# Text checks. Each point is checked in the file or section it belongs to (the skill's steps and --update section, the agents,
+# the templates' SMALL SPEC AMENDMENTS and MERGE CONFLICTS paragraphs, the update template's spec-file rule); the patterns avoid
+# backslashes so they mean the same to gawk and mawk. Reuses the section files of the A05 block above.
+g08="$tmp/A08"; mkdir -p "$g08"
+g08c() { # g08c <label> <file> <n> <ere>...
+	g08_l=$1; g08_f=$2; g08_n=$3; shift 3
+	if g02_win "$g08_f" "$g08_n" "$@"; then ok "$g08_l"; else bad "$g08_l"; fi
+}
+cp "$sk" "$g08/skill.md"
+
+# --- A08-AC-1: which criteria are pinned or superseded, and what a pin commit contains ---
+for g08p in "skill|$g08/skill.md" "tester|$a05/tester.md"; do
+	g08_who=${g08p%%|*}; g08_f=${g08p#*|}
+	g08c "A08-AC-1: the $g08_who: a pin is for an unpinned criterion of an imported dep whose behaviour the node relies on" "$g08_f" 8 'unpinned' 'criteri' 'imported' 'dep'
+	g08c "A08-AC-1: the $g08_who: a criterion whose behaviour the node keeps is pinned, one it changes is superseded and not pinned" "$g08_f" 8 'keeps?|kept' 'pinned' 'superseded' 'chang'
+	g08c "A08-AC-1: the $g08_who: a superseded criterion's frozen test is changed only with the owner's approval" "$g08_f" 8 'superseded' 'frozen' 'test' 'only' 'approv' 'owner'
+	g08c "A08-AC-1: the $g08_who: a pin passes when written, so it is not a RED commit but a pin(<ID>): commit" "$g08_f" 8 'pin[(]<id>[)]:' 'pass' 'red'
+	g08c "A08-AC-1: the $g08_who: a pin(<ID>): commit touches test and fixture paths only" "$g08_f" 8 'pin[(]<id>[)]:' 'test' 'fixture' 'paths?' 'only'
+	g08c "A08-AC-1: the $g08_who: a pin(<ID>): commit carries a Pin-Mutation: trailer naming each pinned criterion" "$g08_f" 8 'pin[(]<id>[)]:' 'pin-mutation:' 'trailer' 'each|every|per' 'criterion'
+	g08c "A08-AC-1: the $g08_who: each mutation is returned as a diff, the code is not edited" "$g08_f" 8 'mutation' 'diff' 'return' 'not edit|never edit|no edit|without edit|does not (change|modify)|not (change|modify)'
+	g08c "A08-AC-1: the $g08_who: the Pin-Mutation trailer names the path, what is broken and the case that fails" "$g08_f" 8 'pin-mutation: <dep>-ac-<n>' 'path' 'broken' 'fails?'
+done
+g08c "A08-AC-1: the skill pins before the node's first RED commit, in a repository whose graph has imported nodes" "$g08/skill.md" 8 'pin' 'before' 'first red' 'imported'
+g08c "A08-AC-1: the skill takes the criteria from the node's Changes and the deps' owns" "$g08/skill.md" 8 'unpinned' 'changes' 'owns' 'touch'
+
+# --- A08-AC-2: the three-run check, its patch and log, frozen pin lines, the reviewer ---
+g08c "A08-AC-2: the skill has the orchestrator write each mutation to out/node/<ID>/pin-<n>.patch" "$g08/skill.md" 8 'orchestrator' 'mutation' 'out/node/<id>/pin-<n>[.]patch'
+g08c "A08-AC-2: the skill keeps the three runs as out/node/<ID>/pin-<n>.log" "$g08/skill.md" 8 'three|3' 'runs' 'out/node/<id>/pin-<n>[.]log'
+g08c "A08-AC-2: the three runs: the pinned cases pass at the pin commit, the named case fails with the patch applied, they pass again with it reverted" "$g08/skill.md" 10 'pin commit' 'pass' 'patch' 'appl' 'fail' 'revert' 'again'
+g08c "A08-AC-2: a pin that passes with its mutation applied goes back to a new tester" "$g08/skill.md" 8 'pin' 'pass' 'mutation|patch' 'appl' 'new tester'
+g08c "A08-AC-2: the skill says a pin's test lines are frozen like a RED commit's: cases may be added, none changed or removed without the owner's approval" "$g08/skill.md" 8 'pin(.s)? (test )?lines|pin commit' 'frozen' 'like' 'red' 'add' 'never|not' 'approv'
+g08c "A08-AC-2: the skill puts the pin check's patch and log in the criterion -> evidence table" "$g08/skill.md" 8 'pin-<n>|pin check|pin commit' 'evidence' 'row|table' 'patch' 'log'
+g08c "A08-AC-2: the reviewer checks each pin commit's paths and Pin-Mutation trailers" "$a05/reviewer.md" 8 'pin[(]<id>[)]' 'path' 'trailer' 'pin-mutation'
+g08c "A08-AC-2: the reviewer checks the pin patches and logs (the three runs)" "$a05/reviewer.md" 8 'pin' 'patch' 'log' 'three|3|runs'
+g08c "A08-AC-2: the reviewer checks the pinned and superseded choices" "$a05/reviewer.md" 8 'pinned' 'superseded' 'choice|chose|choos|judg'
+g08c "A08-AC-2: the reviewer checks that pin lines stay frozen like RED lines, a changed or removed one is a finding" "$a05/reviewer.md" 8 'pin(.s)? (test )?lines|pin commit' 'frozen' 'red' 'finding'
+g08c "A08-AC-2: the reviewer checks the dep amendments (the pin named, superseded, pinned status)" "$a05/reviewer.md" 8 'dep' 'amendment' 'superseded' 'pinned'
+g08c "A08-AC-2: the reviewer reads each mutation with its failing case" "$a05/reviewer.md" 8 'mutation' 'fail' 'case'
+
+# --- A08-AC-3: the dep amendments are small amendments, and their conflict resolution ---
+for g08p in "skill step 7|$a05/s7.md" "unattended.md SMALL SPEC AMENDMENTS|$a05/u-small.md" "unattended-followup.md SMALL SPEC AMENDMENTS|$a05/f-small.md"; do
+	g08_who=${g08p%%|*}; g08_f=${g08p#*|}
+	g08c "A08-AC-3: $g08_who: naming the pin's test in a dep's unpinned criterion is a small amendment" "$g08_f" 8 'dep' 'criterion' 'unpinned' 'pin' 'amendment'
+	g08c "A08-AC-3: $g08_who: marking a changed dep criterion's Verify 'superseded by <ID>-AC-<n>' is a small amendment" "$g08_f" 8 'dep' 'verify' 'superseded by <id>-ac-<n>' 'amendment'
+	g08c "A08-AC-3: $g08_who: setting the dep's status to pinned when no unpinned criterion is left is a small amendment" "$g08_f" 8 'dep' 'status' 'pinned' 'unpinned' 'left|remain' 'amendment'
+done
+for g08p in "skill --update step|$a05/upd.md" "unattended-node-update.md spec-file rule|$a05/nu-spec.md" \
+	"unattended.md MERGE CONFLICTS|$a05/u-merge.md" "unattended-followup.md MERGE CONFLICTS|$a05/f-merge.md"; do
+	g08_who=${g08p%%|*}; g08_f=${g08p#*|}
+	g08c "A08-AC-3: $g08_who: a conflict in the pin, superseded or status lines applies both sides' changes, each line taking the side that changed it" "$g08_f" 10 'unpinned|superseded' 'verify|criteri' 'status' 'both sides' 'each line' 'side that changed'
+	g08c "A08-AC-3: $g08_who: after the resolution the dep is set pinned when no unpinned criterion is left, even when neither side set it" "$g08_f" 10 'status' 'pinned' 'unpinned' 'after' 'resol' 'left|remain' 'neither'
+	g08c "A08-AC-3: $g08_who: when both sides change the same criterion's Verify or set the same dep's status differently, QUESTION.md is written" "$g08_f" 10 'both sides' 'same' 'verify' 'status' 'differently' 'question[.]md'
+done
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
