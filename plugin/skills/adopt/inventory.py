@@ -361,6 +361,51 @@ def cover(inside, counts):
     return walk("")
 
 
+def components(deps):
+    """For each node of the graph deps (node -> the nodes it points to), the lowest node of its strongly connected
+    component. Tarjan's algorithm with an explicit stack, so a long chain does not reach the recursion limit."""
+    n = len(deps)
+    index, low, comp = [None] * n, [0] * n, [None] * n
+    stack, on, counter = [], [False] * n, 0
+    for root in range(n):
+        if index[root] is not None:
+            continue
+        work = [(root, iter(sorted(deps[root])))]
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on[root] = True
+        while work:
+            v, it = work[-1]
+            for w in it:
+                if index[w] is None:
+                    index[w] = low[w] = counter
+                    counter += 1
+                    stack.append(w)
+                    on[w] = True
+                    work.append((w, iter(sorted(deps[w]))))
+                    break
+                if on[w]:
+                    low[v] = min(low[v], index[w])
+            else:
+                work.pop()
+                if work:
+                    u = work[-1][0]
+                    low[u] = min(low[u], low[v])
+                if low[v] == index[v]:
+                    group = []
+                    while True:
+                        w = stack.pop()
+                        on[w] = False
+                        group.append(w)
+                        if w == v:
+                            break
+                    first = min(group)
+                    for w in group:
+                        comp[w] = first
+    return comp
+
+
 def propose_areas(files, lines, links, tracked_tree, limit):
     parts = split_folder("", sorted(files), lines, limit, force=True)
     counts = folder_counts(tracked_tree)
@@ -379,27 +424,27 @@ def propose_areas(files, lines, links, tracked_tree, limit):
     for src, _kind, _raw, tgt in links:
         if src in where and tgt in where and where[src] != where[tgt]:
             deps[where[src]].add(where[tgt])
-    # each step places the first area left whose imports are all placed, else (a cycle) the first left
-    waiting = [len(d) for d in deps]
-    users = [[] for _ in areas]
-    for i, d in enumerate(deps):
-        for j in d:
-            users[j].append(i)
-    ready = [i for i, w in enumerate(waiting) if w == 0]
+    # areas joined by a cycle form one component; each step places the first component left whose imports are all
+    # placed (a component's index is its first area's), its areas by index
+    comp = components(deps)
+    members = {}
+    for i, c in enumerate(comp):
+        members.setdefault(c, []).append(i)
+    cdeps = {c: {comp[j] for i in ms for j in deps[i]} - {c} for c, ms in members.items()}
+    waiting = {c: len(d) for c, d in cdeps.items()}
+    users = {c: [] for c in members}
+    for c, d in cdeps.items():
+        for e in d:
+            users[e].append(c)
+    ready = [c for c, w in waiting.items() if w == 0]
     heapq.heapify(ready)
-    order, placed, first = [], [False] * len(areas), 0
-    while len(order) < len(areas):
-        if ready:
-            pick = heapq.heappop(ready)
-        else:
-            while placed[first]:
-                first += 1
-            pick = first
-        order.append(pick)
-        placed[pick] = True
-        for u in users[pick]:
+    order = []
+    while ready:
+        c = heapq.heappop(ready)
+        order += members[c]
+        for u in users[c]:
             waiting[u] -= 1
-            if waiting[u] == 0 and not placed[u]:
+            if waiting[u] == 0:
                 heapq.heappush(ready, u)
     return [areas[i] for i in order]
 
