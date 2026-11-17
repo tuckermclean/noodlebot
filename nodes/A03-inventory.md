@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | A02 | A04, A06 | S |
+| now | A02 | A06 | S |
 
 **Owns:** `plugin/skills/adopt/inventory.py` (new), `plugin/skills/adopt/inventory.test.sh` (new) and its line in the
 `Makefile`'s `TESTS`, the fixture repository under `plugin/skills/adopt/testdata/inventory/`.
@@ -10,44 +10,46 @@
 ## Purpose
 After this node an adoption starts from a summary of the repository, not from reading all of it. A deterministic
 script lists what is there (files, languages, sizes, entrypoints, tests, CI files, vendored and generated folders, and
-the import links between files) and proposes how to split the code into areas small enough for one session each. An
-adoption session reads that summary and then only the files of the area it maps, so a large repository no longer
-overflows it. The script proposes; the owner and the sessions decide.
+the import links between files) and proposes how to split the repository into areas small enough for one session
+each. An adoption session reads that summary and then only the files of the area it maps, so a large repository no
+longer overflows it. The script proposes; the owner and the sessions decide.
 
 ## Tests
 - `plugin/skills/adopt/inventory.test.sh` (new): a fixture repository (made with `git init` in a temporary folder from
   `testdata/inventory/`) with a Python package, a JavaScript file, a shell script, a test folder, a CI workflow, a
-  `vendor/` folder and a `node_modules/` folder, and a graph whose one node owns `src/core/`. Cases: the summary and
-  `--json` (every tracked file with its language and line count; the three kinds of entrypoint; the tests; the CI file;
-  the vendored folders listed as candidates, not as source); the three kinds of import link, and one that resolves to
-  nothing kept with a null target; `--unowned`; `--areas` on the fixture and with a small `--max-lines`.
+  README, a `vendor/` folder, a `node_modules/` folder, and a folder of flat files larger than a small `--max-lines`;
+  and a graph whose one node owns `src/core/`. Cases: the summary and `--json`; the three kinds of import link, and
+  one that resolves to nothing; `--unowned`; `--glob`; `--areas` with the default and with a small `--max-lines`.
 
 ## Changes
-1. **List.** `python3 -I plugin/skills/adopt/inventory.py <checkout> [--json] [--unowned] [--areas [--max-lines N]]`
-   lists tracked files with `git ls-files` and reports each one's language (by extension, or by the interpreter its
-   shebang names), its non-blank line count, entrypoints (a shebang, `if __name__ == "__main__"`, a package
-   manifest's `main` or `bin`, an executable script), test files (`test_*`, `*_test.*`, `*.test.*`, files under
-   `tests/`, `test/`, `spec/`, `testdata/`, `fixtures/`), CI files (`.github/workflows/*`, `.gitlab-ci.yml`,
-   `Jenkinsfile`, `.circleci/`) and candidate out-of-scope folders (`vendor/`, `node_modules/`, `.venv/`, `dist/`,
-   `build/`, generated files with a "generated" header line), each with its reason. *A03-AC-1.*
+1. **List.** `python3 -I plugin/skills/adopt/inventory.py <checkout> [--json] [--glob GLOB] [--unowned] [--areas
+   [--max-lines N]]` lists tracked files with `git ls-files` and reports each one's language (by extension, or by the
+   interpreter its shebang names), its non-blank line count, entrypoints (a shebang, `if __name__ == "__main__"`, a
+   package manifest's `main` or `bin`, an executable script), test files (`test_*`, `*_test.*`, `*.test.*`, files
+   under `tests/`, `test/`, `spec/`, `testdata/`, `fixtures/`), CI files (`.github/workflows/*`, `.gitlab-ci.yml`,
+   `Jenkinsfile`, `.circleci/`) and candidate out-of-scope paths (`vendor/`, `node_modules/`, `.venv/`, `dist/`,
+   `build/`, files with a "generated" header line), each with its reason. It imports A02's `owns.py` from
+   `../node/`, putting that folder on `sys.path` itself (it runs under `python3 -I`). *A03-AC-1.*
 2. **Links.** Python `import` and `from … import`, JavaScript and TypeScript `import … from` and `require(`, and shell
    `source` and `. path`, resolved to tracked paths; a link that resolves to nothing keeps its raw text with a null
    target. *A03-AC-2.*
 3. **Output.** By default a short summary (files and lines by language, the largest files, entrypoints, tests, CI,
    candidates); `--json` the same as one object with the keys `files`, `languages`, `entrypoints`, `tests`, `ci`,
-   `candidates`, `links`, `unowned`, `areas`. *A03-AC-1.*
-4. **`--unowned`** lists the tracked files that no node's `owns` (A02's matcher) and no `out_of_scope` glob covers,
-   one per line, sorted; with no ownership in the graph it lists nothing. *A03-AC-3.*
-5. **`--areas`** proposes areas: folders of source files (candidates and already-owned files left out), a folder over
-   `--max-lines` (default 4000) split into its subfolders, small sibling folders merged, each area with a kebab-case
-   name, a glob, its files and its lines, in an order where an area comes after the areas it imports from where
-   possible. Every source file is in exactly one proposed area. *A03-AC-4.*
+   `candidates`, `links`, `unowned`, `areas`. `--glob` limits every list to the files the glob matches (A02's
+   matcher), for a session that maps one area. *A03-AC-1.*
+4. **`--unowned`** lists the tracked files that no node's `owns` and no `out_of_scope` glob covers, one per line,
+   sorted; with no ownership in the graph it lists nothing. *A03-AC-3.*
+5. **`--areas`** proposes areas covering every tracked file that is not a candidate and not already owned (code,
+   tests, docs, CI and configuration alike): one area per folder, a folder over `--max-lines` (default 4000) split into
+   its subfolders, and a folder whose own files are over the limit split into groups of files; small sibling folders
+   may be merged. Each area has a kebab-case name (never `scaffold` or `plan`), a list of globs, its files and its
+   lines, in an order where an area comes after the areas it imports from where possible. *A03-AC-4.*
 
 ## Gate
-- **A03-AC-1** — On the fixture, the summary and `--json` report every tracked file with its language and lines, the three kinds of entrypoint, the tests, the CI file, and the vendored folders as candidates with a reason. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
+- **A03-AC-1** — On the fixture, the summary and `--json` report every tracked file with its language and lines, the three kinds of entrypoint, the tests, the CI file and the vendored folders as candidates with a reason, and `--glob` limits them to one folder. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
 - **A03-AC-2** — Import, require and source links carry their resolved path, and one that resolves to nothing keeps its raw text with a null target. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
 - **A03-AC-3** — `--unowned` lists exactly the tracked files no `owns` and no `out_of_scope` glob covers, and nothing for a graph without ownership. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
-- **A03-AC-4** — `--areas` puts every source file in exactly one area, none over `--max-lines` unless it is a single file, and leaves out candidates and owned files. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
+- **A03-AC-4** — `--areas` puts every tracked file that is not a candidate and not owned in exactly one area, none over `--max-lines` unless it is a single file, and the flat folder over the limit is split into groups of files. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
 
 ## Risks
 - Best effort by design: dynamic imports, computed `require` names and shell globs are invisible. Links only inform
