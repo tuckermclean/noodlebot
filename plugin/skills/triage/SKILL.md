@@ -10,7 +10,7 @@ Feedback on one of the bot's open spec PRs (the feedback flag with a PR number):
 You turn one issue into **plan**, not code. The graph is the only work queue: once your spec PR is
 merged, the scheduler builds the node with `/node` as usual, and the loop closes the issue once the nodes are merged.
 
-**Never** write implementation or tests, edit a merged node's criteria, or change the repository's
+**Never** write implementation or tests, edit the criteria of a merged, imported or pinned node, or change the repository's
 principles. With `--dry-run`, do everything up to a local commit, then stop: no push, no PR, no
 comment; write your result to `out/triage/<issue>/result.md` and print it. With `--dry-run` that result.md holds the issue as read, `nodes.py`'s output, the placement and what would have been posted.
 
@@ -34,7 +34,7 @@ a separate job.
 - Read the issue with its comments: `"$NOODLEBOT_FORGE" issue view --number <issue>` and `"$NOODLEBOT_FORGE" issue comments --number <issue>`. Follow its links (PRs, runs,
   logs) far enough to know what it is about.
 - Run `python3 -I <this skill's dir>/nodes.py --grep <term> ...` from the worktree root, with the
-  paths, tools and words the issue is about as terms. It prints every node's state (merged, open PR,
+  paths, tools and words the issue is about as terms. It prints every node's state (merged, imported, pinned, open PR,
   none), deps, what it unlocks and what it **Owns**, and which specs mention each term.
 - Read the specs of the 1–3 candidate nodes in full.
 
@@ -42,11 +42,11 @@ a separate job.
 Pick the first that holds, and write down why the earlier ones do not:
 1. **No change.** Already covered by a criterion of some node (merged or not), a duplicate, not
    actionable, or a question. Reply on the issue with the node/criterion that covers it.
-2. **Amend an unmerged node** whose Purpose and Owns already cover the area, and which has **no open
+2. **Amend a planned node** (not merged, imported or pinned) whose Purpose and Owns already cover the area, and which has **no open
    PR**: add criteria (next free AC numbers), the matching Tests and Changes items, and Risks.
    A node with an open PR or a running session is in flight: do not move its goalposts; use 3.
-3. **Follow-up node** when the area belongs to a merged node, or to one in flight: a new node with
-   that node in its `deps`. A merged node's spec is history; never add criteria to it.
+3. **Follow-up node** when the area belongs to a merged, imported or pinned node, or to one in flight: a new node with
+   that node in its `deps`. Such a node's spec is history; never add criteria to it.
 4. **New node** when nothing owns the area.
 
 Imported and pinned nodes (a graph `status` of `imported` or `pinned`) are done, like merged ones. Work on
@@ -61,7 +61,7 @@ For a new node: the ID for the letter family whose nodes do similar work from th
 `nodes.py`'s output (one line, every letter in use, e.g. `next free: S05 T02`; it counts `main` and every open `spec/*` PR, so two PRs never take one
 ID; never pick a number from `ids in use`).
 When `nodes.py` cannot tell (IDs unknown, no `next free:` line), the run ends without a PR; a later
-start tries again. A short kebab-case `name`; minimal `deps` (only what its gate truly needs);
+start tries again. A short kebab-case `name`; minimal `deps` (only what its gate truly needs; in a graph with ownership also the owners the placement rule above names);
 `track` by the repository's rule; a one-sentence `summary`; a full spec from the template; and add it
 to the deps of any node that must not pass without it. Size it honestly.
 
@@ -138,7 +138,7 @@ nothing else.
 
 ## 5. Feedback on a spec PR: `/triage --feedback <PR> [--dry-run]`
 Run by the loop for one of the bot's own open `spec/*` PRs that has new feedback from the owner. Work in a worktree checked out on the PR's named branch, brought to `origin/<branch>` (a fast-forward); read `FEEDBACK.md` in your state folder: each item has its kind, URL, author, body and, for a line comment, its file, line and thread.
-1. Change the PR's specs as `FEEDBACK.md` asks, by the triage rules above (graph first, current-state wording, a new node's ID from the `next free:` line of `nodes.py`, never a merged node's criteria), as one new commit: never an amend, a rebase or a force push.
+1. Change the PR's specs as `FEEDBACK.md` asks, by the triage rules above (graph first, current-state wording, a new node's ID from the `next free:` line of `nodes.py`, never the criteria of a merged, imported or pinned node), as one new commit: never an amend, a rebase or a force push.
 2. Rerun the spec checker until it reports PROBLEMS 0.
 3. A point that needs a judgment only the owner can make (a placement that is reasonable both ways, a principle or scope change) is not guessed: it goes to QUESTION.md with your recommendation (item 4 or 6 says when it is written).
 4. With `--dry-run`: no push, no PR edit, no reply, no thread resolved. Write `out/triage/pr-<N>/result.md` holding the commit, the checker's output and one reply per item, each naming the commit (or why nothing changed) and, for a fixed line comment, the thread it would resolve; and write QUESTION.md for the points of item 3, in the state folder the loop gives or, with none (a dry run by hand), next to result.md as `out/triage/pr-<N>/QUESTION.md`. Stop there.
