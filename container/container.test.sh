@@ -544,6 +544,33 @@ chk("D06-AC-10 SPEC.md section 2 names container/",
 chk("D06-AC-10 AGENTS.md 'Where things are' names container/",
     lambda: "container/" in section(text("AGENTS.md"), r"^## Where things are"))
 
+# ---- S11 change 3: every README section a file under container/ names as (README, section "<title>") is a heading of
+# README.md; at least one such reference is found, so an empty scan is not a pass. (Scratch folder name: S11.)
+def s11_refs():
+    found = []
+    for dp, dn, fns in os.walk(path("container")):
+        for fn in sorted(fns):
+            if fn.endswith(".test.sh"):
+                continue
+            full = os.path.join(dp, fn)
+            try:
+                with open(full, encoding="utf-8") as f:
+                    for no, line in enumerate(f, 1):
+                        for m in re.finditer(r'\(README, section "([^"]+)"\)', line):
+                            found.append((os.path.relpath(full, root), no, m.group(1)))
+            except (UnicodeDecodeError, OSError):
+                continue
+    return found
+
+
+s11_headings = safe(lambda: [m.group(1).strip() for m in re.finditer(r"(?m)^#{1,6}[ \t]+(.*?)[ \t#]*$", text("README.md"))]) or []
+s11_found = s11_refs()
+chk("S11-AC-3 a file under container/ names a README section as (README, section \"<title>\")",
+    lambda: (len(s11_found) > 0, "no reference found"))
+for s11_f, s11_n, s11_t in s11_found:
+    chk("S11-AC-3 %s:%d: README section \"%s\" is a heading of README.md" % (s11_f, s11_n, s11_t),
+        lambda t=s11_t: (t in s11_headings, "headings: %s" % "; ".join(s11_headings)))
+
 print("DONE")
 sys.exit(1 if nfail else 0)
 EOPY

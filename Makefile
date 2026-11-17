@@ -150,6 +150,7 @@ TESTS = \
 	scheduler/agnostic.test.sh \
 	scheduler/move-runtime.test.sh \
 	plugin/skills/adopt/adopt.test.sh \
+	plugin/skills/adopt/inventory.test.sh \
 	plugin/skills/triage/nodes.test.sh \
 	plugin/skills/node/skill.test.sh \
 	plugin/skills/node/check-spec-diff.test.sh \
@@ -162,6 +163,7 @@ TESTS = \
 	scheduler/pickup-s10.test.sh \
 	scheduler/forge.test.sh \
 	scheduler/quick-gate.test.sh \
+	scheduler/quiet-reads.test.sh \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
 	scheduler/runtests-d08.test.sh \

@@ -63,7 +63,7 @@ n_live=0
 for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
 	[ -e "$f" ] || continue
 	p=$(cat "$f") id=$(basename "$(dirname "$f")") sdir=$(dirname "$f")
-	python3 -I -B "$nb/scheduler/harness.py" matches "$id" "$(tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null)" || continue
+	python3 -I -B "$nb/scheduler/harness.py" matches "$id" "$(tr '\0' ' ' 2>/dev/null <"/proc/$p/cmdline")" || continue
 	n_live=$((n_live + 1)) label=$id
 	[[ $sdir == */issue/* ]] && label="triage of #$id"
 	# the log's size and last write (harness.py log-stat), then the last actions; a subagent's are marked with ">"

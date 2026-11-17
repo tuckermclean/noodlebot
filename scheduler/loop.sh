@@ -358,7 +358,7 @@ except Exception as e:
 alive() {
 	kill -0 "$1" 2>/dev/null || return 1
 	local cmd
-	cmd=$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)
+	cmd=$(tr '\0' ' ' 2>/dev/null <"/proc/$1/cmdline")
 	# a node's feedback prompt ends in the PR number, so it is recognised by the node's state folder
 	[ -z "$fb_node_re" ] || ! grep -qE "run-session\.sh [^ ]+ [^ ]*/node/$2 $fb_node_re( |\$)" <<<"$cmd" || return 0
 	if [ -n "$match_tpl" ]; then   # the harness's pattern, asked once per loop start: no python run per check
@@ -432,7 +432,7 @@ not_counted() { local n; n=$(starts_of "$1"); [ "$n" -gt 0 ] && set_starts "$1" 
 
 # fu_branch <node dir>: the follow-up branch in its FOLLOWUP marker; fails if there is none (a missing,
 # empty or blank marker is no marker).
-fu_branch() { local b; b=$(tr -d '[:space:]' <"$1/FOLLOWUP" 2>/dev/null) && [ -n "$b" ] && echo "$b"; }
+fu_branch() { local b; b=$(tr -d '[:space:]' 2>/dev/null <"$1/FOLLOWUP") && [ -n "$b" ] && echo "$b"; }
 
 # has_pr <dir> <ID>: the node has an open or merged PR that ends a session as "with a PR". A follow-up
 # (its FOLLOWUP marker holds the branch) counts only a PR on its own follow-up branch.
@@ -1134,7 +1134,7 @@ publish() {
 	gist=$(head -n1 "$cfg/gist" | tr -d '[:space:]')
 	repos=$cfg/repos
 	[ -r "$repos" ] || { repos=$state/site-repos; echo "$repo" >"$repos"; }
-	prev=$(wc -c <"$state/site.log" 2>/dev/null || echo 0)
+	prev=$(wc -c 2>/dev/null <"$state/site.log" || echo 0)
 	if GH_TOKEN="$(cat "$cfg/gist-token")" timeout 60 python3 -I "$here/site.py" publish --data-root "$root" --repos "$repos" \
 			--gist "$gist" --throttle "$site_usage" 2>>"$state/site.log"; then
 		[ "$site_state" != failed ] || say "status site: publishing again"
@@ -1316,7 +1316,7 @@ start_node() {
 	# the resume section sits between @RESUME-BEGIN@/@RESUME-END@, the patch lines between @PATCH-BEGIN@/@PATCH-END@,
 	# the reason between @REASON-BEGIN@/@REASON-END@; the pending patches are shown (and their list cleared) only with it
 	site_sed
-	{ if [ "$resume" = 1 ]; then cat; else sed '/^@RESUME-BEGIN@$/,/^@RESUME-END@$/d'; fi; } <"$here/$prompt" 2>/dev/null |
+	{ if [ "$resume" = 1 ]; then cat; else sed '/^@RESUME-BEGIN@$/,/^@RESUME-END@$/d'; fi; } 2>/dev/null <"$here/$prompt" |
 	{ if [ -n "$plist" ]; then cat; else sed '/^@PATCH-BEGIN@$/,/^@PATCH-END@$/d'; fi; } |
 	{ if [ -n "$reason" ]; then cat; else sed '/^@REASON-BEGIN@$/,/^@REASON-END@$/d'; fi; } |
 	sed -e '/^@\(RESUME\|PATCH\|REASON\)-\(BEGIN\|END\)@$/d' "${rsed[@]}" "${ssed[@]}" \
