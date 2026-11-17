@@ -220,11 +220,13 @@ instructions for questions win.
      naming the existing test that shows it (a file the repository tracks) or reading `unpinned` when no test does;
      Risks. Describe what you read; do not invent intent;
    - lists as `deps` the already-mapped nodes whose code it relies on.
+   The one change allowed to a node outside the area: the header row's Unlocks of each node a new node depends on
+   is kept in sync with the graph (`check-regime.py` derives it from the `deps`), as triage does; never its criteria, Purpose or `owns`.
 3. Remove the area from `adoption.areas`. A file of the area that should not be owned (vendored, generated) goes
    into a further `out_of_scope` entry, with a glob and a reason; such a file is then not owned by any node.
    Keep the other areas, the existing `out_of_scope` entries and the gate unchanged.
 4. Run `python3 -I <plugin dir>/skills/node/check-regime.py` and `check-coverage.py` until both report
-   `PROBLEMS 0`; a problem outside the area (a file no area covers, say) is a `QUESTION.md`, never an ownership change outside the area. Commit, then (it compares commits) run `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`
+   `PROBLEMS 0`; a `check-coverage.py` problem outside the area (a file no area, node or `out_of_scope` entry covers, say) is a `QUESTION.md`, never an ownership change outside the area: write it and end the run without a PR, pushing nothing. Commit, then (it compares commits) run `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`
    until it passes (exit 0), fixing the drafts, not the checkers, and committing each fix; exit 2 (git failed) stops the run, as in section 5.
 5. Push `spec/adopt-<name>` and open one spec PR (one PR for the area, as in section 5), body: the
    nodes, what each owns, the criteria marked `unpinned`, any new out_of_scope entry; `Refs #N` for issues the
@@ -240,10 +242,10 @@ Run by the loop once no area is left under `adoption.areas`. Work in the checkou
    node, by the triage rules: `deps` on the nodes whose files it changes and on the nodes whose globs match
    the paths it will add files at; `owns` only for added paths that no node's glob and no `out_of_scope`
    glob matches; **Resolves:** #N for its issue. Never change the criteria of an imported node: the change
-   is a new node of its own. An issue that needs the owner's decision goes to QUESTION.md with your recommendation.
+   is a new node of its own (only the header row's Unlocks of the nodes it depends on is kept in sync, as in section 7 step 2). An issue that needs the owner's decision goes to QUESTION.md with your recommendation.
 3. Remove `adoption` from `docs/graph.yaml` (the whole key), so the graph shows the adoption is over.
 4. Run the same checks as in section 7 step 4 (`check-regime.py`, `check-coverage.py`, then, after committing, `check-spec-diff.py origin/<default branch> HEAD`).
-5. Commit, push `spec/adopt-plan` and open one PR with `Refs #N` for each issue (no closing keyword), then
+5. With everything committed, push `spec/adopt-plan` and open one PR with `Refs #N` for each issue (no closing keyword), then
    `WAITING-PR` as the prompt says. Never merge.
 
 ## 9. Update and feedback: `/adopt --update <N>` and `/adopt --feedback <N>`
@@ -252,15 +254,16 @@ Run by the loop for one of the adoption's own open spec PRs (`spec/adopt`, `spec
 (a fast-forward). Create no other branch. Mirror the triage skill's update and feedback modes.
 - **`--update <N>`**: the PR conflicts with main. `git fetch origin`, then merge `origin/<default branch>`
   into the branch: a merge commit, never a rebase, never a force push. Resolve a conflict that needs no
-  judgment by keeping both sides (both graph rows, both areas' removals); leave no conflict markers. A
+  judgment by keeping both sides (both graph rows, both areas' removals, and main's header row with the branch's change put back in); leave no conflict markers. A
   conflict that needs a judgment: `git merge --abort`, push nothing, comment on the PR with the files and why, end.
   Where main has since taken a node ID of the PR, renumber the PR's node as triage does (spec file, graph entry,
-  criteria IDs, references) in one commit on top. Rerun `check-regime.py`, `check-coverage.py` and
+  criteria IDs, references, the header rows it changes in other specs) in one commit on top. Rerun `check-regime.py`, `check-coverage.py` and
   `check-spec-diff.py` until they pass (`PROBLEMS 0`; the spec-diff check is
   `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`, run on the committed merge). For the `spec/adopt` PR, which
   adds `AGENTS.md` (and `.noodlebot/roles.yaml` when drafted) before main has a **Spec files:** line, run it as in
   section 5 with `--allow AGENTS.md [--allow .noodlebot/roles.yaml]` before `origin/<default branch> HEAD`; without them it always reports
-  `NOT SPEC` for those files. If the merge had conflicts, run the resolution review before anything is pushed,
+  `NOT SPEC` for those files. Exit 2 of `check-spec-diff.py` (git failed) stops the run: push nothing,
+  `git reset --hard origin/<branch>` (no merge commit left) and end. If the merge had conflicts, run the resolution review before anything is pushed,
   as triage's update mode (step 4) does: dispatch a new reviewer (the repository's reviewer role,
   `noodlebot:reviewer` when it names none) with the merge commit and its diffs against both parents; it checks
   that the resolution keeps the intent of both sides and that no node is owned twice or left unowned. Post its verdict on the PR as
@@ -272,7 +275,7 @@ Run by the loop for one of the adoption's own open spec PRs (`spec/adopt`, `spec
   amend, a rebase or a force push), keeping the area's files owned once each; run the same checks as `--update` (`check-regime.py`, `check-coverage.py`, commit, then
   `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`, with `--allow AGENTS.md [--allow .noodlebot/roles.yaml]`
   before the refs for the `spec/adopt` PR) until they pass; a coverage problem outside the PR's area is a `QUESTION.md`, never an ownership change
-  outside the area, and check-spec-diff exit 2 (git failed) stops the run. A point only the owner can decide goes to QUESTION.md with your recommendation, written last.
+  outside the area, and check-spec-diff exit 2 (git failed) stops the run; either ends the run: push nothing, `git reset --hard origin/<branch>`, end (the `QUESTION.md` written last). Other nodes' header-row Unlocks are kept in sync as in section 7 step 2. A point only the owner can decide goes to QUESTION.md with your recommendation, written last.
   Push the branch, update the PR's title and body if its nodes changed, and reply to each point: a
   line comment in its own thread, the others in one PR comment; each reply says what changed, with the commit,
   or why nothing did. Resolve the line threads you fixed.
