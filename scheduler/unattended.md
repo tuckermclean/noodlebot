@@ -44,7 +44,7 @@ UNATTENDED RUN. The noodlebot scheduler (@LOOP@) started this session to build n
   has merged. Read out/node/@ID@/ (brief, logs) and the commits on this branch too. Continue from
   where the last run stopped; do not redo slices that are already committed and reviewed.
   - <ts>-SPEC-PR-CLOSED: the spec PR that WAITING-PR named (the number is in the file) was closed
-    without merging, so its spec changes did not land. Read the PR's comments on GitHub for why.
+    without merging, so its spec changes did not land. Read the PR's comments for why.
     Carry out the approvals that need no spec change on the node branch, test-first (a frozen test
     line, a file outside the node's Owns, a deviation to record). A spec change that is still needed
     is a new question in QUESTION.md, not a reopened PR; end the run once you have written it.
