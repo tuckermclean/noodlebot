@@ -581,8 +581,8 @@ def small_capable():
 
 
 def small_start(state_dir, prompt):
-    """S09's pickup run: the small model, no tool, one turn, no plugin, no permission mode, no system prompt added;
+    """S09's pickup run: the small model, no tool, one turn, no plugin, no permission mode, no system prompt added, no session saved (--no-session-persistence);
     in the state directory; otherwise as start() (credential, events.jsonl, raw stream on stdout)."""
     argv = ["claude", "-p", prompt, "--model", SMALL_MODEL, "--tools", "", "--max-turns", "1", "--strict-mcp-config",
-            "--disable-slash-commands", "--output-format", "stream-json", "--verbose"]
+            "--disable-slash-commands", "--no-session-persistence", "--output-format", "stream-json", "--verbose"]
     return _run(state_dir, state_dir, argv, True, unset=("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NOODLEBOT_FORGE_TOKEN_SCRIPT"))

@@ -41,6 +41,10 @@ PICKUP_CEILING (default 90%; "90%", "90" and "0.9" all mean 90 percent); usage.j
 never read. With no run the items get their pending file's reply and are handled, stderr names the reason, and the first such
 tick of a window prints one stdout line "pickup: no run: <reason>". Without NOODLEBOT_DATA there is no record and no ceiling.
 An answer a run records writes DIR/pickup/answered (the loop ticks again at once, as for report.py's exit 3).
+
+Cleanup (S10): each `run` step removes the run folders whose items are all done and whose last change (the newest mtime of the
+folder and of everything in it) is more than seven days old. Unfinished runs, the handled record and pickup.json stay; a failed
+removal is logged and ignored.
 """
 import argparse
 import fcntl
@@ -48,6 +52,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -111,6 +116,33 @@ def handled_ids(a):
 
 def run_dirs(a):
     return sorted(d for d in glob.glob(os.path.join(pdir(a), "*")) if os.path.isfile(os.path.join(d, "items.json")))
+
+
+KEEP_SECONDS = 7 * 24 * 3600   # a finished run folder is kept this long after its last change
+
+
+def last_change(d):
+    t = os.path.getmtime(d)
+    for root, dirs, files in os.walk(d):
+        for n in dirs + files:
+            try:
+                t = max(t, os.lstat(os.path.join(root, n)).st_mtime)
+            except OSError:
+                pass
+    return t
+
+
+def clean_runs(a):
+    """Remove the finished run folders that nothing has changed for seven days."""
+    for d in run_dirs(a):
+        try:
+            st = read_json(os.path.join(d, "state.json"), {})
+            if any(not st.get(str(c["id"]), {}).get("done") for c in read_json(os.path.join(d, "items.json"), [])):
+                continue
+            if time.time() - last_change(d) > KEEP_SECONDS:
+                shutil.rmtree(d)
+        except Exception as e:
+            log("cleanup of %s failed: %s" % (d, e))
 
 
 def in_flight(a):
@@ -372,6 +404,7 @@ def cmd_run(a):
                 apply_run(a, d)
             except Exception as e:
                 log("retrying %s: %s" % (d, e))
+    clean_runs(a)
     items = pending_items(a)[:MAX_ITEMS]
     if not items:
         return 0
