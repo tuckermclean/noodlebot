@@ -24,12 +24,14 @@ none: imported
 
 ## Gate
 
-- **W02-AC-1** — Without a file the command folds standard input at the default width of 20. *Verify:* `sh tests/t_basic.sh` exits 0.
+- **W02-AC-1** — Without a file the command folds standard input. *Verify:* `sh tests/t_basic.sh` exits 0.
 - **W02-AC-2** — `-w N` sets the width. *Verify:* `sh tests/t_fold.sh` exits 0.
 - **W02-AC-3** — A file named on the command line is folded instead of standard input. *Verify:* unpinned.
 - **W02-AC-4** — The README names the command, its options and the known gap. *Verify:* unpinned.
+- **W02-AC-5** — Without `-w` the default width is 20. *Verify:* unpinned.
 
 ## Risks
 
-`-w` is read only as the first argument, and its value is not validated, so a non-number reaches awk
-unchecked. The command has no usage message.
+- `-w` is read only as the first argument, and its value is not validated, so a non-number reaches awk
+  unchecked.
+- The command has no usage message.

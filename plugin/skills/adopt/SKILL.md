@@ -19,7 +19,7 @@ the gate and the areas; you never guess them.
 main branch. Every forge operation goes through the forge CLI, written `<forge>` below: the command the run's environment and prompt name for it, used as `<forge> <family> <op> --opt value` (JSON out). With none (a run by hand), use `<plugin dir>/../scheduler/forge-cli.sh --repo <kind>:<owner/name>` (for example `github:owner/name`), the same command with the repository named. It fetches credentials itself: never print, echo or log a token, and use no other forge client.
 With `--dry-run` the argument may also be a local directory instead of `owner/name`. A dry run works
 offline and stops with files in an output directory: no push, no PR, no comment (see "Dry run").
-In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop and say so (it already has a graph; changing its plan is a triage job). The modes of sections 7 to 9 start from a graph and never stop for it.
+In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop and say so (it already has a graph; changing its plan is a triage job). The modes of sections 7 to 9 work on a repository that already has its first PR (and, for 7 and 8, a graph) and never stop for that graph.
 
 ## 1. Facts first (deterministic)
 - A run whose prompt names a checkout (a loop run) works there and makes no clone: skip the clone
@@ -211,7 +211,7 @@ instructions for questions win.
 1. Run `python3 -I <plugin dir>/skills/adopt/inventory.py --json --glob <glob> <checkout>` for each of the area's globs
    and read the area's files. You may read other files to understand them, but you map only the area's files.
 2. Write one or more imported nodes (`status: imported`, `track: done`, in `docs/graph.yaml`, each with a
-   `nodes/<ID>-<name>.md`; take each ID from the next free ones `nodes.py` reports, as triage does). Each node:
+   `nodes/<ID>-<name>.md`; take each ID from the `next free:` line of `python3 -I <plugin dir>/skills/triage/nodes.py`, run from the checkout, as triage does. A node of a letter already in use takes that letter's next free number. When no letter is in use (the graph has `nodes: []`) or the area has none yet, pick for the area an unused capital letter (an ID is one capital letter and two digits, as `check-regime.py` requires) and number its nodes `<L>01`, `<L>02`, ...; the first area's letter is new, and each later area gets its own new letter, never one that `nodes.py` or the graph shows in use). Each node:
    - owns part of the area's files, as `owns` globs: together the nodes own all of the area's files except those you
      put out of scope, and each file once (no overlap between nodes);
    - has a spec that says what the code does, with the template's headings: Purpose; Tests, the existing tests;
@@ -223,9 +223,9 @@ instructions for questions win.
    into a further `out_of_scope` entry, with a glob and a reason; such a file is then not owned by any node.
    Keep the other areas, the existing `out_of_scope` entries and the gate unchanged.
 4. Run `python3 -I <plugin dir>/skills/node/check-regime.py` and `check-coverage.py` until both report
-   `PROBLEMS 0`, and `check-spec-diff.py` (against `origin/<default branch>`) until it passes, fixing the
-   drafts, not the checkers.
-5. Commit, push `spec/adopt-<name>` and open one spec PR (one PR for the area, as in section 5), body: the
+   `PROBLEMS 0`. Commit, then (it compares commits) run `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`
+   until it passes (exit 0), fixing the drafts, not the checkers, and committing each fix.
+5. Push `spec/adopt-<name>` and open one spec PR (one PR for the area, as in section 5), body: the
    nodes, what each owns, the criteria marked `unpinned`, any new out_of_scope entry; `Refs #N` for issues the
    nodes touch, no closing keyword. End with a `WAITING-PR` marker in the state folder as the prompt says. You write no code and no
    tests, never change a file outside the spec files, and never merge.
@@ -241,7 +241,7 @@ Run by the loop once no area is left under `adoption.areas`. Work in the checkou
    glob matches; **Resolves:** #N for its issue. Never change the criteria of an imported node: the change
    is a new node of its own. An issue that needs the owner's decision goes to QUESTION.md with your recommendation.
 3. Remove `adoption` from `docs/graph.yaml` (the whole key), so the graph shows the adoption is over.
-4. Run the same checks as in section 7 step 4 (`check-regime.py`, `check-coverage.py`, `check-spec-diff.py`).
+4. Run the same checks as in section 7 step 4 (`check-regime.py`, `check-coverage.py`, then, after committing, `check-spec-diff.py origin/<default branch> HEAD`).
 5. Commit, push `spec/adopt-plan` and open one PR with `Refs #N` for each issue (no closing keyword), then
    `WAITING-PR` as the prompt says. Never merge.
 
@@ -255,7 +255,17 @@ Run by the loop for one of the adoption's own open spec PRs (`spec/adopt`, `spec
   conflict that needs a judgment: `git merge --abort`, push nothing, comment on the PR with the files and why, end.
   Where main has since taken a node ID of the PR, renumber the PR's node as triage does (spec file, graph entry,
   criteria IDs, references) in one commit on top. Rerun `check-regime.py`, `check-coverage.py` and
-  `check-spec-diff.py` until they pass (`PROBLEMS 0`), push the branch and comment on the PR with what was merged.
+  `check-spec-diff.py` until they pass (`PROBLEMS 0`; the spec-diff check is
+  `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`, run on the committed merge). For the `spec/adopt` PR, which
+  adds `AGENTS.md` (and `.noodlebot/roles.yaml` when drafted) before main has a **Spec files:** line, run it as in
+  section 5 with `--allow AGENTS.md [--allow .noodlebot/roles.yaml]` before `origin/<default branch> HEAD`; without them it always reports
+  `NOT SPEC` for those files. If the merge had conflicts, run the resolution review before anything is pushed,
+  as triage's update mode (step 4) does: dispatch a new reviewer (the repository's reviewer role,
+  `noodlebot:reviewer` when it names none) with the merge commit and its diffs against both parents; it checks
+  that the resolution keeps the intent of both sides and that no node is owned twice or left unowned. Post its verdict on the PR as
+  `Resolution review (<verdict>)`, a comment, never an approval. Nothing is pushed until it approves; on
+  `request_changes` fix the findings as new commits and run one more new reviewer. A second rejection pushes nothing:
+  comment the findings on the PR, `git reset --hard origin/<branch>` and end. Then push the branch and comment on the PR with what was merged.
 - **`--feedback <N>`**: read `FEEDBACK.md` in the state folder (each item has its kind, URL, author, body, and for a
   line comment its file, line and thread). Change the PR's specs as it asks, as one new commit (never an
   amend, a rebase or a force push), keeping the area's files owned once each; rerun the checkers until
