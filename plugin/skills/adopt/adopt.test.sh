@@ -271,5 +271,155 @@ else
 fi
 if [ -d "$ex" ] && python3 -I "$src/../node/check-regime.py" --root "$ex" 2>&1 | grep -q 'PROBLEMS 0$'; then ok "A06-AC-3: the checks of example/ still pass (check-regime.py PROBLEMS 0)"; else bad "A06-AC-3: the checks of example/ no longer pass"; fi
 
+# ---------- A07: the loop's modes (--area, --plan, --update, --feedback), the checkout rule, the recorded --area dry run ----------
+a07d="$tmp/A07"; mkdir -p "$a07d"
+aex="$src/example-area"
+a07_area=wrap
+# a07_secs <heading-regex> <out>: every "## " section of the skill whose heading matches the regex, joined
+a07_secs() { awk -v re="$1" '/^## / { on = (tolower($0) ~ re) } on { print }' "$f" >"$2"; }
+a07_secs '--area' "$a07d/sarea"
+a07_secs '--plan' "$a07d/splan"
+a07_secs '--update|--feedback' "$a07d/supd"
+a07_win() {
+	_nm=$1; _sf=$2; _n=$3; _lb=$4; shift 4
+	if [ -s "$_sf" ] && g05_win "$_sf" "$_n" "$@"; then ok "$_nm: $_lb"; else bad "$_nm: $_lb"; fi
+}
+# the usage line and the frontmatter
+use=$(grep -m1 '^# /adopt' "$f")
+for m in '--area' '--plan' '--update' '--feedback'; do
+	case $use in *"$m"*) ok "A07-AC-3: the usage line names $m" ;; *) bad "A07-AC-3: the usage line names $m" ;; esac
+done
+if printf '%s\n' "$fm" | grep -qi 'plan' && printf '%s\n' "$fm" | grep -qi 'area'; then ok "A07-AC-3: the frontmatter description names the area and plan modes"; else bad "A07-AC-3: the frontmatter description names the area and plan modes"; fi
+if printf '%s\n' "$fm" | grep -qi 'map'; then ok "A07-AC-3: the frontmatter description names mapping"; else bad "A07-AC-3: the frontmatter description names mapping"; fi
+# "already has a graph, stop" is for the first-PR mode only
+a07_win A07-AC-3 "$f" 2 "the stop on an existing graph applies to the first-PR mode only" 'already has' 'graph' 'stop' 'only|first[- ]pr'
+# a run whose prompt names a checkout works there and makes no clone; the clone is for runs by hand only
+a07_win A07-AC-3 "$f" 8 "a run whose prompt names a checkout works there and makes no clone" 'prompt' 'checkout' 'no clone|not clone|without (a )?clone|makes no clone|never clone|does not (make|create|run)'
+a07_win A07-AC-3 "$a06d/s1" 8 "section 1's clone is for runs by hand only" 'by hand' 'clone' 'only'
+# --area
+a07_win A07-AC-3 "$a07d/sarea" 8 "--area runs inventory.py --json --glob for each of the area's globs" 'inventory[.]py' '--json' '--glob' 'each|every'
+a07_win A07-AC-3 "$a07d/sarea" 8 "--area maps only the area's files (it may read others to understand them)" 'area' 'files' 'only' 'read|understand'
+a07_win A07-AC-3 "$a07d/sarea" 8 "--area writes imported nodes that own the area's files, each once" 'imported' 'own' 'files' 'once|exactly|each'
+a07_win A07-AC-3 "$a07d/sarea" 8 "files put out of scope are not owned" 'out[_ -]of[_ -]scope|out of scope' 'not|except|apart|without'
+a07_win A07-AC-3 "$a07d/sarea" 8 "each imported spec has none: imported under Changes" 'none: imported' 'changes'
+a07_win A07-AC-3 "$a07d/sarea" 8 "each criterion's Verify names the existing test or reads unpinned" 'verify' 'unpinned' 'test'
+a07_win A07-AC-3 "$a07d/sarea" 8 "an imported spec has Purpose, the existing tests under Tests and criteria of current behaviour" 'purpose' 'tests' 'criteri'
+a07_win A07-AC-3 "$a07d/sarea" 8 "deps on the already-mapped nodes whose code it relies on" 'deps' 'mapped' 'rel'
+a07_win A07-AC-3 "$a07d/sarea" 8 "the area is removed from adoption.areas" 'remove' 'area' 'adoption[.]areas'
+a07_win A07-AC-3 "$a07d/sarea" 8 "further out_of_scope entries carry reasons" 'out_of_scope' 'reason'
+a07_win A07-AC-3 "$a07d/sarea" 10 "check-regime.py and check-coverage.py must report PROBLEMS 0" 'check-regime' 'check-coverage' 'problems 0'
+a07_win A07-AC-3 "$a07d/sarea" 10 "check-spec-diff.py must pass" 'check-spec-diff' 'pass|exit(s)? 0|clean'
+a07_win A07-AC-3 "$a07d/sarea" 10 "one spec PR on spec/adopt-<name>" 'spec/adopt-<name>' 'one|single' 'pr'
+a07_win A07-AC-3 "$a07d/sarea" 10 "--area writes no code and no tests" 'no code|never (write|change)|not (write|change)|writes no' 'tests?'
+# --plan
+a07_win A07-AC-3 "$a07d/splan" 8 "--plan reads the open issues (closed ones as history)" 'open issues' 'closed' 'history'
+a07_win A07-AC-3 "$a07d/splan" 8 "--plan turns each issue into a planned node or a criterion of one" 'planned node' 'criterion'
+a07_win A07-AC-3 "$a07d/splan" 10 "--plan places it with deps on the nodes whose files it changes and owns only for added paths no glob matches" 'deps' 'owns' 'out_of_scope|glob' 'added|add'
+a07_win A07-AC-3 "$a07d/splan" 10 "each planned node carries Resolves: for its issue" 'resolves:' 'issue'
+a07_win A07-AC-3 "$a07d/splan" 8 "--plan removes adoption from the graph" 'remove' 'adoption'
+a07_win A07-AC-3 "$a07d/splan" 10 "--plan opens spec/adopt-plan with the same checks" 'spec/adopt-plan' 'check'
+# --update and --feedback
+a07_win A07-AC-3 "$a07d/supd" 12 "--update <N> takes a spec/adopt* PR that conflicts with main" 'spec/adopt' '--update' '<n>' 'conflict'
+a07_win A07-AC-3 "$a07d/supd" 12 "--feedback <N> takes the owner's comments and reviews on a spec/adopt* PR" 'spec/adopt' '--feedback' '<n>' 'comment|review|feedback'
+a07_win A07-AC-3 "$a07d/supd" 14 "they work on the PR's branch in the checkout the prompt names, then push it" 'branch' 'checkout|prompt' 'push'
+# the recorded --area dry run
+if [ -d "$aex" ]; then ok "A07-AC-3: example-area/ exists"; else bad "A07-AC-3: example-area/ does not exist"; fi
+# Expected layout: example-area/docs/graph.yaml (the baseline's graph with area wrap taken off adoption.areas and nodes: the
+# imported nodes) and example-area/nodes/<ID>-<name>.md; SPEC.md, AGENTS.md and the rest come from example-baseline/ (an own
+# copy in example-area/ wins when present). Laid over testdata/baseline/repo (a06_mkfix) in this order.
+if [ -f "$aex/docs/graph.yaml" ] && ls "$aex"/nodes/*.md >/dev/null 2>&1; then ok "A07-AC-3: example-area/ holds docs/graph.yaml and nodes/*.md"; else bad "A07-AC-3: example-area/ lacks docs/graph.yaml or nodes/*.md"; fi
+if [ -d "$aex" ]; then
+	hit=$(find "$aex" -type f -exec cat {} + | sed -e 's#/\{0,1\}noodlebot:[a-z]*##g' -e 's#\.noodlebot/##g' | grep -in -e themonolith -e monolith -e strange-company -e qa-lab -e linux-live-iso-factory -e 'tuckermclean/' -e noodlebot | head -n 3)
+	if [ -z "$hit" ]; then ok "A07-AC-3: example-area/ names no repository"; else bad "A07-AC-3: example-area/ names a repository: $hit"; fi
+else
+	bad "A07-AC-3: example-area/ names no repository (cannot check: no example-area/)"
+fi
+a06_mkfix "$a07d/fx"
+for p in SPEC.md AGENTS.md docs nodes .noodlebot; do
+	if [ -e "$bex/$p" ]; then rm -rf "$a07d/fx/$p"; cp -R "$bex/$p" "$a07d/fx/$p"; fi
+done
+for p in SPEC.md AGENTS.md docs nodes .noodlebot; do
+	if [ -e "$aex/$p" ]; then rm -rf "$a07d/fx/$p"; cp -R "$aex/$p" "$a07d/fx/$p"; fi
+done
+(cd "$a07d/fx" && git add -f -A && git -c user.name=t -c user.email=t@t commit -q -m area)
+cat >"$a07d/area-check.py" <<'PY'
+import os, re, subprocess, sys
+area_graph, base_graph, fx, area, nodedir = sys.argv[1:6]
+sys.path.insert(0, nodedir)
+LABELS = ["the area's nodes are all imported, with track done and owns",
+          "the area is gone from adoption.areas",
+          "the other areas remain, with their globs",
+          "the baseline's out_of_scope entries remain",
+          "the imported nodes together own exactly the area's files not put out of scope",
+          "every one of those files is owned by exactly one node",
+          "each node spec has none: imported under Changes",
+          "each criterion's Verify names an existing test or reads unpinned"]
+res = {}
+def r(i, ok):
+    res[i] = bool(ok)
+try:
+    import yaml, owns
+    g = yaml.safe_load(open(area_graph)) or {}
+    b = yaml.safe_load(open(base_graph)) or {}
+    nodes = g.get("nodes") or []
+    r(0, nodes and all(n.get("status") == "imported" and n.get("track") == "done" and n.get("owns") for n in nodes))
+    areas = (g.get("adoption") or {}).get("areas") or []
+    bareas = (b.get("adoption") or {}).get("areas") or []
+    r(1, any(a["name"] == area for a in bareas) and not any(a["name"] == area for a in areas))
+    want = [a for a in bareas if a["name"] != area]
+    r(2, want and sorted((a["name"], tuple(a["globs"])) for a in areas) == sorted((a["name"], tuple(a["globs"])) for a in want))
+    oos = [e["glob"] for e in (g.get("out_of_scope") or [])]
+    r(3, all(e["glob"] in oos for e in (b.get("out_of_scope") or [])))
+    files = subprocess.run(["git", "ls-files"], cwd=fx, capture_output=True, text=True).stdout.split()
+    tree = owns.Tree(sorted(files))
+    gl = [x for a in bareas if a["name"] == area for x in a["globs"]]
+    exp = {f for f in files if any(owns.match(x, f, tree) for x in gl) and not any(owns.match(o, f, tree) for o in oos)}
+    own = {}
+    for n in nodes:
+        for f in files:
+            if any(owns.match(x, f, tree) for x in n.get("owns") or []):
+                own.setdefault(f, []).append(n["id"])
+    r(4, exp and set(own) == exp)
+    r(5, exp and all(len(own.get(f, [])) == 1 for f in exp))
+    c = v = True
+    for n in nodes:
+        t = open(os.path.join(fx, "nodes", "%s-%s.md" % (n["id"], n["name"]))).read()
+        ch = t.split("## Changes", 1)[1].split("\n## ", 1)[0] if "## Changes" in t else ""
+        c = c and "none: imported" in ch.lower()
+        gate = t.split("## Gate", 1)[1].split("\n## ", 1)[0] if "## Gate" in t else ""
+        acs = re.findall(r"\*Verify:\*(.*)$", gate, re.M)
+        v = v and len(acs) > 0
+        for rest in acs:
+            rest = rest.strip().strip("`").strip()
+            toks = re.findall(r"[A-Za-z0-9_./-]+", rest)
+            v = v and (rest.startswith("unpinned") or any(x in files for x in toks))
+    r(6, nodes and c)
+    r(7, nodes and v)
+except Exception as e:
+    sys.stderr.write("area-check: %s\n" % e)
+for i, l in enumerate(LABELS):
+    print(("ok " if res.get(i) else "bad ") + l)
+PY
+python3 -I "$a07d/area-check.py" "$aex/docs/graph.yaml" "$bex/docs/graph.yaml" "$a07d/fx" "$a07_area" "$src/../node" >"$a07d/ac.out" 2>"$a07d/ac.err"
+if [ "$(wc -l <"$a07d/ac.out")" -ne 8 ]; then
+	bad "A07-AC-3: the area check did not run: $(head -n 2 "$a07d/ac.err")"
+else
+	while IFS= read -r l; do
+		case $l in
+		"ok "*) ok "A07-AC-3: ${l#ok }" ;;
+		*) bad "A07-AC-3: ${l#bad }" ;;
+		esac
+	done <"$a07d/ac.out"
+fi
+if [ -f "$aex/docs/graph.yaml" ]; then
+	rep=$(python3 -I "$src/../node/check-regime.py" --root "$a07d/fx" 2>&1)
+	if printf '%s\n' "$rep" | grep -q 'PROBLEMS 0$'; then ok "A07-AC-3: check-regime.py reports PROBLEMS 0 on the fixture with the --area dry run laid over it"; else bad "A07-AC-3: check-regime.py does not report PROBLEMS 0 with the --area dry run: $(printf '%s\n' "$rep" | head -n 2 | tr '\n' ' ')"; fi
+	rep=$(python3 -I "$src/../node/check-coverage.py" --root "$a07d/fx" 2>&1)
+	if printf '%s\n' "$rep" | grep -q 'PROBLEMS 0$'; then ok "A07-AC-3: check-coverage.py reports PROBLEMS 0 on the fixture with the --area dry run laid over it"; else bad "A07-AC-3: check-coverage.py does not report PROBLEMS 0 with the --area dry run: $(printf '%s\n' "$rep" | head -n 2 | tr '\n' ' ')"; fi
+else
+	bad "A07-AC-3: check-regime.py reports PROBLEMS 0 with the --area dry run laid over the fixture (no example-area/docs/graph.yaml)"
+	bad "A07-AC-3: check-coverage.py reports PROBLEMS 0 with the --area dry run laid over the fixture (no example-area/docs/graph.yaml)"
+fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
