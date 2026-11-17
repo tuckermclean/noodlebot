@@ -606,7 +606,8 @@ def waiting_items(a, sts, prs, rs):
             items.append("- **%s asks a question** (%s).%s" % (n, question_link(a, rs, n), unit_ref(a, n)))
         elif has(state, n, "WAITING-PR") and not spec_merged(state, n):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
-            items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after.%s" % (n, pr, unit_ref(a, n)))
+            after = "the adoption's next step starts within a minute after" if n.startswith("adopt/") else "it resumes within a minute after"
+            items.append("- **%s** waits for you to merge spec PR #%s; %s.%s" % (n, pr, after, unit_ref(a, n)))
     for n, pr in sorted(prs.items()):
         if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in [t[0] for t in sts]:
             items.append("- %s's PR #%s: open, no session running on it (review or merge it).%s" % (n, pr, unit_ref(a, n)))
@@ -1720,6 +1721,9 @@ def post_adopt_prs(a, rs):
                                ("specpr:" + pr, "spec PR #%s merged" % pr)):
                 if key in done or (key.startswith("specpr") and not merged):
                     continue
+                if key.startswith("waitpr") and merged:  # merged when first seen: only the merge is news
+                    done.append(key)
+                    continue
                 if a.first_run:  # from before the first run: seen, not new
                     done.append(key)
                     continue
@@ -1733,13 +1737,20 @@ def close_adopt(a, rs):
     if merges_unknown(a) or not has(a.state, "adopt/plan", "WAITING-PR"):
         return
     pr = spec_merged(a.state, "adopt/plan")
-    issue = rs.get("adopt_issue")
+    try:
+        issue = int(open(os.path.join(tdir(a.state, "adopt/plan"), "issue")).read().split()[0])
+    except (OSError, ValueError, IndexError):
+        issue = rs.get("adopt_issue")
     if not pr or not isinstance(issue, int):
         return
     c = rs.setdefault("closed", {}).get(str(issue)) or {}
     if c.get("closed") or has(a.state, "adopt/plan", "QUESTION.md"):
         return
     try:
+        if not c.get("commented") and a.forge.issue_view(number=issue)["state"] == "closed":
+            rs["closed"][str(issue)] = {"closed": True, "by_other": True}  # closed by someone already
+            a.save()
+            return
         if not c.get("commented"):
             comment(a, issue, "**Stage:** merged, closing this issue\n\nMerged: PR #%s, the adoption plan. Closing this issue." % pr)
             c = rs["closed"][str(issue)] = {"commented": True}
