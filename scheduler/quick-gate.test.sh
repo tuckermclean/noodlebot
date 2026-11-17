@@ -32,7 +32,7 @@ qg_check() {
 	r=$1
 	ag="$r/AGENTS.md"
 	if [ ! -f "$ag" ]; then echo "define-tests|AGENTS.md:0: missing"; return 1; fi
-	qg_bullet "$ag" '^- \*\*Tests:\*\*' | tr '\n' ' ' | tr -s ' ' >"$tmp/tests-bullet.txt"
+	qg_bullet "$ag" '^- [*][*]Tests:[*][*]' | tr '\n' ' ' | tr -s ' ' >"$tmp/tests-bullet.txt"
 	tb=$(cat "$tmp/tests-bullet.txt")
 	n=$(grep -n '^- \*\*Tests:\*\*' "$ag" | head -n 1 | cut -d: -f1); n=${n:-0}
 	lc=$(printf '%s' "$tb" | tr 'A-Z' 'a-z')
@@ -45,7 +45,7 @@ qg_check() {
 	cn=$(grep -n '^- `make test`' "$ag" | head -n 1 | cut -d: -f1); cn=${cn:-0}
 	cb=$(qg_bullet "$ag" '^- `make test`' | tr '\n' ' ' | tr 'A-Z' 'a-z')
 	case $cb in *" ci"*) ;; *) echo "define-cmd|AGENTS.md:$cn: the Commands line does not say the whole make test is CI's" ;; esac
-	eb=$(qg_bullet "$ag" '^- \*\*CI evidence:\*\*' | tr '\n' ' ' | tr 'A-Z' 'a-z')
+	eb=$(qg_bullet "$ag" '^- [*][*]CI evidence:[*][*]' | tr '\n' ' ' | tr 'A-Z' 'a-z')
 	case $eb in *"whole suite"*) ;; *) echo "define-ci|AGENTS.md:$(grep -n '^- \*\*CI evidence:\*\*' "$ag" | head -n 1 | cut -d: -f1): the CI evidence line does not name the PR's CI run as the whole suite's evidence" ;; esac
 	qg_files "$r" | while read -r f; do
 		if [ ! -f "$r/$f" ]; then echo "name:$f|$f:0: missing"; continue; fi
