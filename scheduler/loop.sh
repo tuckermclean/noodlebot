@@ -3,12 +3,12 @@
 # ready node (ready.py --all), each in its own worktree, all at once (SCHED_MAX caps them; default
 # 0, no cap), plus one triage at a time for issues the owner labels `noodlebot`, or one update session
 # for a bot's spec/* PR that conflicts with main or whose graph gives an ID of main to another node
-# (/noodlebot:triage --update <N>; the same one slot as a triage); and one update session for each bot's
+# (/noodlebot:triage --update <N>, or /noodlebot:adopt --update <N> for a spec/adopt* PR; the same one slot as a triage); and one update session for each bot's
 # node/* PR that GitHub reports CONFLICTING (/noodlebot:node --update <N>; no slot, but it counts toward
 # SCHED_MAX, and its node's own session waits for it).
 # Each tick it also reads the last finished run of feedback.py (which runs in the background, one at a time): the owner's new comments and reviews on the bot's open PRs start one
 # feedback session for the PR's unit (/noodlebot:node --feedback <N> for a node or follow-up PR, in the node's
-# worktree; /noodlebot:triage --feedback <N> for a spec PR, in the triage's slot), with the items in the unit's
+# worktree; /noodlebot:triage --feedback <N> for a spec PR (/noodlebot:adopt --feedback <N> for a spec/adopt* PR), in the triage's slot), with the items in the unit's
 # FEEDBACK.md. Feedback sessions count toward SCHED_MAX.
 #   tmux new -d -s sched ~/gitrepos/noodlebot/scheduler/loop.sh [owner/name]   (default tuckermclean/themonolith)
 # One loop per repository, each with its own lock, state and status issue.
@@ -1029,7 +1029,7 @@ on_branch() {
 # is_adopt_br <branch>: the branch of the adoption's PR (spec/adopt for the scaffold, spec/adopt-<key> for an area or the plan).
 is_adopt_br() { [ "$1" = spec/adopt ] || [[ $1 == spec/adopt-* ]]; }
 
-# start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N)
+# start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N); /noodlebot:adopt --update N for a spec/adopt* branch
 # in a worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
 # commits it starts from. With a node ID, N is the bot's node PR of that node (/noodlebot:node --update N,
 # unattended-node-update.md) and the ID is written to pr/N/node.
@@ -1079,7 +1079,7 @@ declare -A fb_said=()
 fbsay() { [ "${fb_said[$1]:-}" = "${2#*; }" ] || { say "$2"; fb_said[$1]=${2#*; }; }; }
 
 # start_feedback <node|spec> <node ID, or PR number for spec> <PR> <branch> <saw>: start the feedback session of a PR's
-# unit (/noodlebot:node --feedback <PR> in the node's worktree, /noodlebot:triage --feedback <PR> in worktrees/<name>/pr-<PR>,
+# unit (/noodlebot:node --feedback <PR> in the node's worktree, /noodlebot:triage --feedback <PR> (/noodlebot:adopt --feedback <PR> for a spec/adopt* PR) in worktrees/<name>/pr-<PR>,
 # in the triage's slot). Nothing is handed over (the PR's feedback is not appended and its record not advanced) unless
 # the session starts; a unit that already has a FEEDBACK.md (a restart, or the start after an answer) keeps it as it is.
 # A node's branch may be held by a leftover update worktree (pr-<N>): free_branch detaches it, as for start_node, before
@@ -1212,7 +1212,7 @@ next_update() {
 		[ -e "$state/pr/$n/FAILED" ] && continue
 		if [[ $br == spec/* ]]; then
 			[ "$(cat "$state/pr/$n/done" 2>/dev/null)" = "$mainc $oid" ] && continue
-			if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && ! is_adopt_br "$br" && graph_clash "$br"; }; then
+			if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && graph_clash "$br"; }; then
 				echo "$n $br $mainc $oid"
 			fi
 		elif [[ $br == node/* ]] && [ "$mg" = CONFLICTING ]; then
