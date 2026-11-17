@@ -15,10 +15,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tools the tests use
         run: python3 -c 'import yaml' 2>/dev/null || sudo apt-get install -y python3-yaml
-      - name: make test
+      # The two steps differ only in TEST_BUDGET_ENFORCE. On pull requests the time budgets fail the
+      # run, so a slow test is caught in review. On push to main the TIME/SLOW/TOTAL lines are still
+      # printed, but only a failing test fails the run: GitHub's runner times vary, and main's push
+      # run gates the self-deploy (D07).
+      - name: make test (pull_request)
+        if: github.event_name == 'pull_request'
         run: make test
         env:
           SITE_TESTS: required
           TEST_BUDGET_ENFORCE: 1
+          TEST_FILE_BUDGET: 60
+          TEST_BUDGET: 360
+      - name: make test (push)
+        if: github.event_name == 'push'
+        run: make test
+        env:
+          SITE_TESTS: required
           TEST_FILE_BUDGET: 60
           TEST_BUDGET: 360
