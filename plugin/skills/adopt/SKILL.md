@@ -35,7 +35,7 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
 - Read the README, any `AGENTS.md`/`CLAUDE.md` and docs, the build and CI files, and how to build,
   test and lint (Makefile, package scripts, workflow steps). Note which commands the repository runs.
 - Of the repository's own commands (build, test, lint, its scripts), before the owner confirms the
-  gate, run only one that its CI, Makefile or package scripts already run (for example the one test command), and only in the clone or worktree (a dry
+  gate, run only one that its CI, Makefile or package scripts already run (for example the one test command), once, and only in the clone or worktree (a dry
   run: its temporary copy, see "Dry run"). Run it to see its output, so that the `fail_pattern` is
   proposed together with the gate command. Any other command of the repository's waits until the owner has confirmed the
   gate in the answers; never run one earlier. A command that cannot run here (heavy install, a
@@ -57,7 +57,7 @@ recommendation so a bare "yes" works. A recommendation is a proposal, labelled a
 settled fact ("Do not invent intent" still holds). Keep `QUESTION.md` short enough to read on a phone
 (about 80 lines): the fewest questions that settle the plan. Ask what the code cannot show:
 1. scope and non-goals: what this repository is for and what it is not;
-2. priorities and order: which work comes first, which can wait (`track: now` / `later`);
+2. priorities and order: which work comes first, which can wait (recorded in `SPEC.md` for the later nodes);
 3. what is done and what is only planned (existing code that is half-built, issues already fixed);
 4. principles and constraints that every change must respect;
 5. open decisions that block work, with a default for each;
@@ -100,7 +100,8 @@ Only after `ANSWER.md`. Order: the baseline, then the graph, then the other draf
   Draft no node and no `nodes/` file: open issues become nodes later, once the code is mapped.
   Every tracked file must be out of scope, in an area, or one of the regime's own files (`SPEC.md`,
   `AGENTS.md`, `docs/graph.yaml`, `nodes/` and the like).
-- **`SPEC.md`**: what this is, principles (from the answers), architecture, the node spec template
+- **`SPEC.md`**: what this is, principles (from the answers), the state (what is done, what is planned
+  and the priorities, from the answers to questions 2 and 3), architecture, the node spec template
   (a `## Node spec template` section giving the headings above), open decisions with defaults,
   conventions (branches `node/<ID>-<name>` and `spec/<topic>`, sizes, when a node is done).
   Drafts name no repository (no owner/name of any, not even the plugin's own). They do name the
@@ -143,7 +144,9 @@ whose tracked files are the ones to cover: in a real run the clone, with the dra
 input). The gate run happens in that same tree, so stage and commit only the drafted paths (`SPEC.md`,
 `AGENTS.md`, `docs/graph.yaml`, and `.noodlebot/roles.yaml` when drafted), e.g. `git add -- <those paths>`,
 never `git add -A`. Files the gate run left behind (caches, `node_modules`, build output) are not part of
-the PR: if they would otherwise be committed, remove them (e.g. `git clean`) first. Also check the drafted `AGENTS.md` commands exist, and that the quick gate runs.
+the PR: if they would otherwise be committed, remove them (e.g. `git clean`) first. A fix after a
+checker run goes into that same commit (`git commit --amend`), so the branch holds one commit (section 5).
+Also check the drafted `AGENTS.md` commands exist, and that the quick gate runs.
 
 ## 5. The PR
 - One commit on `spec/adopt`, subject `Spec: adopt the repository into the graph regime`, body: what
@@ -166,9 +169,11 @@ loop closes the issue once the nodes that build the work are merged.
 
 ## Dry run
 With `--dry-run`, run sections 1 to 4 offline against a local directory or a clone:
-- First copy the input directory to a temporary folder, with its `.git` (tracked files included).
-  If the input is not a git repository of its own (a subfolder of another repository, like
-  `testdata/repo/`), `git init` the copy and commit its files with `git add -f` (so files an outer
+- First copy the input directory to a temporary folder that is a git repository of its own. When the
+  input's `.git` is a directory, copy the input with it (tracked files included). When `.git` is a
+  file (a git worktree: it points at a shared repository, so a commit in such a copy moves the input's
+  branch) or there is none (a subfolder of another repository, like `testdata/repo/`), copy the files
+  without `.git`, `git init` the copy and commit its files with `git add -f` (so files an outer
   ignore list would hide are kept) before anything runs. That `-f` is for this first commit only: the
   drafts are later staged by path, never with `git add -A` or `-f` (see section 4).
   Every command the skill runs (the section 1 command, the inventory, the gate run of section 3, the
