@@ -7,14 +7,15 @@ Judges `git diff --name-status -M <from>...<to>` (from the merge base, so what c
 node's; renames are judged by both paths, a deletion by its old path). The node's deps and the deps' globs
 are read from docs/graph.yaml at <from>, the node's own globs from the graph at <to>. Each changed path
 (old path of a rename or deletion, new path of the rest, an added path alike) must match an own glob or a
-direct dep's glob; the regime's own files (owns.regime_files of AGENTS.md at <to>, over the files at <to>
+direct dep's glob; the regime's own files (owns.regime_files of AGENTS.md at <from>, over the files at <to>
 and at <from>) are exempt. Globs resolve folders against the tracked files at <to> (at <from> for an old path).
 Prints the globs it used (`OWN GLOBS ...`, `DEP GLOBS <ID> ...`), then one line each:
 - `NOT OWNED <path> (owner: <ID or none>)`: the owner is the node owning the path in the graph at <from>,
   else in the graph at <to>, else none;
 - `UNUSED <glob>`: an own glob matching no file at <to>.
 A graph (at <from>) with no owns, out_of_scope or adoption prints `no ownership declared` and exits 0.
-Exits 0 when clean, 1 on any NOT OWNED or UNUSED, 2 when git fails (an unknown commit).
+Exits 0 when clean, 1 on any NOT OWNED or UNUSED, 2 when git fails (an unknown commit) or the node is in no graph
+(`unknown node`).
 """
 import os
 import subprocess
@@ -66,6 +67,9 @@ def main():
     if not (oos or areas or any(n.get("owns") for n in nodes)):
         print("no ownership declared")
         return 0
+    if not node_of(gfrom, nid) and not node_of(gto, nid):
+        print("check-owns-diff: unknown node %s" % nid)
+        return 2
     ls = lambda rev: sorted(x for x in git(repo, "ls-tree", "-r", "-z", "--name-only", rev).split("\0") if x)
     tree_to, tree_from = owns.Tree(ls(to)), owns.Tree(ls(frm))
     tokens = git(repo, "diff", "--name-status", "-z", "-M", frm + "..." + to).split("\0")
@@ -84,7 +88,7 @@ def main():
     print("OWN GLOBS %s: %s" % (nid, " ".join(own)))
     for d, gl in deps.items():
         print("DEP GLOBS %s: %s" % (d, " ".join(gl)))
-    agents = git(repo, "show", to + ":AGENTS.md", check=False)
+    agents = git(repo, "show", frm + ":AGENTS.md", check=False)
     exempt = set(owns.regime_files(agents, owns.Tree(sorted(set(tree_to) | set(tree_from)))))
     mine = [(gl, None) for gl in own] + [(gl, None) for gl_l in deps.values() for gl in gl_l]
     problems = []
