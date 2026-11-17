@@ -318,4 +318,80 @@ g05c "D09-AC-2: the reviewer's GREEN re-run is the quick gate, and the whole sui
 g05c "D09-AC-2: the tester adds a new test file to the list of test files AGENTS.md names" "$pa/tester.md" 3 'new test file' 'list' 'test files' 'agents\.md'
 if grep -Eiq 'wired into the repository.s quick test gate' "$pa/tester.md"; then bad "D09-AC-2: the tester still says a new test file is 'wired into the repository's quick test gate'"; else ok "D09-AC-2: the tester no longer says a new test file is wired into the quick test gate"; fi
 
+# ---------- A05-AC-2 / A05-AC-3: ownership checks, the gate's pass condition, amendments, conflicts, imported tests ----------
+# The text of the skill, the plugin agents and the session templates. Each point is checked in each file separately, in the
+# paragraph or section it belongs to, so unrelated text elsewhere cannot satisfy it.
+a05="$tmp/A05"; mkdir -p "$a05"
+a05t="$src/../../../scheduler"
+# a05_para <file> <start-ere> <out>: from the first line matching the start up to (not including) the next line that begins
+# a new template bullet ("- ") or a marker line ("@").
+a05_para() { awk -v re="$2" '!on && $0 ~ re { on = 1; print; next } on && /^(- |@)/ { exit } on { print }' "$1" >"$3"; }
+for a05n in 3 5 6 7 8; do g05_sec "$sk" "^## $a05n[.]" "$a05/s$a05n.md"; done
+g05_sec "$sk" '^## .*--update' "$a05/upd.md"
+a05_para "$a05t/unattended.md" 'SMALL SPEC AMENDMENTS' "$a05/u-small.md"
+a05_para "$a05t/unattended-followup.md" 'SMALL SPEC AMENDMENTS' "$a05/f-small.md"
+a05_para "$a05t/unattended.md" 'MERGE CONFLICTS' "$a05/u-merge.md"
+a05_para "$a05t/unattended-followup.md" 'MERGE CONFLICTS' "$a05/f-merge.md"
+a05_para "$a05t/unattended-node-update.md" 'Never change a frozen test' "$a05/nu-spec.md"
+for a05f in s3 s5 s6 s7 s8 upd u-small f-small u-merge f-merge nu-spec; do
+	if [ -s "$a05/$a05f.md" ]; then ok "A05: text section $a05f found"; else bad "A05: text section $a05f not found"; fi
+done
+cp "$pa/tester.md" "$a05/tester.md"; cp "$pa/implementer.md" "$a05/implementer.md"; cp "$pa/reviewer.md" "$a05/reviewer.md"
+cp "$a05t/unattended-node-update.md" "$a05/nu.md"
+cp "$a05t/unattended.md" "$a05/u.md"; cp "$a05t/unattended-followup.md" "$a05/f.md"
+
+# --- A05-AC-2: the two checks before the PR, their evidence, NOT OWNED through the owner's approval ---
+g05c "A05-AC-2: the skill (step 6) runs check-owns-diff.py as <ID> origin/main HEAD" "$a05/s6.md" 6 'check-owns-diff[.]py' 'origin/main' 'head' '<id>'
+g05c "A05-AC-2: the skill (step 6) runs it in a repository whose graph has owns (ownership)" "$a05/s6.md" 8 'check-owns-diff' 'ownership|owns'
+g05c "A05-AC-2: the skill (step 6) runs check-coverage.py at the head and at origin/main" "$a05/s6.md" 6 'check-coverage[.]py' 'origin/main' 'head'
+g05c "A05-AC-2: the skill (step 6) counts only the coverage problems at the head that are not at origin/main as the node's" "$a05/s6.md" 8 'check-coverage' 'only' 'problems?' 'not (at|in|on)|new|absent'
+g05c "A05-AC-2: the skill (step 6) puts the check-owns-diff output in the criterion -> evidence table" "$a05/s6.md" 8 'check-owns-diff' 'evidence' 'row|table'
+g05c "A05-AC-2: the skill (step 6) puts the check-coverage output in the criterion -> evidence table" "$a05/s6.md" 8 'check-coverage' 'evidence' 'row|table'
+g05c "A05-AC-2: the skill sends a NOT OWNED path through the owner's approval, asked as a question and recorded in the answer" "$sk" 8 'not owned' 'approv' 'question' 'record' 'answer'
+g05c "A05-AC-2: the reviewer names check-owns-diff.py run as <ID> origin/main HEAD" "$a05/reviewer.md" 6 'check-owns-diff[.]py' 'origin/main' 'head'
+g05c "A05-AC-2: the reviewer names check-coverage.py at the head and at origin/main" "$a05/reviewer.md" 6 'check-coverage[.]py' 'origin/main' 'head'
+g05c "A05-AC-2: the reviewer takes both outputs as evidence" "$a05/reviewer.md" 8 'check-owns-diff' 'check-coverage' 'evidence|output'
+g05c "A05-AC-2: the reviewer treats a NOT OWNED path without a recorded approval as a finding" "$a05/reviewer.md" 6 'not owned' 'approv' 'record' 'finding'
+g05c "A05-AC-2: the reviewer treats a new coverage problem as a finding" "$a05/reviewer.md" 6 'coverage' 'new' 'problem' 'finding'
+g05c "A05-AC-2: the reviewer treats an unmatched failure (a failing line no known_red entry matches) as a finding" "$a05/reviewer.md" 6 'unmatched|no (known_red )?entry|matches? no|not match' 'fail' 'finding'
+
+# --- A05-AC-3: the gate's pass condition, in the skill's steps and in each agent and the update template ---
+for a05p in "skill step 3 (GREEN)|$a05/s3.md" "skill step 5 (local runs)|$a05/s5.md" "skill --update step (the failing test)|$a05/upd.md" \
+	"skill step 8 (feedback)|$a05/s8.md" "tester|$a05/tester.md" "implementer|$a05/implementer.md" "reviewer|$a05/reviewer.md" \
+	"unattended-node-update.md|$a05/nu.md"; do
+	a05_who=${a05p%%|*}; a05_f=${a05p#*|}
+	g05c "A05-AC-3: $a05_who: a run passes on exit 0, or on a non-zero exit whose fail_pattern lines each contain a known_red entry" "$a05_f" 8 'exit(s)? (code )?0|exits? zero|0 exit' 'fail_pattern' 'known_red' 'each'
+	g05c "A05-AC-3: $a05_who: a non-zero exit with no matched line fails" "$a05_f" 8 'known_red' 'non-zero' 'no (matched )?line|no line (is )?matched|matches? no line|without a matched line' 'fail'
+	g05c "A05-AC-3: $a05_who: the evidence lists each failing line with the known_red entry it matched" "$a05_f" 8 'evidence|list' 'each' 'failing line|matched line|line' 'known_red|entry' 'match'
+done
+g05c "A05-AC-3: the skill applies the pass condition to the local quick gate and the CI run of gate.command alike" "$sk" 10 'known_red' 'quick gate' 'ci run' 'gate[.]command' 'alike|both|same'
+g05c "A05-AC-3: the skill requires no local run of gate.command" "$sk" 10 'gate[.]command' 'no local run|not (require|run|make)[^.]*local|without[^.]*local|never[^.]*local' 
+g05c "A05-AC-3: the reviewer applies the pass condition to the quick gate and the CI run of gate.command alike, with no local run required" "$a05/reviewer.md" 10 'known_red' 'quick gate' 'ci' 'gate[.]command' 'no local run|not (require|run|make)[^.]*local|without[^.]*local|never[^.]*local'
+g05c "A05-AC-3: unattended-node-update.md applies the pass condition to the quick gate and the CI run of gate.command, with no local run required" "$a05/nu.md" 10 'known_red' 'quick gate' 'ci' 'gate[.]command' 'no local run|not (require|run|make)[^.]*local|without[^.]*local|never[^.]*local'
+
+# --- A05-AC-3: the amendments of change 3 ---
+for a05p in "skill step 7|$a05/s7.md" "unattended.md SMALL SPEC AMENDMENTS|$a05/u-small.md" "unattended-followup.md SMALL SPEC AMENDMENTS|$a05/f-small.md"; do
+	a05_who=${a05p%%|*}; a05_f=${a05p#*|}
+	g05c "A05-AC-3: $a05_who: adding, correcting or removing a glob of the node's own owns is a small amendment" "$a05_f" 8 'glob' 'owns' 'add' 'correct' 'remov' 'amendment'
+	g05c "A05-AC-3: $a05_who: an added own glob only for paths no other node's glob and no out_of_scope glob matches" "$a05_f" 8 'glob' 'only' 'out[_ -]of[_ -]scope' 'no other|no existing|not match|matches? none|matches? no'
+	g05c "A05-AC-3: $a05_who: removing a known_red entry the change makes pass is a small amendment" "$a05_f" 8 'known_red' 'remov' 'pass' 'amendment'
+	g05c "A05-AC-3: $a05_who: removing a dep's glob the change leaves matching nothing, unless it is the dep's last glob" "$a05_f" 8 'dep' 'glob' 'remov' 'matching nothing|matches nothing|match(es)? no' 'last'
+done
+
+# --- A05-AC-3: conflict resolution of those lines ---
+for a05p in "skill --update step|$a05/upd.md" "unattended-node-update.md spec-file rule|$a05/nu-spec.md" \
+	"unattended.md MERGE CONFLICTS|$a05/u-merge.md" "unattended-followup.md MERGE CONFLICTS|$a05/f-merge.md"; do
+	a05_who=${a05p%%|*}; a05_f=${a05p#*|}
+	g05c "A05-AC-3: $a05_who: a conflict in owns globs or known_red entries applies both sides' changes, each line taking the side that changed it" "$a05_f" 8 'known_red' 'glob|owns' 'both sides' 'each line' 'side that changed'
+	g05c "A05-AC-3: $a05_who: that resolution needs no question" "$a05_f" 8 'known_red' 'both sides' 'without a question|no question|needs no question|not a question'
+	g05c "A05-AC-3: $a05_who: a line both sides changed is not resolved: QUESTION.md is written" "$a05_f" 8 'known_red' 'both sides changed' 'same' 'question[.]md'
+done
+
+# --- A05-AC-3: the tests an imported or pinned node's criteria name are frozen ---
+for a05p in "skill|$sk" "tester|$a05/tester.md" "implementer|$a05/implementer.md" "reviewer|$a05/reviewer.md" \
+	"unattended.md|$a05/u.md" "unattended-followup.md|$a05/f.md" "unattended-node-update.md|$a05/nu.md"; do
+	a05_who=${a05p%%|*}; a05_f=${a05p#*|}
+	g05c "A05-AC-3: $a05_who: the tests an imported or pinned node's criteria name in their Verify are frozen like an earlier node's" "$a05_f" 6 'imported' 'pinned' 'verify' 'frozen' 'criteri'
+done
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
