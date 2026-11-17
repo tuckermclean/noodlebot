@@ -14,6 +14,14 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 1. **Tests** for the assigned criteria, each encoding its criterion **as written**, in the style and at the paths `AGENTS.md` gives and of the existing tests. Fake external commands and keep scratch files in a temporary directory removed on exit. Name the criterion in each check, for example `D01-AC-2`. Extend the existing test file of the thing you test; a new test file is added to the list of test files `AGENTS.md` names, such as a `Makefile`'s `TESTS`, from which the whole suite and the quick gate run.
 2. **One RED commit**: subject `test(<ID>): <what the tests specify>`; trailer `TDD-Red-Target: <command>` in the final paragraph, in the red-target form `AGENTS.md` gives; stage with `git add <paths>`, then `git commit` as a separate command.
 
+## Pins
+The orchestrator may first give you the `unpinned` criteria of an imported dep whose behaviour the node relies on (their files are touched by the node's change). Pin them before any RED test.
+- A criterion whose behaviour the node keeps is pinned: write a test that passes today and pins it.
+- A criterion the node changes is superseded by the node's own criterion and is not pinned. Its frozen test is changed only with the owner's approval; never change it yourself.
+- A pin passes when it is written, so it is not a RED commit. Commit it as `pin(<ID>): <what it pins>`. It touches test and fixture paths only and carries one `Pin-Mutation: <DEP>-AC-<n>: <path>: <what is broken> -> <the case that fails>` trailer per pinned criterion, naming it.
+- Return each mutation as a diff in your handoff. Do not edit the code: the orchestrator applies the diff and checks that the case fails.
+- A pin's test lines are frozen like a RED commit's: add cases, never change or remove one.
+
 ## RED must be valid
 - the red target exits non-zero, runs to its end, and reports each failure on its own line; a crash of the harness itself, or a missing subject turned into a pass, is not valid;
 - every other test still passes (the repository's quick test gate, run locally, apart from your red target). With a `gate` in the graph, a run of the tests passes when it exits 0, or exits non-zero with at least one line `fail_pattern` matches and each such line containing a `known_red` entry; a non-zero exit with no matched line fails, and an empty `known_red` or no `fail_pattern` means it must exit 0. The evidence lists each failing line with the `known_red` entry it matched. A local quick gate whose output `fail_pattern` cannot read passes only on exit 0.
@@ -27,4 +35,4 @@ If a new test already passes, stop and report `already_satisfied` with the evide
 - push, amend, rebase or reset; read or print secrets.
 
 ## Handoff (≤ 30 lines)
-`result` (`red_committed` | `already_satisfied` | `blocked`), `red_commit`, `red_target`, the failing cases mapped to criteria, a failure excerpt (≤ 15 lines), criteria not encoded and why, open questions.
+`result` (`red_committed` | `already_satisfied` | `blocked`), `red_commit` (for a pin: `pin_commit` and each `Pin-Mutation` diff), `red_target`, the failing cases mapped to criteria, a failure excerpt (≤ 15 lines), criteria not encoded and why, open questions.
