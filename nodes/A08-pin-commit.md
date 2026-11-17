@@ -6,8 +6,9 @@
 
 **Owns:** in `plugin/skills/node/SKILL.md`, the pin step, the checks of a pin commit, their evidence rows, and the dep
 amendments in step 7's small-amendment rule; the pin instructions in `plugin/agents/tester.md` and the pin checks in
-`plugin/agents/reviewer.md`; the dep-amendment line of the SMALL SPEC AMENDMENTS rule in `scheduler/unattended.md` and
-`scheduler/unattended-followup.md`; their cases in `plugin/skills/node/skill.test.sh`.
+`plugin/agents/reviewer.md`; the dep-amendment line of the SMALL SPEC AMENDMENTS rule and its lines in A05's
+keep-both-sides exception (the MERGE CONFLICTS rule, the `--update` step and `scheduler/unattended-node-update.md`) in
+`scheduler/unattended.md`, `scheduler/unattended-followup.md` and the node skill; their cases in `plugin/skills/node/skill.test.sh`.
 
 ## Purpose
 After this node a node can change imported code safely. Before it relies on behaviour of an imported node that no test
@@ -44,14 +45,14 @@ dep criterion the node itself changes is not pinned: the node's own criterion su
    `unpinned` in a pinned dep criterion with the pin's test; replacing a changed dep criterion's *Verify* with
    `superseded by <ID>-AC-<n>`; and setting the dep's `status` to `pinned` in the graph when no `unpinned` criterion is
    left. Like A05's `owns` and `known_red` lines, these are exceptions to "another node's spec or the graph needs a
-   spec PR". *A08-AC-3.*
+   spec PR", and a conflict with `main` in them is resolved by keeping both sides as A05 says. *A08-AC-3.*
 6. **The reviewer** checks every pin commit's paths and trailers, the patches and logs, the pinned and superseded
    choices, and the dep amendments. *A08-AC-2.*
 
 ## Gate
 - **A08-AC-1** — The skill and the tester say which dep criteria are pinned and which are superseded (a superseded criterion's frozen test changed only with the owner's approval), and what a `pin(<ID>):` commit contains: test and fixture paths only, a `Pin-Mutation:` trailer naming each pinned criterion, and each mutation returned as a diff. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 - **A08-AC-2** — The skill requires the orchestrator's three-run check of each pin with its patch and log, freezes pin lines like RED lines, and the reviewer checks both. *Verify:* `sh plugin/skills/node/skill.test.sh`.
-- **A08-AC-3** — The skill and both session templates allow, as small amendments in the node PR, naming the pin in a dep's criterion, marking a changed one `superseded by <ID>-AC-<n>`, and setting the dep `pinned` when none is left unpinned. *Verify:* `sh plugin/skills/node/skill.test.sh`.
+- **A08-AC-3** — The skill and both session templates allow, as small amendments in the node PR, naming the pin in a dep's criterion, marking a changed one `superseded by <ID>-AC-<n>`, and setting the dep `pinned` when none is left unpinned, resolving a conflict in those lines by keeping both sides. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 
 ## Risks
 - Which criteria a change touches, and whether it keeps or changes each, is the orchestrator's judgement from the

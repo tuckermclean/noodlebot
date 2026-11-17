@@ -45,8 +45,9 @@ specs in the first PR; A01's worked example `example/` stays as the record of th
    proposal, which the owner may rename, merge or split). A candidate the owner keeps in scope goes into an area.
    *A06-AC-1.*
 3. **The baseline.** After the answers, the skill runs the gate command once in the clone. It records in
-   `gate.fail_pattern` a regular expression matching the lines the command prints for a failure (asked for with the
-   gate command when the output does not make it plain), and each failing test in `gate.known_red` as its full name
+   `gate.fail_pattern` a regular expression matching the lines the command prints for a failure (section 1 may run the
+   proposed command once to see its output, so the pattern is proposed with the gate command; when the output still
+   does not make it plain, one follow-up question asks for it), and each failing test in `gate.known_red` as its full name
    as such a line prints it (the text A05 matches). The pattern matches only lines that name a failing test (a
    summary line that names none is not matched), so that in the baseline run every matched line contains a
    `known_red` entry, and at least one line is matched when the command exits non-zero: the baseline passes A05's
