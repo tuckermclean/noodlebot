@@ -17,9 +17,11 @@ longer overflows it. The script proposes; the owner and the sessions decide.
 ## Tests
 - `plugin/skills/adopt/inventory.test.sh` (new): a fixture repository (made with `git init` in a temporary folder from
   `testdata/inventory/`) with a Python package, a JavaScript file, a shell script, a test folder, a CI workflow, a
-  README, a `vendor/` folder, a `node_modules/` folder, and a folder of flat files larger than a small `--max-lines`;
-  and a graph whose one node owns `src/core/`. Cases: the summary and `--json`; the three kinds of import link, and
-  one that resolves to nothing; `--unowned`; `--glob`; `--areas` with the default and with a small `--max-lines`.
+  README, an `AGENTS.md`, a `vendor/` and a `node_modules/` folder (created by the test at run time and added with
+  `git add -f`, so no ignore file drops them), and a folder of flat files larger than a small `--max-lines`; once with
+  a graph whose one node owns `src/core/`, once with no `docs/graph.yaml` at all. Cases: the summary and `--json`; the
+  three kinds of import link, and one that resolves to nothing; `--unowned`; `--glob`; `--areas` with the default and
+  with a small `--max-lines`, and the order of two areas where one imports from the other.
 
 ## Changes
 1. **List.** `python3 -I plugin/skills/adopt/inventory.py <checkout> [--json] [--glob GLOB] [--unowned] [--areas
@@ -37,19 +39,20 @@ longer overflows it. The script proposes; the owner and the sessions decide.
    candidates); `--json` the same as one object with the keys `files`, `languages`, `entrypoints`, `tests`, `ci`,
    `candidates`, `links`, `unowned`, `areas`. `--glob` limits every list to the files the glob matches (A02's
    matcher), for a session that maps one area. *A03-AC-1.*
-4. **`--unowned`** lists the tracked files that no node's `owns` and no `out_of_scope` glob covers, one per line,
-   sorted; with no ownership in the graph it lists nothing. *A03-AC-3.*
-5. **`--areas`** proposes areas covering every tracked file that is not a candidate and not already owned (code,
-   tests, docs, CI and configuration alike): one area per folder, a folder over `--max-lines` (default 4000) split into
+4. **`--unowned`** lists the tracked files that no node's `owns` and no `out_of_scope` glob covers and that are not
+   the regime's own files (A02's list), one per line, sorted; with no ownership in the graph, or no graph at all, it
+   lists nothing. A missing `docs/graph.yaml` is a repository with no ownership, not an error. *A03-AC-3.*
+5. **`--areas`** proposes areas covering every tracked file that is not a candidate, not already owned and not one of
+   the regime's own files (code, tests, docs, CI and configuration alike), with or without a graph: one area per folder, a folder over `--max-lines` (default 4000) split into
    its subfolders, and a folder whose own files are over the limit split into groups of files; small sibling folders
    may be merged. Each area has a kebab-case name (never `scaffold` or `plan`), a list of globs, its files and its
    lines, in an order where an area comes after the areas it imports from where possible. *A03-AC-4.*
 
 ## Gate
-- **A03-AC-1** — On the fixture, the summary and `--json` report every tracked file with its language and lines, the three kinds of entrypoint, the tests, the CI file and the vendored folders as candidates with a reason, and `--glob` limits them to one folder. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
+- **A03-AC-1** — On the fixture, the summary and `--json` report every tracked file with its language and lines, the four kinds of entrypoint, the tests, the CI file and the vendored folders as candidates with a reason, and `--glob` limits them to one folder. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
 - **A03-AC-2** — Import, require and source links carry their resolved path, and one that resolves to nothing keeps its raw text with a null target. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
-- **A03-AC-3** — `--unowned` lists exactly the tracked files no `owns` and no `out_of_scope` glob covers, and nothing for a graph without ownership. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
-- **A03-AC-4** — `--areas` puts every tracked file that is not a candidate and not owned in exactly one area, none over `--max-lines` unless it is a single file, and the flat folder over the limit is split into groups of files. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
+- **A03-AC-3** — `--unowned` lists exactly the tracked files no `owns` and no `out_of_scope` glob covers, leaving out the regime's own files, and nothing for a graph without ownership or with no graph. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
+- **A03-AC-4** — `--areas`, with the graph and with none, puts every tracked file that is not a candidate, not owned and not a regime file in exactly one area, none over `--max-lines` unless it is a single file; the flat folder over the limit is split into groups of files, and an area comes after the area it imports from. *Verify:* `sh plugin/skills/adopt/inventory.test.sh`.
 
 ## Risks
 - Best effort by design: dynamic imports, computed `require` names and shell globs are invisible. Links only inform

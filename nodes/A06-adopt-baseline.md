@@ -6,8 +6,10 @@
 
 **Owns:** in `plugin/skills/adopt/SKILL.md`, the facts (section 1), the questions (section 2), the drafts of the first
 adoption PR (section 3), its checks (section 4) and the dry run; the new recorded dry run under
-`plugin/skills/adopt/example-baseline/`; the fixture repository and answers under `plugin/skills/adopt/testdata/`; their
-cases in `plugin/skills/adopt/adopt.test.sh`. The existing worked example `plugin/skills/adopt/example/` stays as it is.
+`plugin/skills/adopt/example-baseline/`; the new fixture repository and answers under
+`plugin/skills/adopt/testdata/baseline/` (`repo/` and `ANSWER.md`); their cases in `plugin/skills/adopt/adopt.test.sh`.
+The existing fixture `plugin/skills/adopt/testdata/repo/` and worked example `plugin/skills/adopt/example/` stay as they
+are.
 
 ## Purpose
 After this node the first step of an adoption is small, checkable and honest about the repository's health. Instead of
@@ -22,10 +24,14 @@ yet. Mapping the areas into imported nodes is A07's work.
   - the skill's text: it reads `inventory.py`'s output instead of every file, asks for the gate command, the
     out-of-scope paths and the areas (each with a recommendation), runs the gate once, records `known_red`, drafts
     `nodes: []`, and runs `check-regime.py` and `check-coverage.py` before the PR;
-  - the recorded dry run under `example-baseline/`, made from the fixture repository with recorded answers: its
-    `docs/graph.yaml` has `nodes: []`, a `gate` whose `known_red` names the fixture's one failing test, `out_of_scope`
-    with the fixture's vendored folder, and `adoption` areas that, with it, cover every tracked file;
-    `check-regime.py` and `check-coverage.py` report `PROBLEMS 0` on it.
+  - the recorded dry run under `example-baseline/`, made from `testdata/baseline/repo/` (a small repository with a
+    vendored folder, which the test creates at run time and adds with `git add -f`, and one failing test) and
+    `testdata/baseline/ANSWER.md`: its `docs/graph.yaml` has `nodes: []`, a `gate` with a `fail_pattern` and a
+    `known_red` naming the fixture's failing test, `out_of_scope` with the vendored folder, and `adoption` areas;
+  - the coverage of that dry run: the test copies the fixture repository to a temporary folder, lays the drafted
+    `SPEC.md`, `AGENTS.md`, `docs/graph.yaml`, `nodes/` and `.noodlebot/roles.yaml` over it (not `QUESTION.md` or
+    `FACTS.md`), commits it with `git init`, and runs `check-regime.py --root` and `check-coverage.py --root` there,
+    both `PROBLEMS 0`.
   - The existing checks of `example/` keep passing unchanged.
 
 ## Changes
@@ -36,8 +42,10 @@ yet. Mapping the areas into imported nodes is A07's work.
    with a recommendation: the gate command (proposed from CI, the Makefile or the package scripts); the paths to
    leave out of scope, with reasons (proposed from the inventory's candidates); and the areas (the inventory's
    proposal, which the owner may rename, merge or split). *A06-AC-1.*
-3. **The baseline.** After the answers, the skill runs the gate command once in the clone. Each failing test is
-   recorded in `gate.known_red` as its full name as the command prints it (the text A05 matches in failing lines). A
+3. **The baseline.** After the answers, the skill runs the gate command once in the clone. It records in
+   `gate.fail_pattern` a regular expression matching the lines the command prints for a failure (asked for with the
+   gate command when the output does not make it plain), and each failing test in `gate.known_red` as its full name
+   as such a line prints it (the text A05 matches). A
    command that cannot run here stops the run with a question: an adoption needs a gate that runs. *A06-AC-2.*
 4. **The first PR** drafts `SPEC.md`, the `AGENTS.md` "Building a node" section (with the gate command and the rules
    for `owns` and `known_red`), `.noodlebot/roles.yaml` where the guard's defaults do not fit, and `docs/graph.yaml`
@@ -49,8 +57,8 @@ yet. Mapping the areas into imported nodes is A07's work.
 
 ## Gate
 - **A06-AC-1** — The skill reads the inventory instead of every file and asks for the gate command, the out-of-scope paths and the areas, each with a recommendation. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
-- **A06-AC-2** — The skill runs the gate once, records each failing test's full name in `known_red`, stops with a question when the gate cannot run, and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
-- **A06-AC-3** — The recorded dry run under `example-baseline/` gives a graph with `nodes: []` whose `known_red` names the fixture's failing test and on which `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`; the checks of `example/` still pass. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
+- **A06-AC-2** — The skill runs the gate once, records a `fail_pattern` and each failing test's full name in `known_red`, stops with a question when the gate cannot run, and drafts a graph with `gate`, `out_of_scope`, `adoption` areas and `nodes: []`. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
+- **A06-AC-3** — The recorded dry run under `example-baseline/` gives a graph with `nodes: []` whose `known_red` names the fixture's failing test, and laid over the fixture repository as the Tests say, `check-regime.py` and `check-coverage.py` report `PROBLEMS 0`; the checks of `example/` still pass. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 
 ## Risks
 - The gate runs the repository's own command on the scheduler's machine. The command is the one the owner confirmed,
@@ -58,3 +66,5 @@ yet. Mapping the areas into imported nodes is A07's work.
 - A flaky suite gives an unstable `known_red`; the skill runs the gate once, and a later node that sees a listed
   failure pass removes it (A05).
 - A repository too small to split gets one area covering everything.
+- A frozen check of `adopt.test.sh` allows "noodlebot" in the adopt skill only as `/noodlebot:<skill>` and
+  `.noodlebot/`; the new text names no label or other noodlebot word.

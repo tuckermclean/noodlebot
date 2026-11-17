@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | A05 | none | M |
+| now | A05 | A09 | M |
 
 **Owns:** in `plugin/skills/node/SKILL.md`, the pin step, the checks of a pin commit, their evidence rows, and the dep
 amendments in step 7's small-amendment rule; the pin instructions in `plugin/agents/tester.md` and the pin checks in
@@ -28,7 +28,8 @@ dep criterion the node itself changes is not pinned: the node's own criterion su
    is superseded by the node's own criterion that states the new behaviour (change 5), and is not pinned. *A08-AC-1.*
 2. **The commit.** A tester writes the pins: a commit with the subject `pin(<ID>): …` that touches only test and
    fixture paths (new test files placed as A05 allows, under the dep's folders or the node's own `owns`) and carries
-   one `Pin-Mutation: <path>: <what is broken> -> <the case that fails>` trailer per pinned criterion. The tester
+   one `Pin-Mutation: <DEP>-AC-<n>: <path>: <what is broken> -> <the case that fails>` trailer per pinned criterion,
+   naming the criterion it pins. The tester
    returns each mutation as a diff in its handoff; it does not edit the code. *A08-AC-1.*
 3. **Verified, not claimed.** The orchestrator writes each mutation to `out/node/<ID>/pin-<n>.patch` and checks it:
    the pinned cases pass at the pin commit; with the patch applied the named case fails; with it reverted they pass
@@ -45,7 +46,7 @@ dep criterion the node itself changes is not pinned: the node's own criterion su
    choices, and the dep amendments. *A08-AC-2.*
 
 ## Gate
-- **A08-AC-1** — The skill and the tester say which dep criteria are pinned and which are superseded, and what a `pin(<ID>):` commit contains: test and fixture paths only, a `Pin-Mutation:` trailer per criterion, and each mutation returned as a diff. *Verify:* `sh plugin/skills/node/skill.test.sh`.
+- **A08-AC-1** — The skill and the tester say which dep criteria are pinned and which are superseded, and what a `pin(<ID>):` commit contains: test and fixture paths only, a `Pin-Mutation:` trailer naming each pinned criterion, and each mutation returned as a diff. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 - **A08-AC-2** — The skill requires the orchestrator's three-run check of each pin with its patch and log, freezes pin lines like RED lines, and the reviewer checks both. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 - **A08-AC-3** — The skill and both session templates allow, as small amendments in the node PR, naming the pin in a dep's criterion, marking a changed one `superseded by <ID>-AC-<n>`, and setting the dep `pinned` when none is left unpinned. *Verify:* `sh plugin/skills/node/skill.test.sh`.
 

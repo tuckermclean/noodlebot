@@ -53,13 +53,14 @@ way.
 - **Adopted repositories** (nodes A02–A08). A repository brought into the regime by `/noodlebot:adopt` has its whole
   existing code in the graph, not only the work still to do. A node has a `status`: `planned` (work to build, the
   default), `imported` (code that already exists, described by its spec) or `pinned` (imported, with every criterion
-  shown by a test). It names the files it owns as `owns:` globs, and every tracked file is owned by exactly one node or
+  shown by a test or superseded by a later node's). It names the files it owns as `owns:` globs, and every tracked file is owned by exactly one node or
   listed under `out_of_scope:` with a reason, lies in an adoption area still to map, or is one of the
   regime's own files. The graph's `gate:` names the repository's one test command and the
   failures it already had when adopted (`known_red`). While an adoption is in progress, `adoption: {areas: [...]}` lists
   the parts of the code still to map; the graph itself is the record of what has been mapped. Imported and pinned
   nodes are done: they are never started and they satisfy deps. A node's change stays within its own files and its
-  deps' files; behaviour of imported code it relies on is pinned by a test before it is changed. A graph with none of
+  deps' files; behaviour of imported code it keeps is pinned by a test before the code is changed, and behaviour it
+  changes is superseded by its own criteria. A graph with none of
   these fields means what it always has.
 - **Backends.** The forge interface (`scheduler/forge.py`, node G04) and the harness interface
   (`scheduler/harness.py`, node S08) are core's only way to the code forge and the agent harness; what

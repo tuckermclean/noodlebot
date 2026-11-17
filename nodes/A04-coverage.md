@@ -28,9 +28,8 @@ ownership (noodlebot's own) passes unchanged.
    the tracked files at the working tree (`git ls-files`), or both at `REV` with `--ref` (`git show REV:docs/graph.yaml`,
    `git ls-tree -r --name-only REV`), and matches each file against every node's `owns`, the `out_of_scope` globs and
    the pending `adoption` areas' globs, with A02's matcher. *A04-AC-1.*
-2. **The regime's own files are exempt:** the repository's spec files as `check-spec-diff.py` reads them (the
-   **Spec files:** line of `AGENTS.md`, else `SPEC.md`, `docs/graph.yaml` and `nodes/`), plus `AGENTS.md` and
-   `.noodlebot/roles.yaml`. Nothing else is skipped by name: vendored and generated folders are left out only through
+2. **The regime's own files are exempt**, as A02's `owns.py` lists them (the spec files of the **Spec files:** line or
+   the default, plus `AGENTS.md` and `.noodlebot/roles.yaml`). Nothing else is skipped by name: vendored and generated folders are left out only through
    `out_of_scope`. *A04-AC-1.*
 3. **Problems**, one per line, then `PROBLEMS <n>` and exit 1 when n > 0, in `check-regime.py`'s shape: a file no node
    owns that is neither exempt, out of scope nor in a pending area; a file two nodes own (both named, whatever their
