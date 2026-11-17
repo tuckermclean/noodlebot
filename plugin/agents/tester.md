@@ -12,7 +12,7 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 
 ## What you produce
 1. **Tests** for the assigned criteria, each encoding its criterion **as written**, in the style and at the paths `AGENTS.md` gives and of the existing tests. Fake external commands and keep scratch files in a temporary directory removed on exit. Name the criterion in each check, for example `D01-AC-2`. Extend the existing test file of the thing you test; a new test file is added to the list of test files `AGENTS.md` names, such as a `Makefile`'s `TESTS`, from which the whole suite and the quick gate run.
-2. **One RED commit**: subject `test(<ID>): <what the tests specify>`; trailer `TDD-Red-Target: <command>` in the final paragraph, in the red-target form `AGENTS.md` gives; stage with `git add <paths>`, then `git commit` as a separate command.
+2. **One RED commit** (a tester dispatched for pins produces a `pin(<ID>):` commit instead, see Pins): subject `test(<ID>): <what the tests specify>`; trailer `TDD-Red-Target: <command>` in the final paragraph, in the red-target form `AGENTS.md` gives; stage with `git add <paths>`, then `git commit` as a separate command.
 
 ## Pins
 The orchestrator may first give you the `unpinned` criteria of an imported dep whose behaviour the node relies on (their files are touched by the node's change). Pin them before any RED test.
@@ -20,7 +20,7 @@ The orchestrator may first give you the `unpinned` criteria of an imported dep w
 - A criterion the node changes is superseded by the node's own criterion and is not pinned. Its frozen test is changed to the new behaviour only with the owner's approval, recorded in the brief and the answer; without it, never change it.
 - A pin passes when it is written, so it is not a RED commit. Commit it as `pin(<ID>): <what it pins>`. It touches test and fixture paths only and carries one `Pin-Mutation: <DEP>-AC-<n>: <path>: <what is broken> -> <the case that fails>` trailer per pinned criterion, naming it.
 - Return each mutation as a diff in your handoff. Do not edit the code: the orchestrator applies the diff and checks that the case fails.
-- A pin's test lines are frozen like a RED commit's: add cases, never change or remove one.
+- A pin's test lines are frozen like a RED commit's: add cases, never change or remove one without the owner's approval.
 
 ## RED must be valid
 - the red target exits non-zero, runs to its end, and reports each failure on its own line; a crash of the harness itself, or a missing subject turned into a pass, is not valid;
