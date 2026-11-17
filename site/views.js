@@ -91,7 +91,7 @@ export function renderRepos(data, ctx) {
     const nodes = r.nodes || [];
     const counts = {};
     for (const n of nodes) counts[n.state] = (counts[n.state] || 0) + 1;
-    const merged = counts.merged || 0;
+    const merged = (counts.merged || 0) + (counts.imported || 0) + (counts.pinned || 0);
     const segs = Object.entries(counts).map(([k, v]) =>
       `<span class="seg" data-state="${e(k)}" title="${v} ${e(k)}" style="width:${((100 * v) / nodes.length).toFixed(1)}%;background:${stateVar(k)}"></span>`).join('');
     const summary = nodes.length ? `<p class="count">${merged} of ${nodes.length} merged</p><div class="bar" role="img" aria-label="node states">${segs}</div>`

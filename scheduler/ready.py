@@ -17,7 +17,8 @@ With no markers, a node with an open PR is not ready (it waits for the owner). A
 or a merged WAITING-PR makes it ready even with its PR open, so the session can resume.
 A merged node is printed with a third word, "followup", when its markers say resume, or when only
 a FOLLOWUP marker is there and it has no open PR.
-A node counts as merged when it is passed
+A node whose graph status is imported or pinned is done by declaration: it counts as merged for its dependants
+and is never printed. A node counts as merged when it is passed
 with --merged (a merged node/<ID>-* PR) or when a line of --subjects (`git log --format=%s
 origin/main`) starts with "<ID> <name>:", the squash subject of its PR. The second source exists
 because GitHub hides the PRs of a suspended author. Any error exits non-zero and prints no node.
@@ -71,6 +72,9 @@ def main() -> int:
         for n in nodes:
             if any(s.startswith(f"{n['id']} {n['name']}:") for s in subjects):
                 merged.add(n["id"])
+    # imported and pinned nodes are done by declaration (the graph's status field; planned is the default)
+    adopted = {n["id"] for n in nodes if n.get("status") in ("imported", "pinned")}
+    merged |= adopted
     opened = set(a.open)
     merged_prs = set()
     if a.merged_prs:
@@ -83,6 +87,8 @@ def main() -> int:
 
     for n in nodes:
         nid = n["id"]
+        if nid in adopted:
+            continue
         is_merged = nid in merged
         if not is_merged and not all(d in merged for d in n.get("deps") or []):
             continue
