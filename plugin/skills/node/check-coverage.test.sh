@@ -99,5 +99,9 @@ cov "A04-AC-1: the working tree's AGENTS.md no longer exempts docs/extra.md" 1 1
 mk regime-two-owners; cov "A04-AC-2: a regime file owned by two nodes is still named with both" 1 1 SPEC.md A01 A02
 mk regime-oos; cov "A04-AC-2: a regime file owned and out of scope names the file, the node and the glob" 1 1 nodes/A01-core.md A01 'nodes/*.md'
 
+# ---- review of 97f34e6: an argument the checker does not know is an error
+mk owned; cov "A04-AC-1: an unknown option (--ref=HEAD) is named and fails, not judged on the working tree" 1 1 --ref=HEAD -- --ref=HEAD
+mk owned; cov "A04-AC-1: a stray positional argument is named and fails, not judged on the working tree" 1 1 extra -- extra
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all check-coverage checks"
