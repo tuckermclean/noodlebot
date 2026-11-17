@@ -94,6 +94,7 @@ else
 		[ -f "$root/$t" ] && echo "$root/$t"
 	done >"$tmp/files"
 	cat >"$tmp/sentinel.sh" <<'EOT'
+case ${D12_SENTINEL:-} in '') D12_SENTINEL=1 exec env --default-signal=INT,HUP,TERM sh "$0" "$@" ;; esac
 # $1: records folder. A shell whose command line has a "/": records each TERM, HUP or INT it gets.
 trap 'echo TERM >>"$1/sig"' TERM
 trap 'echo HUP >>"$1/sig"' HUP
