@@ -85,5 +85,19 @@ root=$(cd "$src/../../.." && pwd -P)
 out=$(python3 -I "$src/check-coverage.py" --root "$root" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "no ownership declared" && printf '%s\n' "$out" | grep -qx "PROBLEMS 0"; then echo "PASS: A04-AC-3: this repository's graph passes (no ownership declared, PROBLEMS 0)"; else echo "FAIL: A04-AC-3: this repository's graph: exit $rc: $out"; fails=$((fails + 1)); fi
 
+# ---- review of c0d5bbb: quoted paths, pinned globs, --ref AGENTS.md, regime files owned twice
+mk owned; mkdir -p "$r/src/core"; echo x >"$r/src/core/café.py"; echo x >"$r/src/core/q\"t.py"; echo x >"$r/src/core/b\\s.py"; gt add -A; gt commit -qm names
+cov "A04-AC-1: unusual names (non-ASCII, quote, backslash) under an owned glob are matched as they are (working tree)" 0 0
+cov "A04-AC-1: unusual names under an owned glob are matched as they are (--ref)" 0 0 -- --ref HEAD
+mk owned src/naïve.py; cov "A04-AC-2: an unowned non-ASCII name is reported in its real form" 1 1 src/naïve.py
+mk owned src/naïve.py; cov "A04-AC-2: an unowned non-ASCII name is reported in its real form (--ref)" 1 1 src/naïve.py -- --ref HEAD
+mk pinned-empty; cov "A04-AC-2: a pinned node's glob matching nothing names the node and the glob" 1 1 A02 'src/gone/**'
+mk owned docs/extra.md; printf '# Agents\n\n## Building a node\n\n- **Spec files:** `SPEC.md`, `docs/graph.yaml`, `nodes/`, `docs/extra.md`\n' >"$r/AGENTS.md"; gt add -A; gt commit -qm spec
+cp "$fx/files/AGENTS.md" "$r/AGENTS.md"; gt add -A; gt commit -qm restore
+cov "A04-AC-1: --ref reads AGENTS.md at that commit (Spec files line exempts docs/extra.md)" 0 0 -- --ref HEAD~1
+cov "A04-AC-1: the working tree's AGENTS.md no longer exempts docs/extra.md" 1 1 docs/extra.md
+mk regime-two-owners; cov "A04-AC-2: a regime file owned by two nodes is still named with both" 1 1 SPEC.md A01 A02
+mk regime-oos; cov "A04-AC-2: a regime file owned and out of scope names the file, the node and the glob" 1 1 nodes/A01-core.md A01 'nodes/*.md'
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all check-coverage checks"
