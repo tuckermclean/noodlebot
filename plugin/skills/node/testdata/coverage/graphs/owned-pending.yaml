@@ -1,0 +1,6 @@
+template: {headings: [Purpose, Gate]}
+adoption:
+  areas:
+    - {name: api, globs: ['src/x.py']}
+nodes:
+  - {id: A01, name: core, track: done, status: imported, deps: [], owns: ['src/core/**', 'src/x.py']}

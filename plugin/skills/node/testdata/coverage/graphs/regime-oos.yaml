@@ -1,0 +1,5 @@
+template: {headings: [Purpose, Gate]}
+out_of_scope:
+  - {glob: 'nodes/*.md', reason: generated}
+nodes:
+  - {id: A01, name: core, track: done, status: imported, deps: [], owns: ['src/core/**', 'src/x.py', 'nodes/**']}
