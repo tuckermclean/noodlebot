@@ -9,7 +9,8 @@ worktree and state, its end), triage waiting during an adoption, and the skill a
 feedback of `spec/adopt*` PRs, and the throttle's view of adoption sessions in `scheduler/usage.py` (with its case
 in `scheduler/usage.test.sh`), `scheduler/status.sh` and `scheduler/loops.sh` (with their cases in
 `scheduler/loops-status.test.sh`); the session template `scheduler/unattended-adopt.md` (new); the adoption kind in `scheduler/turn.py`;
-the adoption home issue ("Adopt <name>", created as unit home issues are) and its answers in `scheduler/report.py`; in `plugin/skills/adopt/SKILL.md`, the `--area
+the adoption home issue ("Adopt <name>", created as unit home issues are) and its answers in `scheduler/report.py`; in `plugin/skills/adopt/SKILL.md`, the "already has a graph, stop" line (which then applies to the first-PR mode only)
+and the `--area
 <name>`, `--plan`, `--update <N>` and `--feedback <N>` modes; the recorded `--area` dry run under
 `plugin/skills/adopt/example-area/`; the new tests `scheduler/loop-a07*.test.sh` (split so each file stays under
 `TEST_FILE_BUDGET`, the end-to-end run in its own file) and their lines in the `Makefile`'s

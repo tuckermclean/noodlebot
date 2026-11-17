@@ -47,7 +47,9 @@ nodes as done. noodlebot's own graph, which uses none of the new fields, is chec
    component, `**` matches zero or more components, a trailing `/` (or a glob with no wildcard that names a folder) means the folder and
    everything under it. It also gives the regime's own files, which no node owns: the repository's spec files as
    `check-spec-diff.py` reads them (the **Spec files:** line of `AGENTS.md`, else `SPEC.md`, `docs/graph.yaml` and
-   `nodes/`), plus `AGENTS.md` and `.noodlebot/roles.yaml`. Every ownership tool (A03, A04, A05) imports it.
+   `nodes/`), plus `AGENTS.md` and `.noodlebot/roles.yaml`. Its caller passes `AGENTS.md`'s text and the tracked-file
+   list at the commit being judged, so a check at another commit never reads the working tree. Every ownership tool
+   (A03, A04, A05) imports it.
    *A02-AC-2.*
 2. **The fields.**
    - A node may have `status` (`planned` by default, `imported` or `pinned`) and `owns` (a list of globs).

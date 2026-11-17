@@ -17,7 +17,8 @@ reading the whole repository and drafting the whole plan at once, `/noodlebot:ad
 project's own documents, asks the owner to confirm the test command, what to leave out and how to split the repository
 into areas, runs the test command once and records what already fails, and opens one PR that sets up the regime: the
 main spec, the `AGENTS.md` section, and a graph with the `gate`, `out_of_scope` and the `adoption` areas, and no nodes
-yet. Mapping the areas into imported nodes is A07's work.
+yet. Mapping the areas into imported nodes is A07's work. This replaces the part of A01's flow that drafted node
+specs in the first PR; A01's worked example `example/` stays as the record of that earlier flow.
 
 ## Tests
 - `plugin/skills/adopt/adopt.test.sh` (extended):
