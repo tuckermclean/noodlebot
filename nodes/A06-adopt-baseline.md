@@ -5,7 +5,8 @@
 | now | A01, A03, A04 | A07 | M |
 
 **Owns:** in `plugin/skills/adopt/SKILL.md`, the facts (section 1), the questions (section 2), the drafts of the first
-adoption PR (section 3), its checks (section 4) and the dry run; the new recorded dry run under
+adoption PR (section 3), its checks (section 4) and the dry run, and where they say what the first PR holds, the
+description, the introduction, the PR body (section 5) and the report (section 6); the new recorded dry run under
 `plugin/skills/adopt/example-baseline/`; the new fixture repository and answers under
 `plugin/skills/adopt/testdata/baseline/` (`repo/` and `ANSWER.md`); their cases in `plugin/skills/adopt/adopt.test.sh`.
 The existing fixture `plugin/skills/adopt/testdata/repo/` and worked example `plugin/skills/adopt/example/` stay as they
