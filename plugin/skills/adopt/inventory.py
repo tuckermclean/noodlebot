@@ -18,6 +18,8 @@ links between files. A submodule is one entry and is not descended.
 A missing docs/graph.yaml is a repository with no ownership, not an error. Standard library plus PyYAML.
 """
 import argparse
+import bisect
+import heapq
 import json
 import os
 import posixpath
@@ -309,10 +311,11 @@ def split_folder(folder, files, lines, limit, force=False):
     if not force and (sum(lines[f] for f in files) <= limit or len(files) == 1):
         return [(folder, sorted(files), True)]
     cut = len(folder) + 1 if folder else 0
-    own = [f for f in files if "/" not in f[cut:]]
-    subs = {}
+    own, subs = [], {}
     for f in files:
-        if f not in own:
+        if "/" not in f[cut:]:
+            own.append(f)
+        else:
             subs.setdefault(f[cut:].split("/", 1)[0], []).append(f)
     out = []
     for name in sorted(subs):
@@ -324,24 +327,43 @@ def split_folder(folder, files, lines, limit, force=False):
     return out
 
 
-def cover(paths, inside, prefix=""):
-    """The largest folders whose tracked files are all in the area, and single files only where needed."""
-    if prefix and all(p in inside for p in paths):
-        return [prefix]
-    out, subs = [], {}
+def folder_counts(paths):
+    """{"a/b/": number of tracked files under it} for every folder of the tracked paths, counted once."""
+    counts = {}
     for p in paths:
-        rest = p[len(prefix):]
-        if "/" in rest:
-            subs.setdefault(rest.split("/", 1)[0], []).append(p)
-        elif p in inside:
-            out.append(p)
-    for name in sorted(subs):
-        out += cover(subs[name], inside, prefix + name + "/")
-    return out
+        i = p.find("/")
+        while i >= 0:
+            counts[p[: i + 1]] = counts.get(p[: i + 1], 0) + 1
+            i = p.find("/", i + 1)
+    return counts
+
+
+def cover(inside, counts):
+    """The largest folders whose tracked files are all in the area, and single files only where needed. Walks only
+    the area's own folders: a folder is whole when it holds as many of the area's files as tracked files."""
+    held, own, subs = {}, {}, {}
+    for p in inside:
+        prev, i = "", p.find("/")
+        while i >= 0:
+            f = p[: i + 1]
+            held[f] = held.get(f, 0) + 1
+            subs.setdefault(prev, set()).add(p[len(prev): i])
+            prev, i = f, p.find("/", i + 1)
+        own.setdefault(prev, []).append(p)
+
+    def walk(prefix):
+        if prefix and held[prefix] == counts[prefix]:
+            return [prefix]
+        out = sorted(own.get(prefix, []))
+        for name in sorted(subs.get(prefix, ())):  # by name, as "a" < "a-b" while "a-b/" < "a/"
+            out += walk(prefix + name + "/")
+        return out
+    return walk("")
 
 
 def propose_areas(files, lines, links, tracked_tree, limit):
     parts = split_folder("", sorted(files), lines, limit, force=True)
+    counts = folder_counts(tracked_tree)
     parts.sort(key=lambda p: p[1][0])
     areas, names = [], set()
     for label, fs, whole in parts:
@@ -350,20 +372,35 @@ def propose_areas(files, lines, links, tracked_tree, limit):
         while name in names:
             name, k = "%s-%d" % (base, k), k + 1
         names.add(name)
-        inside = set(fs)
-        globs = cover(sorted(tracked_tree), inside)
+        globs = cover(fs, counts)
         areas.append({"name": name, "globs": globs, "files": fs, "lines": sum(lines[f] for f in fs)})
     where = {f: i for i, a in enumerate(areas) for f in a["files"]}
     deps = [set() for _ in areas]
     for src, _kind, _raw, tgt in links:
         if src in where and tgt in where and where[src] != where[tgt]:
             deps[where[src]].add(where[tgt])
-    order, placed = [], set()
+    # each step places the first area left whose imports are all placed, else (a cycle) the first left
+    waiting = [len(d) for d in deps]
+    users = [[] for _ in areas]
+    for i, d in enumerate(deps):
+        for j in d:
+            users[j].append(i)
+    ready = [i for i, w in enumerate(waiting) if w == 0]
+    heapq.heapify(ready)
+    order, placed, first = [], [False] * len(areas), 0
     while len(order) < len(areas):
-        rest = [i for i in range(len(areas)) if i not in placed]
-        pick = next((i for i in rest if deps[i] <= placed), rest[0])  # a cycle: take the first left
+        if ready:
+            pick = heapq.heappop(ready)
+        else:
+            while placed[first]:
+                first += 1
+            pick = first
         order.append(pick)
-        placed.add(pick)
+        placed[pick] = True
+        for u in users[pick]:
+            waiting[u] -= 1
+            if waiting[u] == 0 and not placed[u]:
+                heapq.heappush(ready, u)
     return [areas[i] for i in order]
 
 
@@ -424,11 +461,19 @@ def build(root, glob, limit):
         cands.append({"path": f, "reason": reasons[posixpath.basename(f.rstrip("/")) + "/"]})
 
     unowned = sorted(p for p in paths if p not in owned and p not in regime) if globs else []
+    cand_paths = {c["path"] for c in cands}
     eligible = [p for p in paths if candidate_folder(p) is None and p not in owned and p not in regime
-                and p not in {c["path"] for c in cands}]
+                and p not in cand_paths]
 
     def keep(p):
         return glob is None or owns.match(glob, p, tree)
+
+    def under(folder):
+        """The tracked paths that start with folder, from the sorted list."""
+        i = bisect.bisect_left(paths, folder)
+        while i < len(paths) and paths[i].startswith(folder):
+            yield paths[i]
+            i += 1
 
     files = [x for x in files if keep(x["path"])]
     links = [l for l in links if keep(l[0])]
@@ -447,8 +492,7 @@ def build(root, glob, limit):
         "tests": [p for p in tests if keep(p)],
         "ci": [p for p in ci if keep(p)],
         "candidates": [c for c in sorted(cands, key=lambda c: c["path"])
-                       if keep(c["path"]) or (c["path"].endswith("/")
-                                              and any(p.startswith(c["path"]) and keep(p) for p in paths))],
+                       if keep(c["path"]) or (c["path"].endswith("/") and any(keep(p) for p in under(c["path"])))],
         "links": [{"source": s, "kind": k, "raw": r, "target": t} for s, k, r, t in links],
         "unowned": [p for p in unowned if keep(p)],
         "areas": areas,
@@ -517,9 +561,11 @@ def main(argv):
     if a.json:
         print(json.dumps(d, indent=1))
     elif a.unowned:
-        print("\n".join(d["unowned"]))
+        if d["unowned"]:
+            print("\n".join(d["unowned"]))
     elif a.areas:
-        print(areas_text(d["areas"]))
+        if d["areas"]:
+            print(areas_text(d["areas"]))
     else:
         print(summary(d))
     return 0
