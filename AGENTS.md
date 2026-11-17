@@ -15,7 +15,7 @@ Agent guidance for noodlebot. Architecture and principles are in `SPEC.md`; usag
 
 ## Commands
 
-- `make test`: every test (the scheduler's unit and end-to-end tests with fake `gh` and `claude`, and also
+- `make test`: the whole suite, which CI runs on the PR (a session runs the quick gate, see **Tests:**): every test (the scheduler's unit and end-to-end tests with fake `gh` and `claude`, and also
   `nbctl` and the site; the list is the Makefile's `TESTS`). Offline. It runs through `scheduler/runtests.sh`:
   the files run at once and print `TIME` lines per file, `SLOW` lines past a budget and a `TOTAL` line, tuned by
   `TEST_JOBS`, `TEST_FILE_BUDGET` and `TEST_BUDGET`. It takes under three minutes on the scheduler's machine
@@ -36,14 +36,18 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
 - **Spec files:** `SPEC.md`, `docs/graph.yaml`, `nodes/` (a trailing slash marks a folder); a spec PR changes only these, and plugin/skills/node/check-spec-diff.py checks a branch against them.
 - **Spec checker:** `python3 -I plugin/skills/node/check-regime.py` (PROBLEMS 0). **Decisions
   table:** SPEC §4.
-- **Tests:** `make test` is both the quick gate and the whole suite. Tests are the `*.test.sh` files
+- **Tests:** the quick gate is the change's red targets plus the test files of each file it touches (for
+  `scheduler/<name>.sh` or `.py`, `scheduler/<name>.test.sh` and `scheduler/<name>-*.test.sh`; for another file, the
+  test files that name it), run through `TEST_JOBS=2 make test TESTS="<files>"`, so that a change to
+  `scheduler/loop.sh`, whose quick gate is about a hundred test files, runs two at a time. The whole `make test` runs
+  in CI on the PR (`.github/workflows/test.yml`); a session does not run it locally. Tests are the `*.test.sh` files
   and `scheduler/testdata/` (the frozen paths). A red target has the form
   `sh scheduler/<name>.test.sh` (or `bash` for `loop.test.sh`). A new script gets its own
   `*.test.sh`. A new case waits for the condition it checks (no
   fixed sleep where a condition can be observed), uses the shared helpers in `scheduler/testdata/lib/`, and
   keeps its file under `TEST_FILE_BUDGET` (30 s); a new test file is added to the Makefile's `TESTS` list.
 - **Porting rules:** none; noodlebot ports nothing.
-- **CI evidence:** `.github/workflows/test.yml` runs `make test` on the PR; record the run URL. Behaviour
+- **CI evidence:** `.github/workflows/test.yml` runs `make test` on the PR; the PR's CI run is the whole suite's evidence, so record its run URL. Behaviour
   that needs a live loop, real GitHub or real Claude sessions is shown by the end-to-end test with fakes;
   where a criterion needs more, it says what to record.
 

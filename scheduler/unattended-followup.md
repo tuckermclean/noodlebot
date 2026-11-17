@@ -31,7 +31,7 @@ back for changing files outside the spec files (see RESUMING below). Nobody can 
   paths, committed by an earlier RED commit or node) or a spec file. The spec files are the paths the
   checker check-spec-diff.py lists: those on the **Spec files:** line of the repository's AGENTS.md, or
   its default list when AGENTS.md has no such line. For those, git merge --abort, write QUESTION.md and
-  end the run. After resolving, rerun the quick test gate and every red target of this node, and list
+  end the run. After resolving, rerun the quick test gate the repository's AGENTS.md names and every red target of this node, and list
   each resolved file in the PR under Deviations.
 @RESUME-BEGIN@
 - RESUMING AFTER A STOP. This branch already has work (commits past origin/main: @COMMITS@), and the
