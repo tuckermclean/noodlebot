@@ -65,8 +65,8 @@ harness = _load_harness()
 
 
 def _load_forge():
-    """scheduler/forge.py, the forge interface (G04), loaded like the harness; only its pure web_url is used here: no forge
-    call, nothing written. It is registered as `forge`, as its GitHub backend imports it by that name."""
+    """scheduler/forge.py, the forge interface (G04), loaded like the harness; only its pure web_url and the GitHub backend's
+    repo_of_remote (checkout_repo) are used here: no forge call, nothing written. It is registered as `forge`, as its GitHub backend imports it by that name."""
     spec = importlib.util.spec_from_file_location("forge", os.path.join(HERE, "forge.py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules["forge"] = mod
@@ -92,17 +92,20 @@ def checkout_repo():
     """owner/name of the live checkout's repository, read once from its origin remote (local git, no forge call, no token)
     through the GitHub backend's own URL parsing; None when unreadable (no origin, or no backend knows the URL)."""
     global _forge
+    if _checkout_repo:
+        return _checkout_repo[0]
+    repo = None
+    try:
+        r = subprocess.run(["git", "-C", CHECKOUT, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20)
+        if r.returncode == 0 and r.stdout.strip():
+            with _forge_lock:
+                if _forge is None:
+                    _forge = _load_forge()
+            repo = _forge._load("github").repo_of_remote(r.stdout.strip())
+    except Exception:
+        repo = None
     with _forge_lock:
         if not _checkout_repo:
-            repo = None
-            try:
-                r = subprocess.run(["git", "-C", CHECKOUT, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=20)
-                if r.returncode == 0 and r.stdout.strip():
-                    if _forge is None:
-                        _forge = _load_forge()
-                    repo = _forge._load("github").repo_of_remote(r.stdout.strip())
-            except Exception:
-                repo = None
             _checkout_repo.append(repo)
         return _checkout_repo[0]
 
