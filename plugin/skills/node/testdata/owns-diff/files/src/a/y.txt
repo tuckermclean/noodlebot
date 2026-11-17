@@ -1,0 +1,3 @@
+content of src/a/y, distinct line one
+second line of src/a/y so renames are exact
+third line of src/a/y

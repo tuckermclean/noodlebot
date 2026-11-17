@@ -11,10 +11,10 @@ in the `Makefile`'s `TESTS`, its fixtures under `plugin/skills/node/testdata/own
 imported tests, and the gate's pass condition wherever the skill requires the
 repository's tests to pass (GREEN, the `--update` step that stops on a failing test, the feedback steps); the same in
 `plugin/agents/tester.md`, `plugin/agents/implementer.md` and `plugin/agents/reviewer.md` (its checks and its GREEN
-re-run); the gate's pass condition and the exception for the amendments' lines in the spec-file rule of
-`scheduler/unattended-node-update.md`; the `owns` and `known_red` lines of the
-SMALL SPEC AMENDMENTS rule, and the same both-sides exception in the MERGE CONFLICTS rule, in
-`scheduler/unattended.md` and `scheduler/unattended-followup.md`; their cases in
+re-run); the gate's pass condition, the freezing of imported tests and the exception for the amendments' lines in the
+spec-file rule of `scheduler/unattended-node-update.md`; the `owns` and `known_red` lines of the
+SMALL SPEC AMENDMENTS rule, and the same both-sides exception and the freezing of imported tests in the MERGE CONFLICTS
+rule, in `scheduler/unattended.md` and `scheduler/unattended-followup.md`; their cases in
 `plugin/skills/node/skill.test.sh`; the `owns` placement rule of `plugin/skills/triage/SKILL.md` (the `out_of_scope`
 case), with its case in `plugin/skills/triage/nodes.test.sh`.
 **Resolves:** #139, #151
@@ -53,9 +53,11 @@ that fixes an inherited failure takes it off the list. In a repository without o
    from the graph at `<to>`, and names each own glob that matches no file at `<to>` (`UNUSED <glob>`), since the node is
    not merged yet and coverage cannot see it. Each changed path must match the node's own `owns` or a direct dep's;
    an added path must match its own `owns` or a direct dep's glob; a deleted path is judged by its old path, a renamed
-   one by both. The regime's own files are exempt, as in A04. It imports A02's `owns.py`, putting its own folder on
+   one by both. The regime's own files are exempt, as in A04, read from `AGENTS.md` at `<from>` (a branch can neither
+   widen nor narrow them). It imports A02's `owns.py`, putting its own folder on
    `sys.path` (it runs under `python3 -I`). It prints the globs it used, then one
-   `NOT OWNED <path> (owner: <ID or none>)` line per other path, and exits 0, 1, or 2 when git fails. A graph without
+   `NOT OWNED <path> (owner: <ID or none>)` line per other path, and exits 0, 1, or 2 when git fails or the node is in
+   neither graph (`unknown node`). A graph without
    ownership prints `no ownership declared` and exits 0. The regime's own files come from A02's `owns.py`.
    *A05-AC-1.*
 2. **Before the PR.** In a repository whose graph has `owns`, the node skill runs `check-owns-diff.py <ID> origin/main

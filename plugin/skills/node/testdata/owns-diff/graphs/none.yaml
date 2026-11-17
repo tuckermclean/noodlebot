@@ -1,0 +1,4 @@
+template: {headings: [Purpose, Gate]}
+nodes:
+  - {id: A01, name: lib, track: done, status: imported, summary: the lib, deps: []}
+  - {id: A03, name: node, track: now, status: planned, summary: the node, deps: [A01]}
