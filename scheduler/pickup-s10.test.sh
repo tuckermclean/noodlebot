@@ -131,5 +131,21 @@ ok "S10-AC-2: both go once nothing in them is younger than 7 days" test ! -e "$S
 ok "S10-AC-2: no run started after the setup's four, no second reply anywhere" \
 	test "$(nsmall)" = 4 -a "$(replies 13)" = "$rp0" -a "$(denied 13)" = 1
 
+
+echo "== S10-AC-2: a run whose items.json cannot be read is not known to be finished, so it is kept"
+for kind in bad notlist; do
+	d=$ST/pickup/S10-unreadable-$kind
+	mkdir -p "$d"
+	echo '{"9201": {"done": true}}' >"$d/state.json"
+	echo 'x' >"$d/prompt.md"
+	if [ "$kind" = bad ]; then printf '[{"id": 9201, "bo' >"$d/items.json"; else echo '{}' >"$d/items.json"; fi
+	find "$d" -type f -exec touch -d "9 days ago" {} +
+	touch -d "9 days ago" "$d"
+done
+pk run >"$R/step6.out" 2>"$R/step6.err"
+ok "S10-AC-2: a 9-day-old run whose items.json is truncated JSON is kept" \
+	test -s "$ST/pickup/S10-unreadable-bad/items.json" -a -s "$ST/pickup/S10-unreadable-bad/state.json"
+ok "S10-AC-2: a 9-day-old run whose items.json is valid JSON but not a list is kept" \
+	test -s "$ST/pickup/S10-unreadable-notlist/items.json" -a -s "$ST/pickup/S10-unreadable-notlist/state.json"
 [ "$fails" -eq 0 ] || { echo "FAIL: $fails check(s) failed"; exit 1; }
 echo "all passed"
