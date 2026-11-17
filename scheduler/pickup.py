@@ -137,7 +137,10 @@ def clean_runs(a):
     for d in run_dirs(a):
         try:
             st = read_json(os.path.join(d, "state.json"), {})
-            if any(not st.get(str(c["id"]), {}).get("done") for c in read_json(os.path.join(d, "items.json"), [])):
+            items = read_json(os.path.join(d, "items.json"), None)
+            if not isinstance(items, list) or not items:
+                continue  # unreadable or empty: not known to be finished
+            if any(not st.get(str(c["id"]), {}).get("done") for c in items):
                 continue
             if time.time() - last_change(d) > KEEP_SECONDS:
                 shutil.rmtree(d)
