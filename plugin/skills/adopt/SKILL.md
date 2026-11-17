@@ -34,10 +34,10 @@ If the repository already has `docs/graph.yaml`, stop and say so: changing its p
   question needs.
 - Read the README, any `AGENTS.md`/`CLAUDE.md` and docs, the build and CI files, and how to build,
   test and lint (Makefile, package scripts, workflow steps). Note which commands the repository runs.
-- Before the owner confirms the gate, run only a command the repository's own CI, Makefile or package
-  scripts already run (for example the one test command), and only in the clone or worktree (a dry
+- Of the repository's own commands (build, test, lint, its scripts), before the owner confirms the
+  gate run only one its CI, Makefile or package scripts already run (for example the one test command), and only in the clone or worktree (a dry
   run: its temporary copy, see "Dry run"). Run it to see its output, so that the `fail_pattern` is
-  proposed together with the gate command. Any other command waits until the owner has confirmed the
+  proposed together with the gate command. Any other command of the repository's waits until the owner has confirmed the
   gate in the answers; never run one earlier. A command that cannot run here (heavy install, a
   database, Docker) is recorded as "not run: <reason>" plus what CI shows. A documented command that
   is itself broken is a fact to raise in section 2.
@@ -92,7 +92,8 @@ Only after `ANSWER.md`. Order: the baseline, then the graph, then the other draf
   repository's own list), `gate: {command, fail_pattern, known_red}`, `out_of_scope:` (a `glob` and a
   `reason` each, from the answers), `adoption: {areas: [{name, globs}]}` from the answers, and `nodes: []`.
   Draft no node and no `nodes/` file: open issues become nodes later, once the code is mapped.
-  Every tracked file must be out of scope or in an area.
+  Every tracked file must be out of scope, in an area, or one of the regime's own files (`SPEC.md`,
+  `AGENTS.md`, `docs/graph.yaml`, `nodes/` and the like).
 - **`SPEC.md`**: what this is, principles (from the answers), architecture, the node spec template
   (a `## Node spec template` section giving the headings above), open decisions with defaults,
   conventions (branches `node/<ID>-<name>` and `spec/<topic>`, sizes, when a node is done).
@@ -156,6 +157,9 @@ loop closes the issue once the nodes that build the work are merged.
 ## Dry run
 With `--dry-run`, run sections 1 to 4 offline against a local directory or a clone:
 - First copy the input directory to a temporary folder, with its `.git` (tracked files included).
+  If the input is not a git repository of its own (a subfolder of another repository, like
+  `testdata/repo/`), `git init` the copy and commit its files with `git add -f` (so files an outer
+  ignore list would hide are kept) before anything runs.
   Every command the skill runs (the section 1 command, the inventory, the gate run of section 3, the
   checkers) runs in that copy, and the drafts are laid over the copy and committed there for
   `check-coverage.py`. Nothing is written into the input.
