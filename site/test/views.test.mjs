@@ -344,3 +344,110 @@ test('W03-AC-1 the repositories view lists each repository with a link to its ro
   assert.ok(h.includes('#/repo/acme/alpha') && h.includes('#/repo/acme/bravo'));
   assert.ok(h.includes('#/throttle') && h.includes('#/activity'), 'the navigation');
 });
+
+// ---- A02-AC-4: the states imported and pinned in the repositories card, the node table and the explorer
+{
+  const { readFileSync } = await import('node:fs');
+  const mkn = (id, deps, state) => ({
+    id, name: `${id.toLowerCase()}-name`, track: 'now', deps, unlocks: [], summary: `summary of ${id}`, size: null, has_spec: false,
+    criteria: [], starts: 0, state, pr: null, started: null, text: null, url: null, mergeable: null, waiting_for: [],
+  });
+  // two merged, one imported, one pinned, one ready, one waiting: four are done
+  const NODES = () => [mkn('M1', [], 'merged'), mkn('M2', ['M1'], 'merged'), mkn('I1', [], 'imported'), mkn('P1', ['I1'], 'pinned'),
+    mkn('R1', ['P1'], 'ready'), mkn('W1', ['R1'], 'waiting')];
+  const withNodes = async (nodes) => {
+    const s = await setup();
+    const d = clone(s.data);
+    d.files['repo.acme.alpha.json'].nodes = nodes;
+    return { ...s, d };
+  };
+  const card = (html, repo) => {
+    const m = html.match(new RegExp(`<li[^>]*data-card="${repo}"[^>]*>([\\s\\S]*?)</li>`));
+    assert.ok(m, `a card for ${repo}`);
+    return m[1];
+  };
+
+  test('A02-AC-4 the repositories card counts imported and pinned nodes as done', async () => {
+    const { views, d, ctx } = await withNodes(NODES());
+    const c = card(views.renderRepos(d, ctx), 'acme/alpha');
+    const m = c.match(/<p class="count">\s*(\d+) of (\d+)/);
+    assert.ok(m, `a count line, got ${c.slice(0, 300)}`);
+    assert.equal(`${m[1]} of ${m[2]}`, '4 of 6');
+  });
+
+  test('A02-AC-4 the card counts only merged nodes as done when there is no imported or pinned node', async () => {
+    const { views, d, ctx } = await withNodes([mkn('M1', [], 'merged'), mkn('R1', ['M1'], 'ready'), mkn('W1', ['R1'], 'waiting')]);
+    const m = card(views.renderRepos(d, ctx), 'acme/alpha').match(/<p class="count">\s*(\d+) of (\d+)/);
+    assert.ok(m);
+    assert.equal(`${m[1]} of ${m[2]}`, '1 of 3');
+  });
+
+  test('A02-AC-4 the card shows a bar segment of its own for imported and pinned, in their own colours', async () => {
+    const { views, d, ctx } = await withNodes(NODES());
+    const c = card(views.renderRepos(d, ctx), 'acme/alpha');
+    for (const s of ['imported', 'pinned']) {
+      const m = c.match(new RegExp(`<span class="seg" data-state="${s}"[^>]*style="([^"]*)"`));
+      assert.ok(m, `a ${s} segment`);
+      assert.ok(m[1].includes(`var(--state-${s})`), `${s} segment colour: ${m[1]}`);
+    }
+  });
+
+  test('A02-AC-4 the repository view shows the badges imported and pinned in the node table', async () => {
+    const { views, d, ctx } = await withNodes(NODES());
+    const html = views.renderRepo(d, { ...ctx, repo: 'acme/alpha' });
+    for (const [id, s] of [['I1', 'imported'], ['P1', 'pinned']]) {
+      const m = html.match(new RegExp(`<tr[^>]*data-node="${id}"[^>]*>([\\s\\S]*?)</tr>`));
+      assert.ok(m, `a row for ${id}`);
+      assert.ok(m[1].includes(`data-badge="${s}"`) && m[1].includes(`var(--state-${s})`), `${id}: a ${s} badge in its own colour`);
+    }
+  });
+
+  test('A02-AC-4 the explorer shows imported and pinned: node state, fill, legend entry, own colour', async () => {
+    const { renderExplorer, stateVar } = await import('../explorer/view.js');
+    assert.equal(stateVar('imported'), 'var(--state-imported)');
+    assert.equal(stateVar('pinned'), 'var(--state-pinned)');
+    const html = renderExplorer({ repo: 'acme/alpha', name: 'alpha', running: false, stop: false, nodes: NODES(), open_prs: [], spec_prs: [] }, {});
+    for (const [id, s] of [['I1', 'imported'], ['P1', 'pinned']]) {
+      const g = html.match(new RegExp(`<g[^>]*data-node="${id}"[^>]*>([\\s\\S]*?)</g>`));
+      assert.ok(g && /data-state="/.test(g[0]) && g[0].includes(`data-state="${s}"`), `${id} has data-state ${s}`);
+      assert.ok(g[1].includes(`fill="var(--state-${s})"`), `${id}: filled with its own colour`);
+      const leg = html.match(new RegExp(`data-legend="${s}"[^>]*data-color="([^"]*)"`)) || html.match(new RegExp(`data-color="([^"]*)"[^>]*data-legend="${s}"`));
+      assert.ok(leg, `a legend entry for ${s}`);
+      assert.equal(leg[1], `var(--state-${s})`);
+    }
+  });
+
+  test('A02-AC-4 the explorer marks the longest remaining chain without the imported and pinned nodes', async () => {
+    const { renderExplorer } = await import('../explorer/view.js');
+    const html = renderExplorer({ repo: 'acme/alpha', name: 'alpha', running: false, stop: false, nodes: NODES(), open_prs: [], spec_prs: [] }, {});
+    const chained = (id) => new RegExp(`<g[^>]*data-node="${id}"[^>]*data-chain="true"|<g[^>]*data-chain="true"[^>]*data-node="${id}"`).test(html);
+    assert.ok(chained('R1') && chained('W1'), 'R1 and W1 are the chain');
+    assert.ok(!chained('I1') && !chained('P1') && !chained('M1'), 'no done node is on the chain');
+    assert.ok(!/data-edge="P1>R1"[^>]*data-chain="true"/.test(html) && !/data-edge="I1>P1"[^>]*data-chain="true"/.test(html), 'no heavy edge out of a done node');
+  });
+
+  test('A02-AC-4 style.css gives imported and pinned each a --state-<state> colour', async () => {
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    for (const s of ['imported', 'pinned']) assert.match(css, new RegExp(`--state-${s}:\\s*#[0-9a-fA-F]{3,8}`), `--state-${s} is defined`);
+  });
+
+  test('A02-AC-4 the card says done, not merged, when the nodes include an imported or pinned node', async () => {
+    const { views, d, ctx } = await withNodes(NODES());
+    const m = card(views.renderRepos(d, ctx), 'acme/alpha').match(/<p class="count">([^<]*)<\/p>/);
+    assert.ok(m, 'a count line');
+    assert.equal(m[1].trim(), '4 of 6 done');
+    assert.ok(!/merged/.test(m[1]), `no "merged" in the count: ${m[1]}`);
+    for (const only of ['imported', 'pinned']) {
+      const x = await withNodes([mkn('M1', [], 'merged'), mkn('X1', ['M1'], only), mkn('W1', ['X1'], 'waiting')]);
+      const mm = card(x.views.renderRepos(x.d, x.ctx), 'acme/alpha').match(/<p class="count">([^<]*)<\/p>/);
+      assert.equal(mm[1].trim(), '2 of 3 done', `a graph with only a ${only} node`);
+    }
+  });
+
+  test('A02-AC-4 the card still says "N of M merged", unchanged, when no node is imported or pinned', async () => {
+    const { views, d, ctx } = await withNodes([mkn('M1', [], 'merged'), mkn('R1', ['M1'], 'ready'), mkn('W1', ['R1'], 'waiting')]);
+    const m = card(views.renderRepos(d, ctx), 'acme/alpha').match(/<p class="count">([^<]*)<\/p>/);
+    assert.ok(m, 'a count line');
+    assert.equal(m[1], '1 of 3 merged');
+  });
+}

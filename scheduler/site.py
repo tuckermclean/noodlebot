@@ -233,7 +233,8 @@ def graph_nodes(src):
             deps = n.get("deps") or []
             out.append({"id": n["id"], "name": n["name"], "track": str(n.get("track", "")),
                         "deps": [str(d) for d in deps] if isinstance(deps, list) else [],
-                        "summary": str(n.get("summary", ""))})
+                        "summary": str(n.get("summary", "")),
+                        "status": str(n.get("status") or "planned")})
     return out
 
 
@@ -321,6 +322,7 @@ def repo_file(root, repo, running, hold, home):
     except Exception:  # noqa: BLE001
         pass
 
+    adopted = {n["id"] for n in nodes if n["status"] in ("imported", "pinned")}
     out_nodes = []
     for n in nodes:
         i = n["id"]
@@ -336,7 +338,9 @@ def repo_file(root, repo, running, hold, home):
         s = read(os.path.join(d, "starts"), 32) if d else None
         if s and s.strip().isdigit():
             o["starts"] = int(s.strip())
-        if i in merged_ids:
+        if n["status"] in ("imported", "pinned"):   # done by declaration (the graph's status field)
+            o["state"] = n["status"]
+        elif i in merged_ids:
             o["state"] = "merged"
             nums = [int(p) for p, b in merged_rows if b.startswith("node/%s-" % i)]
             if nums:
@@ -373,7 +377,7 @@ def repo_file(root, repo, running, hold, home):
         elif i in ready:
             o["state"] = "held" if hold else "ready"
         else:
-            o["waiting_for"] = [text(x) for x in n["deps"] if x not in merged_ids]
+            o["waiting_for"] = [text(x) for x in n["deps"] if x not in merged_ids and x not in adopted]
         out_nodes.append(o)
 
     open_prs = [{"number": int(r[0]), "branch": cut(text(r[1]), 300), "mergeable": cut(text(r[4]), 60), "bot": r[3] == "true"}

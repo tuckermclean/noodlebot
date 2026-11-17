@@ -1,0 +1,13 @@
+template: {headings: [Purpose, Gate]}
+gate:
+  command: make test
+  fail_pattern: '^FAIL'
+  known_red: ['FAIL: flaky thing']
+out_of_scope:
+  - {glob: 'vendor/**', reason: third party code}
+adoption:
+  areas: []
+nodes:
+  - {id: I01, name: core, track: done, status: imported, deps: [], owns: ['src/core/**', 'src/util.py']}
+  - {id: P01, name: pin, track: done, status: pinned, deps: [I01], owns: ['src/pin/*.py']}
+  - {id: X01, name: fresh, track: now, status: planned, deps: [P01], owns: ['tests/**/new.py']}

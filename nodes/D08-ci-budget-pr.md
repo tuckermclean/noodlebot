@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D03 | none | S |
+| now | D03 | D10 | S |
 
 **Owns:** in `.github/workflows/test.yml`: the split of the `make test` step by event (the step that runs on `pull_request`, the step that runs on `push`, and the settings each one sets); `scheduler/runtests-d08.test.sh` (new) and its line in the `Makefile`'s `TESTS`.
 **Resolves:** #137
