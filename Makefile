@@ -39,6 +39,7 @@ TESTS = \
 	scheduler/deploy-d04.test.sh \
 	scheduler/deploy-d07.test.sh \
 	scheduler/api-d07.test.sh \
+	scheduler/api-p04.test.sh \
 	plugin/hooks/guard.test.sh \
 	plugin/hooks/guard-git.test.sh \
 	plugin/hooks/guard-shell.test.sh \
