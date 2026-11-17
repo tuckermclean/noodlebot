@@ -82,6 +82,7 @@ NESTED_PIDNS=1
 # takes the lock itself, it is the server (left in $hpid), and stop sends it TERM. NOODLEBOT_PROC_LOCKS names
 # the file read instead of /proc/locks (tests only). If that has no line for the file, the lock lines in
 # /proc/<pid>/fdinfo/* are tried (a pid namespace's /proc/locks lacks the locks); $hpid is then that <pid>.
+# The list is read up to three times first, as one read can miss a line (see below).
 held() {
 	local f=$1 st ino dev mdev='' n type adv rw pid id rest lino ldev
 	[ -e "$f" ] || return 1
@@ -101,7 +102,14 @@ held() {
 		done
 		return 1
 	}
-	lockmatch <"${NOODLEBOT_PROC_LOCKS:-/proc/locks}" && return 0
+	# /proc/locks is a seq_file read by position: when other locks come and go during one read, a line
+	# can be skipped, and a skipped line is a false "not held". So the list is read in one go (cat, never
+	# bash `read` straight from the file, which re-seeks for every line) and, when it has no line for the
+	# file, read afresh (a new open) up to three times in all before the fdinfo fallback is tried.
+	local pass
+	for pass in 1 2 3; do
+		lockmatch < <(cat "${NOODLEBOT_PROC_LOCKS:-/proc/locks}" 2>/dev/null) && return 0
+	done
 	# No line in /proc/locks (in a pid namespace of its own it does not list the locks): only now look
 	# at the lock lines in /proc/<pid>/fdinfo/<fd>, and only in the fds whose "ino:" is the file's
 	# (one grep over all of them). The holder is the pid of the matching path, never the one on the line.
