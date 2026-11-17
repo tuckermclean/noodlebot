@@ -326,5 +326,99 @@ for r in r2 r1; do
 done
 run "$tmp/a3.json" "$tmp/r3" --json --max-lines 15
 chk areas "$tmp/a3.json" "$tmp/r3.elig" 15 "r3 graph without ownership, max-lines 15" split
+# ---------- A03-AC-4: an area comes after the areas it imports from when a cycle joins others ----------
+cyc="$tmp/A03-cycle"
+mkcyc() { # mkcyc <name> <folder:imports-folder>...: one folder per spec, m.py importing <imports>.m (none when "-")
+	_r=$cyc/$1
+	shift
+	mkdir -p "$_r"
+	git -C "$_r" init -q
+	git -C "$_r" config user.name t
+	git -C "$_r" config user.email t@example.com
+	for _s in "$@"; do
+		_f=${_s%%:*}
+		_t=${_s#*:}
+		mkdir -p "$_r/$_f"
+		: >"$_r/$_f/__init__.py"
+		if [ "$_t" = - ]; then printf 'X = 1\n' >"$_r/$_f/m.py"; else printf 'import %s.m\n' "$_t" >"$_r/$_f/m.py"; fi
+	done
+	git -C "$_r" add -A
+	git -C "$_r" commit -q -m init
+}
+cat >"$tmp/ord.py" <<'PY'
+import json, sys
+
+with open(sys.argv[1]) as f:
+    D = json.load(f)
+label = sys.argv[2]
+areas = D["areas"]
+owner = {}
+for i, a in enumerate(areas):
+    for p in a["files"]:
+        owner[p] = i
+n = len(areas)
+adj = [set() for _ in range(n)]
+nlinks = 0
+for l in D["links"]:
+    s, t = owner.get(l["source"]), owner.get(l["target"]) if l["target"] else None
+    if s is not None and t is not None:
+        nlinks += 1
+        if s != t:
+            adj[s].add(t)
+reach = [set() for _ in range(n)]
+for i in range(n):
+    stack = list(adj[i])
+    while stack:
+        j = stack.pop()
+        if j not in reach[i]:
+            reach[i].add(j)
+            stack.extend(adj[j])
+bad = 0
+for a in range(n):
+    for b in adj[a]:
+        if b > a and a not in reach[b]:
+            bad += 1
+            print("bad A03-AC-4: %s: area %s comes before %s, which it imports from, outside any cycle" % (label, areas[a]["name"], areas[b]["name"]))
+if not nlinks:
+    bad += 1
+    print("bad A03-AC-4: %s: no link joins two areas" % label)
+if not bad:
+    print("ok A03-AC-4: %s: no area comes before an area it imports from unless a cycle joins them (%d areas)" % (label, n))
+PY
+cat >"$tmp/pos.py" <<'PY'
+import json, sys
+
+with open(sys.argv[1]) as f:
+    D = json.load(f)
+pos = {}
+for i, a in enumerate(D["areas"]):
+    for p in a["files"]:
+        pos[p.split("/")[0]] = i
+print(" ".join(str(pos.get(d, -1)) for d in sys.argv[2:]))
+PY
+mkcyc four a:b b:c c:d d:c
+mkcyc chain a:b b:x x:y y:x
+mkcyc mid p:q q:r r:- x:y y:x p2:x
+for r in four chain mid; do
+	run "$tmp/cy-$r.json" "$cyc/$r" --json --areas --max-lines 2
+	if [ "$rc" -eq 0 ]; then ok "A03-AC-4: --json --areas --max-lines 2 on cycle repo $r exits 0"; else bad "A03-AC-4: --json --areas --max-lines 2 on cycle repo $r exits $rc ($(head -n 1 "$tmp/run.err"))"; fi
+done
+nl=$(python3 -I -c 'import json,sys; print(sum(1 for l in json.load(open(sys.argv[1]))["links"] if l["target"]))' "$tmp/cy-four.json" 2>/dev/null)
+if [ "${nl:-0}" -eq 4 ]; then ok "A03-AC-4: the four-folder cycle repo has four links, each with a target"; else bad "A03-AC-4: the four-folder cycle repo has four links, each with a target (got ${nl:-none})"; fi
+set -- $(python3 -I "$tmp/pos.py" "$tmp/cy-four.json" a b c d 2>/dev/null)
+if [ $# -eq 4 ] && [ "$1" -ge 0 ] && [ "$2" -ge 0 ] && [ "$3" -ge 0 ] && [ "$4" -ge 0 ]; then
+	[ "$3" -lt "$2" ] && [ "$4" -lt "$2" ] && ok "A03-AC-4: cycle c/d areas come before b (the area importing from them)" || bad "A03-AC-4: cycle c/d areas come before b (positions a=$1 b=$2 c=$3 d=$4)"
+	[ "$2" -lt "$1" ] && ok "A03-AC-4: b comes before a (a imports b)" || bad "A03-AC-4: b comes before a (positions a=$1 b=$2 c=$3 d=$4)"
+else
+	bad "A03-AC-4: cycle c/d areas come before b (no area for every folder)"
+	bad "A03-AC-4: b comes before a (no area for every folder)"
+fi
+for r in four chain mid; do
+	python3 -I "$tmp/ord.py" "$tmp/cy-$r.json" "cycle repo $r" >"$tmp/ord.out" 2>"$tmp/ord.err"
+	[ -s "$tmp/ord.out" ] || echo "bad A03-AC-4: cycle repo $r: order check could not run ($(tail -n 1 "$tmp/ord.err"))" >"$tmp/ord.out"
+	while IFS= read -r l; do
+		case $l in ok\ *) ok "${l#ok }" ;; *) bad "${l#bad }" ;; esac
+	done <"$tmp/ord.out"
+done
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"
