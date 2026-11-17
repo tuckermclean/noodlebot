@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| later | R01 | none | L |
+| later | R01 | A06 | L |
 
 **Owns:** `plugin/skills/adopt/` (the skill and its fixture-based checks).
 
