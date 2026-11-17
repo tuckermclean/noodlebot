@@ -1023,6 +1023,9 @@ on_branch() {
 	[ "$(cat "$3/detached" 2>/dev/null)" = "$2" ] && git -C "$1" merge-base --is-ancestor HEAD "refs/heads/$2" 2>/dev/null
 }
 
+# is_adopt_br <branch>: the branch of the adoption's PR (spec/adopt for the scaffold, spec/adopt-<key> for an area or the plan).
+is_adopt_br() { [ "$1" = spec/adopt ] || [[ $1 == spec/adopt-* ]]; }
+
 # start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N)
 # in a worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
 # commits it starts from. With a node ID, N is the bot's node PR of that node (/noodlebot:node --update N,
@@ -1031,6 +1034,8 @@ start_update() {
 	local n=$1 br=$2 mainc=$3 head=$4 saw=$5 nid=${6:-} d=$state/pr/$1 wt=$wtroot/pr-$1 released cmd
 	local tmpl=unattended-update.md skill=triage
 	[ -z "$nid" ] || { tmpl=unattended-node-update.md skill=node; }
+	# the adoption's own PR (spec/adopt, spec/adopt-<key>): the same template, run as /noodlebot:adopt --update
+	{ [ -n "$nid" ] || ! is_adopt_br "$br"; } || skill=adopt
 	[ -r "$here/$tmpl" ] || { note "$saw; no $tmpl; PR #$n not started"; return 1; }
 	mkdir -p "$d"
 	released=$(sh "$here/release-markers.sh" "$d") || { note "$saw; releasing PR #$n's markers failed"; return 1; }
@@ -1080,7 +1085,7 @@ fbsay() { [ "${fb_said[$1]:-}" = "${2#*; }" ] || { say "$2"; fb_said[$1]=${2#*; 
 start_feedback() {
 	local t=$1 key=$2 n=$3 br=$4 saw=$5 d wt name skill cmd released list u ni pn=''
 	if [ "$t" = node ]; then d=$state/node/$key wt=$wtroot/$key name=$key skill=node
-	else d=$state/pr/$n wt=$wtroot/pr-$n name="PR #$n" skill=triage; fi
+	else d=$state/pr/$n wt=$wtroot/pr-$n name="PR #$n" skill=triage; is_adopt_br "$br" && skill=adopt; fi
 	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--feedback $n") || { fbsay "$name" "$saw; $name: the harness gave no skill command; feedback not started"; return 1; }
 	mkdir -p "$d"
 	fb_blocked "$d" "$n" && return 1
@@ -1204,7 +1209,7 @@ next_update() {
 		[ -e "$state/pr/$n/FAILED" ] && continue
 		if [[ $br == spec/* ]]; then
 			[ "$(cat "$state/pr/$n/done" 2>/dev/null)" = "$mainc $oid" ] && continue
-			if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && graph_clash "$br"; }; then
+			if [ "$mg" = CONFLICTING ] || { [ "$mg" = MERGEABLE ] && ! is_adopt_br "$br" && graph_clash "$br"; }; then
 				echo "$n $br $mainc $oid"
 			fi
 		elif [[ $br == node/* ]] && [ "$mg" = CONFLICTING ]; then
