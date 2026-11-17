@@ -837,7 +837,10 @@ adopt_release_done() {
 		[ -d "$u" ] && [ "$(basename "$u")" != "$1" ] || continue
 		[ -e "$u/session.pid" ] || [ -e "$u/FAILED" ] && continue
 		[ -e "$u/WAITING-PR" ] || [ -e "$u/MERGE-SEEN" ] || continue
-		if [ -e "$u/WAITING-PR" ]; then mkdir -p "$u/answered"; mv "$u/WAITING-PR" "$u/answered/$ts-SPEC-PR"; fi
+		if [ -e "$u/WAITING-PR" ]; then
+			grep -qxF "$(tr -d '[:space:]' <"$u/WAITING-PR")" "$state/merged-prs.txt" 2>/dev/null || continue   # open or closed PR: not released as merged
+			mkdir -p "$u/answered"; mv "$u/WAITING-PR" "$u/answered/$ts-SPEC-PR"
+		fi
 		rm -f "$u/MERGE-SEEN" "$u/SPEC-PR-CHECKED"
 	done
 	return 0
@@ -853,10 +856,10 @@ adopt_step() {
 	nogo) asay nogo "$saw; adoption not started: origin/main does not resolve"; return 0 ;;
 	giterr) asay giterr "$saw; adoption not started: git could not tell whether origin/main has docs/graph.yaml"; return 0 ;;
 	bad) adopt_on=1; asay bad "$saw; adoption not started: docs/graph.yaml on origin/main cannot be read"; return 0 ;;
-	refuse) adopt_on=1; asay bad "$saw; adoption not started: the area '$adopt_key' in docs/graph.yaml has a name the adoption uses for its own unit (plan, scaffold); rename it"; return 0 ;;
-	none) asay_clear nogo; asay_clear giterr; asay_clear bad; asay_clear tpl; adopt_release_done ''; return 0 ;;
+	refuse) adopt_on=1; asay refuse "$saw; adoption not started: the area '$adopt_key' in docs/graph.yaml has a name the adoption uses for its own unit (plan, scaffold); rename it"; return 0 ;;
+	none) asay_clear nogo; asay_clear giterr; asay_clear bad; asay_clear refuse; asay_clear tpl; adopt_release_done ''; return 0 ;;
 	esac
-	asay_clear nogo; asay_clear giterr; asay_clear bad
+	asay_clear nogo; asay_clear giterr; asay_clear bad; asay_clear refuse
 	adopt_on=1
 	key=$adopt_key br=$adopt_br d=$state/adopt/$key
 	adopt_release_done "$key"

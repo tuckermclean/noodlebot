@@ -441,6 +441,24 @@ def spec_merged(state, n):
     return pr if pr and pr in read_lines(os.path.join(state, "merged-prs.txt")) else None
 
 
+def adopt_pr(state, n):
+    """An adoption unit's spec PR number: its WAITING-PR, else (the loop released it once the PR was merged and its step
+    taken) the newest answered/<ts>-SPEC-PR, never a -SPEC-PR-CLOSED; "" when there is none."""
+    d = tdir(state, n)
+    cands = [os.path.join(d, "WAITING-PR")]
+    try:
+        cands += sorted((os.path.join(d, "answered", f) for f in os.listdir(os.path.join(d, "answered")) if f.endswith("-SPEC-PR")), reverse=True)
+    except OSError:
+        pass
+    for f in cands:
+        lines = read_lines(f)
+        if lines:
+            return lines[0].strip()
+        if os.path.exists(f) and f.endswith("WAITING-PR"):
+            return ""
+    return ""
+
+
 def waiting(state):
     """Tasks whose QUESTION.md has no ANSWER.md yet."""
     return [n for n in nodes(state) if has(state, n, "QUESTION.md") and not has(state, n, "ANSWER.md")]
@@ -606,7 +624,7 @@ def waiting_items(a, sts, prs, rs):
             items.append("- **%s asks a question** (%s).%s" % (n, question_link(a, rs, n), unit_ref(a, n)))
         elif has(state, n, "WAITING-PR") and not spec_merged(state, n):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
-            after = "the adoption's next step starts within a minute after" if n.startswith("adopt/") else "it resumes within a minute after"
+            after = "the adoption ends, the graph is complete, after" if n == "adopt/plan" else "the adoption's next step starts within a minute after" if n.startswith("adopt/") else "it resumes within a minute after"
             items.append("- **%s** waits for you to merge spec PR #%s; %s.%s" % (n, pr, after, unit_ref(a, n)))
     for n, pr in sorted(prs.items()):
         if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in [t[0] for t in sts]:
@@ -1708,14 +1726,13 @@ def close_issues(a, rs):
 def post_adopt_prs(a, rs):
     """Each adoption unit's spec PR (its WAITING-PR): a milestone once it waits for the owner, one once it is merged."""
     for n in nodes(a.state):
-        if not n.startswith("adopt/") or not has(a.state, n, "WAITING-PR"):
+        if not n.startswith("adopt/"):
             continue
-        pr = read_lines(os.path.join(tdir(a.state, n), "WAITING-PR"))
-        pr = pr[0] if pr else ""
+        pr = adopt_pr(a.state, n)
         if not pr.isdigit():
             continue
         done = rs.setdefault("units", {}).setdefault(n, {}).setdefault("done", [])
-        merged = spec_merged(a.state, n)
+        merged = pr in read_lines(os.path.join(a.state, "merged-prs.txt"))
         try:
             for key, stage in (("waitpr:" + pr, "%s ended: spec PR #%s waits for you to merge" % (n, pr)),
                                ("specpr:" + pr, "spec PR #%s merged" % pr)):
@@ -1734,9 +1751,11 @@ def post_adopt_prs(a, rs):
 
 def close_adopt(a, rs):
     """Close the "Adopt <name>" issue with one comment naming the plan PR once the plan unit's PR (spec/adopt-plan) is merged."""
-    if merges_unknown(a) or not has(a.state, "adopt/plan", "WAITING-PR"):
+    if merges_unknown(a):
         return
-    pr = spec_merged(a.state, "adopt/plan")
+    pr = adopt_pr(a.state, "adopt/plan")
+    if not pr or pr not in read_lines(os.path.join(a.state, "merged-prs.txt")):
+        return
     try:
         issue = int(open(os.path.join(tdir(a.state, "adopt/plan"), "issue")).read().split()[0])
     except (OSError, ValueError, IndexError):

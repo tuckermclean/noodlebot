@@ -15,7 +15,7 @@ the graph regime: the unit adopt/@UNIT@. No human is watching.
   owner's decision), check whether the branch @BRANCH@ or its PR already exists, and carry on.
   "As recommended" means the recommendation in the matching question. Files named <ts>-SPEC-PR mean the PR you
   opened was merged, <ts>-SPEC-PR-CLOSED that it was closed without merging (read why on its page, then decide what
-  to open instead); <ts>-QUESTION.md and <ts>-ANSWER.md are a question and the owner's answer.
+  to open instead).
 - Forge: every forge operation (a PR, an issue, a comment, a label, a CI run, a push) goes through the forge CLI,
   "$NOODLEBOT_FORGE" <family> <op> --opt value, which fetches credentials itself and prints JSON (a failed call
   exits non-zero). Examples: "$NOODLEBOT_FORGE" pr create --head @BRANCH@ --base main --title T --body-file F;
