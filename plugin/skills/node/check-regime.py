@@ -25,6 +25,95 @@ ID = re.compile(r"^[A-Z][0-9][0-9]$")
 NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
+def node_fields(i, n, p):
+    st = n.get("status", "planned")
+    if st not in ("planned", "imported", "pinned"):
+        p("%s: unknown status %r" % (i, st))
+    ow = n.get("owns")
+    if "owns" in n and not (isinstance(ow, list) and all(isinstance(x, str) and x for x in ow)):
+        p("%s: owns is not a list of globs" % i)
+    if st in ("imported", "pinned"):
+        if not (isinstance(ow, list) and ow):
+            p("%s: no owns" % i)
+        if n.get("track") != "done":
+            p("%s: track must be done for a %s node" % (i, st))
+
+
+def owns_paragraph(s):
+    out, on = [], False
+    for line in s.splitlines():
+        if not on:
+            if line.startswith("**Owns:**"):
+                on = True
+                out.append(line)
+        elif not line.strip() or re.match(r"^\*\*[^*]+:\*\*", line):
+            break
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def top_fields(g, by, p):
+    gate = g.get("gate")
+    adoption = g.get("adoption")
+    if gate is None:
+        if adoption is not None or any(n.get("status") in ("imported", "pinned") for n in by.values()):
+            p("gate: required (the graph has imported or pinned nodes, or an adoption)")
+    elif not isinstance(gate, dict):
+        p("gate: not a mapping")
+    else:
+        cmd = gate.get("command")
+        if not isinstance(cmd, str) or not cmd.strip():
+            p("gate.command: not a non-empty string")
+        kr = gate.get("known_red", [])
+        if not isinstance(kr, list):
+            p("gate.known_red: not a list")
+            kr = []
+        else:
+            for k, e in enumerate(kr):
+                if not isinstance(e, str) or not e:
+                    p("gate.known_red: entry %d is not a non-empty string" % (k + 1))
+        fp = gate.get("fail_pattern")
+        if fp is None:
+            if kr:
+                p("gate.fail_pattern: required when known_red is not empty")
+        else:
+            try:
+                if not isinstance(fp, str) or not fp:
+                    raise ValueError
+                re.compile(fp)
+            except (re.error, ValueError):
+                p("gate.fail_pattern: not a valid regular expression: %r" % (fp,))
+    oos = g.get("out_of_scope")
+    if oos is not None:
+        if not isinstance(oos, list):
+            p("out_of_scope: not a list")
+        else:
+            for k, e in enumerate(oos):
+                if not (isinstance(e, dict) and isinstance(e.get("glob"), str) and e["glob"]
+                        and isinstance(e.get("reason"), str) and e["reason"].strip()):
+                    p("out_of_scope entry %d: needs a glob and a non-empty reason" % (k + 1))
+    if adoption is not None:
+        areas = adoption.get("areas") if isinstance(adoption, dict) else None
+        if not isinstance(areas, list):
+            p("adoption: areas is not a list")
+            areas = []
+        seen = set()
+        for k, a in enumerate(areas):
+            nm = a.get("name") if isinstance(a, dict) else None
+            if not isinstance(nm, str) or not NAME.match(nm):
+                p("adoption area %d: bad name %r (kebab-case)" % (k + 1, nm))
+                continue
+            if nm in ("scaffold", "plan"):
+                p("adoption area %s: reserved name" % nm)
+            if nm in seen:
+                p("adoption area %s: duplicate name" % nm)
+            seen.add(nm)
+            gl = a.get("globs")
+            if not (isinstance(gl, list) and gl and all(isinstance(x, str) and x for x in gl)):
+                p("adoption area %s: globs must be a non-empty list of globs" % nm)
+
+
 def main():
     root = sys.argv[sys.argv.index("--root") + 1] if "--root" in sys.argv else "."
     g = yaml.safe_load(open(os.path.join(root, "docs/graph.yaml")))
@@ -66,6 +155,8 @@ def main():
 
     for i in by:
         visit(i, [])
+    for i, n in by.items():
+        node_fields(i, n, p)
     unlocks = {i: sorted(j for j in by if i in by[j]["deps"]) for i in by}
 
     for i, n in by.items():
@@ -98,6 +189,22 @@ def main():
         for a, rest in acs:
             if "*Verify:*" not in rest:
                 p("%s-AC-%s: no *Verify:*" % (i, a))
+            elif n.get("status") == "pinned" and re.match(r"unpinned\b", rest.split("*Verify:*", 1)[1].strip().lstrip("`").strip()):
+                p("%s-AC-%s: unpinned criterion on a pinned node" % (i, a))
+        if isinstance(n.get("owns"), list):
+            para = owns_paragraph(s)
+            for gl in n["owns"]:
+                if isinstance(gl, str) and gl and "`%s`" % gl not in para:
+                    p("%s: owns glob %s not in the spec's Owns paragraph" % (i, gl))
+    owners = {}
+    for i, n in by.items():
+        for gl in n["owns"] if isinstance(n.get("owns"), list) else []:
+            if isinstance(gl, str) and i not in owners.setdefault(gl, []):
+                owners[gl].append(i)
+    for gl, who in owners.items():
+        if len(who) > 1:
+            p("%s listed by %s" % (gl, " and ".join(who)))
+    top_fields(g, by, p)
     for line in problems:
         print(line)
     print("%d nodes, %d criteria" % (len(by), sum(len(re.findall(r"-AC-\d+\*\*", open(os.path.join(root, "nodes", "%s-%s.md" % (i, n.get("name")))).read()))

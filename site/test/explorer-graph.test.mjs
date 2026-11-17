@@ -135,3 +135,33 @@ test('W04-AC-2 the longest remaining chain is found when deps point later in the
   const g = [n('C', ['B']), n('B', ['A']), n('A'), n('M', [], 'merged')];
   assert.deepEqual(longestChain(g), ['A', 'B', 'C']);
 });
+
+// ---- A02-AC-4: an imported or pinned node is done, as a merged one is
+test('A02-AC-4 the longest remaining chain does not count imported or pinned nodes', async () => {
+  const { longestChain } = await mod();
+  // I (imported) <- P (pinned) <- A <- B; I <- C. Counting I and P the chain would be I, P, A, B.
+  const g = [n('I', [], 'imported'), n('P', ['I'], 'pinned'), n('A', ['P']), n('B', ['A']), n('C', ['I'])];
+  assert.deepEqual(longestChain(g), ['A', 'B']);
+});
+
+test('A02-AC-4 the longest remaining chain is empty when every node is merged, imported or pinned', async () => {
+  const { longestChain } = await mod();
+  assert.deepEqual(longestChain([n('M', [], 'merged'), n('I', ['M'], 'imported'), n('P', ['I'], 'pinned')]), []);
+});
+
+test('A02-AC-4 an imported or pinned dep does not make a node wait in the chain: a lone open dependant is a chain of one', async () => {
+  const { longestChain } = await mod();
+  const g = [n('I', [], 'imported'), n('P', [], 'pinned'), n('A', ['I', 'P'])];
+  assert.deepEqual(longestChain(g), ['A']);
+});
+
+test('A02-AC-4 ready next never lists an imported or pinned node, and still lists the ready ones', async () => {
+  const { readyNext } = await mod();
+  assert.deepEqual(readyNext([n('I', [], 'imported'), n('P', ['I'], 'pinned'), n('R', ['P'], 'ready'), n('H', ['I'], 'held')]), ['R', 'H']);
+});
+
+test('A02-AC-4 merged, imported and pinned nodes together do not lengthen the chain', async () => {
+  const { longestChain } = await mod();
+  const g = [n('M', [], 'merged'), n('I', ['M'], 'imported'), n('P', ['I'], 'pinned'), n('A', ['P']), n('B', ['M'])];
+  assert.deepEqual(longestChain(g), ['A']);
+});

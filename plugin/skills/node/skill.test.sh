@@ -254,4 +254,11 @@ r02_forge_win() { # <file> <label>
 }
 r02_forge_win "$sk" node
 
+
+# ---------- A02-AC-5: the deps precondition accepts a dep that is merged, imported or pinned ----------
+a02_pre="$tmp/A02-pre.md"
+grep -i 'deps' "$sk" | grep -i 'merged' | head -n 1 >"$a02_pre"
+if grep -qi 'imported' "$a02_pre"; then ok "A02-AC-5: the deps precondition accepts an imported dep"; else bad "A02-AC-5: the deps precondition does not accept an imported dep"; fi
+if grep -qi 'pinned' "$a02_pre"; then ok "A02-AC-5: the deps precondition accepts a pinned dep"; else bad "A02-AC-5: the deps precondition does not accept a pinned dep"; fi
+g05c "A02-AC-5: the precondition names merged, imported and pinned deps together and says to stop when one is missing" "$sk" 3 'deps' 'merged' 'imported' 'pinned' 'stop'
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

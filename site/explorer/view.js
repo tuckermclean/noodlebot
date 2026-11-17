@@ -13,7 +13,7 @@ const ROW_H = 64;
 const PAD = 16;
 
 // A state's one colour is the custom property --state-<state> of style.css (any other state: --state-other).
-const STATES = ['merged', 'running', 'failed', 'question', 'answered', 'waiting-pr', 'pr-open', 'ready', 'held', 'waiting'];
+const STATES = ['merged', 'imported', 'pinned', 'running', 'failed', 'question', 'answered', 'waiting-pr', 'pr-open', 'ready', 'held', 'waiting'];
 export const stateVar = (state) => `var(--state-${STATES.includes(state) ? state : 'other'})`;
 const colour = stateVar;
 

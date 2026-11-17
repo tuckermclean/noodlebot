@@ -22,6 +22,9 @@ export function downstream(nodes, id) {
   return inOrder(nodes, reach(id, (i) => nodes.filter((x) => x.deps.includes(i)).map((x) => x.id)));
 }
 
+// the states of a node that is done: its PR merged, or declared imported or pinned
+export const DONE = ['merged', 'imported', 'pinned'];
+
 export function readyNext(nodes) {
   return nodes.filter((x) => x.state === 'ready' || x.state === 'held').map((x) => x.id);
 }
@@ -29,7 +32,7 @@ export function readyNext(nodes) {
 // the longest dependency path through not-merged nodes, in nodes; ties go to the path first in graph order
 export function longestChain(nodes) {
   const pos = new Map(nodes.map((x, i) => [x.id, i]));
-  const open = new Map(nodes.filter((x) => x.state !== 'merged').map((x) => [x.id, x]));
+  const open = new Map(nodes.filter((x) => !DONE.includes(x.state)).map((x) => [x.id, x]));
   const memo = new Map(); // id -> best chain ending at id
   const better = (a, b) => {
     if (a.length !== b.length) return a.length > b.length;

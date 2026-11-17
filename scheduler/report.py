@@ -251,6 +251,11 @@ def is_merged(state, n):
         return False
 
 
+def done_ids(state, graph=()):
+    """Node IDs done for the start clause: PR merged (merged_ids), or declared imported or pinned in the graph's status."""
+    return merged_ids(state, graph) | {n["id"] for n in graph if n.get("status") in ("imported", "pinned")}
+
+
 def graph_nodes(state):
     try:
         import yaml
@@ -267,7 +272,6 @@ def start_info(state, node):
     try:
         import yaml
         graph = yaml.safe_load(open(os.path.join(state, "graph.yaml"), encoding="utf-8"))["nodes"]
-        merged = merged_ids(state, graph)
         cmd = [sys.executable, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ready.py"),
                "--graph", os.path.join(state, "graph.yaml"), "--markers", os.path.join(state, "node"), "--all",
                "--merged-prs", os.path.join(state, "merged-prs.txt")]
@@ -275,6 +279,7 @@ def start_info(state, node):
             cmd += ["--subjects", os.path.join(state, "subjects.txt")]
         for i in sorted(merged_ids(state)):
             cmd += ["--merged", i]
+        merged = done_ids(state, graph)
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             return None

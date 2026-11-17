@@ -525,5 +525,34 @@ ok "S03-AC-8: with no graph.yaml the reply says it is recorded" nonempty "$(repl
 ok "S03-AC-8: with no graph.yaml the reply claims no timing" lacks_seconds "$(reply7 R01)"
 ok "S03-AC-8: with no graph.yaml the item exists and claims no timing" sh -c "[ -n \"\$1\" ] && ! printf '%s\n' \"\$1\" | grep -qi 'within seconds'" _ "$(item7 R01)"
 
+# A02-AC-4: imported and pinned nodes are done for the start clause. start_info and ready_next use a done set of merged,
+# imported and pinned nodes; merged_ids keeps meaning "PR merged" (it feeds the PR-merged events).
+sA=$tmp/A02/state; mkdir -p "$sA/node"
+cat >"$sA/graph.yaml" <<'GRAPH'
+nodes:
+  - {id: I01, name: imported-one, deps: [], track: done, status: imported, owns: ["src/i/**"]}
+  - {id: P01, name: pinned-one, deps: [I01], track: done, status: pinned, owns: ["src/p/**"]}
+  - {id: M01, name: merged-one, deps: []}
+  - {id: D01, name: after-adopted, deps: [I01, P01]}
+  - {id: Z01, name: plain-one, deps: [M01]}
+  - {id: D02, name: mixed-deps, deps: [I01, Z01, P01]}
+GRAPH
+echo "31 node/M01-merged-one" >"$sA/merged-prs.tsv"; echo 31 >"$sA/merged-prs.txt"; : >"$sA/subjects.txt"; : >"$sA/status.log"
+for n in D01 D02; do mkdir -p "$sA/node/$n"; printf 'Q1: which way for %s?\n' "$n" >"$sA/node/$n/QUESTION.md"; : >"$sA/node/$n/ANSWER.md"; done
+repyA() { python3 -I -c "
+import sys, argparse
+sys.path.insert(0, '$src'); import report
+st = '$sA'
+$1"; }
+ok "A02-AC-4: merged_ids is unchanged: only the PR-merged node, no imported or pinned node" test "$(repyA "print(sorted(report.merged_ids(st, report.graph_nodes(st))))" 2>&1)" = "['M01']"
+ok "A02-AC-4: start_info: a node whose deps are imported and pinned is ready (not a follow-up)" test "$(repyA "print(report.start_info(st, 'D01'))" 2>&1)" = "('ready', False)"
+out=$(repyA "print(report.start_info(st, 'D02'))" 2>&1)
+ok "A02-AC-4: start_info: a node with an imported, a pinned and an unmerged dep waits, naming the unmerged dep only" sh -c "printf '%s\n' \"\$1\" | grep -q \"^('wait'\" && printf '%s\n' \"\$1\" | grep -q 'Z01' && ! printf '%s\n' \"\$1\" | grep -qE 'I01|P01'" _ "$out"
+ok "A02-AC-4: ready_next lists no imported or pinned node and names the dependants of adopted nodes, in graph order" test "$(repyA "print(report.ready_next(argparse.Namespace(state=st), set()))" 2>&1)" = "['D01 after-adopted', 'Z01 plain-one']"
+ok "A02-AC-4: ready_next with an open PR for Z01 skips it" test "$(repyA "print(report.ready_next(argparse.Namespace(state=st), {'Z01'}))" 2>&1)" = "['D01 after-adopted']"
+clauseA() { python3 -I "$src/report.py" --repo owner/repo --state "$sA" --worktrees "$tmp/worktrees/repo" --clause "$1" 2>&1; }
+ok "A02-AC-4: the clause for an answered node whose deps are imported and pinned says it resumes within seconds" says "resumes within seconds" "$(clauseA D01)"
+ok "A02-AC-4: the clause for D02 waits for Z01 and does not name the imported or pinned dep" sh -c "c=\$(python3 -I '$src/report.py' --repo owner/repo --state '$sA' --worktrees '$tmp/worktrees/repo' --clause D02 2>&1); printf '%s\n' \"\$c\" | grep -q 'Z01' && ! printf '%s\n' \"\$c\" | grep -qE 'I01|P01|within seconds'"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all report checks"

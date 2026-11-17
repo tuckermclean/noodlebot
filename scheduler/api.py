@@ -281,7 +281,8 @@ import json, sys, yaml
 with open(sys.argv[1], encoding="utf-8") as f:
     nodes = yaml.safe_load(f)["nodes"]
 print(json.dumps([{"id": str(n["id"]), "name": str(n["name"]), "deps": [str(d) for d in n.get("deps") or []],
-                   "track": str(n.get("track") or "")} for n in nodes]))
+                   "track": str(n.get("track") or ""),
+                   "status": str(n.get("status") or "planned")} for n in nodes]))
 """
 
 
@@ -413,6 +414,8 @@ def nodes_of(repo):
     for n in nodes:
         if any(x.startswith("%s %s:" % (n["id"], n["name"])) for x in subjects):
             merged.add(n["id"])
+    status = {n["id"]: n.pop("status") for n in nodes}   # the graph's status: planned (default), imported, pinned
+    adopted = {i for i, s in status.items() if s in ("imported", "pinned")}
     out = []
     for n in nodes:
         i = n["id"]
@@ -424,7 +427,9 @@ def nodes_of(repo):
         if st and st.isdigit():
             n["starts"] = int(st)
         wp = first_word(os.path.join(d, "WAITING-PR"))
-        if i in merged:
+        if i in adopted:   # done by declaration: its own state
+            n["state"] = status[i]
+        elif i in merged:
             n["state"] = "merged"
         elif i in prs:
             n["state"], (n["pr"], n["mergeable"]) = "pr-open", prs[i]
@@ -450,7 +455,7 @@ def nodes_of(repo):
         elif i in ready:
             n["state"] = "held" if hold else "ready"
         else:
-            n["state"], n["waiting_on"] = "waiting", [x for x in n["deps"] if x not in merged]
+            n["state"], n["waiting_on"] = "waiting", [x for x in n["deps"] if x not in merged and x not in adopted]
         out.append(n)
     return out
 

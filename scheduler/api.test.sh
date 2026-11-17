@@ -178,6 +178,61 @@ for res in nodes node; do
 done
 # Not encoded: the question URL falling back to the status issue (no fixture node has a QUESTION.md without node/<ID>/issue).
 
+# ================= A02-AC-4: imported and pinned nodes =================
+# A third repository, acme/adopt (scratch under $tmp/A02), whose graph has imported and pinned nodes. Own state "imported" and
+# "pinned" (the node's status, which the planned default leaves to the other states), counted as done: a dependant of an
+# adopted node is not "waiting" on it, and is "ready" when every dep is merged, imported or pinned. A PR-merged node is "merged".
+ad=$tmp/A02; mkdir -p "$ad" "$data/state/adopt"
+cat >"$ad/graph.yaml" <<'EOG'
+nodes:
+  - {id: X01, track: now, name: merged-one, deps: []}
+  - {id: X02, track: done, name: imported-one, deps: [], status: imported, owns: ["src/a/**"]}
+  - {id: X03, track: done, name: pinned-one, deps: [X02], status: pinned, owns: ["src/b/**"]}
+  - {id: X04, track: now, name: after-adopted, deps: [X02, X03]}
+  - {id: X05, track: now, name: after-merged, deps: [X01, X02], status: planned}
+  - {id: X06, track: now, name: unmerged-one, deps: [X01]}
+  - {id: X07, track: now, name: mixed-deps, deps: [X02, X06, X03]}
+  - {id: X08, track: now, name: no-more-planned, deps: [X07]}
+EOG
+cp "$ad/graph.yaml" "$data/state/adopt/graph.yaml"
+echo "21 node/X01-merged-one" >"$data/state/adopt/merged-prs.tsv"
+: >"$data/state/adopt/open-prs.tsv"; : >"$data/state/adopt/open-prs.txt"; : >"$data/state/adopt/merged-prs.txt"; : >"$data/state/adopt/subjects.txt"
+printf '%s\n' acme/adopt >>"$home/.config/noodlebot/repos"
+set_usage open
+get A02-AC-4 /v1/repos/acme/adopt/nodes nodes; cp "$tmp/resp" "$tmp/nodes.json"
+if [ "$(jx "[n['id'] for n in d['nodes']]")" = "['X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08']" ]; then pass "A02-AC-4: /nodes of an adopted graph gives every node once, in graph order"; else fail "A02-AC-4: /nodes ids: $(jx "[n.get('id') for n in d.get('nodes', [])]")"; fi
+adnode() { # adnode <ID> <python expr over n> <what>: list entry and GET .../nodes/<ID> of acme/adopt
+	cp "$tmp/nodes.json" "$tmp/resp"
+	if [ "$(nodefield "$1" "$2")" = True ]; then pass "A02-AC-4: /nodes: $1 $3"; else fail "A02-AC-4: /nodes: $1 $3; got $(jx "[n for n in d['nodes'] if n.get('id') == '$1']")"; fi
+	if get A02-AC-4 /v1/repos/acme/adopt/nodes/$1 node; then
+		if [ "$(jx "(lambda n: $2)(d)")" = True ]; then pass "A02-AC-4: /nodes/$1: $3"; else fail "A02-AC-4: /nodes/$1: $3; got $(head -c 300 "$tmp/resp")"; fi
+	fi
+}
+adnode X01 "n['state'] == 'merged'" "a PR-merged node is merged"
+adnode X02 "n['state'] == 'imported' and n['waiting_on'] == [] and n['pr'] is None" "an imported node has the state imported"
+adnode X03 "n['state'] == 'pinned' and n['waiting_on'] == [] and n['pr'] is None" "a pinned node has the state pinned"
+adnode X04 "n['state'] == 'ready' and n['waiting_on'] == []" "with imported and pinned deps only is ready, not waiting"
+adnode X05 "n['state'] == 'ready' and n['waiting_on'] == []" "with a merged and an imported dep is ready"
+adnode X06 "n['state'] == 'ready'" "after a merged dep is ready"
+adnode X07 "n['state'] == 'waiting' and n['waiting_on'] == ['X06']" "waits only on its planned dep, not on its imported and pinned deps"
+adnode X08 "n['state'] == 'waiting' and n['waiting_on'] == ['X07']" "waits on X07 only"
+# the schemas accept the two states (the states of the other nodes still pass)
+for res in nodes node; do
+	if [ "$(python3 -I -c '
+import json, sys
+def states(o):
+    if isinstance(o, dict):
+        if isinstance(o.get("properties"), dict) and isinstance(o["properties"].get("state"), dict):
+            yield o["properties"]["state"].get("enum", [])
+        for v in o.values():
+            yield from states(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from states(v)
+e = [x for x in states(json.load(open(sys.argv[1])))]
+print(bool(e) and all("imported" in x and "pinned" in x and "merged" in x for x in e))' "$schemas/$res.json" 2>/dev/null)" = True ]; then pass "A02-AC-4: schema $res lists imported and pinned among the states"; else fail "A02-AC-4: schema $res does not list imported and pinned among the states"; fi
+done
+
 
 # ================= P01-AC-1: HEAD moves, the server's own code changes (a second move) =================
 # A schema file is read from disk per request, so the first move above cannot tell a re-exec from no re-exec.

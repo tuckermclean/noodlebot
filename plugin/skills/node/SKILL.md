@@ -20,7 +20,7 @@ You are the **orchestrator**. You never write tests or implementation yourself. 
 
 ## 0. Preconditions
 - The working tree is clean and `main` is current.
-- The node is in `docs/graph.yaml`. Each node in its `deps` has a merged PR (`<forge> pr list --state merged`, a merged PR whose head branch starts `node/<dep>-`, or its squash commit `<ID> <name>: …` on `main`). If one is missing, stop and say which.
+- The node is in `docs/graph.yaml`. Each node in its `deps` is merged (`<forge> pr list --state merged`, a merged PR whose head branch starts `node/<dep>-`, or its squash commit `<ID> <name>: …` on `main`), imported or pinned (its `status` in the graph says `imported` or `pinned`; it has no PR). If one is none of these, stop and say which.
 - Each open decision in the node's `decisions` is settled (the repository's decisions table), or the owner said to take its default. If not, ask.
 - The repository's spec checker reports no problems, and its other preconditions pass.
 - Create the branch `node/<ID>-<name>` from `main`.

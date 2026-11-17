@@ -253,4 +253,38 @@ r02_forge_win "$sk" triage
 r02_dr=$(tr -d '*\n' <"$sk" | tr 'A-Z' 'a-z' | sed 's/\. /.\n/g' | grep -F -e '--dry-run' | grep -F 'result.md' | grep -F 'nodes.py' | grep -E 'issue' | grep -E 'hold|contain|record|with')
 if [ -n "$r02_dr" ]; then ok "R02-AC-5: the dry-run instruction says result.md holds the issue as read and nodes.py's output"; else bad "R02-AC-5: no sentence says a --dry-run's result.md holds the issue as read and nodes.py's output (needs --dry-run, result.md, issue and nodes.py in one sentence)"; fi
 
+
+# ---------- A02-AC-5: nodes.py shows imported and pinned; the skill never amends them and gives a new node owns ----------
+a02="$tmp/A02"; mkdir -p "$a02/docs" "$a02/nodes"
+cat >"$a02/docs/graph.yaml" <<'A02G'
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+nodes:
+  - {id: I01, track: done, status: imported, owns: ["src/**"], name: legacy-core, deps: [], summary: "x"}
+  - {id: P01, track: done, status: pinned, owns: ["lib/**"], name: pinned-lib, deps: [I01], summary: "x"}
+  - {id: N01, track: now, name: fresh-work, deps: [I01, P01], summary: "x"}
+A02G
+for a02p in I01-legacy-core P01-pinned-lib N01-fresh-work; do printf '# %s\n\n**Owns:** x\n' "$a02p" >"$a02/nodes/$a02p.md"; done
+git init -q --bare "$tmp/a02o.git" && git -C "$tmp/a02o.git" symbolic-ref HEAD refs/heads/main
+git -C "$a02" init -q -b main && git -C "$a02" add -A && git -C "$a02" commit -q -m "A02 fixture"
+git -C "$a02" remote add origin "$tmp/a02o.git" && git -C "$a02" push -q origin main 2>/dev/null
+printf '[]\n' >"$GH_PRS"; rm -f "$GH_FAIL"
+a02_out=$(cd "$a02" && python3 -I "$src/nodes.py" 2>&1); a02_rc=$?
+a02_I=$(printf '%s\n' "$a02_out" | grep '^I01 ')
+a02_P=$(printf '%s\n' "$a02_out" | grep '^P01 ')
+a02_N=$(printf '%s\n' "$a02_out" | grep '^N01 ')
+if printf '%s\n' "$a02_I" | grep -Eq '^I01 +legacy-core +imported( |$)'; then ok "A02-AC-5: nodes.py shows an imported node's state as imported"; else bad "A02-AC-5: nodes.py line for the imported node I01 lacks state 'imported': ${a02_I:-none}"; fi
+if printf '%s\n' "$a02_P" | grep -Eq '^P01 +pinned-lib +pinned( |$)'; then ok "A02-AC-5: nodes.py shows a pinned node's state as pinned"; else bad "A02-AC-5: nodes.py line for the pinned node P01 lacks state 'pinned': ${a02_P:-none}"; fi
+if printf '%s\n' "$a02_N" | grep -Eq '^N01 +fresh-work +none( |$)'; then ok "A02-AC-5: nodes.py still shows a planned node without a PR as none"; else bad "A02-AC-5: nodes.py line for the planned node N01 lacks state 'none': ${a02_N:-none}"; fi
+if printf '%s\n' "$a02_I" | grep -q 'unlocks=P01,N01'; then ok "A02-AC-5: nodes.py shows what an imported node unlocks"; else bad "A02-AC-5: nodes.py line for I01 lacks unlocks=P01,N01: ${a02_I:-none}"; fi
+if [ "$a02_rc" -eq 0 ]; then ok "A02-AC-5: nodes.py exits 0 on the adopted graph"; else bad "A02-AC-5: nodes.py exits $a02_rc on the adopted graph"; fi
+
+tr -d '*' <"$sk" >"$tmp/A02-sk.txt"
+if g05_win "$tmp/A02-sk.txt" 8 'imported' 'pinned' 'done|merged'; then ok "A02-AC-5: the skill treats imported and pinned nodes as done"; else bad "A02-AC-5: the skill does not treat imported and pinned nodes as done"; fi
+if g05_win "$tmp/A02-sk.txt" 8 'imported' 'pinned' 'never' 'amend|change|add criteria|edit' 'criteria|purpose' 'owns'; then ok "A02-AC-5: the skill never amends an imported or pinned node's criteria, Purpose or owns"; else bad "A02-AC-5: the skill does not say never to change an imported or pinned node's criteria, Purpose or owns"; fi
+if g05_win "$tmp/A02-sk.txt" 8 'imported' 'pinned' 'new node' 'deps|depend'; then ok "A02-AC-5: the skill makes work on an imported or pinned node's code a new node depending on it"; else bad "A02-AC-5: the skill does not make work on an imported or pinned node's code a new node depending on it"; fi
+if g05_win "$tmp/A02-sk.txt" 8 'unlocks' 'imported|pinned' 'header|row|sync'; then ok "A02-AC-5: the skill keeps an imported or pinned node's header row Unlocks in sync"; else bad "A02-AC-5: the skill does not say the header row's Unlocks of an imported or pinned node is kept in sync"; fi
+if g05_win "$tmp/A02-sk.txt" 8 'ownership' 'new node' 'owns'; then ok "A02-AC-5: the skill gives a new node owns in a graph with ownership"; else bad "A02-AC-5: the skill does not give a new node owns in a graph with ownership"; fi
+if g05_win "$tmp/A02-sk.txt" 8 'glob' 'depend|deps' 'file' 'chang'; then ok "A02-AC-5: the new node depends on the nodes whose files it changes and whose globs match its added paths"; else bad "A02-AC-5: the skill does not make the new node depend on the nodes whose files it changes and whose globs match where it adds files"; fi
+if g05_win "$tmp/A02-sk.txt" 8 'glob' 'add' 'test (folder|dir)'; then ok "A02-AC-5: the skill counts test folders among the paths a new node adds files at"; else bad "A02-AC-5: the skill does not name test folders among the paths a new node adds files at"; fi
+if g05_win "$tmp/A02-sk.txt" 8 'owns' 'only' 'add' 'no (existing )?glob|not match|no glob|matches? no|unmatched'; then ok "A02-AC-5: the skill gives owns only for added paths no existing glob matches"; else bad "A02-AC-5: the skill does not give owns only for added paths no existing glob matches"; fi
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

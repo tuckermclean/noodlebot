@@ -143,5 +143,36 @@ check "G05-AC-6: SPEC-PR-SCOPE resumes a merged node as a follow-up" "A02 second
 reset; mkdir -p "$tmp/m/A02"; echo 34 >"$tmp/m/A02/WAITING-PR"; printf 'pr 34\nbranch spec/x\nhead abc\npath p\n' >"$tmp/m/A02/SPEC-PR-SCOPE"; : >"$tmp/m/A02/FAILED"
 check "G05-AC-6: FAILED still holds a node with SPEC-PR-SCOPE" "A03 third-node" --merged A01
 
+# A02: an imported or pinned node is done by declaration: never printed, merged for its dependants.
+adopted=scheduler/testdata/graph-adopted.yaml
+checka() {
+	name=$1; want=$2; shift 2
+	mkdir -p "$tmp/m"
+	got=$(python3 -I "$ready" --graph "$adopted" --markers "$tmp/m" "$@" 2>&1); rc=$?
+	if [ $rc = 0 ] && [ "$got" = "$want" ]; then echo "PASS: $name"
+	else echo "FAIL: $name: want '$want' (rc 0), got '$got' (rc $rc)"; fails=$((fails + 1)); fi
+}
+reset
+checka "A02-AC-4: nothing merged: imported and pinned are not printed, their planned dependant is ready" "A01 first-node"
+checka "A02-AC-4: --all: planned nodes only, the dependant of imported and pinned nodes included" "$(printf 'A01 first-node\nA04 after-adopted')" --all
+checka "A02-AC-4: --all with A01 and A04 merged: the planned dependants of both" "$(printf 'A05 after-planned\nA06 last-node')" --merged A01 --merged A04 --all
+checka "A02-AC-4: --open of a planned node skips it; the dependant of adopted nodes is next" "A04 after-adopted" --open A01
+reset; mkdir -p "$tmp/m/A02" "$tmp/m/A03"
+: >"$tmp/m/A02/QUESTION.md"; : >"$tmp/m/A02/ANSWER.md"; echo node/A02-followup-1 >"$tmp/m/A02/FOLLOWUP"
+: >"$tmp/m/A03/QUESTION.md"; : >"$tmp/m/A03/ANSWER.md"; echo node/A03-followup-1 >"$tmp/m/A03/FOLLOWUP"
+checka "A02-AC-4: answers and FOLLOWUP markers on an imported or pinned node print nothing" "$(printf 'A01 first-node\nA04 after-adopted')" --all
+checka "A02-AC-4: markers plus --merged of an adopted node print no follow-up line" "$(printf 'A01 first-node\nA04 after-adopted')" --merged A02 --merged A03 --all
+checka "A02-AC-4: a first-ready line is never an adopted node, even with markers" "A01 first-node" --merged A02
+reset; mkdir -p "$tmp/m/A02" "$tmp/m/A03"; : >"$tmp/m/A02/FAILED"; : >"$tmp/m/A03/FAILED"
+checka "A02-AC-4: FAILED on an imported or pinned node does not hold its dependant" "$(printf 'A01 first-node\nA04 after-adopted')" --all
+reset; mkdir -p "$tmp/m/A02" "$tmp/m/A03"; : >"$tmp/m/A02/FAILED"; echo 12 >"$tmp/m/A03/WAITING-PR"
+checka "A02-AC-4: WAITING-PR on an adopted node prints nothing and holds no dependant" "$(printf 'A01 first-node\nA04 after-adopted')" --all
+printf '%s\n' "A02 imported-node: adopted (#3)" "A03 pinned-node: adopted (#4)" "A01 first-node: x (#5)" >"$tmp/subjectsa"
+reset; mkdir -p "$tmp/m/A02"; : >"$tmp/m/A02/QUESTION.md"; : >"$tmp/m/A02/ANSWER.md"
+checka "A02-AC-4: an adopted node named by a squash subject with an answer is still not printed" "$(printf 'A04 after-adopted\nA05 after-planned')" --subjects "$tmp/subjectsa" --all
+reset; mkdir -p "$tmp/m/A02" "$tmp/m/A03"; echo node/x >"$tmp/m/A02/FOLLOWUP"
+checka "A02-AC-4: --open of an adopted node changes nothing" "$(printf 'A01 first-node\nA04 after-adopted')" --open A02 --open A03 --all
+reset; checka "A02-AC-4: an open A04 (dependant of adopted nodes) is skipped like any ready node" "A01 first-node" --open A04
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all scheduler-ready checks"
