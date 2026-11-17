@@ -5,6 +5,7 @@ TESTS = \
 	scheduler/release-markers.test.sh \
 	scheduler/report.test.sh \
 	scheduler/report-units.test.sh \
+	scheduler/report-a07.test.sh \
 	scheduler/report-w05.test.sh \
 	scheduler/report-answers.test.sh \
 	scheduler/report-prs.test.sh \
