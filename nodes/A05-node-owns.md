@@ -53,9 +53,11 @@ that fixes an inherited failure takes it off the list. In a repository without o
    from the graph at `<to>`, and names each own glob that matches no file at `<to>` (`UNUSED <glob>`), since the node is
    not merged yet and coverage cannot see it. Each changed path must match the node's own `owns` or a direct dep's;
    an added path must match its own `owns` or a direct dep's glob; a deleted path is judged by its old path, a renamed
-   one by both. The regime's own files are exempt, as in A04. It imports A02's `owns.py`, putting its own folder on
+   one by both. The regime's own files are exempt, as in A04, read from `AGENTS.md` at `<from>` (a branch can neither
+   widen nor narrow them). It imports A02's `owns.py`, putting its own folder on
    `sys.path` (it runs under `python3 -I`). It prints the globs it used, then one
-   `NOT OWNED <path> (owner: <ID or none>)` line per other path, and exits 0, 1, or 2 when git fails. A graph without
+   `NOT OWNED <path> (owner: <ID or none>)` line per other path, and exits 0, 1, or 2 when git fails or the node is in
+   neither graph (`unknown node`). A graph without
    ownership prints `no ownership declared` and exits 0. The regime's own files come from A02's `owns.py`.
    *A05-AC-1.*
 2. **Before the PR.** In a repository whose graph has `owns`, the node skill runs `check-owns-diff.py <ID> origin/main
