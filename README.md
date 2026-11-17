@@ -40,19 +40,21 @@ it must do, how to check it, and which other nodes it depends on. noodlebot then
 4. **You decide.** You answer the question or review the pull request. To accept it, you *merge* it.
 5. **Repeat.** Your merge finishes that node, which may unlock others, and the cycle carries on.
 
-New ideas don't need a full plan. Label an ordinary GitHub issue `noodlebot`, and it drafts the new node for you to
-approve. One machine can do this for several projects at once. noodlebot is built this way itself: its own plan is in
+New ideas don't need a full plan. Label an ordinary GitHub issue `noodlebot`, and it proposes a change to the plan for
+you to approve (or answers the issue, if no change is needed). One machine can do this for several projects at once. noodlebot is built this way itself: its own plan is in
 `docs/graph.yaml` and `nodes/`.
 
 ## What you'll need
 
 - A **GitHub** repository (the project's home on GitHub: its code, history, issues and pull requests) for each
   project, and a **GitHub App** for noodlebot to act as (here, `n00dl3b0t`). noodlebot uses it to propose changes and
-  never accepts them; protecting the `main` branch makes GitHub enforce that too.
+  never accepts them. Turning on GitHub's branch protection for `main` (the accepted version of the project) makes GitHub
+  enforce that too.
 - An **AI plan** for the agents (it runs Claude Code sessions today).
-- A **Linux machine** that stays on, or a container host ([Setting it up](#setting-it-up)).
+- A **Linux machine** that stays on, or a server that runs containers (packaged apps, such as Docker or Kubernetes)
+  ([Setting it up](#setting-it-up)).
 - **The plan:** a `docs/graph.yaml` and a `nodes/` folder in the project. For a project without one, the
-  `/noodlebot:adopt` skill drafts it from the code and your answers.
+  `/noodlebot:adopt` command (run in Claude Code) drafts it from the code and your answers.
 
 The rest of this page is for running it. How noodlebot is built is in [`SPEC.md`](SPEC.md) (design) and
 [`AGENTS.md`](AGENTS.md) (working on its code).
@@ -215,7 +217,7 @@ the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state
 
 | You see | It means | Do |
 |---|---|---|
-| `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why and what to do. | Do what the file says (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (2 fresh starts). |
+| `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why (some also say what to do). | Do what the file says, if anything (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (2 fresh starts). |
 | `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is past its warning or limit (the weekly warning excepted), or (with `USAGE_7D_PACE=1`) the week is ahead of pace. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
 | A session that hit the usage limit | It's resumed by itself after the reset. | Nothing. |
 | `not deployed: ... fails CI` / `make test` | A new noodlebot commit failed its check; the old code still runs. | Fix `main`, or re-run its CI and retry the deploy. |
