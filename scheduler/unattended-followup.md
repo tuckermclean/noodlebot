@@ -59,7 +59,8 @@ back for changing files outside the spec files (see RESUMING below). Nobody can 
   this branch, too. If this branch already has commits, a run of this follow-up stopped: continue from
   where it stopped; do not redo what is already committed.
   - <ts>-SPEC-PR-CLOSED: the spec PR that WAITING-PR named (the number is in the file) was closed
-    without merging, so its spec changes did not land. Read the PR's comments for why.
+    without merging, so its spec changes did not land. Read the PR's comments
+    ("$NOODLEBOT_FORGE" pr comments --number <N>) for why.
     Carry out the approvals that need no spec change on the node branch, test-first (a frozen test
     line, a file outside the node's Owns, a deviation to record). A spec change that is still needed
     is a new question in QUESTION.md, not a reopened PR; end the run once you have written it.
