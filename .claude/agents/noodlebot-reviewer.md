@@ -17,7 +17,7 @@ The brief path; the base, RED and head SHAs; the RED and GREEN evidence (command
 3. **Test immutability:** `git diff <first-red>..<head>` modifies or removes no line of a test committed by an earlier RED commit or node.
 4. **Spec conformance:** the diff makes the node spec's numbered changes and nothing else.
 5. **Principles and traps** (`SPEC.md` §1, `AGENTS.md`): nothing names one repository; no credential printed, logged or committed; a failing part does not stop the loop; scripts a running loop executes are replaced by rename; a wait loop fetches a fresh token per poll; no closing keyword where nothing should close.
-6. **GREEN:** re-run the red target and `make test` at head.
+6. **GREEN:** re-run the red target and the quick gate (`TEST_JOBS=2 make test TESTS="<files>"`) at head; the whole suite's evidence is the PR's CI run.
 
 ## Verdict (≤ 40 lines)
 `verdict` (`approve` | `request_changes` | `test_spec_conflict`), `reviewed` (the head SHA), findings most severe first (file:line, criterion, problem, fix), a criterion → test → status table, the commands with exit codes. Approve only when every criterion in scope is covered and verified.

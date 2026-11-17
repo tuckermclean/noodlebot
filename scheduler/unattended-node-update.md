@@ -4,7 +4,7 @@ node PR #@N@ of @REPO@: the bot's own PR, which conflicts with main. No human is
 
 - Follow @CMD@ (not a dry run). You start in @WT@, a worktree already on the
   PR's branch; work there. Merge origin/main as a merge commit (no rebase, no force push), keep both
-  sides, rerun the repository's test entry point and the PR's red targets, get the fresh resolution review of the merge, and only
+  sides, rerun the quick test gate the repository's AGENTS.md names for the files the merge touched and the PR's red targets, get the fresh resolution review of the merge, and only
   then push to the PR's branch and comment on the PR, as the skill says. After an end with rc 0
   the scheduler removes @WT@; after any other end it keeps it and resets it at the next start.
 - Never change a frozen test or fixture line (a line in the repository's frozen test and fixture paths already on

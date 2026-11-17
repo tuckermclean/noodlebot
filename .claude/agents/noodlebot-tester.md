@@ -16,7 +16,7 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 
 ## RED must be valid
 - the red target exits non-zero, runs to its end, and reports each failure in its own `FAIL` line; a crash of the harness itself, or a missing subject turned into a pass, is not valid;
-- every other test still passes (`make test`, apart from your red target).
+- every other test still passes (the quick gate, `TEST_JOBS=2 make test TESTS="<files>"`, apart from your red target; a new test file goes in the `Makefile`'s `TESTS`).
 
 If a new test already passes, stop and report `already_satisfied` with the evidence. If a criterion is ambiguous or contradicts the spec, stop and report it.
 
