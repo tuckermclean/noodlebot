@@ -41,7 +41,14 @@ INTERP_LANG = {"python": "python", "node": "javascript", "sh": "shell", "bash": 
 CANDIDATE_DIRS = ("vendor", "node_modules", ".venv", "dist", "build")
 TEST_DIRS = ("tests", "test", "spec", "testdata", "fixtures")
 JS_EXTS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".json")
-COMMENT_START = ("#", "//", "/*", "*", "--", "<!--", ";")
+HASH, CLIKE = ("#",), ("//", "/*", "*")
+COMMENT_STARTS = {
+    "python": HASH, "shell": HASH, "yaml": HASH, "toml": HASH, "ruby": HASH, "perl": HASH,
+    "javascript": CLIKE, "typescript": CLIKE, "go": CLIKE, "rust": CLIKE, "java": CLIKE, "c": CLIKE,
+    "cpp": CLIKE, "css": ("/*", "*"), "php": ("#",) + CLIKE, "sql": ("--", "/*", "*"),
+    "html": ("<!--",), "markdown": ("<!--",), "json": (),
+}
+COMMENT_STARTS_OTHER = ("#", "//", "/*", "--", ";", "<!--")
 
 
 def git_files(root):
@@ -99,28 +106,36 @@ def candidate_folder(path):
 
 
 GENERATED_RE = re.compile(r"@generated|(?:auto-?)?generated (?:by|from)|this file (?:is|was) (?:auto-?)?generated"
-                          r"|do not edit", re.I)
+                          r"|code generated", re.I)
+DO_NOT_EDIT_RE = re.compile(r"do not edit", re.I)
+GENERATED_WORD_RE = re.compile(r"generated", re.I)
 DOC_START = re.compile(r"""^[rRuUbB]?(\"\"\"|\'\'\')""")
 
 
-def is_generated(text):
-    """A usual generated-file marker on a comment or docstring line among the first five lines."""
+def is_generated(text, lang="other"):
+    """A generated-file marker on a comment or docstring line among the first five lines. "Do not edit" counts
+    only beside the word generated in the same header."""
+    starts = COMMENT_STARTS.get(lang, COMMENT_STARTS_OTHER)
     in_doc = None
+    header = []
     for line in text.split("\n", 5)[:5]:
         s = line.strip()
-        m = DOC_START.match(s)
+        m = DOC_START.match(s) if lang == "python" else None
         if m and in_doc is None:
             in_doc = m.group(1)
             commentish = True
             if s.count(in_doc) >= 2:
                 in_doc = None
         else:
-            commentish = in_doc is not None or s.startswith(COMMENT_START)
+            commentish = in_doc is not None or (bool(starts) and s.startswith(starts))
             if in_doc is not None and in_doc in s:
                 in_doc = None
-        if commentish and GENERATED_RE.search(s):
-            return True
-    return False
+        if commentish:
+            if GENERATED_RE.search(s):
+                return True
+            header.append(s)
+    h = "\n".join(header)
+    return bool(DO_NOT_EDIT_RE.search(h) and GENERATED_WORD_RE.search(h))
 
 
 def is_test(path):
@@ -243,16 +258,32 @@ def load_ownership(root):
     except Exception as e:
         print("inventory.py: cannot read docs/graph.yaml: %s" % e, file=sys.stderr)
         sys.exit(2)
-    if not isinstance(g, dict):
-        print("inventory.py: docs/graph.yaml is not a mapping", file=sys.stderr)
+    if g is None:
+        return []
+
+    def bad(what):
+        print("inventory.py: docs/graph.yaml: %s" % what, file=sys.stderr)
         sys.exit(2)
+    if not isinstance(g, dict):
+        bad("not a mapping")
     globs = []
-    for n in g.get("nodes") or []:
-        if isinstance(n, dict):
-            globs += [x for x in (n.get("owns") or []) if isinstance(x, str)]
-    for o in g.get("out_of_scope") or []:
-        if isinstance(o, dict) and isinstance(o.get("glob"), str):
-            globs.append(o["glob"])
+    nodes = g.get("nodes")
+    if nodes is not None and not isinstance(nodes, list):
+        bad("nodes is not a list")
+    for n in nodes or []:
+        if not isinstance(n, dict):
+            bad("a nodes entry is not a mapping")
+        o = n.get("owns")
+        if o is not None and (not isinstance(o, list) or not all(isinstance(x, str) for x in o)):
+            bad("owns of node %s is not a list of globs" % n.get("id", "?"))
+        globs += o or []
+    oos = g.get("out_of_scope")
+    if oos is not None and not isinstance(oos, list):
+        bad("out_of_scope is not a list")
+    for o in oos or []:
+        if not isinstance(o, dict) or not isinstance(o.get("glob"), str):
+            bad("an out_of_scope entry is not a mapping with a glob string")
+        globs.append(o["glob"])
     return globs
 
 
@@ -363,7 +394,7 @@ def build(root, glob, limit):
         if folder:
             folders.add(folder)
             continue
-        if t and is_generated(t):
+        if t and is_generated(t, files[-1]["language"]):
             cands.append({"path": p, "reason": "generated header"})
             continue
         if is_test(p):
