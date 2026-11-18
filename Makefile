@@ -187,6 +187,7 @@ TESTS = \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
 	scheduler/runtests-d08.test.sh \
+	scheduler/runtests-d11.test.sh \
 	scheduler/check-ci-workflow.test.sh \
 	scheduler/scratch-guard.test.sh \
 	container/entrypoint.test.sh \

@@ -264,7 +264,7 @@ pr_evis() { [ "$(pr_ev "$1" "$2")" = "$3" ]; }
 rl6() { rl_event "$state/node/X01/session.jsonl" "$@"; }
 loop6() {
 	NOODLEBOT_DATA=$data6 PATH=$tmp/bin6:$PATH SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 \
-		bash "$tmp/nb6/scheduler/loop.sh" o/up >>"$tmp/g01-loop.out" 2>&1 &
+		fixture_start bash "$tmp/nb6/scheduler/loop.sh" o/up >>"$tmp/g01-loop.out" 2>&1 &
 	pids+=("$!"); lp6=$!
 }
 

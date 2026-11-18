@@ -64,7 +64,7 @@ evis() { [ "$(ev "$1" "$2")" = "$3" ]; }
 countis() { [ "$(count "$1")" = "$2" ]; }
 loop4() {
 	NOODLEBOT_DATA=$data4 PATH=$tmp/bin4:$PATH SCHED_REPORT=0 SCHED_THROTTLE=0 SCHED_TICK=1 SCHED_POLL=0.2 \
-		bash "$tmp/nb4/scheduler/loop.sh" o/sc >>"$tmp/s01-loop.out" 2>&1 &
+		fixture_start bash "$tmp/nb4/scheduler/loop.sh" o/sc >>"$tmp/s01-loop.out" 2>&1 &
 	pids+=("$!"); lp4=$!
 }
 s01_started() { [ "$(grep -cE 'started B0[1-6] ' "$state/status.log" 2>/dev/null)" -ge "$1" ]; }

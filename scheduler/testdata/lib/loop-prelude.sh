@@ -15,6 +15,7 @@ extra_cleanup() { :; }
 trap 'for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done; extra_cleanup; pkill -f "$tmp/" 2>/dev/null; rm -rf "$tmp"' EXIT
 fails=0
 . "$src/testdata/lib/common.sh"
+. "$src/testdata/lib/fixture.sh"
 # ok <name> <command...>: PASS when the command succeeds.
 ok() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; echo "      status.log:"; sed 's/^/      /' "$state/status.log" 2>/dev/null; fi; }
 

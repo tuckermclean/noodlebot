@@ -6,7 +6,8 @@
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
-trap 'for d in "$tmp"/*/home; do touch "$d/STOP" 2>/dev/null; done; pkill -f "$tmp/" 2>/dev/null; sleep 0.3; pkill -9 -f "$tmp/" 2>/dev/null; rm -rf "$tmp"' EXIT
+trap 'for d in "$tmp"/*/home; do touch "$d/STOP" 2>/dev/null; done; fixture_stop_all; rm -rf "$tmp"' EXIT
+. "$src/testdata/lib/fixture.sh"; NB_FIXTURE_SH=$src/testdata/lib/fixture.sh; export NB_FIXTURE_SH
 fails=0
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; fails=$((fails + 1)); }
@@ -24,7 +25,8 @@ case $1 in
 new | new-session)
 	shift
 	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
-	setsid sh -c "$*" >/dev/null 2>&1 </dev/null &
+	. "$NB_FIXTURE_SH"
+	fixture_start sh -c "$*" >/dev/null 2>&1 </dev/null &
 	exit 0 ;;
 esac
 exit 1
@@ -69,13 +71,13 @@ EOT
 running() { ! flock -n "$nb/state/$1/loop.lock" true 2>/dev/null; }
 # start_loop <name>: a loop as the owner would have started it; waits for its lock.
 start_loop() {
-	setsid "$nb/scheduler/loop.sh" "o/$1" >/dev/null 2>&1 </dev/null &
+	fixture_start "$nb/scheduler/loop.sh" "o/$1" >/dev/null 2>&1 </dev/null &
 	i=0; while ! running "$1" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 }
 # start_session <name> <ID>: a live session recorded in session.pid.
 start_session() {
 	mkdir -p "$nb/state/$1/node/$2"
-	setsid sh "$nb/scheduler/run-session.sh" "o/$1" "$2" >/dev/null 2>&1 </dev/null &
+	fixture_start sh "$nb/scheduler/run-session.sh" "o/$1" "$2" >/dev/null 2>&1 </dev/null &
 	echo $! >"$nb/state/$1/node/$2/session.pid"
 	sleep 0.3
 }
@@ -233,7 +235,7 @@ EOT
 # rt_cases <label>: start, status and stop against the runtime root $rt.
 rt_cases() {
 	l=$1
-	setsid "$nb/scheduler/loop.sh" "o/alpha" >/dev/null 2>&1 </dev/null &
+	fixture_start "$nb/scheduler/loop.sh" "o/alpha" >/dev/null 2>&1 </dev/null &
 	rt_wait alpha
 	run start
 	ok "M01-AC-1:$l:beta-lock-held-under-runtime-root" sh -c "sleep 0.3; [ -e '$rt/state/beta/loop.lock' ] && ! flock -n '$rt/state/beta/loop.lock' true"
@@ -242,7 +244,7 @@ rt_cases() {
 	ok "M01-AC-1:$l:alpha-lock-still-held" sh -c "! flock -n '$rt/state/alpha/loop.lock' true"
 	ok "M01-AC-1:$l:start-exits-0" sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
 	mkdir -p "$rt/state/alpha/node/A01" "$rt/state/beta/node/B02"
-	setsid sh "$nb/scheduler/run-session.sh" o/alpha A01 >/dev/null 2>&1 </dev/null &
+	fixture_start sh "$nb/scheduler/run-session.sh" o/alpha A01 >/dev/null 2>&1 </dev/null &
 	echo $! >"$rt/state/alpha/node/A01/session.pid"
 	sp=$!
 	echo "# Which colour?" >"$rt/state/beta/node/B02/QUESTION.md"
@@ -361,7 +363,7 @@ no M01-AC-1:probe-race:no-loop-exited-already-running sh -c "cat '$nb'/state/*/e
 
 nl_setup racest
 LOOP_DELAY=0.8; export LOOP_DELAY
-setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+fixture_start "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
 sleep 0.3
 run_w status
 ok M01-AC-3:probe-race:loop-starting-during-status-takes-its-lock nl_pidwait alpha
@@ -370,7 +372,7 @@ touch "$HOME/STOP"
 
 nl_setup racesp
 LOOP_DELAY=0.8; export LOOP_DELAY
-setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+fixture_start "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
 sleep 0.3
 run_w stop
 ok M01-AC-2:probe-race:loop-starting-during-stop-takes-its-lock nl_pidwait alpha
@@ -384,7 +386,7 @@ echo "# M01-AC-3: status with issue/ sessions and the answered state"
 nl_setup iss
 st=$nb/state/alpha
 mkdir -p "$st/issue/46" "$st/issue/47" "$st/issue/49" "$st/node/C07" "$st/node/C08"
-setsid "$nb/scheduler/run-session.sh" "$sc/wt" "$st/issue/46" "/noodlebot:triage 46" </dev/null >/dev/null 2>&1 &
+fixture_start "$nb/scheduler/run-session.sh" "$sc/wt" "$st/issue/46" "/noodlebot:triage 46" </dev/null >/dev/null 2>&1 &
 echo $! >"$st/issue/46/session.pid"
 echo "# Which?" >"$st/issue/47/QUESTION.md"
 echo "# Which?" >"$st/issue/49/QUESTION.md"; echo "blue" >"$st/issue/49/ANSWER.md"
@@ -455,7 +457,7 @@ echo "# M01-AC-1: a loop from before the D02 move holds the checkout's lock"
 rt_setup old "$tmp/old/data"
 mkdir -p "$nb/state/alpha"
 oldlock=$nb/state/alpha/loop.lock
-setsid "$REALFLOCK" "$oldlock" sleep 60 >/dev/null 2>&1 </dev/null &
+fixture_start "$REALFLOCK" "$oldlock" sleep 60 >/dev/null 2>&1 </dev/null &
 oldpid=$!
 i=0; while ! nl_held "$oldlock" && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
 run start
@@ -525,7 +527,8 @@ case \$1 in
 new | new-session)
 	shift
 	while [ \$# -gt 0 ]; do case \$1 in -d) shift ;; -s) sess=\$2; shift 2 ;; *) break ;; esac; done
-	setsid sh -c "\$*" >/dev/null 2>&1 </dev/null &
+	. "\$NB_FIXTURE_SH"
+	fixture_start sh -c "\$*" >/dev/null 2>&1 </dev/null &
 	echo \$! >"$sc/sess-\$sess.pid"
 	exit 0 ;;
 kill-session | kill-server)
@@ -609,7 +612,7 @@ api_end
 
 echo "# P01-AC-10: a server already running is left alone"
 api_setup ac10b
-setsid python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
+fixture_start python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
 api_wait
 run start
 sleep 0.5
@@ -661,7 +664,8 @@ case $1 in
 new | new-session)
 	shift
 	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
-	setsid env -u USAGE_7D_PACE -u USAGE_7D_MARGIN -u USAGE_5H_LIMIT -u USAGE_OTHER -u SCHED_TICK -u SCHED_NOTE -u SCHED_OTHER "$@" >/dev/null 2>&1 </dev/null &
+	. "$NB_FIXTURE_SH"
+	fixture_start env -u USAGE_7D_PACE -u USAGE_7D_MARGIN -u USAGE_5H_LIMIT -u USAGE_OTHER -u SCHED_TICK -u SCHED_NOTE -u SCHED_OTHER "$@" >/dev/null 2>&1 </dev/null &
 	exit 0 ;;
 esac
 exit 1
@@ -712,7 +716,8 @@ case $1 in
 new | new-session)
 	shift
 	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
-	setsid env -u SCHED_HARNESS "$@" >/dev/null 2>&1 </dev/null &
+	. "$NB_FIXTURE_SH"
+	fixture_start env -u SCHED_HARNESS "$@" >/dev/null 2>&1 </dev/null &
 	exit 0 ;;
 esac
 exit 1
@@ -765,7 +770,8 @@ case $1 in
 new | new-session)
 	shift
 	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
-	setsid env -u PICKUP -u PICKUP_RUNS -u PICKUP_CEILING -u PICKUPX -u NOTPICKUP "$@" >/dev/null 2>&1 </dev/null &
+	. "$NB_FIXTURE_SH"
+	fixture_start env -u PICKUP -u PICKUP_RUNS -u PICKUP_CEILING -u PICKUPX -u NOTPICKUP "$@" >/dev/null 2>&1 </dev/null &
 	exit 0 ;;
 esac
 exit 1
