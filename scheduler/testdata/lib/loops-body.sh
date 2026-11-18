@@ -67,17 +67,33 @@ EOT
 }
 # running <name>: the loop's lock is held.
 running() { ! flock -n "$nb/state/$1/loop.lock" true 2>/dev/null; }
-# start_loop <name>: a loop as the owner would have started it; waits for its lock.
+# until_ok <what> <command...>: waits (at most ${LOOPS_HELPER_WAIT:-20} s, free when the condition holds) until the
+# command succeeds; on time-out it fails naming <what> (the condition) and returns 1. The commands only read: a probe that
+# takes a lock (flock -n) would take it from a loop or server that is starting, which then exits (M02).
+until_ok() {
+	u_what=$1; shift
+	u_i=0; u_max=$(( ${LOOPS_HELPER_WAIT:-20} * 10 ))
+	while ! "$@"; do
+		[ "$u_i" -ge "$u_max" ] && { fail "$u_what (not within ${LOOPS_HELPER_WAIT:-20} s)"; return 1; }
+		sleep 0.1; u_i=$((u_i + 1))
+	done
+}
+# pid_file <name>: the loop wrote its pid (it does after taking its lock) in the scenario's state folder.
+pid_file() { [ -s "$nb/state/$1/loop.pid" ]; }
+# start_loop <name>: a loop as the owner would have started it; waits for its lock without taking it: loop.pid is
+# written after the loop's flock (a probe by flock -n would make a starting loop exit).
 start_loop() {
 	setsid "$nb/scheduler/loop.sh" "o/$1" >/dev/null 2>&1 </dev/null &
-	i=0; while ! running "$1" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+	until_ok "start_loop $1: the loop did not take its lock (no loop.pid)" pid_file "$1"
 }
+# sess_up <pid>: the process runs run-session.sh (what status matches through /proc/<pid>/cmdline).
+sess_up() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'run-session\.sh'; }
 # start_session <name> <ID>: a live session recorded in session.pid.
 start_session() {
 	mkdir -p "$nb/state/$1/node/$2"
 	setsid sh "$nb/scheduler/run-session.sh" "o/$1" "$2" >/dev/null 2>&1 </dev/null &
 	echo $! >"$nb/state/$1/node/$2/session.pid"
-	sleep 0.3
+	until_ok "start_session $1 $2: the session process did not run run-session.sh" sess_up "$!"
 }
 # run <args>: loops.sh with a timeout; output in $sc/out, status in $sc/rc.
 run() { timeout 30 sh "$nb/scheduler/loops.sh" "$@" >"$sc/out" 2>&1 </dev/null; echo $? >"$sc/rc"; }
@@ -210,8 +226,8 @@ export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
 fi
 # rt_lock <name>: the loop's lock under the runtime root $rt is held.
 rt_lock() { [ -e "$rt/state/$1/loop.lock" ] && ! flock -n "$rt/state/$1/loop.lock" true 2>/dev/null; }
-# rt_wait <name>: waits (at most 6 s) for that lock.
-rt_wait() { i=0; while ! rt_lock "$1" && [ $i -lt 60 ]; do sleep 0.1; i=$((i + 1)); done; rt_lock "$1"; }
+# rt_wait <name>: waits for that lock without taking it: loop.pid (written after the loop's flock) under $rt.
+rt_wait() { until_ok "rt_wait $1: the loop did not take its lock (no loop.pid)" test -s "$rt/state/$1/loop.pid"; }
 # rt_setup <scenario> <data dir | unset>: setup, a runtime root, and a fake loop.sh that keeps its
 # lock and state under ${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}/state/<name>.
 rt_setup() {
@@ -246,7 +262,7 @@ rt_cases() {
 	echo $! >"$rt/state/alpha/node/A01/session.pid"
 	sp=$!
 	echo "# Which colour?" >"$rt/state/beta/node/B02/QUESTION.md"
-	sleep 0.3
+	until_ok "rt_cases $l: the session process did not run run-session.sh" sess_up "$sp"
 	run status
 	aline=$(grep 'alpha' "$sc/out" | head -n 1)
 	bline=$(grep 'beta' "$sc/out" | head -n 1)
@@ -294,7 +310,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want B2 C; then
 echo "# M01 run 3: a probe must not take a loop's lock; issue/ sessions; list hygiene; old lock; dead pids"
-export LOOPS_START_WAIT=2 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 REALFLOCK=$(command -v flock); export REALFLOCK
 fi
 # nl_setup <scenario> [list]: setup, plus a fake loop.sh that follows ${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot},
@@ -327,20 +343,19 @@ EOT
 run_w() { nl_path=$PATH; PATH=$sc/wbin:$PATH; run "$@"; PATH=$nl_path; }
 # nl_pidwait <name>: waits (at most 4 s) for the loop to have taken its lock (it then writes loop.pid).
 nl_pidwait() { i=0; while [ ! -s "$nb/state/$1/loop.pid" ] && [ $i -lt 40 ]; do sleep 0.1; i=$((i + 1)); done; [ -s "$nb/state/$1/loop.pid" ]; }
+# nl_both_free: nobody holds the alpha or the beta lock (the loops are stopping: a probe takes nothing from them).
+nl_both_free() { flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/beta/loop.lock" true; }
 # nl_halt: stops alpha and beta loops through STOP-<name> files and waits for both locks to be free.
 nl_halt() {
 	touch "$HOME/STOP-alpha" "$HOME/STOP-beta"
-	i=0
-	while [ $i -lt 50 ]; do
-		flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/beta/loop.lock" true && break
-		sleep 0.1; i=$((i + 1))
-	done
+	until_ok "nl_halt: the alpha and beta locks were not both free" nl_both_free
 	rm -f "$HOME/STOP-alpha" "$HOME/STOP-beta"
 }
 # nl_held <lockfile>: the lock is held (probes by taking it, so only after the loops are up).
 nl_held() { [ -e "$1" ] && ! flock -n "$1" true 2>/dev/null; }
-# nl_wait_free <lockfile>: waits (at most 5 s) until nobody holds the lock.
-nl_wait_free() { i=0; while nl_held "$1" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+# nl_wait_free <lockfile>: waits until nobody holds the lock; fails naming it on time-out.
+nl_not_held() { ! nl_held "$1"; }
+nl_wait_free() { until_ok "nl_wait_free: the lock $1 was still held" nl_not_held "$1"; }
 
 if want B2; then
 nl_setup race
@@ -362,7 +377,7 @@ no M01-AC-1:probe-race:no-loop-exited-already-running sh -c "cat '$nb'/state/*/e
 nl_setup racest
 LOOP_DELAY=0.8; export LOOP_DELAY
 setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
-sleep 0.3
+until_ok "racest: the loop did not open its lock file" test -e "$nb/state/alpha/loop.lock"
 run_w status
 ok M01-AC-3:probe-race:loop-starting-during-status-takes-its-lock nl_pidwait alpha
 no M01-AC-3:probe-race:status-did-not-make-the-loop-exit test -e "$nb/state/alpha/exits"
@@ -371,7 +386,7 @@ touch "$HOME/STOP"
 nl_setup racesp
 LOOP_DELAY=0.8; export LOOP_DELAY
 setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
-sleep 0.3
+until_ok "racesp: the loop did not open its lock file" test -e "$nb/state/alpha/loop.lock"
 run_w stop
 ok M01-AC-2:probe-race:loop-starting-during-stop-takes-its-lock nl_pidwait alpha
 no M01-AC-2:probe-race:stop-did-not-make-the-loop-exit test -e "$nb/state/alpha/exits"
@@ -389,7 +404,7 @@ echo $! >"$st/issue/46/session.pid"
 echo "# Which?" >"$st/issue/47/QUESTION.md"
 echo "# Which?" >"$st/issue/49/QUESTION.md"; echo "blue" >"$st/issue/49/ANSWER.md"
 echo "# Which?" >"$st/node/C07/QUESTION.md"; echo "blue" >"$st/node/C07/ANSWER.md"
-sleep 0.3
+until_ok "iss: the issue 46 session process did not run run-session.sh" sess_up "$(cat "$st/issue/46/session.pid")"
 run status
 aline=$(grep 'alpha' "$sc/out" | head -n 1)
 asess=$(echo "$aline" | sed 's/.*sessions: *//; s/;.*//')
@@ -457,7 +472,7 @@ mkdir -p "$nb/state/alpha"
 oldlock=$nb/state/alpha/loop.lock
 setsid "$REALFLOCK" "$oldlock" sleep 60 >/dev/null 2>&1 </dev/null &
 oldpid=$!
-i=0; while ! nl_held "$oldlock" && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+until_ok "old-lock: the old lock $oldlock was not held by its holder" nl_held "$oldlock"
 run start
 no M01-AC-1:old-lock:start-exits-nonzero sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
 ok M01-AC-1:old-lock:output-names-the-lock sh -c "grep -qF '$oldlock' '$sc/out'"
@@ -481,7 +496,7 @@ if want D; then
 echo "# V01-AC-8: status names the version of a running loop"
 setup v01
 start_loop alpha
-i=0; while [ ! -s "$nb/state/alpha/loop.pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+until_ok "V01-AC-8: the loop wrote no loop.pid (it did not take its lock)" pid_file alpha
 echo v9.8.7-3-g1a2b3c4 >"$nb/state/alpha/version"
 mkdir -p "$nb/state/beta"; echo v1.1.1-stale >"$nb/state/beta/version"
 run status
@@ -567,7 +582,8 @@ while True:
 EOT
 	chmod +x "$nb/scheduler/api.py"
 }
-api_wait() { i=0; while ! nl_held "$data/api.lock" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+# api_wait: waits for api.py to hold api.lock without taking it: the "start" line api.py logs after its lock.
+api_wait() { until_ok "api_wait: api.py did not take its lock (no start line in $alog)" grep -q '^start' "$alog"; }
 api_gone() { i=0; while pgrep -f "$nb/scheduler/api.py" >/dev/null && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done; ! pgrep -f "$nb/scheduler/api.py" >/dev/null; }
 api_end() { touch "$HOME/STOP"; pkill -f "$nb/scheduler/api.py" 2>/dev/null; sleep 0.3; rm -f "$HOME/STOP"; PATH=$oldpath; }
 
@@ -670,7 +686,8 @@ chmod +x "$sc/bin/tmux"
 oldpath=$PATH
 PATH=$sc/bin:$oldpath
 USAGE_7D_PACE=1 USAGE_7D_MARGIN=0.2 SCHED_TICK=7 SCHED_NOTE="two words  here" run start
-sleep 1
+t03_seen() { [ -s "$HOME/seen/$1.env" ] && [ -s "$HOME/seen/$1.note" ]; }
+for n in alpha beta; do until_ok "T03-AC-4: loop $n wrote no seen/$n.env and seen/$n.note" t03_seen "$n"; done
 for n in alpha beta; do
 	ok "T03-AC-4:start-exits-0" sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
 	ok "T03-AC-4:$n:USAGE_7D_PACE-reaches-the-loop" sh -c "grep -qx 'USAGE_7D_PACE=1' '$HOME/seen/$n.env'"
@@ -726,7 +743,9 @@ for n in alpha beta; do
 	ok "S08-AC-5:$n:SCHED_HARNESS-reaches-the-loop" sh -c "grep -qx 'SCHED_HARNESS=fake' '$HOME/seen/$n.env'"
 done
 touch "$HOME/STOP"
-for n in alpha beta; do for _ in $(seq 50); do alive "$(loop_pid $n)" || break; sleep 0.1; done; done
+# the S08 fake loop writes no loop.pid: wait until both locks are free (the loops are stopping, a probe takes nothing)
+s08_free() { flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/beta/loop.lock" true; }
+until_ok "S08-AC-5: the alpha and beta loop locks were not both free after STOP" s08_free
 rm -f "$HOME/STOP" "$HOME/seen"/*
 run start
 for n in alpha beta; do for _ in $(seq 50); do [ -s "$HOME/seen/$n.env" ] && break; sleep 0.1; done; done
