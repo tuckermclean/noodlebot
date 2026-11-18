@@ -5,6 +5,7 @@ TESTS = \
 	scheduler/release-markers.test.sh \
 	scheduler/report.test.sh \
 	scheduler/report-units.test.sh \
+	scheduler/report-a07.test.sh \
 	scheduler/report-w05.test.sh \
 	scheduler/report-answers.test.sh \
 	scheduler/report-prs.test.sh \
@@ -96,6 +97,23 @@ TESTS = \
 	scheduler/loop-g03-starts.test.sh \
 	scheduler/loop-g04-args.test.sh \
 	scheduler/loop-g04-e2e.test.sh \
+	scheduler/loop-a07-origin.test.sh \
+	scheduler/loop-a07-scaffold.test.sh \
+	scheduler/loop-a07-areas.test.sh \
+	scheduler/loop-a07-plan.test.sh \
+	scheduler/loop-a07-closed.test.sh \
+	scheduler/loop-a07-late-scaffold.test.sh \
+	scheduler/loop-a07-late-area.test.sh \
+	scheduler/loop-a07-late-plan.test.sh \
+	scheduler/loop-a07-triage.test.sh \
+	scheduler/loop-a07-slot.test.sh \
+	scheduler/loop-a07-feedback.test.sh \
+	scheduler/loop-a07-update.test.sh \
+	scheduler/loop-a07-list.test.sh \
+	scheduler/loop-a07-resume.test.sh \
+	scheduler/loop-a07-release.test.sh \
+	scheduler/loop-a07-reorder.test.sh \
+	scheduler/loop-a07-e2e.test.sh \
 	scheduler/loop-g04-cap.test.sh \
 	scheduler/loop-R02-prompts.test.sh \
 	scheduler/loop-R02-node.test.sh \
