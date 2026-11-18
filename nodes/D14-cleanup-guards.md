@@ -15,11 +15,12 @@ these existing lines of the frozen test paths (the `*.test.sh` files and `schedu
 `scheduler/loop-s06.test.sh:63`, `scheduler/loop-s06-update.test.sh:36`, `scheduler/loop-s06-later.test.sh:66` and
 `scheduler/loop-s06-review.test.sh:130` (as of `main` at c38bb52), whose kills of the `pg.*` and `pg2.*` pid files go
 through the guarded kill and which change in nothing else; one line sourcing `kill-own.sh` in
-`scheduler/testdata/lib/loop-s06.sh`, which all four files source; the fake's `kill -KILL $PPID` at
-`scheduler/loop-s04.test.sh:71`, which gains the check of change 2 and nothing else; each line the wider scan of change
-3 finds unguarded (none on `main` at c38bb52), which gains only D12's guard; and the lines of
-`scheduler/scratch-guard.test.sh` that changes 3-6 name. No check, compared value, wait or start of another
-frozen line changes.
+`scheduler/testdata/lib/loop-s06.sh`, which all four files source; one line added to
+`scheduler/testdata/lib/loop-s04.sh` exporting `S04_LIB`; the fake's `kill -KILL $PPID` at
+`scheduler/loop-s04.test.sh:71`, which gains the source of `kill-own.sh` and the call to `kill_own_ok` of change 2 and
+nothing else; each line the wider scan of change 3 finds unguarded (none on `main` at c38bb52), which gains only D12's
+guard; and the lines of `scheduler/scratch-guard.test.sh` that changes 3-6 name. No check, compared value, wait or start
+of another frozen line changes.
 **Resolves:** #177
 
 ## Purpose
@@ -46,16 +47,19 @@ canonical turning the namespace case into a skip with a misleading reason.
   group: the group and its leader are gone and the sentinel and its group still run. Given the group leader's pid file
   with a scratch folder that is empty, `/`, one whose canonical form is `/` (such as `/tmp/..`), not absolute or not an
   existing directory, it signals nothing (the group still runs). Each such bad folder is one the leader's command line
-  names followed by `/` (an argument holding `//` for `/` and for a folder whose canonical form is `/`, a path under
-  the missing folder for one that does not exist, and a path holding the relative folder for one that is not
-  absolute), so that only the refusal keeps the group from being killed. Given the scratch folder through a symlink
-  while the leader's command line names the canonical path, it kills the group. A sibling folder whose name starts
-  with the scratch folder's name (`<folder>x`) named on a process's command line does not count as the scratch
-  folder. A second case reads the five lines of change 2 and shows that each kills its `pg.*`, `pg2.*` or `$PPID`
-  value only through the check: a call to `kill-own.sh` in the four S06 lines, and in the S04 fake the same check
-  written into its line, made against the scratch folder that holds `$S04` (`${S04%/*}`), not against `$S04`. Where
-  the machine refuses the namespace, the first case runs nothing that signals and passes with a line naming the
-  skip, as D12-AC-3 does.
+  names followed by `/` (an argument holding `//` for `/` and for a folder whose canonical form is `/`, a path under the
+  missing folder for one that does not exist, and a path holding the relative folder for one that is not absolute), so
+  that only the refusal keeps the group from being killed. The namespace's pid 1 has a command line that names
+  `<folder>/` (for example the driver run as `sh <folder>/driver.sh`), so that only the number check keeps the `1` input
+  from becoming `kill -- -1`. The relative folder exists from the guard's working directory (for example the scratch
+  folder without its leading `/`, given while the working directory is `/`), so that only the absolute-path check
+  refuses it. `kill_own_ok` gives the same answers for the same inputs as the guarded kill. Given the scratch folder
+  through a symlink while the leader's command line names the canonical path, it kills the group. A sibling folder whose
+  name starts with the scratch folder's name (`<folder>x`) named on a process's command line does not count as the
+  scratch folder. A second case reads the five lines of change 2 and shows that each kills its `pg.*`, `pg2.*` or
+  `$PPID` value only through the check: a call to `kill-own.sh` in the four S06 lines, and in the S04 fake a call to
+  `kill_own_ok` with `${S04%/*}`, not `$S04`. Where the machine refuses the namespace, the first case runs nothing that
+  signals and passes with a line naming the skip, as D12-AC-3 does.
 - `scheduler/scratch-guard.test.sh` (D12's, extended as changes 3-6 say): fixture lines for each new form of change 3,
   the probe of change 4 and the late-signal run of change 5. Every case that passes on the base still passes, and every
   `PASS:` name the base prints is still printed, except the two skip lines, which may be reworded (changes 4 and 6).
@@ -63,7 +67,7 @@ canonical turning the namespace case into a skip with a misleading reason.
   on the base still passes.
 - `scheduler/kill-own.test.sh`, any new `scratch-guard-*.test.sh` and `scheduler/scratch-guard.test.sh` stay under
   `TEST_FILE_BUDGET`; the S04 and S06 files changed only by a cleanup or fake line gain no wait, sleep or retry:
-  `kill-own.sh` and the S04 check only read `/proc` and signal.
+  `kill-own.sh`, which the S04 fake also calls, only reads `/proc` and signals.
 
 ## Changes
 1. **The read.** Every `kill`, `pkill` and `killall` in the files of the `Makefile`'s `TESTS` and in
@@ -82,14 +86,15 @@ canonical turning the namespace case into a skip with a misleading reason.
    and pid files, sends KILL to the process group and the pid each file holds only when the value is a number above 1
    and `/proc/<pid>/cmdline` names `<folder>/`, with the trailing slash, as the scratch folder was given or in its
    canonical form; any other value is left alone. It signals nothing at all when the scratch folder it is given is
-   empty, `/`, one whose canonical form is `/`, not absolute or not an existing directory. The four `loop-s06*`
-   cleanup lines pass their `pg.*` and `pg2.*` files through it. The S04 fake (`loop-s04.test.sh:71`) is a quoted
-   heredoc whose only path to the scratch folder is `$S04`, so the same check is written into its line: it kills
-   `$PPID` only when `${S04%/*}`, the scratch folder that holds `$S04`, passes the folder checks, `$PPID` is above 1,
-   and its command line names `${S04%/*}/` as given or in its canonical form (`run-session.sh` is under `$tmp/nb7/`,
-   never under `$S04/`). A leader that has already ended is then not signalled; what is left of its group is stopped
-   by D11's runner, which stops every process carrying its file's `NBRT_` mark, and, for those whose command line
-   names the folder, by the prelude's `pkill -f "$tmp/"`. *D14-AC-2.*
+   empty, `/`, one whose canonical form is `/`, not absolute or not an existing directory. The four `loop-s06*` cleanup
+   lines pass their `pg.*` and `pg2.*` files through it. The S04 fake (`loop-s04.test.sh:71`) kills one pid, not a
+   group, so `kill-own.sh` also gives the check alone, `kill_own_ok <folder> <pid>`, which the guarded kill itself uses.
+   One line added to `scheduler/testdata/lib/loop-s04.sh` exports its folder (`S04_LIB=$src/testdata/lib; export
+   S04_LIB`, as `loop-s06.sh` does for `S06_LIB`). The fake's line becomes `… . "$S04_LIB/kill-own.sh" && kill_own_ok
+   "${S04%/*}" "$PPID" && kill -KILL $PPID; exit 0 ;;`. `${S04%/*}` is the scratch folder that holds `$S04`;
+   `run-session.sh` is under `$tmp/nb7/`, never under `$S04/`. A leader that has already ended is then not signalled;
+   what is left of its group is stopped by D11's runner, which stops every process carrying its file's `NBRT_` mark,
+   and, for those whose command line names the folder, by the prelude's `pkill -f "$tmp/"`. *D14-AC-2.*
 3. **The scan sees every form.** The mktemp case of `scratch-guard.test.sh` also reads assignments of the form
    `<var>="$(mktemp -d …)"`, `` <var>=`mktemp -d …` ``, `$( mktemp -d … )` with spaces, `mktemp --directory`,
    `mktemp` with `-d` after other options (`mktemp -p "$x" -d`) and `-d` inside combined short options where it is
@@ -128,12 +133,12 @@ canonical turning the namespace case into a skip with a misleading reason.
 
 ## Gate
 - **D14-AC-1** — The PR records the read of change 1: every `kill`, `pkill` and `killall` in the `Makefile`'s `TESTS` files and `scheduler/testdata/` whose pid or group comes from `$PPID`, directly or through a pid file a fake wrote, each with its source, whether it can be 1, empty or outside the test, and the change made or why none; at least the four `loop-s06*` cleanups, `scheduler/loop-s04.test.sh:71` and `scheduler/deploy.test.sh:182` and `:194`. *Verify:* the record in the PR, checked by the fresh reviewer against `grep -nE '\$\$?PPID'` and the `pg.*`/`pg2.*` writers over the same files.
-- **D14-AC-2** — Inside a user and pid namespace of its own, the guarded kill of `scheduler/testdata/lib/kill-own.sh`, given pid files holding `1`, nothing, a non-number, the pid of a sentinel (a group leader of its own) whose command line does not name the scratch folder, and the pid of a group leader whose command line names `<folder>/`, signals only that group (the group and its leader are gone, the sentinel and its group still run); given the group leader's pid file with a scratch folder that is empty, `/`, one whose canonical form is `/`, not absolute or not an existing directory, each named on the leader's command line followed by `/` (an argument holding `//` for `/` and for a canonical `/`, a path under the missing folder, a path holding the relative folder), it signals nothing; given the folder through a symlink while the leader names the canonical path, it kills the group; a sibling `<folder>x` on a command line does not match; the four `loop-s06*` cleanup lines kill their `pg.*` and `pg2.*` values only through a call to `kill-own.sh`, and the S04 fake its `$PPID` only through the same check written into its line, made against `${S04%/*}`, the scratch folder that holds `$S04`, as given or canonical; where the namespace is refused, the behaviour case runs nothing that signals and passes with a line naming the skip. *Verify:* `scheduler/kill-own.test.sh`, and a recorded local run in the PR in which its namespace case ran (not skipped), made in the node's quick gate before any S06 file runs with the new cleanup lines.
+- **D14-AC-2** — Inside a user and pid namespace of its own, the guarded kill of `scheduler/testdata/lib/kill-own.sh`, given pid files holding `1`, nothing, a non-number, the pid of a sentinel (a group leader of its own) whose command line does not name the scratch folder, and the pid of a group leader whose command line names `<folder>/`, signals only that group (the group and its leader are gone, the sentinel and its group still run); given the group leader's pid file with a scratch folder that is empty, `/`, one whose canonical form is `/`, not absolute or not an existing directory, each named on the leader's command line followed by `/` (an argument holding `//` for `/` and for a canonical `/`, a path under the missing folder, a path holding the relative folder; the namespace's pid 1 names `<folder>/` and the relative folder exists from the guard's working directory), it signals nothing; `kill_own_ok` gives the same answers for the same inputs; given the folder through a symlink while the leader names the canonical path, it kills the group; a sibling `<folder>x` on a command line does not match; the four `loop-s06*` cleanup lines kill their `pg.*` and `pg2.*` values only through a call to `kill-own.sh`, and the S04 fake its `$PPID` only through a call to `kill_own_ok` with `${S04%/*}`, the scratch folder that holds `$S04`, not `$S04`; where the namespace is refused, the behaviour case runs nothing that signals and passes with a line naming the skip. *Verify:* `scheduler/kill-own.test.sh`, and a recorded local run in the PR in which its namespace case ran (not skipped), made in the node's quick gate before any S06 file runs with the new cleanup lines.
 - **D14-AC-3** — `scheduler/scratch-guard.test.sh`'s mktemp case reports by `file:line` an unguarded fixture line of each form of change 3 (quoted, backtick, spaced `$( … )`, `--directory`, `-d` after other options, `-d` inside combined short options where it is not first, and with `local` or `export`) and does not report the guarded twin of each; every such line in the `Makefile`'s `TESTS` files and `scheduler/testdata/lib/*.sh` is guarded. Accepting a guarded `local` or `export` line widens the literal form D12-AC-1 names (`<var>=$(mktemp -d …) && …`) and loosens no check. *Verify:* `scheduler/scratch-guard.test.sh`.
 - **D14-AC-4** — In the namespace case, a probe run as the driver runs a test file, with fake values of `NOODLEBOT_FORGE`, `GH_TOKEN`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` set on the namespace's command, has in its environment only `PATH`, `HOME`, `TMPDIR`, D11's `NBRT_<pid>` mark and the variables the shell sets itself (`PWD`, and for a file run with `bash` also `SHLVL` and `_`), and sees only the `lo` interface in `/proc/net/dev`; where the namespace with `--net` is refused, the case runs no file and passes with a line naming the skip. *Verify:* `scheduler/scratch-guard.test.sh`, and a recorded local run in the PR in which the namespace case ran (not skipped).
 - **D14-AC-5** — A stand-in last file that sends TERM to the sentinel just after the sentinel starts a new tick (a new `sleep` child of the sentinel in `/proc`), and then exits at once, has that TERM recorded and the case reports it; the case fails on D12's driver (the RED run records a failing run; on the base it fails in most runs, not every run, as the driver's poll phase is not fixed); the late-signal case run alone with the argument `late` (`sh <file> late`, not the whole namespace run) passes in 20 consecutive local runs in which the namespace was made, recorded in the PR; where the namespace is refused, the case runs nothing and passes with a line naming the skip. *Verify:* `scheduler/scratch-guard.test.sh` (or the `scratch-guard-*.test.sh` it moves to), the RED run, and the PR's record of the 20 runs.
 - **D14-AC-6** — With `TMPDIR` set to a path through a symlink, or holding `..`, to a folder where the namespace case runs with the canonical path, `scheduler/scratch-guard.test.sh`'s namespace case runs (it is not skipped) and passes; the canonical path is taken with its own guard before the trap is set; a skip line names the check that failed, never "driver did not start" for a driver that started. *Verify:* a recorded local run in the PR with each such `TMPDIR`, and the fresh reviewer's reading of the skip lines.
-- **D14-AC-7** — The only existing lines changed under the frozen test paths are those **Owns** names, each changed only as it says: the four `loop-s06*` cleanup lines, one source line in `scheduler/testdata/lib/loop-s06.sh`, `scheduler/loop-s04.test.sh:71`, lines the wider scan finds unguarded (gaining only D12's guard) and the lines of `scheduler/scratch-guard.test.sh` that changes 3-6 name, with no check of that file loosened and every `PASS:` name of the base still printed but the two skip lines, which may be reworded; `AGENTS.md`'s Traps bullet has the sentence of change 7, with its exception for the make recipes of `scheduler/deploy.test.sh`; every case that passes on the base passes on the head; `scheduler/kill-own.test.sh`, any new `scratch-guard-*.test.sh` and `scheduler/scratch-guard.test.sh` stay under `TEST_FILE_BUDGET`, and the S04 and S06 files changed only by a cleanup or fake line gain no wait, sleep or retry (`kill-own.sh` and the S04 check only read `/proc` and signal). *Verify:* the fresh reviewer's check of `git diff <base>..HEAD` and reading of `kill-own.sh` and the changed lines, recorded in the PR, and the PR's CI run.
+- **D14-AC-7** — The only existing lines changed under the frozen test paths are those **Owns** names, each changed only as it says: the four `loop-s06*` cleanup lines, one source line in `scheduler/testdata/lib/loop-s06.sh`, the `S04_LIB` line added to `scheduler/testdata/lib/loop-s04.sh`, `scheduler/loop-s04.test.sh:71`, lines the wider scan finds unguarded (gaining only D12's guard) and the lines of `scheduler/scratch-guard.test.sh` that changes 3-6 name, with no check of that file loosened and every `PASS:` name of the base still printed but the two skip lines, which may be reworded; `AGENTS.md`'s Traps bullet has the sentence of change 7, with its exception for the make recipes of `scheduler/deploy.test.sh`; every case that passes on the base passes on the head; `scheduler/kill-own.test.sh`, any new `scratch-guard-*.test.sh` and `scheduler/scratch-guard.test.sh` stay under `TEST_FILE_BUDGET`, and the S04 and S06 files changed only by a cleanup or fake line gain no wait, sleep or retry (`kill-own.sh`, which the S04 fake also calls, only reads `/proc` and signals). *Verify:* the fresh reviewer's check of `git diff <base>..HEAD` and reading of `kill-own.sh` and the changed lines, recorded in the PR, and the PR's CI run.
 
 ## Risks
 - The guarded kill skips a group whose leader has already ended, so a fake's leftover processes are no longer killed
@@ -152,8 +157,9 @@ canonical turning the namespace case into a skip with a misleading reason.
   `run-session.sh` under the scratch folder, canonical as `loop.sh` and `loop-s06-main.sh` make it); a fixture that
   starts its session from outside the scratch folder would make the guard skip its kill, which the S06 cases would
   show as a leftover group, not a wrong pass.
-- `scheduler/loop-s06-later.test.sh` is near the 60 s `TEST_FILE_BUDGET` that PR runs enforce (61.74 s on CI run
-  44395308749, 47.83 s on run 44398778243, same code), and the node's PR changes its cleanup line. A red `SLOW:` line
-  for an S06 file is rerun, and recorded as unrelated when the file's diff is only the cleanup line.
+- `scheduler/loop-s06-later.test.sh` and the total are near or over the budgets that PR runs enforce (63.35 s and
+  421.39 s on CI run 44402594016; issue #190 measures the S06 pair at 56-77 s), and the node's PR changes that file's
+  cleanup line. A red run whose only failures are `SLOW:` lines (an S06 file or the total), with no `FAIL:` line, is
+  recorded as unrelated when the S06 files' diff is only the cleanup line, until issue #190 sets the budgets.
 - A node built at the same time that adds a test file with an unguarded `mktemp -d` line of one of the new forms
   fails the mktemp case once both are on `main`; the node that merges second guards that line, as `AGENTS.md` says.
