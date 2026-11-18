@@ -42,6 +42,11 @@ sendsig() {
 	done
 	return 0
 }
+# _grp <groups>: true when one of the process groups still has members.
+_grp() {
+	for _y in $1; do kill -s 0 -- "-$_y" 2>/dev/null && return 0; done
+	return 1
+}
 # reap <n|all>: stops what is left of file n (or of all files): its marked processes and its group. TERM, then
 # KILL for what is still there after 3 s; waits only when something was signalled.
 reap() {
@@ -56,7 +61,7 @@ reap() {
 	[ -n "$_p$_g" ] || return 0
 	sendsig TERM
 	_i=0
-	while [ "$_i" -lt 30 ] && [ -n "$(marked "$1")" ]; do sleep 0.1; _i=$((_i + 1)); done
+	while [ "$_i" -lt 30 ] && { [ -n "$(marked "$1")" ] || _grp "$_g"; }; do sleep 0.1; _i=$((_i + 1)); done
 	_p=$(marked "$1")
 	sendsig KILL
 }
@@ -78,10 +83,11 @@ elapsed() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.2f", b - a }'; }
 work() {
 	case $(basename "$2") in loop.test.sh) sh=bash ;; *) sh=sh ;; esac
 	s=$(now)
-	env "NBRT_$$=$1" setsid -w sh -c 'echo $$ >"$0"; exec "$@"' "$tmp/$1.pg" "$sh" "$2" >"$tmp/$1.out" 2>&1 </dev/null
+	env -u NB_TEST_SHELL "NBRT_$$=$1" setsid -w sh -c 'echo $$ >"$0"; exec "$@"' "$tmp/$1.pg" "$sh" "$2" >"$tmp/$1.out" 2>&1 </dev/null
 	echo $? >"$tmp/$1.rc"
 	elapsed "$s" "$(now)" >"$tmp/$1.time"
 	reap "$1"
+	rm -f "$tmp/$1.pg"
 	: >"$tmp/$1.done"
 }
 
