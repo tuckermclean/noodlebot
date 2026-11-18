@@ -305,5 +305,32 @@ ok "D06-AC-11:stop-owner:api-server-stopped" has '^api: server stopped' "$sc/out
 ok "D06-AC-11:stop-owner:api-server-process-gone" sh -c "! kill -0 '${apid2:-0}' 2>/dev/null"
 unset NOODLEBOT_PROC_LOCKS LOOPS_STOP_WAIT
 
+echo "# M02-AC-2: held() re-reads the lock list before it says a lock is free (a read that misses a held lock's line)"
+scenario m02-reread
+: >"$data/state/alpha/loop.lock"
+python3 -I "$tmp/fab.py" "$data/state/alpha/loop.lock" >"$sc/with-line"
+sed 's/:[0-9]* 0 EOF/:999999999 0 EOF/' "$sc/with-line" >"$sc/without-line"
+mkfifo "$sc/locks.fifo"
+# a writer serving the FIFO one list per open, alternately: the first without the line, the next with it. After each
+# list it waits a second before it opens again: an open while the last reader is still there would add the next
+# list to that read (two lists in one read), where each open must see one.
+cat >"$sc/serve.sh" <<'EOT'
+#!/bin/sh
+while :; do
+	cat "$1" >"$3"; sleep 1
+	cat "$2" >"$3"; sleep 1
+done
+EOT
+setsid sh "$sc/serve.sh" "$sc/without-line" "$sc/with-line" "$sc/locks.fifo" >/dev/null 2>&1 </dev/null &
+m02_writer=$!
+export NOODLEBOT_PROC_LOCKS=$sc/locks.fifo
+ok "M02-AC-2:held-rereads:control-no-lock-is-really-held" flock -n "$data/state/alpha/loop.lock" true
+loops status
+ok "M02-AC-2:held-rereads:status-ends-normally" rc_is 0
+ok "M02-AC-2:held-rereads:status-says-loop-running-though-the-first-read-misses-the-line" has 'o/alpha: loop running' "$sc/out"
+no "M02-AC-2:held-rereads:status-not-loop-not-running" has 'o/alpha: loop not running' "$sc/out"
+kill "$m02_writer" 2>/dev/null; pkill -f "$sc/serve.sh" 2>/dev/null
+unset NOODLEBOT_PROC_LOCKS
+
 [ "$fails" = 0 ] || { echo "$fails FAILED"; exit 1; }
 echo "all passed"

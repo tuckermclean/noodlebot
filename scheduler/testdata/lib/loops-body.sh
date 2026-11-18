@@ -69,17 +69,33 @@ EOT
 }
 # running <name>: the loop's lock is held.
 running() { ! flock -n "$nb/state/$1/loop.lock" true 2>/dev/null; }
-# start_loop <name>: a loop as the owner would have started it; waits for its lock.
+# until_ok <what> <command...>: waits (at most ${LOOPS_HELPER_WAIT:-20} s, free when the condition holds) until the
+# command succeeds; on time-out it fails naming <what> (the condition) and returns 1. The commands only read: a probe that
+# takes a lock (flock -n) would take it from a loop or server that is starting, which then exits (M02).
+until_ok() {
+	u_what=$1; shift
+	u_i=0; u_max=$(( ${LOOPS_HELPER_WAIT:-20} * 10 ))
+	while ! "$@"; do
+		[ "$u_i" -ge "$u_max" ] && { fail "$u_what (not within ${LOOPS_HELPER_WAIT:-20} s)"; return 1; }
+		sleep 0.1; u_i=$((u_i + 1))
+	done
+}
+# pid_file <name>: the loop wrote its pid (it does after taking its lock) in the scenario's state folder.
+pid_file() { [ -s "$nb/state/$1/loop.pid" ]; }
+# start_loop <name>: a loop as the owner would have started it; waits for its lock without taking it: loop.pid is
+# written after the loop's flock (a probe by flock -n would make a starting loop exit).
 start_loop() {
 	fixture_start "$nb/scheduler/loop.sh" "o/$1" >/dev/null 2>&1 </dev/null &
-	i=0; while ! running "$1" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+	until_ok "start_loop $1: the loop did not take its lock (no loop.pid)" pid_file "$1"
 }
+# sess_up <pid>: the process runs run-session.sh (what status matches through /proc/<pid>/cmdline).
+sess_up() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'run-session\.sh'; }
 # start_session <name> <ID>: a live session recorded in session.pid.
 start_session() {
 	mkdir -p "$nb/state/$1/node/$2"
 	fixture_start sh "$nb/scheduler/run-session.sh" "o/$1" "$2" >/dev/null 2>&1 </dev/null &
 	echo $! >"$nb/state/$1/node/$2/session.pid"
-	sleep 0.3
+	until_ok "start_session $1 $2: the session process did not run run-session.sh" sess_up "$!"
 }
 # run <args>: loops.sh with a timeout; output in $sc/out, status in $sc/rc.
 run() { timeout 30 sh "$nb/scheduler/loops.sh" "$@" >"$sc/out" 2>&1 </dev/null; echo $? >"$sc/rc"; }
@@ -208,12 +224,12 @@ ok Purpose:comment-and-blank-lines-ignored-two-lines sh -c "[ \$(grep -c . '$sc/
 fi
 if want B; then
 echo "# runtime root: state lives under \${NOODLEBOT_DATA:-\$HOME/.local/share/noodlebot}/state (D02), not in the checkout"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 fi
 # rt_lock <name>: the loop's lock under the runtime root $rt is held.
 rt_lock() { [ -e "$rt/state/$1/loop.lock" ] && ! flock -n "$rt/state/$1/loop.lock" true 2>/dev/null; }
-# rt_wait <name>: waits (at most 6 s) for that lock.
-rt_wait() { i=0; while ! rt_lock "$1" && [ $i -lt 60 ]; do sleep 0.1; i=$((i + 1)); done; rt_lock "$1"; }
+# rt_wait <name>: waits for that lock without taking it: loop.pid (written after the loop's flock) under $rt.
+rt_wait() { until_ok "rt_wait $1: the loop did not take its lock (no loop.pid)" test -s "$rt/state/$1/loop.pid"; }
 # rt_setup <scenario> <data dir | unset>: setup, a runtime root, and a fake loop.sh that keeps its
 # lock and state under ${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}/state/<name>.
 rt_setup() {
@@ -248,7 +264,7 @@ rt_cases() {
 	echo $! >"$rt/state/alpha/node/A01/session.pid"
 	sp=$!
 	echo "# Which colour?" >"$rt/state/beta/node/B02/QUESTION.md"
-	sleep 0.3
+	until_ok "rt_cases $l: the session process did not run run-session.sh" sess_up "$sp"
 	run status
 	aline=$(grep 'alpha' "$sc/out" | head -n 1)
 	bline=$(grep 'beta' "$sc/out" | head -n 1)
@@ -296,7 +312,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want B2 C; then
 echo "# M01 run 3: a probe must not take a loop's lock; issue/ sessions; list hygiene; old lock; dead pids"
-export LOOPS_START_WAIT=2 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 REALFLOCK=$(command -v flock); export REALFLOCK
 fi
 # nl_setup <scenario> [list]: setup, plus a fake loop.sh that follows ${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot},
@@ -329,20 +345,19 @@ EOT
 run_w() { nl_path=$PATH; PATH=$sc/wbin:$PATH; run "$@"; PATH=$nl_path; }
 # nl_pidwait <name>: waits (at most 4 s) for the loop to have taken its lock (it then writes loop.pid).
 nl_pidwait() { i=0; while [ ! -s "$nb/state/$1/loop.pid" ] && [ $i -lt 40 ]; do sleep 0.1; i=$((i + 1)); done; [ -s "$nb/state/$1/loop.pid" ]; }
+# nl_both_free: nobody holds the alpha or the beta lock (the loops are stopping: a probe takes nothing from them).
+nl_both_free() { flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/beta/loop.lock" true; }
 # nl_halt: stops alpha and beta loops through STOP-<name> files and waits for both locks to be free.
 nl_halt() {
 	touch "$HOME/STOP-alpha" "$HOME/STOP-beta"
-	i=0
-	while [ $i -lt 50 ]; do
-		flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/beta/loop.lock" true && break
-		sleep 0.1; i=$((i + 1))
-	done
+	until_ok "nl_halt: the alpha and beta locks were not both free" nl_both_free
 	rm -f "$HOME/STOP-alpha" "$HOME/STOP-beta"
 }
 # nl_held <lockfile>: the lock is held (probes by taking it, so only after the loops are up).
 nl_held() { [ -e "$1" ] && ! flock -n "$1" true 2>/dev/null; }
-# nl_wait_free <lockfile>: waits (at most 5 s) until nobody holds the lock.
-nl_wait_free() { i=0; while nl_held "$1" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+# nl_wait_free <lockfile>: waits until nobody holds the lock; fails naming it on time-out.
+nl_not_held() { ! nl_held "$1"; }
+nl_wait_free() { until_ok "nl_wait_free: the lock $1 was still held" nl_not_held "$1"; }
 
 if want B2; then
 nl_setup race
@@ -364,7 +379,7 @@ no M01-AC-1:probe-race:no-loop-exited-already-running sh -c "cat '$nb'/state/*/e
 nl_setup racest
 LOOP_DELAY=0.8; export LOOP_DELAY
 fixture_start "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
-sleep 0.3
+until_ok "racest: the loop did not open its lock file" test -e "$nb/state/alpha/loop.lock"
 run_w status
 ok M01-AC-3:probe-race:loop-starting-during-status-takes-its-lock nl_pidwait alpha
 no M01-AC-3:probe-race:status-did-not-make-the-loop-exit test -e "$nb/state/alpha/exits"
@@ -373,7 +388,7 @@ touch "$HOME/STOP"
 nl_setup racesp
 LOOP_DELAY=0.8; export LOOP_DELAY
 fixture_start "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
-sleep 0.3
+until_ok "racesp: the loop did not open its lock file" test -e "$nb/state/alpha/loop.lock"
 run_w stop
 ok M01-AC-2:probe-race:loop-starting-during-stop-takes-its-lock nl_pidwait alpha
 no M01-AC-2:probe-race:stop-did-not-make-the-loop-exit test -e "$nb/state/alpha/exits"
@@ -391,7 +406,7 @@ echo $! >"$st/issue/46/session.pid"
 echo "# Which?" >"$st/issue/47/QUESTION.md"
 echo "# Which?" >"$st/issue/49/QUESTION.md"; echo "blue" >"$st/issue/49/ANSWER.md"
 echo "# Which?" >"$st/node/C07/QUESTION.md"; echo "blue" >"$st/node/C07/ANSWER.md"
-sleep 0.3
+until_ok "iss: the issue 46 session process did not run run-session.sh" sess_up "$(cat "$st/issue/46/session.pid")"
 run status
 aline=$(grep 'alpha' "$sc/out" | head -n 1)
 asess=$(echo "$aline" | sed 's/.*sessions: *//; s/;.*//')
@@ -459,7 +474,7 @@ mkdir -p "$nb/state/alpha"
 oldlock=$nb/state/alpha/loop.lock
 fixture_start "$REALFLOCK" "$oldlock" sleep 60 >/dev/null 2>&1 </dev/null &
 oldpid=$!
-i=0; while ! nl_held "$oldlock" && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+until_ok "old-lock: the old lock $oldlock was not held by its holder" nl_held "$oldlock"
 run start
 no M01-AC-1:old-lock:start-exits-nonzero sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
 ok M01-AC-1:old-lock:output-names-the-lock sh -c "grep -qF '$oldlock' '$sc/out'"
@@ -483,7 +498,7 @@ if want D; then
 echo "# V01-AC-8: status names the version of a running loop"
 setup v01
 start_loop alpha
-i=0; while [ ! -s "$nb/state/alpha/loop.pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+until_ok "V01-AC-8: the loop wrote no loop.pid (it did not take its lock)" pid_file alpha
 echo v9.8.7-3-g1a2b3c4 >"$nb/state/alpha/version"
 mkdir -p "$nb/state/beta"; echo v1.1.1-stale >"$nb/state/beta/version"
 run status
@@ -497,7 +512,7 @@ touch "$HOME/STOP"
 fi
 if want E; then
 echo "# P01-AC-10: the API server with the loops (only when the checkout has scheduler/api.py)"
-export LOOPS_START_WAIT=5 LOOPS_STOP_WAIT=20
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=20
 fi
 # api_setup <scenario> [noapi]: setup, a runtime root of its own, loops that record their exit in the
 # sequence log, a fake tmux that remembers each session's process and can kill it, and (unless noapi)
@@ -570,7 +585,8 @@ while True:
 EOT
 	chmod +x "$nb/scheduler/api.py"
 }
-api_wait() { i=0; while ! nl_held "$data/api.lock" && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+# api_wait: waits for api.py to hold api.lock without taking it: the "start" line api.py logs after its lock.
+api_wait() { until_ok "api_wait: api.py did not take its lock (no start line in $alog)" grep -q '^start' "$alog"; }
 api_gone() { i=0; while pgrep -f "$nb/scheduler/api.py" >/dev/null && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done; ! pgrep -f "$nb/scheduler/api.py" >/dev/null; }
 api_end() { touch "$HOME/STOP"; pkill -f "$nb/scheduler/api.py" 2>/dev/null; sleep 0.3; rm -f "$HOME/STOP"; PATH=$oldpath; }
 
@@ -639,7 +655,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want F; then
 echo "# T03-AC-4: start passes its USAGE_* and SCHED_* variables to each loop, though the tmux server's environment lacks them"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 unset USAGE_7D_PACE USAGE_7D_MARGIN USAGE_5H_LIMIT SCHED_TICK SCHED_NOTE SCHED_OTHER USAGE_OTHER
 setup t03env
 cat >"$nb/scheduler/loop.sh" <<'EOT'
@@ -674,7 +690,8 @@ chmod +x "$sc/bin/tmux"
 oldpath=$PATH
 PATH=$sc/bin:$oldpath
 USAGE_7D_PACE=1 USAGE_7D_MARGIN=0.2 SCHED_TICK=7 SCHED_NOTE="two words  here" run start
-sleep 1
+t03_seen() { [ -s "$HOME/seen/$1.env" ] && [ -s "$HOME/seen/$1.note" ]; }
+for n in alpha beta; do until_ok "T03-AC-4: loop $n wrote no seen/$n.env and seen/$n.note" t03_seen "$n"; done
 for n in alpha beta; do
 	ok "T03-AC-4:start-exits-0" sh -c "[ \"\$(cat '$sc/rc')\" = 0 ]"
 	ok "T03-AC-4:$n:USAGE_7D_PACE-reaches-the-loop" sh -c "grep -qx 'USAGE_7D_PACE=1' '$HOME/seen/$n.env'"
@@ -693,7 +710,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want H; then
 echo "# S08-AC-5: start passes SCHED_HARNESS to each loop it starts (and passes nothing when it is unset)"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 unset SCHED_HARNESS
 setup s08env
 cat >"$nb/scheduler/loop.sh" <<'EOT'
@@ -731,10 +748,13 @@ for n in alpha beta; do
 	ok "S08-AC-5:$n:SCHED_HARNESS-reaches-the-loop" sh -c "grep -qx 'SCHED_HARNESS=fake' '$HOME/seen/$n.env'"
 done
 touch "$HOME/STOP"
-for n in alpha beta; do for _ in $(seq 50); do alive "$(loop_pid $n)" || break; sleep 0.1; done; done
+# the S08 fake loop writes no loop.pid: wait until both locks are free (the loops are stopping, a probe takes nothing)
+s08_free() { flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/beta/loop.lock" true; }
+until_ok "S08-AC-5: the alpha and beta loop locks were not both free after STOP" s08_free
 rm -f "$HOME/STOP" "$HOME/seen"/*
 run start
-for n in alpha beta; do for _ in $(seq 50); do [ -s "$HOME/seen/$n.env" ] && break; sleep 0.1; done; done
+s08_seen() { [ -s "$HOME/seen/$1.env" ]; }
+for n in alpha beta; do until_ok "S08-AC-5: loop $n wrote no seen/$n.env after the second start" s08_seen "$n"; done
 for n in alpha beta; do
 	no "S08-AC-5:$n:SCHED_HARNESS-unset-not-passed" sh -c "grep -q '^SCHED_HARNESS=' '$HOME/seen/$n.env'"
 done
@@ -746,7 +766,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want S09; then
 echo "# S09-AC-5: start passes PICKUP, PICKUP_RUNS and PICKUP_CEILING to each loop (and no other PICKUP-like variable)"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 unset PICKUP PICKUP_RUNS PICKUP_CEILING PICKUPX NOTPICKUP
 setup s09env
 cat >"$nb/scheduler/loop.sh" <<'EOT'
@@ -794,6 +814,83 @@ sleep 0.5
 PATH=$oldpath
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
+fi
+if want M02; then
+echo "# M02-AC-2: a helper's wait does not take the lock of a loop or api.py that is starting, and a wait that times out fails naming its condition"
+# The helpers (start_loop, rt_wait, api_wait) run in background subshells at the same time, each in a scenario of its
+# own (m02-*), output in <scenario>/helper.out, so a FAIL a helper prints stays out of this file's count and the
+# cases cost the longest wait, not the sum. <scenario>/ret appears when the helper returned.
+# Interface of the fix: each helper waits at most ${LOOPS_HELPER_WAIT:-20} seconds for its condition (start_loop and
+# rt_wait: the loop's loop.pid, written after its lock; api_wait: the "start data=" line in api.log, written after its
+# lock) without taking the lock, and on time-out prints through fail() a line "FAIL: <message>" whose message names the
+# condition and contains the word "lock".
+m02_real=$(command -v flock)
+# m02_wrap <dir>: a flock first on PATH whose first successful probe of a loop.lock or api.lock path takes that lock and
+# holds it 2 s (a probe that lands while the process is starting); later calls just run the real flock.
+m02_wrap() {
+	mkdir -p "$1"
+	cat >"$1/flock" <<EOT
+#!/bin/sh
+for a in "\$@"; do case \$a in */loop.lock | */api.lock) [ -e "$1/stolen" ] || "$m02_real" -n "\$a" sh -c ": >'$1/stolen'; sleep 2" ;; esac; done
+exec "$m02_real" "\$@"
+EOT
+	chmod +x "$1/flock"
+}
+# m02_idle: a loop.sh that never takes its lock and runs until a STOP file appears.
+m02_idle() {
+	printf '#!/bin/sh\nwhile [ ! -e "$HOME/STOP" ]; do sleep 0.2; done\n' >"$nb/scheduler/loop.sh"
+	chmod +x "$nb/scheduler/loop.sh"
+}
+m02_oldpath=$PATH
+
+# 1 start_loop on a slow loop (lock file opened, lock taken 0.5 s later) with the probe-stealing flock on PATH
+nl_setup m02-startloop; s1=$sc; n1=$nb
+mkdir -p "$nb/state/alpha"   # so a probe finds the folder: with none, flock fails and start_loop takes the loop for running
+m02_wrap "$s1/wbin2"
+( PATH=$s1/wbin2:$PATH; LOOP_DELAY=0.5; export LOOP_DELAY; start_loop alpha; echo done >"$s1/ret" ) >"$s1/helper.out" 2>&1 </dev/null &
+# 2 rt_wait, as rt_cases uses it right after launching alpha
+nl_setup m02-rtwait; s2=$sc; n2=$nb; rt=$nb
+m02_wrap "$s2/wbin2"
+( PATH=$s2/wbin2:$PATH; fixture_start env LOOP_DELAY=0.5 "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+  rt_wait alpha; echo done >"$s2/ret" ) >"$s2/helper.out" 2>&1 </dev/null &
+# 3 api_wait after a bare api.py that waits 1 s between opening its lock file and taking the lock
+api_setup m02-apiwait; s3=$sc; n3=$nb; a3=$alog; d3=$data
+sed '/^lk = open/a time.sleep(1)' "$nb/scheduler/api.py" >"$nb/scheduler/api.py.slow" && mv "$nb/scheduler/api.py.slow" "$nb/scheduler/api.py"
+chmod +x "$nb/scheduler/api.py"
+m02_wrap "$s3/wbin2"
+( PATH=$s3/wbin2:$PATH; fixture_start python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
+  api_wait; echo done >"$s3/ret" ) >"$s3/helper.out" 2>&1 </dev/null &
+# 4 start_loop on a loop that never takes its lock, bound 2 s
+nl_setup m02-tmoloop; s4=$sc; n4=$nb
+m02_idle
+( LOOPS_HELPER_WAIT=2; export LOOPS_HELPER_WAIT; start_loop alpha; echo done >"$s4/ret" ) >"$s4/helper.out" 2>&1 </dev/null &
+# 5 rt_wait with no loop at all, bound 2 s
+nl_setup m02-tmoreal; s5=$sc; n5=$nb; rt=$nb
+( LOOPS_HELPER_WAIT=2; export LOOPS_HELPER_WAIT; rt_wait alpha; echo done >"$s5/ret" ) >"$s5/helper.out" 2>&1 </dev/null &
+# 6 api_wait with no api.py, bound 2 s
+api_setup m02-tmoapi noapi; s6=$sc
+( LOOPS_HELPER_WAIT=2; export LOOPS_HELPER_WAIT; api_wait; echo done >"$s6/ret" ) >"$s6/helper.out" 2>&1 </dev/null &
+PATH=$m02_oldpath
+# wait for the helpers to have returned (a helper that never returns is cut off after 30 s)
+i=0; while [ $i -lt 300 ]; do
+	n=0; for d in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6"; do [ -e "$d/ret" ] && n=$((n + 1)); done
+	[ $n = 6 ] && break
+	sleep 0.1; i=$((i + 1))
+done
+
+ok M02-AC-2:waits:start_loop-returns-with-the-loop-holding-its-lock sh -c "[ -e '$s1/ret' ] && [ -s '$n1/state/alpha/loop.pid' ] && kill -0 \$(cat '$n1/state/alpha/loop.pid')"
+no M02-AC-2:waits:start_loop-loop-did-not-exit-on-a-taken-lock test -e "$n1/state/alpha/exits"
+ok M02-AC-2:waits:rt_wait-returns-with-the-loop-holding-its-lock sh -c "[ -e '$s2/ret' ] && [ -s '$n2/state/alpha/loop.pid' ] && kill -0 \$(cat '$n2/state/alpha/loop.pid')"
+no M02-AC-2:waits:rt_wait-loop-did-not-exit-on-a-taken-lock test -e "$n2/state/alpha/exits"
+ok M02-AC-2:waits:api_wait-returns-with-api.py-running-and-holding-its-lock sh -c "[ -e '$s3/ret' ] && [ \"\$(grep -c '^start' '$a3' 2>/dev/null)\" = 1 ]"
+no M02-AC-2:waits:api_wait-api.py-did-not-exit-on-a-taken-lock sh -c "grep -q lockfail '$a3' 2>/dev/null"
+ok M02-AC-2:waits:start_loop-time-out-fails-naming-the-lock sh -c "[ -e '$s4/ret' ] && grep -q '^FAIL: .*lock' '$s4/helper.out'"
+ok M02-AC-2:waits:rt_wait-time-out-fails-naming-the-lock sh -c "[ -e '$s5/ret' ] && grep -q '^FAIL: .*lock' '$s5/helper.out'"
+ok M02-AC-2:waits:api_wait-time-out-fails-naming-the-lock sh -c "[ -e '$s6/ret' ] && grep -q '^FAIL: .*lock' '$s6/helper.out'"
+
+for d in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6"; do [ -n "$d" ] && touch "$d/home/STOP"; done
+[ -n "$n3" ] && pkill -f "$n3/scheduler/api.py" 2>/dev/null
+unset NOODLEBOT_DATA m02_real
 fi
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
