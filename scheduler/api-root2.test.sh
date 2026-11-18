@@ -5,7 +5,7 @@
 # api.test.sh holds the rest; the helpers are in testdata/lib/api-common.sh. The two run at the same time.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 . "$src/testdata/lib/api-common.sh"
 
 data=$tmp/data home=$tmp/home

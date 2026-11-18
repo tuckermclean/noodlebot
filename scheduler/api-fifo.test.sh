@@ -6,7 +6,7 @@
 # (a FAIL line on a finding; the PASS lines of those are printed by api-events.test.sh).
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 . "$src/testdata/lib/api-common.sh"
 . "$src/testdata/lib/api-setup.sh"
 up=0

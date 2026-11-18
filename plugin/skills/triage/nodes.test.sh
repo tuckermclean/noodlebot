@@ -3,7 +3,7 @@
 #   sh plugin/skills/triage/nodes.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 ok() { echo "PASS: $1"; }

@@ -3,7 +3,7 @@
 #   sh plugin/skills/node/check-regime.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 # fixture: X01 (no deps) and X02 (deps X01)
