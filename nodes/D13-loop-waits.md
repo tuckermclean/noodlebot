@@ -52,13 +52,15 @@ the loop reads so that no tick sees it half done, without loosening any check.
    - G01-AC-6 (44037857263 attempt 2; again in PR #189's run 44395308749): the loop started 07:30:51, its first start
      of PR #107 came at 07:30:59 and its limit end at 07:31:02, and no second start came before the `waitf 12` of
      line 14, which starts with the loop, ran out; the later G01-AC-6 checks passed;
-   - S01-AC-1 (44037857263 attempt 2): `s01ok` prints no status.log; the log has the `FAIL:` line of line 27 and
-     `TIME 41.68`.
+   - S01-AC-1 (44037857263 attempt 2): `s01ok` prints no status.log; the log has `TIME 41.68`, the `FAIL:` line of
+     line 27 and `PASS:` for the later S01-AC-1 checks of lines 28–35 (the child was dead within line 28's `waitf 2`).
 
-   Then, on the scheduler's machine, with one CPU-bound process per CPU running beside it (for example
-   `yes >/dev/null`, one per `nproc`), run the four files together, `make test TESTS="<the four files>"` with
-   `TEST_JOBS` at its default, at the node's base until one of the checks the Purpose lists fails, up to ten runs; if
-   none fails, up to ten more with two such processes per CPU. Each run's log goes under `out/node/D13/`. For each
+   Then, on the scheduler's machine, with the load kept to half its CPUs (at least one) so that other sessions keep
+   the rest: the four files and one CPU-bound process per pinned CPU run under one `taskset -c <those CPUs>`, each
+   load process bounded so that it cannot outlive its run (for example `timeout 900 yes >/dev/null`, killed when the
+   run ends). Run the four files together, `make test TESTS="<the four files>"` with `TEST_JOBS` at its default, at
+   the node's base until one of the checks the Purpose lists fails, up to ten runs; if none fails, up to ten more
+   with two such processes per pinned CPU. Each run's log goes under `out/node/D13/`. For each
    check that fails, the PR records the failing run's `FAIL:` line and what the case waited on that the load broke
    (which bound, which tick or start it assumed), from the loop's status log and heartbeat in that run (a run may log
    more, as D05's instrumented run did, in a scratch copy only). The read checks first the causes found before:
@@ -84,8 +86,9 @@ the loop reads so that no tick sees it half done, without loosening any check.
    no time and Change 1 records why the old one ran out. An existing helper or default in a shared fixture changes only
    where Change 1 names it as a cause, and then every test file that sources it keeps its `PASS:` lines. A fixed sleep
    or a wall-clock bound stays only where no condition can be observed, with a comment saying why. Each file stays
-   under `TEST_FILE_BUDGET` in an unloaded run (30 s) and in CI (60 s); the unloaded run's `TIME` lines of the four
-   files are recorded at the base and at the head, and the loaded runs of Change 4 record theirs.
+   under `TEST_FILE_BUDGET` in an unloaded run (30 s) and in CI (`test.yml`'s `TEST_FILE_BUDGET`, 60 s at this
+   spec's base); the unloaded run's `TIME` lines of the four files are recorded at the base and at the head, and the
+   loaded runs of Change 4 record theirs.
    *D13-AC-2, D13-AC-3.*
 3. **No check loosened.** No expected value, pattern, order, count, event text or check name changes; "order" here is
    the order a check expects (of starts, events or lines), not the order of a case's setup steps. A bound that only
@@ -93,20 +96,20 @@ the loop reads so that no tick sees it half done, without loosening any check.
    "gone within a tick" (`waitf 4`) may become a check in the loop's ticks (for example, the group is gone before the
    second heartbeat the loop writes after the PR is marked merged). *D13-AC-3.*
 4. **Show it holds.** At the head, ten consecutive runs of the four files under the heaviest load at which Change 1
-   saw a failure (one process per CPU when none was seen) pass with no `FAIL:` line, each run's log under
+   saw a failure (one process per pinned CPU when none was seen) pass with no `FAIL:` line, each run's log under
    `out/node/D13/` and its `TIME` lines in the PR; the files that source a fixture helper or default the node changed
    pass in the quick gate; CI passes on the PR. *D13-AC-2.*
 
 ## Gate
-- **D13-AC-1** — The PR records, for each check the Purpose lists that failed in the CI runs Change 1 names (from their logs, or Change 1's excerpts where a log cannot be fetched) or in the loaded runs at the node's base (Change 1's load, up to ten runs at one CPU-bound process per CPU and ten more at two), the failing `FAIL:` line and the cause: what the case waited on or set up and how the load broke it, with D05's loaded tick length, M02's give-up waits and G06-AC-2's two-step setup checked first. If the loaded runs show no failure of those checks, it records the twenty runs, and the node makes Change 2's changes for the causes the CI logs show and for the give-up waits and the bounds Change 1 names. *Verify:* the recorded runs, the saved CI logs (or the record that they could not be fetched) and the diagnosis table in the PR, checked by the fresh reviewer.
-- **D13-AC-2** — At the node's head, ten consecutive runs of the four files under Change 4's load pass with no `FAIL:` line, and each of the four files stays under `TEST_FILE_BUDGET` in an unloaded run (30 s) and in CI (60 s); every test file that sources a fixture helper or default the node changed passes; CI passes on the PR. *Verify:* the ten recorded runs (their `FAIL:` count and the four files' `TIME` lines), the unloaded run's and CI's `TIME` lines, the quick gate's output and the CI run URL, in the PR.
+- **D13-AC-1** — The PR records, for each check the Purpose lists that failed in the CI runs Change 1 names (from their logs, or Change 1's excerpts where a log cannot be fetched), and each check of the four files that failed in the loaded runs at the node's base (Change 1's load, up to ten runs at one CPU-bound process per pinned CPU and ten more at two), the failing `FAIL:` line and the cause: what the case waited on or set up and how the load broke it, with D05's loaded tick length, M02's give-up waits and G06-AC-2's two-step setup checked first. If the loaded runs show no failure of those checks, it records the twenty runs, and the node makes Change 2's changes for the causes the CI logs show and for the give-up waits and the bounds Change 1 names. *Verify:* the recorded runs, the saved CI logs (or the record that they could not be fetched) and the diagnosis table in the PR, checked by the fresh reviewer.
+- **D13-AC-2** — At the node's head, ten consecutive runs of the four files under Change 4's load pass with no `FAIL:` line, and each of the four files stays under `TEST_FILE_BUDGET` in an unloaded run (30 s) and in CI (`test.yml`'s `TEST_FILE_BUDGET`, 60 s at this spec's base); every test file that sources a fixture helper or default the node changed passes; CI passes on the PR. *Verify:* the ten recorded runs (their `FAIL:` count and the four files' `TIME` lines), the unloaded run's and CI's `TIME` lines, the quick gate's output and the CI run URL, in the PR.
 - **D13-AC-3** — The node changes the tests only as Changes 2 and 3 allow: every `PASS:` line of the four files, and of each file that sources a fixture helper or default the node changed, in a base run in which those files passed is the same `PASS:` line at the head; the checks that print only on failure (`loop-s01.test.sh` lines 40 and 43, `loop-g01-lim.test.sh` line 25) are unchanged but for their waits; no expected value, pattern, expected order, count or event text changes; a replaced bound checks the check's own words at least as strictly; no file outside **Owns** changes; each fixed sleep or wall-clock bound left in the waits the node touched has a comment saying why no condition can be observed. *Verify:* the fresh reviewer's check of `git diff <base>..HEAD` (the print-only-on-failure checks read in the diff), recorded in the PR with the sorted `PASS:` lines of a passing base run and a head run and their diff.
 
 ## Risks
 - The load a test can survive is not unlimited: a runner far busier than Change 1's load can still stretch a tick
-  past a bound. The recorded runs say what load was shown; the CI `TIME` lines of the runs in Change 1 and of a
-  passing run differ up to about 2.8× for the same file (`loop-g06-question.test.sh`: 15.45 s in a passing run,
-  43.44 s in 44023182252; `loop-s01.test.sh`: 29.14–43.00 s in the failing runs).
+  past a bound. The recorded runs say what load was shown; where a file passed, its CI `TIME` lines differ up to
+  about 1.9× (`loop-g06-question.test.sh`: 15.45 s in 44393713888, 29.67 s in 43994554527; `loop-s01.test.sh`:
+  23.62 s and 43.00 s in the same runs); a failing run adds its timed-out waits (G06's 43.44 s in 44023182252).
 - Running only the four files beside CPU-bound processes may not reproduce failures seen in a whole loaded
   `make test`; the CI logs Change 1 quotes cover that.
 - Other loop test files run their loops at `SCHED_TICK=1` with bounds in seconds too; they are not in this node's
@@ -114,9 +117,12 @@ the loop reads so that no tick sees it half done, without loosening any check.
 - A cause in the scheduler itself rather than in a test's wait or setup (the loop missing a start, say) is not this
   node's to fix: it is recorded with its evidence and put to the owner as a question.
 - Longer ticks or more waited ticks make the files slower; under load the files already took more than 30 s in CI
-  (whose budget is 60 s), so the budget is held in an unloaded run and in CI, and the loaded times are recorded.
-- CI on a PR also enforces the total (`TEST_BUDGET`, 360 s), which slow runners exceed with no test change (465.70 s on
-  this spec's own CI run); the node keeps the four files' added time to what the waits need, and a CI run that fails
-  only on other files' `SLOW` lines or the total is rerun, both run URLs recorded.
+  (whose `TEST_FILE_BUDGET` is 60 s at this spec's base), so the budget is held in an unloaded run and in CI, and the
+  loaded times are recorded.
+- CI on a PR also enforces the total (`test.yml`'s `TEST_BUDGET`, 360 s at this spec's base), which slow runners
+  exceed with no test change (465.70 s on this spec's own CI run); the node keeps the four files' added time to what
+  the waits need, and a CI run that fails only on other files' `SLOW` lines or the total is rerun, both run URLs
+  recorded; if the reruns keep failing only on those, the node records them and puts it to the owner as a question
+  (issue #190 covers CI's budgets).
 - A wait for a condition with a long timeout turns a broken loop into a failure at the timeout, so a failing run takes
   longer than a passing one.
