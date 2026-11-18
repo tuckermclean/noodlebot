@@ -155,5 +155,26 @@ ev "$s9/a/pickup/20261114T100000Z/session.jsonl" 0.20 $((now - 60)) 0.30 $r7 rej
 run9 $now
 if printf '%s' "$out" | grep -q '^open:'; then pass "S09-AC-2: a pickup reading past its reset no longer holds"; else fail "S09-AC-2: pickup reading past reset: $out"; fi
 
+
+# A07-AC-4: a running adoption session's usage readings (DIR/<repo>/adopt/<key>/session.jsonl: the scaffold, an area or the plan
+# unit) count in the windows like a node's or an issue's session. Scratch: $tmp/A07.
+unset USAGE_7D_PACE USAGE_7D_MARGIN USAGE_5H_LIMIT
+sa=$tmp/A07
+runa() { out=$(python3 -I "$src/usage.py" --state-root "$sa" --now "$1" 2>&1); rc=$?; }
+resa() { rm -rf "$sa"; mkdir -p "$sa"; }
+resa
+ev "$sa/a/adopt/scaffold/session.jsonl" 0.20 $r5 0.30 $r7 rejected
+runa $now
+if [ $rc = 0 ] && printf '%s' "$out" | grep -q '^hold: five-hour window rejected'; then pass "A07-AC-4: a rejected window logged only by an adoption session holds like a node's"; else fail "A07-AC-4: adoption rejected reading ignored (rc $rc): $out"; fi
+resa
+ev "$sa/a/adopt/one/session.jsonl" 0.40 $r5 0.30 $r7
+runa $now
+if printf '%s' "$out" | grep -q '^hold: 5-hour window projected'; then pass "A07-AC-4: a fast burn logged only by an area's adoption session is projected"; else fail "A07-AC-4: adoption burn ignored: $out"; fi
+resa
+ev "$sa/a/node/X01/session.jsonl" 0.05 $r5 0.30 $r7
+ev "$sa/b/adopt/plan/session.jsonl" 0.12 $r5 0.33 $r7
+runa $now
+if [ $rc = 0 ] && [ "$(python3 -I -c "import json; d=json.load(open('$sa/usage.json')); print(d['windows']['five_hour']['utilization'], d['windows']['seven_day']['utilization'])")" = "0.12 0.33" ]; then pass "A07-AC-4: an adoption session's reading is merged with a node session's across repositories (the highest wins, both windows)"; else fail "A07-AC-4: merged adoption reading: $out $(tr -d '\n ' <"$sa/usage.json" 2>&1)"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all usage checks"

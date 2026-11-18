@@ -4,7 +4,7 @@
   usage.py --state-root DIR [--now EPOCH]
 
 All repositories' sessions run on one account, so they share one budget: this reads every
-DIR/<repo>/{node,issue,pr}/* sessions whose log changed in the last 7 days and merges what it finds into
+DIR/<repo>/{node,issue,pr,adopt}/* sessions whose log changed in the last 7 days and merges what it finds into
 DIR/usage.json. Within a window usage only grows, so the current reading of a window is the highest
 utilization among the readings with the latest reset time; no timestamps are needed.
 
@@ -33,7 +33,7 @@ FIVE_H, WEEK = 5 * 3600, 7 * 86400
 def readings(root, now):
     """{window: {"resetsAt", "utilization", "status"}} from the sessions' usage events."""
     out = {}
-    pats = [os.path.join(root, "*", k, "*") for k in ("node", "issue", "pr", "pickup")]
+    pats = [os.path.join(root, "*", k, "*") for k in ("node", "issue", "pr", "pickup", "adopt")]
     for d in [d for p in pats for d in glob.glob(p)]:
         try:
             m = harness.log_stat(d).get("mtime")   # the raw log's age, not the events file's: the real clock
