@@ -789,5 +789,82 @@ PATH=$oldpath
 unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 
 fi
+if want M02; then
+echo "# M02-AC-2: a helper's wait does not take the lock of a loop or api.py that is starting, and a wait that times out fails naming its condition"
+# The helpers (start_loop, rt_wait, api_wait) run in background subshells at the same time, each in a scenario of its
+# own (m02-*), output in <scenario>/helper.out, so a FAIL a helper prints stays out of this file's count and the
+# cases cost the longest wait, not the sum. <scenario>/ret appears when the helper returned.
+# Interface of the fix: each helper waits at most ${LOOPS_HELPER_WAIT:-20} seconds for its condition (start_loop and
+# rt_wait: the loop's loop.pid, written after its lock; api_wait: the "start data=" line in api.log, written after its
+# lock) without taking the lock, and on time-out prints through fail() a line "FAIL: <message>" whose message names the
+# condition and contains the word "lock".
+m02_real=$(command -v flock)
+# m02_wrap <dir>: a flock first on PATH whose first successful probe of a loop.lock or api.lock path takes that lock and
+# holds it 2 s (a probe that lands while the process is starting); later calls just run the real flock.
+m02_wrap() {
+	mkdir -p "$1"
+	cat >"$1/flock" <<EOT
+#!/bin/sh
+for a in "\$@"; do case \$a in */loop.lock | */api.lock) [ -e "$1/stolen" ] || "$m02_real" -n "\$a" sh -c ": >'$1/stolen'; sleep 2" ;; esac; done
+exec "$m02_real" "\$@"
+EOT
+	chmod +x "$1/flock"
+}
+# m02_idle: a loop.sh that never takes its lock and runs until a STOP file appears.
+m02_idle() {
+	printf '#!/bin/sh\nwhile [ ! -e "$HOME/STOP" ]; do sleep 0.2; done\n' >"$nb/scheduler/loop.sh"
+	chmod +x "$nb/scheduler/loop.sh"
+}
+m02_oldpath=$PATH
+
+# 1 start_loop on a slow loop (lock file opened, lock taken 0.5 s later) with the probe-stealing flock on PATH
+nl_setup m02-startloop; s1=$sc; n1=$nb
+mkdir -p "$nb/state/alpha"   # so a probe finds the folder: with none, flock fails and start_loop takes the loop for running
+m02_wrap "$s1/wbin2"
+( PATH=$s1/wbin2:$PATH; LOOP_DELAY=0.5; export LOOP_DELAY; start_loop alpha; echo done >"$s1/ret" ) >"$s1/helper.out" 2>&1 </dev/null &
+# 2 rt_wait, as rt_cases uses it right after launching alpha
+nl_setup m02-rtwait; s2=$sc; n2=$nb; rt=$nb
+m02_wrap "$s2/wbin2"
+( PATH=$s2/wbin2:$PATH; LOOP_DELAY=0.5 setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+  rt_wait alpha; echo done >"$s2/ret" ) >"$s2/helper.out" 2>&1 </dev/null &
+# 3 api_wait after a bare api.py that waits 1 s between opening its lock file and taking the lock
+api_setup m02-apiwait; s3=$sc; n3=$nb; a3=$alog; d3=$data
+sed '/^lk = open/a time.sleep(1)' "$nb/scheduler/api.py" >"$nb/scheduler/api.py.slow" && mv "$nb/scheduler/api.py.slow" "$nb/scheduler/api.py"
+chmod +x "$nb/scheduler/api.py"
+m02_wrap "$s3/wbin2"
+( PATH=$s3/wbin2:$PATH; setsid python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
+  api_wait; echo done >"$s3/ret" ) >"$s3/helper.out" 2>&1 </dev/null &
+# 4 start_loop on a loop that never takes its lock, bound 2 s
+nl_setup m02-tmoloop; s4=$sc; n4=$nb
+m02_idle
+( LOOPS_HELPER_WAIT=2; export LOOPS_HELPER_WAIT; start_loop alpha; echo done >"$s4/ret" ) >"$s4/helper.out" 2>&1 </dev/null &
+# 5 rt_wait with no loop at all, bound 2 s
+nl_setup m02-tmoreal; s5=$sc; n5=$nb; rt=$nb
+( LOOPS_HELPER_WAIT=2; export LOOPS_HELPER_WAIT; rt_wait alpha; echo done >"$s5/ret" ) >"$s5/helper.out" 2>&1 </dev/null &
+# 6 api_wait with no api.py, bound 2 s
+api_setup m02-tmoapi noapi; s6=$sc
+( LOOPS_HELPER_WAIT=2; export LOOPS_HELPER_WAIT; api_wait; echo done >"$s6/ret" ) >"$s6/helper.out" 2>&1 </dev/null &
+PATH=$m02_oldpath
+# wait for the helpers to have returned (a helper that never returns is cut off after 30 s)
+i=0; while [ $i -lt 300 ]; do
+	n=0; for d in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6"; do [ -e "$d/ret" ] && n=$((n + 1)); done
+	[ $n = 6 ] && break
+	sleep 0.1; i=$((i + 1))
+done
+
+ok M02-AC-2:waits:start_loop-returns-with-the-loop-holding-its-lock sh -c "[ -e '$s1/ret' ] && [ -s '$n1/state/alpha/loop.pid' ] && kill -0 \$(cat '$n1/state/alpha/loop.pid')"
+no M02-AC-2:waits:start_loop-loop-did-not-exit-on-a-taken-lock test -e "$n1/state/alpha/exits"
+ok M02-AC-2:waits:rt_wait-returns-with-the-loop-holding-its-lock sh -c "[ -e '$s2/ret' ] && [ -s '$n2/state/alpha/loop.pid' ] && kill -0 \$(cat '$n2/state/alpha/loop.pid')"
+no M02-AC-2:waits:rt_wait-loop-did-not-exit-on-a-taken-lock test -e "$n2/state/alpha/exits"
+ok M02-AC-2:waits:api_wait-returns-with-api.py-running-and-holding-its-lock sh -c "[ -e '$s3/ret' ] && [ \"\$(grep -c '^start' '$a3' 2>/dev/null)\" = 1 ]"
+no M02-AC-2:waits:api_wait-api.py-did-not-exit-on-a-taken-lock sh -c "grep -q lockfail '$a3' 2>/dev/null"
+ok M02-AC-2:waits:start_loop-time-out-fails-naming-the-lock sh -c "[ -e '$s4/ret' ] && grep -q '^FAIL: .*lock' '$s4/helper.out'"
+ok M02-AC-2:waits:rt_wait-time-out-fails-naming-the-lock sh -c "[ -e '$s5/ret' ] && grep -q '^FAIL: .*lock' '$s5/helper.out'"
+ok M02-AC-2:waits:api_wait-time-out-fails-naming-the-lock sh -c "[ -e '$s6/ret' ] && grep -q '^FAIL: .*lock' '$s6/helper.out'"
+
+for d in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6"; do [ -n "$d" ] && touch "$d/home/STOP"; done
+[ -n "$n3" ] && pkill -f "$n3/scheduler/api.py" 2>/dev/null
+unset NOODLEBOT_DATA m02_real
+fi
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
