@@ -108,8 +108,8 @@ held() {
 	# all, before the fdinfo fallback is tried. grep reads the file in large chunks and passes on only the
 	# lines with the inode (a superset of what lockmatch accepts, which still checks the device), so bash's
 	# byte-at-a-time read from a pipe sees a few lines, not the whole list, and a not-held probe stays cheap.
-	local pass
-	for pass in 1 2 3; do
+	local try
+	for try in 1 2 3; do
 		lockmatch < <(grep -s -E ":$ino([[:space:]]|\$)" "${NOODLEBOT_PROC_LOCKS:-/proc/locks}") && return 0
 	done
 	# No line in /proc/locks (in a pid namespace of its own it does not list the locks): only now look
