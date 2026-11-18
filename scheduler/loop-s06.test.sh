@@ -60,6 +60,6 @@ done
 x6ok "S06-AC-3: while the resumed triage session runs, no update session is started" test "$(x6runs pr-101)" = 0
 # the checks made eight ticks after the resumes (K02 resumed once, K01, AC-1, AC-4, the ends of AC-3) are in loop-s06-later.test.sh
 kill "$lp06"; wait "$lp06" 2>/dev/null
-for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
+kill_own "$tmp" "$S06"/pg.* "$S06"/pg2.*; for f in "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
 
 loop_end
