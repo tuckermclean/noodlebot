@@ -19,7 +19,7 @@ set -u
 src=$(cd "$(dirname "$0")/.." && pwd -P)
 ep=$src/container/entrypoint.sh
 . "$src/scheduler/testdata/lib/common.sh"
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 origin_url=https://example.invalid/owner/noodlebot.git

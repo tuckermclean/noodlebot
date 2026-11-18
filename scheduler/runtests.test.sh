@@ -7,7 +7,7 @@
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 runner=$src/runtests.sh
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }

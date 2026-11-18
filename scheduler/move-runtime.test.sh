@@ -7,7 +7,7 @@ set -u
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root" || exit 2
 mv_sh=$root/scheduler/move-runtime.sh
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 bg=
 trap 'for p in $bg; do kill "$p" 2>/dev/null; done; rm -rf "$tmp"' EXIT
 tmp=$(cd "$tmp" && pwd -P)

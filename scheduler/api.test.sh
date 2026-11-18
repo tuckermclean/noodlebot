@@ -26,7 +26,7 @@
 #    mtime, epoch), "alive" a bool, "pid" an int, "kind" is "node", "triage" or "update".
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 . "$src/testdata/lib/api-common.sh"
 . "$src/testdata/lib/api-setup.sh"
 

@@ -7,7 +7,7 @@
 #   sh scheduler/api-p04.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 . "$src/testdata/lib/api-common.sh"
 . "$src/testdata/lib/api-setup.sh"
 sl=$data/state/alpha/status.log

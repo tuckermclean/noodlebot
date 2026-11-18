@@ -25,7 +25,7 @@
 #    and for a line comment also "file: PATH", "line: N" and "thread: ID of the thread's first comment".
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }

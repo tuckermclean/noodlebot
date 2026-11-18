@@ -5,7 +5,7 @@
 #   sh scheduler/api-p03.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 . "$src/testdata/lib/api-common.sh"
 mkdir -p "$tmp/bin"
 # A fake gh that records any call (the API must make none).
