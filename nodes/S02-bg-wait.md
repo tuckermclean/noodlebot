@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | T01 | none | S |
+| now | T01 | D13 | S |
 
 **Owns:** the background-wait setting in `scheduler/run-session.sh`, the recognition of a background cut-off in the end-of-session paths (`ended`, `triage_ended`) of `scheduler/loop.sh`, their cases in `scheduler/loop.test.sh`.
 **Resolves:** #29
