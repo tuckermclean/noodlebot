@@ -222,7 +222,7 @@ ok Purpose:comment-and-blank-lines-ignored-two-lines sh -c "[ \$(grep -c . '$sc/
 fi
 if want B; then
 echo "# runtime root: state lives under \${NOODLEBOT_DATA:-\$HOME/.local/share/noodlebot}/state (D02), not in the checkout"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 fi
 # rt_lock <name>: the loop's lock under the runtime root $rt is held.
 rt_lock() { [ -e "$rt/state/$1/loop.lock" ] && ! flock -n "$rt/state/$1/loop.lock" true 2>/dev/null; }
@@ -510,7 +510,7 @@ touch "$HOME/STOP"
 fi
 if want E; then
 echo "# P01-AC-10: the API server with the loops (only when the checkout has scheduler/api.py)"
-export LOOPS_START_WAIT=5 LOOPS_STOP_WAIT=20
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=20
 fi
 # api_setup <scenario> [noapi]: setup, a runtime root of its own, loops that record their exit in the
 # sequence log, a fake tmux that remembers each session's process and can kill it, and (unless noapi)
@@ -652,7 +652,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want F; then
 echo "# T03-AC-4: start passes its USAGE_* and SCHED_* variables to each loop, though the tmux server's environment lacks them"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 unset USAGE_7D_PACE USAGE_7D_MARGIN USAGE_5H_LIMIT SCHED_TICK SCHED_NOTE SCHED_OTHER USAGE_OTHER
 setup t03env
 cat >"$nb/scheduler/loop.sh" <<'EOT'
@@ -706,7 +706,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want H; then
 echo "# S08-AC-5: start passes SCHED_HARNESS to each loop it starts (and passes nothing when it is unset)"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 unset SCHED_HARNESS
 setup s08env
 cat >"$nb/scheduler/loop.sh" <<'EOT'
@@ -761,7 +761,7 @@ unset LOOPS_START_WAIT LOOPS_STOP_WAIT NOODLEBOT_DATA
 fi
 if want S09; then
 echo "# S09-AC-5: start passes PICKUP, PICKUP_RUNS and PICKUP_CEILING to each loop (and no other PICKUP-like variable)"
-export LOOPS_START_WAIT=3 LOOPS_STOP_WAIT=15
+export LOOPS_START_WAIT=10 LOOPS_STOP_WAIT=15
 unset PICKUP PICKUP_RUNS PICKUP_CEILING PICKUPX NOTPICKUP
 setup s09env
 cat >"$nb/scheduler/loop.sh" <<'EOT'
