@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | T01 | S06 | M |
+| now | T01 | D14, S06 | M |
 
 **Owns:** the end record (`stopped`), the leftover-changes step and the resume detection in `scheduler/loop.sh`, the resume section of `scheduler/unattended.md` and of `scheduler/unattended-followup.md` (a restarted follow-up gets the same section), their cases in `scheduler/loop.test.sh`.
 **Resolves:** #18
