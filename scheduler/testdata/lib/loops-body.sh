@@ -851,14 +851,14 @@ m02_wrap "$s1/wbin2"
 # 2 rt_wait, as rt_cases uses it right after launching alpha
 nl_setup m02-rtwait; s2=$sc; n2=$nb; rt=$nb
 m02_wrap "$s2/wbin2"
-( PATH=$s2/wbin2:$PATH; LOOP_DELAY=0.5 setsid "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
+( PATH=$s2/wbin2:$PATH; fixture_start env LOOP_DELAY=0.5 "$nb/scheduler/loop.sh" o/alpha >/dev/null 2>&1 </dev/null &
   rt_wait alpha; echo done >"$s2/ret" ) >"$s2/helper.out" 2>&1 </dev/null &
 # 3 api_wait after a bare api.py that waits 1 s between opening its lock file and taking the lock
 api_setup m02-apiwait; s3=$sc; n3=$nb; a3=$alog; d3=$data
 sed '/^lk = open/a time.sleep(1)' "$nb/scheduler/api.py" >"$nb/scheduler/api.py.slow" && mv "$nb/scheduler/api.py.slow" "$nb/scheduler/api.py"
 chmod +x "$nb/scheduler/api.py"
 m02_wrap "$s3/wbin2"
-( PATH=$s3/wbin2:$PATH; setsid python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
+( PATH=$s3/wbin2:$PATH; fixture_start python3 "$nb/scheduler/api.py" >/dev/null 2>&1 </dev/null &
   api_wait; echo done >"$s3/ret" ) >"$s3/helper.out" 2>&1 </dev/null &
 # 4 start_loop on a loop that never takes its lock, bound 2 s
 nl_setup m02-tmoloop; s4=$sc; n4=$nb
