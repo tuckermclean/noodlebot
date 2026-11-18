@@ -12,7 +12,7 @@ src=$(cd "$(dirname "$0")" && pwd -P)
 unset TMUX NOODLEBOT_PROC_LOCKS
 base=${TMPDIR:-/tmp}/D06
 mkdir -p "$base" || exit 1
-tmp=$(mktemp -d "$base/pidns.XXXXXX") || exit 1
+tmp=$(mktemp -d "$base/pidns.XXXXXX") && [ -d "$tmp" ] || exit 1
 cleanup() {
 	touch "$tmp"/*/release 2>/dev/null
 	pkill -f "$tmp/" 2>/dev/null; sleep 0.3; pkill -9 -f "$tmp/" 2>/dev/null

@@ -15,7 +15,7 @@
 #   - the README's one-replica statement matches: (one|a single|exactly one|1) replica | replicas: 1.
 set -u
 src=$(cd "$(dirname "$0")/.." && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 

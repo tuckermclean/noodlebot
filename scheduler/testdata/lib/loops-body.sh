@@ -5,7 +5,7 @@
 #   Run through loops.test.sh, loops-root.test.sh, loops-status.test.sh and loops-api.test.sh (make test); sourced by them, not run on its own.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'for d in "$tmp"/*/home; do touch "$d/STOP" 2>/dev/null; done; pkill -f "$tmp/" 2>/dev/null; sleep 0.3; pkill -9 -f "$tmp/" 2>/dev/null; rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }

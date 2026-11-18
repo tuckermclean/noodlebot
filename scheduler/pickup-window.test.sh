@@ -21,7 +21,7 @@ set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 for v in $(env | cut -d= -f1 | grep -E '^(SCHED_|FAKE_|PICKUP|NOODLEBOT_|USAGE_)'); do unset "$v"; done
 unset GH_TOKEN
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }

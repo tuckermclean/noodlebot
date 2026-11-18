@@ -3,7 +3,7 @@
 #   sh scheduler/usage.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 unset USAGE_7D_PACE USAGE_7D_MARGIN USAGE_5H_LIMIT   # T03-AC-7: results do not depend on the caller's settings

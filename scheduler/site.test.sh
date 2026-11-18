@@ -20,7 +20,7 @@
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fx=$src/testdata/site
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 pids=
 cleanup() {
 	for p in $pids; do kill "$p" 2>/dev/null; done
