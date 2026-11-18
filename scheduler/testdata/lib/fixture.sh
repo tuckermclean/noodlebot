@@ -50,3 +50,17 @@ fixture_start() {
 	export NB_FIXTURE_MARK
 	exec setsid "$@"
 }
+
+# fixture_stop_all: stop every process that carries the mark of a fixture this test shell (NB_TEST_SHELL) started
+# (TERM, then KILL 0.3 s later), for the EXIT trap of a test file; it never signals by a pattern that can be empty
+# or by a path, and never the calling shell.
+fixture_stop_all() {
+	case ${NB_TEST_SHELL:-} in '' | *[!0-9]*) return 0 ;; esac
+	_nb_pids() { grep -l -a -z -s "^NB_FIXTURE_MARK=nbfx\\.$NB_TEST_SHELL\\." /proc/[0-9]*/environ 2>/dev/null | sed "s|^/proc/\\([0-9]*\\)/environ\$|\\1|" | grep -vx "$$"; }
+	_nb_p=$(_nb_pids)
+	[ -z "$_nb_p" ] || kill -s TERM $_nb_p 2>/dev/null
+	sleep 0.3
+	_nb_p=$(_nb_pids)
+	[ -z "$_nb_p" ] || kill -s KILL $_nb_p 2>/dev/null
+	return 0
+}

@@ -6,6 +6,7 @@
 #   qcopied (1 when the QUESTION.md text is in c42 byte for byte), rc (the exit codes of the five runs).
 # Time and the host are pinned (NOODLEBOT_NOW, TZ=UTC, the session's mtime), so the "all" of a run without --site is the same
 # text on every machine once w05_norm has run over it.
+. "$src/testdata/lib/fixture.sh"
 w05_scenario() {
 	wd=$tmp/$1 wsite=${2:-}
 	wdb=$wd/gh.json wbin=$wd/bin wstate=$wd/state wclone=$wd/clone wlive=$wd/live
@@ -44,7 +45,7 @@ GRAPH
 	printf '2026-05-09T20:30:00Z unknown node, held\n' >"$wstate/node/K98/FAILED"
 	r 0.5 1 >"$wstate/node/K04/session.jsonl"
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Working on K01 and K02 now."}]}}' >>"$wstate/node/K04/session.jsonl"
-	sh "$tmp/rs/run-session.sh" --node K04 &
+	fixture_start sh "$tmp/rs/run-session.sh" --node K04 &
 	wpid=$!
 	trap 'kill $wpid 2>/dev/null; rm -rf "$tmp"' EXIT
 	echo "$wpid" >"$wstate/node/K04/session.pid"

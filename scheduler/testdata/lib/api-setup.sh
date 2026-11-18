@@ -27,7 +27,7 @@ for s in node/N03 node/N04 node/N01 node/N11 issue/9 issue/8 pr/15; do
 	touch -d 2026-11-09T09:01:00Z "$a/$s/session.pid"   # the session's start time
 done
 : >"$a/loop.lock"; : >"$data/state/beta/loop.lock"
-flock "$a/loop.lock" sh -c 'while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &
+fixture_start flock "$a/loop.lock" sh -c 'while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &
 pids="$pids $!"
 ino=$(stat -c %i "$a/loop.lock")
 i=0; while [ $i -lt 50 ] && ! grep -q ":$ino " /proc/locks; do sleep 0.1; i=$((i + 1)); done
@@ -87,7 +87,7 @@ err() {
 }
 
 start_server() {
-	python3 "$co/scheduler/api.py" >>"$tmp/api.out" 2>&1 &
+	fixture_start python3 "$co/scheduler/api.py" >>"$tmp/api.out" 2>&1 &
 	srv_pid=$!
 	i=0
 	while [ $i -lt 60 ] && kill -0 "$srv_pid" 2>/dev/null; do
