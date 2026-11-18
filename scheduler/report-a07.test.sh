@@ -11,7 +11,7 @@ set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fakegh_lib=$src/testdata/lib
 . "$fakegh_lib/report-fakegh.sh"
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 pass() { echo "PASS: $1"; }
