@@ -1,0 +1,14 @@
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+gate:
+  command: make test
+  fail_pattern: '^FAIL '
+  known_red:
+    - t_narrow
+out_of_scope:
+  - {glob: "vendor/", reason: "vendored third-party code, not ours, never changed here"}
+adoption:
+  areas:
+    - {name: wrap, globs: ["bin/", "lib/", "README.md"]}
+    - {name: tests, globs: ["tests/"]}
+    - {name: build, globs: ["Makefile", ".github/"]}
+nodes: []

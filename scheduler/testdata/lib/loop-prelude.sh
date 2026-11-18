@@ -7,7 +7,7 @@ set -u
 unset NOODLEBOT_VERSION   # V01: run from a clean environment, even inside a noodlebot session
 export SCHED_RAMP=0   # S07: the start queue is off for every run; the start-queue run sets SCHED_RAMP=1 on its own loops
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 pids=()
 # extra_cleanup: a file that starts processes of its own that are not in $pids and not named by $tmp redefines it.
 extra_cleanup() { :; }

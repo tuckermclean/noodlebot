@@ -55,7 +55,7 @@ Purpose or `owns`; only its header row's Unlocks is kept in sync, as for any nod
 
 In a graph with ownership (nodes with `owns` globs), a new node depends on the nodes whose files it
 changes and on the nodes whose globs match the paths it will add files at, test folders included. Give it
-`owns` only for added paths that no existing glob matches.
+`owns` only for added paths that no existing glob and no `out_of_scope` glob matches: a path out of scope stays out of scope, and a node that needs one asks the owner.
 
 For a new node: the ID for the letter family whose nodes do similar work from the `next free:` line of
 `nodes.py`'s output (one line, every letter in use, e.g. `next free: S05 T02`; it counts `main` and every open `spec/*` PR, so two PRs never take one

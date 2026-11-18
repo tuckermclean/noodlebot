@@ -3,7 +3,7 @@
 #   sh plugin/skills/triage/nodes.test.sh   (make test)
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 ok() { echo "PASS: $1"; }
@@ -287,4 +287,11 @@ if g05_win "$tmp/A02-sk.txt" 8 'ownership' 'new node' 'owns'; then ok "A02-AC-5:
 if g05_win "$tmp/A02-sk.txt" 8 'glob' 'depend|deps' 'file' 'chang'; then ok "A02-AC-5: the new node depends on the nodes whose files it changes and whose globs match its added paths"; else bad "A02-AC-5: the skill does not make the new node depend on the nodes whose files it changes and whose globs match where it adds files"; fi
 if g05_win "$tmp/A02-sk.txt" 8 'glob' 'add' 'test (folder|dir)'; then ok "A02-AC-5: the skill counts test folders among the paths a new node adds files at"; else bad "A02-AC-5: the skill does not name test folders among the paths a new node adds files at"; fi
 if g05_win "$tmp/A02-sk.txt" 8 'owns' 'only' 'add' 'no (existing )?glob|not match|no glob|matches? no|unmatched'; then ok "A02-AC-5: the skill gives owns only for added paths no existing glob matches"; else bad "A02-AC-5: the skill does not give owns only for added paths no existing glob matches"; fi
+
+# ---------- A05-AC-4: triage gives a new node owns only for paths no glob and no out_of_scope glob matches ----------
+a05="$tmp/A05"; mkdir -p "$a05"
+tr -d '*' <"$sk" >"$a05/sk.txt"
+if g05_win "$a05/sk.txt" 8 'ownership' 'new node' 'owns' 'only' 'add' 'no (other node.s |existing )?glob' 'out[_ -]of[_ -]scope'; then ok "A05-AC-4: the skill gives a new node owns only for added paths no other node's glob and no out_of_scope glob matches"; else bad "A05-AC-4: the skill does not give a new node owns only for added paths that no other node's glob and no out_of_scope glob matches"; fi
+if g05_win "$a05/sk.txt" 8 'out[_ -]of[_ -]scope' 'owns' 'path' 'stays? out of scope|stay out'; then ok "A05-AC-4: the skill keeps a path an out_of_scope glob matches out of a new node's owns"; else bad "A05-AC-4: the skill does not keep a path an out_of_scope glob matches out of a new node's owns"; fi
+if g05_win "$a05/sk.txt" 8 'out[_ -]of[_ -]scope' 'needs?' 'ask' 'owner'; then ok "A05-AC-4: the skill has a node that needs an out-of-scope path ask the owner"; else bad "A05-AC-4: the skill does not have a node that needs an out_of_scope path ask the owner"; fi
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

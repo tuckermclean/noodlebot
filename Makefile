@@ -34,10 +34,12 @@ TESTS = \
 	scheduler/turn-place.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	plugin/skills/node/check-coverage.test.sh \
+	plugin/skills/node/check-owns-diff.test.sh \
 	scheduler/deploy.test.sh \
 	scheduler/deploy-d04.test.sh \
 	scheduler/deploy-d07.test.sh \
 	scheduler/api-d07.test.sh \
+	scheduler/api-p04.test.sh \
 	plugin/hooks/guard.test.sh \
 	plugin/hooks/guard-git.test.sh \
 	plugin/hooks/guard-shell.test.sh \
@@ -167,6 +169,8 @@ TESTS = \
 	site/site.test.sh \
 	scheduler/runtests.test.sh \
 	scheduler/runtests-d08.test.sh \
+	scheduler/check-ci-workflow.test.sh \
+	scheduler/scratch-guard.test.sh \
 	container/entrypoint.test.sh \
 	container/container.test.sh
 

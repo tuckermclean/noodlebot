@@ -8,7 +8,7 @@ src=$(cd "$(dirname "$0")" && pwd)
 . "$src/testdata/lib/common.sh"
 fx=$src/testdata/harness
 readme=$src/harnesses/README.md
-tmp=$(mktemp -d) || exit 1
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 unset USAGE_7D_MARGIN NOODLEBOT_DATA NOODLEBOT_VERSION SCHED_HARNESS FAKE_HARNESS_SCRIPT FAKE_HARNESS_RESUME_SCRIPT \
 	FAKE_HARNESS_RC FAKE_HARNESS_RESUME_RC FAKE_HARNESS_CAPS FAKE_HARNESS_PREFLIGHT FAKE_HARNESS_LOG

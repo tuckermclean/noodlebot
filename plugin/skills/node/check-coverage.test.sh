@@ -13,7 +13,7 @@
 set -u -f
 src=$(cd "$(dirname "$0")" && pwd -P)
 fx=$src/testdata/coverage
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null

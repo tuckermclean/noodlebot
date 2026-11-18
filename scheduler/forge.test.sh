@@ -21,7 +21,7 @@ td=$src/testdata/forge
 . "$src/testdata/lib/common.sh"
 for v in $(env | sed -n 's/^\(NOODLEBOT_FORGE[A-Za-z_]*\)=.*/\1/p'); do unset "$v"; done
 unset GH_TOKEN USAGE_7D_MARGIN NOODLEBOT_DATA NOODLEBOT_VERSION
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 G=$tmp/G04
 mkdir -p "$G/home"

@@ -26,7 +26,7 @@ set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fix=$src/testdata/nbctl
 schemas=$src/api-schema/v1
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 fails=0
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; fails=$((fails + 1)); }

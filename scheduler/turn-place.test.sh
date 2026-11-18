@@ -11,7 +11,7 @@
 #   byte-identical, and no file or directory is created.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'chmod -R u+w "${tmp:?}" 2>/dev/null; rm -rf "${tmp:?}"' EXIT
 fails=0
 . "$src/testdata/lib/turn-common.sh"

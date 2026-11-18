@@ -9,7 +9,7 @@ set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 inv="$src/inventory.py"
 fix="$src/testdata/inventory"
-tmp=$(mktemp -d)
+tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 ok() { echo "PASS: $1"; }
