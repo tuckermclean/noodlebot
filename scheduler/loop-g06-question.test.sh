@@ -30,12 +30,16 @@ ok "G06-AC-2: still no FEEDBACK.md" test ! -e "$x/FEEDBACK.md"
 ok "G06-AC-2: the record feedback/11 is unchanged" test "$(cat "$state/feedback/11" 2>/dev/null)" = "$rec"
 
 # the owner answers; the answered update runs (the PR conflicts) and the feedback waits for it
-# The loop reads the PR list once a tick but checks the question hold live: answer only after a tick has listed PR 11 as
-# CONFLICTING and ended, so that no tick lists it MERGEABLE and then sees the answer (it would start the feedback).
+# The loop reads the PR list once a tick but the question hold live, twice in a tick (next_update, then fb_blocked before the
+# feedback step): answer only after a tick that listed PR 11 as CONFLICTING is past its feedback step (it rewrites graph.yaml
+# right after, and its heartbeat is older), so that no tick sees the answer in one read and not the other (it would start the
+# feedback). Residual window: the test would have to stall between the check and the write for longer than the tick's tail,
+# the pause's poll and the next tick's heartbeat-to-next_update time.
 g06_prs 11 CONFLICTING
 g06_listed() { grep -qE '^11 .* CONFLICTING$' "$state/open-prs.tsv" 2>/dev/null; }
 waitf 40 g06_listed || fail "D13 setup: the loop lists PR 11 as CONFLICTING (in $(basename "$0"))"
-wait_ticks 1 || fail "D13 setup: the tick that listed PR 11 as CONFLICTING has ended (in $(basename "$0"))"
+g06_pastfb() { [ "$state/graph.yaml" -nt "$state/heartbeat" ]; }
+waitf 40 g06_pastfb || fail "D13 setup: the tick that listed PR 11 as CONFLICTING is past its feedback step (in $(basename "$0"))"
 echo "A1: ours" >"$p/ANSWER.md"
 ok "G06-AC-2 setup: the answered update of PR 11 starts and runs" waitf 20 runsis nupd.11 1
 wait_ticks 3 || fail "D13 setup: the loop ticks three more times while the answered update runs (in $(basename "$0"))"
