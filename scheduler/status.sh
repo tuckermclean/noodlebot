@@ -58,14 +58,17 @@ print("usage:   5-hour %s%s, 7-day %s; throttle %s" % (f("five_hour"), ", projec
       "HOLDING: " + u["reason"] if u.get("hold") else "open"))' "$(dirname "$state")/usage.json"
 echo "last change: $(tail -n 1 "$state/status.log" 2>/dev/null | cut -c1-150)"
 
-# The sessions: every node or issue whose session.pid names a live session process.
+# The sessions: every node, issue or adoption unit whose session.pid names a live session process (an adoption unit is
+# found by its state folder in the command line).
 n_live=0
-for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
+for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/adopt/*/session.pid; do
 	[ -e "$f" ] || continue
 	p=$(cat "$f") id=$(basename "$(dirname "$f")") sdir=$(dirname "$f")
+	[[ $sdir == */adopt/* ]] && id=$sdir
 	python3 -I -B "$nb/scheduler/harness.py" matches "$id" "$(tr '\0' ' ' 2>/dev/null <"/proc/$p/cmdline")" || continue
 	n_live=$((n_live + 1)) label=$id
 	[[ $sdir == */issue/* ]] && label="triage of #$id"
+	[[ $sdir == */adopt/* ]] && label="adopt/$(basename "$sdir")"
 	# the log's size and last write (harness.py log-stat), then the last actions; a subagent's are marked with ">"
 	sess=$(python3 -I -B -c '
 import sys, time
@@ -87,7 +90,8 @@ print("\n".join(acts[-4:]) or "   (none yet)")' "$nb" "$sdir" 2>/dev/null)
 	logline=$(printf '%s\n' "$sess" | sed -n 's/^LOG //p')
 	echo "== $label RUNNING (pid $p, for $(ps -o etime= -p "$p" | tr -d ' ')); log ${logline% *}, last written ${logline##* }"
 	printf '%s\n' "$sess" | grep -v '^LOG '
-	[[ $sdir == */issue/* ]] || git -C "$wtroot/$id" log --oneline -3 origin/main..HEAD 2>/dev/null | sed 's/^/   commit /'
+	if [[ $sdir == */adopt/* ]]; then git -C "$wtroot/adopt-$(basename "$sdir")" log --oneline -3 origin/main..HEAD 2>/dev/null | sed 's/^/   commit /'
+	elif [[ $sdir != */issue/* ]]; then git -C "$wtroot/$id" log --oneline -3 origin/main..HEAD 2>/dev/null | sed 's/^/   commit /'; fi
 done
 if [ "$n_live" = 0 ]; then
 	echo "sessions: none running (last started: $(sed -n 's/.*started \(.*\) in .*/\1/p' "$state/status.log" 2>/dev/null | tail -n 1))"
@@ -95,10 +99,11 @@ fi
 
 echo "-- waiting on you:"
 found=0
-for d in "$state"/node/*/ "$state"/issue/*/; do
+for d in "$state"/node/*/ "$state"/issue/*/ "$state"/adopt/*/; do
 	[ -d "$d" ] || continue
 	id=$(basename "$d") d=${d%/}
 	[[ $d == */issue/* ]] && id="#$id"
+	[[ $d == */adopt/* ]] && id="adopt/$id"
 	head1() { grep -m1 -v '^\s*$' "$1" | sed 's/^# *//' | cut -c1-100; }
 	if [ -e "$d/FAILED" ]; then
 		found=1; echo "   $id FAILED: $(head1 "$d/FAILED")"

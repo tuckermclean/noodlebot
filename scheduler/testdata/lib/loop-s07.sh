@@ -145,7 +145,7 @@ qloop() { # <qa|qb> <tick> [VAR=value...]
 	local n=$1 t=$2; shift 2
 	qtk[$n]=$t
 	( exec env NOODLEBOT_DATA="$qd" PATH="$q/bin:$PATH" SCHED_RAMP=1 SCHED_REPORT=0 SCHED_TICK="$t" SCHED_POLL=0.2 "$@" \
-		bash "$qnb/scheduler/loop.sh" "o/$n" >>"$q/loop-$n.out" 2>&1 ) &
+		sh "$src/testdata/lib/fixture-start.sh" bash "$qnb/scheduler/loop.sh" "o/$n" >>"$q/loop-$n.out" 2>&1 ) &
 	qp[$n]=$!; pids+=("$!")
 }
 # qboth <qa tick> <qb tick> [VAR=value...]: both loops start with the throttle holding; each does its first tick.

@@ -37,7 +37,12 @@ Each run:
      The home issue of a triage of N is N; of a node, the first issue on the **Resolves:** line of its spec
      (nodes/<ID>-*.md on origin/main of --clone; default <data>/repos/<basename of --worktrees>) with the
      others linked in its first milestone, or, with no Resolves line, a new "Build <ID> <name>" issue labelled
-     `noodlebot-unit`. It is recorded in the unit's state folder (node/<ID>/issue, issue/<N>/issue). What was
+     `noodlebot-unit`. It is recorded in the unit's state folder (node/<ID>/issue, issue/<N>/issue). The adoption units
+     (state/adopt/<key>, task "adopt/<key>") share one "Adopt <name>" issue (<name> the repository's name), labelled
+     `noodlebot-unit`, created for the first of them and recorded in each unit's `issue` file and in report.json
+     ("adopt_issue"); it gets their starts, questions (an owner reply after the open unit's question is that unit's
+     ANSWER.md), spec PRs and FAILED, and is closed with one comment naming the PR once the plan unit's PR
+     (spec/adopt-plan, its WAITING-PR) is merged (a new question reopens it). What was
      posted per unit is in report.json, so a failed post is retried on the next run and nothing is posted twice;
      the first run after this was added posts nothing for events, questions or FAILED from before;
      An issue the owner labelled (issues.json, written by the loop each tick, also while the throttle holds) with no triage
@@ -170,10 +175,11 @@ def event_text(line):
 
 
 def nodes(state):
-    """The tasks with a state directory: nodes ("B03", node/B03) and triaged issues ("#46", issue/46) and spec-PR updates ("PR #12", pr/12)."""
+    """The tasks with a state directory: nodes ("B03", node/B03) and triaged issues ("#46", issue/46), spec-PR updates ("PR #12", pr/12)
+    and adoption units ("adopt/wrap", adopt/wrap)."""
     out = []
     for kind, pat, fmt in (("node", NODE, "%s"), ("issue", re.compile(r"^\d+$"), "#%s"),
-                         ("pr", re.compile(r"^\d+$"), "PR #%s")):
+                         ("pr", re.compile(r"^\d+$"), "PR #%s"), ("adopt", re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$"), "adopt/%s")):
         d = os.path.join(state, kind)
         if os.path.isdir(d):
             out += [fmt % n for n in sorted(os.listdir(d)) if pat.match(n) and os.path.isdir(os.path.join(d, n))]
@@ -213,6 +219,8 @@ def pr_node(state, task):
 
 
 def tdir(state, task):
+    if task.startswith("adopt/"):
+        return os.path.join(state, task)
     if task.startswith("PR #"):
         return os.path.join(state, "pr", task[4:])
     return os.path.join(state, "issue", task[1:]) if task.startswith("#") else os.path.join(state, "node", task)
@@ -364,6 +372,8 @@ def start_clause(a, key, node=None, queued=False, answered=False):
     """When the unit starts, from usage.json (the throttle), the repository's waiting.json and turn.py place: what it waits
     for, never a promise it cannot keep. node: an ID whose start ready.py must name; queued: a triage waiting for its start;
     answered: the unit's answer was just recorded (a node, or a triage #N)."""
+    if key.startswith("adopt/"):  # an adoption unit resumes at its turn in the loop
+        return "it resumes at its turn"
     hold, reason = throttle(a.state)
     parts = ["the throttle holds new sessions (%s)" % reason] if hold else []
     on = os.path.exists(os.path.join(a.state, "waiting.json"))
@@ -429,6 +439,24 @@ def spec_merged(state, n):
     except OSError:
         return None
     return pr if pr and pr in read_lines(os.path.join(state, "merged-prs.txt")) else None
+
+
+def adopt_pr(state, n):
+    """An adoption unit's spec PR number: its WAITING-PR, else (the loop released it once the PR was merged and its step
+    taken) the newest answered/<ts>-SPEC-PR, never a -SPEC-PR-CLOSED; "" when there is none."""
+    d = tdir(state, n)
+    cands = [os.path.join(d, "WAITING-PR")]
+    try:
+        cands += sorted((os.path.join(d, "answered", f) for f in os.listdir(os.path.join(d, "answered")) if f.endswith("-SPEC-PR")), reverse=True)
+    except OSError:
+        pass
+    for f in cands:
+        lines = read_lines(f)
+        if lines:
+            return lines[0].strip()
+        if os.path.exists(f) and f.endswith("WAITING-PR"):
+            return ""
+    return ""
 
 
 def waiting(state):
@@ -596,7 +624,8 @@ def waiting_items(a, sts, prs, rs):
             items.append("- **%s asks a question** (%s).%s" % (n, question_link(a, rs, n), unit_ref(a, n)))
         elif has(state, n, "WAITING-PR") and not spec_merged(state, n):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
-            items.append("- **%s** waits for you to merge spec PR #%s; it resumes within a minute after.%s" % (n, pr, unit_ref(a, n)))
+            after = "the adoption ends, the graph is complete, after" if n == "adopt/plan" else "the adoption's next step starts within a minute after" if n.startswith("adopt/") else "it resumes within a minute after"
+            items.append("- **%s** waits for you to merge spec PR #%s; %s.%s" % (n, pr, after, unit_ref(a, n)))
     for n, pr in sorted(prs.items()):
         if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in [t[0] for t in sts]:
             items.append("- %s's PR #%s: open, no session running on it (review or merge it).%s" % (n, pr, unit_ref(a, n)))
@@ -1054,6 +1083,40 @@ def spec_info(a, node):
     return name, issues
 
 
+def adopt_issue(a, rs):
+    """The number of the "Adopt <name>" issue: the recorded one, else an open one of that title, else a new one."""
+    if isinstance(rs.get("adopt_issue"), int):
+        return rs["adopt_issue"]
+    for t in nodes(a.state):  # recorded by an earlier unit (report.json lost)
+        if t.startswith("adopt/"):
+            try:
+                n = int(open(os.path.join(tdir(a.state, t), "issue")).read().split()[0])
+                break
+            except (OSError, ValueError, IndexError):
+                pass
+    else:
+        n = None
+    if n is None:
+        title = "Adopt %s" % a.repo.split("/")[-1]
+        try:
+            a.forge.label_ensure(name=UNIT_LABEL, color="0e8a16", description="A unit of noodlebot work, while it is built")
+        except forge.ForgeError:
+            pass  # exists already, or labels.py ensures it
+        for i in a.forge.issue_list(label=UNIT_LABEL, state="open"):
+            if i["title"] == title and UNIT_LABEL in i["labels"] and not i["is_pr"]:
+                n = i["number"]
+                break
+        if n is None:
+            n = a.forge.issue_create(
+                title=title, labels=[UNIT_LABEL],
+                body=signed(a, "Home of the adoption of this repository: the scheduler loop posts the milestones and questions "
+                               "of its adoption units (the first spec PR, the areas, the plan) here. The loop closes this issue "
+                               "once the plan PR is merged."))["number"]
+    rs["adopt_issue"] = n
+    a.save()
+    return n
+
+
 def home_issue(a, rs, task):
     """The unit's home issue number: the recorded one, else decided (and for a Build issue created) and recorded."""
     if pr_node(a.state, task):  # a node-PR update has no issue of its own: its node's
@@ -1065,7 +1128,9 @@ def home_issue(a, rs, task):
         return int(open(f).read().split()[0])
     except (OSError, ValueError, IndexError):
         pass
-    if task.startswith("#"):
+    if task.startswith("adopt/"):  # every adoption unit has the one "Adopt <name>" issue
+        n = adopt_issue(a, rs)
+    elif task.startswith("#"):
         n = int(task[1:])
     else:
         name, issues = spec_info(a, task)
@@ -1112,7 +1177,7 @@ def milestone(a, rs, task, key, stage, body=""):
     text = "**Stage:** " + link_nodes(a, stage)
     if not u.get("intro") and site_base(a) and task.startswith("#"):
         text += "\n\n" + site_line(a, task)
-    if not u.get("intro") and not task.startswith("#") and not task.startswith("PR #"):
+    if not u.get("intro") and not task.startswith("#") and not task.startswith("PR #") and not task.startswith("adopt/"):
         resolves = spec_info(a, task)[1]
         if resolves and site_base(a):
             text += "\n\n" + site_line(a, task)
@@ -1177,7 +1242,7 @@ def migrate(a, rs):
         rs["m_offset"] = rs.get("log_offset", 0)
 
 
-START = re.compile(r"started (?:([A-Z][0-9][0-9]) \(|triage of (#\d+) )")
+START = re.compile(r"started (?:([A-Z][0-9][0-9]) \(|triage of (#\d+) |(adopt/[A-Za-z0-9][A-Za-z0-9._-]*) in )")
 TRIAGE_DONE = re.compile(r"triage of (#\d+) done")
 
 
@@ -1212,7 +1277,7 @@ def collect_starts(a, rs):
         m = START.match(what)
         if not m:
             continue
-        task = m.group(1) or m.group(2)
+        task = m.group(1) or m.group(2) or m.group(3)
         k = re.search(r"\bstart (\d+) of (\d+)", what)
         count = "start %s of %s" % (k.group(1), k.group(2)) if k else "start count unknown"
         resumed = os.path.isdir(os.path.join(tdir(a.state, task), "answered"))
@@ -1220,6 +1285,8 @@ def collect_starts(a, rs):
             stage = "triage resumed after your answer (%s)" % count
         elif task.startswith("#"):
             stage = "triage started (%s)" % count
+        elif task.startswith("adopt/"):
+            stage = "%s %s (%s)" % (task, "resumed after your answer" if resumed else "session started", count)
         elif resumed:
             stage = "resumed after your answer (%s)" % count
         else:
@@ -1331,7 +1398,7 @@ def finished(a, n):
     in progress; a triage once it ended done. A new QUESTION.md makes it unfinished again."""
     if held(a, n) or has(a.state, n, "session.pid") or has(a.state, n, "FAILED"):
         return False
-    if n.startswith("PR #"):  # a node-PR update: nothing more once it asks nothing
+    if n.startswith("PR #") or n.startswith("adopt/"):  # a node-PR update, an adoption unit: nothing more once it asks nothing
         return True
     if n.startswith("#"):  # done: its done line was seen (queued or posted)
         rs = getattr(a, "rs", None) or {}
@@ -1345,7 +1412,7 @@ def held(a, n):
     return has(a.state, n, "QUESTION.md") or has(a.state, n, "FOLLOWUP")
 
 
-ID_PREFIX = re.compile(r"\s*\**(PR #\d+|#\d+|[A-Z][0-9][0-9])\**\s*[:\-]")
+ID_PREFIX = re.compile(r"\s*\**(PR #\d+|#\d+|[A-Z][0-9][0-9]|adopt/[A-Za-z0-9][A-Za-z0-9._-]*)\**\s*[:\-]")
 
 
 def pr_homes(a):
@@ -1608,7 +1675,7 @@ def reopen(a, rs, issue):
         return
     if cur["state"] == "closed":
         a.forge.issue_reopen(number=int(issue))
-    if (rs.get("closed") or {}).pop(str(issue), None) is not None:
+    if (rs.get("closed") or {}).pop(str(issue), None) is not None:  # also the Adopt issue's record
         a.save()
 
 
@@ -1654,6 +1721,64 @@ def close_issues(a, rs):
             a.save()
         except Exception as e:
             a.errors.append(str(e))
+
+
+def post_adopt_prs(a, rs):
+    """Each adoption unit's spec PR (its WAITING-PR): a milestone once it waits for the owner, one once it is merged."""
+    for n in nodes(a.state):
+        if not n.startswith("adopt/"):
+            continue
+        pr = adopt_pr(a.state, n)
+        if not pr.isdigit():
+            continue
+        done = rs.setdefault("units", {}).setdefault(n, {}).setdefault("done", [])
+        merged = pr in read_lines(os.path.join(a.state, "merged-prs.txt"))
+        try:
+            for key, stage in (("waitpr:" + pr, "%s ended: spec PR #%s waits for you to merge" % (n, pr)),
+                               ("specpr:" + pr, "spec PR #%s merged" % pr)):
+                if key in done or (key.startswith("specpr") and not merged):
+                    continue
+                if key.startswith("waitpr") and merged:  # merged when first seen: only the merge is news
+                    done.append(key)
+                    continue
+                if a.first_run:  # from before the first run: seen, not new
+                    done.append(key)
+                    continue
+                milestone(a, rs, n, key, stage)
+        except Exception as e:
+            a.errors.append(str(e))
+
+
+def close_adopt(a, rs):
+    """Close the "Adopt <name>" issue with one comment naming the plan PR once the plan unit's PR (spec/adopt-plan) is merged."""
+    if merges_unknown(a):
+        return
+    pr = adopt_pr(a.state, "adopt/plan")
+    if not pr or pr not in read_lines(os.path.join(a.state, "merged-prs.txt")):
+        return
+    try:
+        issue = int(open(os.path.join(tdir(a.state, "adopt/plan"), "issue")).read().split()[0])
+    except (OSError, ValueError, IndexError):
+        issue = rs.get("adopt_issue")
+    if not pr or not isinstance(issue, int):
+        return
+    c = rs.setdefault("closed", {}).get(str(issue)) or {}
+    if c.get("closed") or has(a.state, "adopt/plan", "QUESTION.md"):
+        return
+    try:
+        if not c.get("commented") and a.forge.issue_view(number=issue)["state"] == "closed":
+            rs["closed"][str(issue)] = {"closed": True, "by_other": True}  # closed by someone already
+            a.save()
+            return
+        if not c.get("commented"):
+            comment(a, issue, "**Stage:** merged, closing this issue\n\nMerged: PR #%s, the adoption plan. Closing this issue." % pr)
+            c = rs["closed"][str(issue)] = {"commented": True}
+            a.save()
+        a.forge.issue_close(number=issue)
+        c["closed"] = True
+        a.save()
+    except Exception as e:
+        a.errors.append(str(e))
 
 
 def seed_closing(a, rs):
@@ -1911,8 +2036,10 @@ def main():
             rs.pop("merges_unknown", None)
         if pulls_err is None:
             post_prs(a, rs, a.pulls)
+        post_adopt_prs(a, rs)
         post_questions(a, rs, issue)
         close_issues(a, rs)
+        close_adopt(a, rs)
     finally:
         save()
     if pulls_err is not None:

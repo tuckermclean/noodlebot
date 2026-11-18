@@ -17,7 +17,7 @@ clone (for runs by hand only; a loop run works in the checkout its prompt names)
 `plugin/skills/adopt/example-area/`; the new tests `scheduler/loop-a07*.test.sh` (split so each file stays under
 `TEST_FILE_BUDGET`, the end-to-end run in its own file) and their lines in the `Makefile`'s
 `TESTS`, with its fixtures under `scheduler/testdata/`; their cases in `scheduler/turn.test.sh`,
-`scheduler/report.test.sh` and `plugin/skills/adopt/adopt.test.sh`.
+`plugin/skills/adopt/adopt.test.sh` and the new `scheduler/report-a07.test.sh` (with its line in `TESTS`).
 **Resolves:** #139, #151
 
 ## Purpose
@@ -58,7 +58,7 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
   - end to end with the fake forge: scaffold, area one, area two and plan, each PR merged by the fake, ending with a
     graph without `adoption` that `check-regime.py` and `check-coverage.py` pass.
 - `scheduler/turn.test.sh` (extended): the adoption kind goes with triages in the start queue.
-- `scheduler/report.test.sh` (extended): the "Adopt <name>" issue (labelled `noodlebot-unit`) gets each adoption unit's
+- `scheduler/report-a07.test.sh` (new; `scheduler/report.test.sh` is already over `TEST_FILE_BUDGET`): the "Adopt <name>" issue (labelled `noodlebot-unit`) gets each adoption unit's
   milestones and questions; an owner reply there is recorded as the open unit's answer; the issue is closed once the
   plan PR is merged.
 - `plugin/skills/adopt/adopt.test.sh` (extended): the `--area`, `--plan`, `--update` and `--feedback` modes' text, that a run
@@ -123,7 +123,7 @@ how far the adoption has got, so nothing is lost when the machine or the loop ch
 
 ## Gate
 - **A07-AC-1** — A repository with no graph gets one `adopt/scaffold` session in its own worktree whose prompt names the repository, the skill and its worktree as the checkout, none while its spec PR is open, and none (one log line) when the template is missing. *Verify:* each `bash scheduler/loop-a07*.test.sh`.
-- **A07-AC-2** — Areas are mapped one at a time in list order, the next only after the previous area's PR is merged, then one plan session; a question holds a unit and an owner reply on the "Adopt <name>" issue answers it; a PR closed without merging fails it; a unit (scaffold, area or plan) whose PR merged after the fetch starts no second session, and is held by `FAILED` naming the PR when a later tick's successful fetch still does not show the merge; the "Adopt <name>" issue is closed after the plan PR merges. *Verify:* each `bash scheduler/loop-a07*.test.sh` and `sh scheduler/report.test.sh`.
+- **A07-AC-2** — Areas are mapped one at a time in list order, the next only after the previous area's PR is merged, then one plan session; a question holds a unit and an owner reply on the "Adopt <name>" issue answers it; a PR closed without merging fails it; a unit (scaffold, area or plan) whose PR merged after the fetch starts no second session, and is held by `FAILED` naming the PR when a later tick's successful fetch still does not show the merge; the "Adopt <name>" issue is closed after the plan PR merges. *Verify:* each `bash scheduler/loop-a07*.test.sh` and `sh scheduler/report-a07.test.sh`.
 - **A07-AC-3** — The recorded `--area` dry run writes imported nodes that together own exactly the area's files not put out of scope, removes the area from the graph, and passes `check-regime.py` and `check-coverage.py`; the `--plan` text turns open issues into planned nodes and removes `adoption`; a run whose prompt names a checkout works there without a clone. *Verify:* `sh plugin/skills/adopt/adopt.test.sh`.
 - **A07-AC-4** — Feedback on and a conflict of a `spec/adopt*` PR start a session in `pr/<N>/` from the feedback or update template running `/noodlebot:adopt --feedback` or `--update`, not a triage, on the PR's branch, which the adoption unit's removed worktree no longer holds; the throttle counts adoption sessions and `status.sh` and `loops.sh status` list them. *Verify:* each `bash scheduler/loop-a07*.test.sh` and `sh scheduler/usage.test.sh`.
 - **A07-AC-5** — A labelled issue is not triaged while an adoption is in progress, and is triaged after it. *Verify:* each `bash scheduler/loop-a07*.test.sh`.

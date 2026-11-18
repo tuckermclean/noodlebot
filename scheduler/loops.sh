@@ -254,18 +254,19 @@ status)
 			v=$(cat "$state/version" 2>/dev/null) && [ -n "$v" ] && loop="loop running version $v"
 		else loop="loop not running"; fi
 		live=() wait=()
-		for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do
+		for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid "$state"/adopt/*/session.pid; do
 			[ -e "$f" ] || continue
 			p=$(cat "$f" 2>/dev/null) id=$(basename "$(dirname "$f")")
+			case $f in */adopt/*) id=$(dirname "$f") ;; esac   # an adoption unit is found by its state folder
 			case $p in '' | *[!0-9]*) continue ;; esac
 			python3 -I -B "$nb/scheduler/harness.py" matches "$id" "$({ tr '\0' ' ' <"/proc/$p/cmdline"; } 2>/dev/null)" || continue
-			case $f in */issue/*) id="#$id" ;; esac
+			case $f in */issue/*) id="#$id" ;; */adopt/*) id="adopt/$(basename "$id")" ;; esac
 			live+=("$id")
 		done
-		for d in "$state"/node/*/ "$state"/issue/*/; do
+		for d in "$state"/node/*/ "$state"/issue/*/ "$state"/adopt/*/; do
 			[ -d "$d" ] || continue
 			id=$(basename "$d") d=${d%/}
-			case $d in */issue/*) id="#$id" ;; esac
+			case $d in */issue/*) id="#$id" ;; */adopt/*) id="adopt/$id" ;; esac
 			if [ -e "$d/FAILED" ]; then wait+=("$id FAILED")
 			elif [ -e "$d/QUESTION.md" ] && [ -e "$d/ANSWER.md" ]; then wait+=("$id answered")
 			elif [ -e "$d/QUESTION.md" ]; then wait+=("$id QUESTION")

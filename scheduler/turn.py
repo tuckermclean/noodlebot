@@ -8,7 +8,7 @@ record DATA/state/starts.json. All reads and writes happen under an exclusive fl
 DATA/state/starts.lock, and files are replaced atomically, so two loops asking at once get one turn.
 
   list      read this loop's waiting units on stdin, one "<key> <kind> <size> <since-epoch>" per line
-            (kind: triage|update|followup|resumed|fresh; size: S|M|L|-), store them with --tick, and
+            (kind: triage|update|followup|resumed|adopt|fresh; size: S|M|L|-), store them with --tick, and
             clear this loop's give-backs. Lines that do not have four fields or a numeric since are ignored.
             A since that is a number but not finite (inf, nan) is an error: list exits 1 and removes this
             loop's waiting list, so the loop is left out (an ask from it gets no turn) until its next good list.
@@ -47,7 +47,7 @@ import os
 import sys
 import time
 
-SMALL = ("triage", "update", "followup", "resumed")
+SMALL = ("triage", "update", "followup", "resumed", "adopt")
 GROUP = {"S": 1, "M": 2, "L": 3}
 
 
@@ -268,7 +268,7 @@ def main():
     p.add_argument("--gap", type=float)
     p.add_argument("--starve", type=float)
     p.add_argument("--now", type=float)
-    p.add_argument("--kind", choices=("triage", "update", "followup", "resumed", "fresh"))
+    p.add_argument("--kind", choices=("triage", "update", "followup", "resumed", "adopt", "fresh"))
     p.add_argument("--size", choices=("S", "M", "L", "-"), default="-")
     # KEY may follow the options (`took --root D --repo R A1`);
     # an older parse_args (3.12.3) binds an empty KEY with COMMAND and rejects it

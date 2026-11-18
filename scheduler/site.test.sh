@@ -20,6 +20,7 @@
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fx=$src/testdata/site
+. "$src/testdata/lib/fixture.sh"
 tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
 pids=
 cleanup() {
@@ -148,10 +149,10 @@ done
 cp "$fx/repos" "$HOME/.config/noodlebot/repos"
 touch "$HOME/STOP-bravo"
 # live sessions (a node and a triage), a loop's lock held
-setsid sh "$tmp/bin/run-session.sh" o/alpha R01 >/dev/null 2>&1 </dev/null & pids="$pids $!"; echo $! >"$sa/node/R01/session.pid"
-setsid sh "$tmp/bin/run-session.sh" o/alpha 21 >/dev/null 2>&1 </dev/null & pids="$pids $!"; echo $! >"$sa/issue/21/session.pid"
+fixture_start sh "$tmp/bin/run-session.sh" o/alpha R01 >/dev/null 2>&1 </dev/null & pids="$pids $!"; echo $! >"$sa/node/R01/session.pid"
+fixture_start sh "$tmp/bin/run-session.sh" o/alpha 21 >/dev/null 2>&1 </dev/null & pids="$pids $!"; echo $! >"$sa/issue/21/session.pid"
 touch -d @1700000100 "$sa/node/R01/session.pid"
-setsid sh -c 'exec 9>"$1"; flock -n 9 && exec sleep 600' x "$sa/loop.lock" >/dev/null 2>&1 </dev/null & pids="$pids $!"
+fixture_start sh -c 'exec 9>"$1"; flock -n 9 && exec sleep 600' x "$sa/loop.lock" >/dev/null 2>&1 </dev/null & pids="$pids $!"
 sleep 0.5
 chmod 000 "$sa/node/R01/session.jsonl" "$sa/node/R01/session.stderr" "$sa/node/R01/unattended.md" "$sa/node/R01/env" \
 	"$sa/issue/21/session.jsonl" "$sa/issue/21/session.stderr" "$sa/env" "$HOME/.config/noodlebot/env" "$HOME/.config/noodlebot/token"

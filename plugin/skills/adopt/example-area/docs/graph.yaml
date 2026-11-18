@@ -1,0 +1,27 @@
+template: {headings: [Purpose, Tests, Changes, Gate, Risks]}
+gate:
+  command: make test
+  fail_pattern: '^FAIL '
+  known_red:
+    - t_narrow
+out_of_scope:
+  - {glob: "vendor/", reason: "vendored third-party code, not ours, never changed here"}
+adoption:
+  areas:
+    - {name: tests, globs: ["tests/"]}
+    - {name: build, globs: ["Makefile", ".github/"]}
+nodes:
+  - id: W01
+    name: wrap-lib
+    deps: []
+    track: done
+    status: imported
+    owns: ["lib/wrap.sh"]
+    summary: "wrap_line folds standard input at spaces so that no line exceeds a width, except a single word longer than the width."
+  - id: W02
+    name: wrap-command
+    deps: [W01]
+    track: done
+    status: imported
+    owns: ["bin/wrap", "README.md"]
+    summary: "bin/wrap [-w N] [file] reads a file or standard input and prints it folded to N characters (default 20), and the README that documents it."

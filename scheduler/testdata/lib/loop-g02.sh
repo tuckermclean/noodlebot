@@ -142,7 +142,7 @@ g02_rl() { printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allow
 g02_loop() {   # g02_loop <SCHED_MAX>
 	rm -f "$HOME/STOP-g02"
 	NOODLEBOT_DATA=$g02_data PATH=$G02/bin:$PATH SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 SCHED_MAX=$1 \
-		bash "$G02/nb/scheduler/loop.sh" o/g02 >>"$G02/loop.out" 2>&1 &
+		fixture_start bash "$G02/nb/scheduler/loop.sh" o/g02 >>"$G02/loop.out" 2>&1 &
 	pids+=("$!"); g02_lp=$!
 }
 g02_stop() {

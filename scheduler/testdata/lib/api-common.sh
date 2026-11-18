@@ -1,5 +1,6 @@
 # Shared by api.test.sh and api-root2.test.sh (P01): the fixture paths, pass/fail, the clean-up, live and ended
 # sessions, the schema validator and the JSON helpers. Sourced after src and tmp are set; not run on its own.
+. "$src/testdata/lib/fixture.sh"
 fix=$src/testdata/api
 schemas=$src/api-schema/v1
 fails=0
@@ -23,7 +24,7 @@ while :; do sleep 1; done
 EOS
 live() { # live <state dir> <worktree> <prompt words...>: session.pid of a running session
 	d=$1 wt=$2; shift 2
-	sh "$tmp/procs/run-session.sh" "$wt" "$d" "$@" </dev/null >/dev/null 2>&1 &
+	fixture_start sh "$tmp/procs/run-session.sh" "$wt" "$d" "$@" </dev/null >/dev/null 2>&1 &
 	pids="$pids $!"; echo $! >"$d/session.pid"
 }
 ended() { sh -c 'exit 0' & p=$!; wait "$p"; echo "$p" >"$1/session.pid"; }
