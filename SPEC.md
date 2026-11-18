@@ -22,7 +22,8 @@ way.
    never printed, logged, committed or stored in Git configuration. Sessions get them only through the
    token script.
 5. **Tested.** `make test` covers every scheduler path end to end, with fake `gh` and `claude`, and runs
-   in CI on every PR.
+   in CI on every push to `main` and on every PR that changes more than `docs/graph.yaml` and `nodes/`; a PR
+   that changes only those runs the spec checks instead.
 6. **Safe to change while running.** Scripts a running loop or session executes are replaced (write a
    new file, then rename it), never edited in place: bash reads a script as it runs it.
 7. **Forge- and harness-agnostic.** The scheduler, the skills and the session templates reach the code
