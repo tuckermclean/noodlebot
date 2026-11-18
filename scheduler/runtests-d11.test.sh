@@ -347,8 +347,51 @@ drv_hd() {
 	wait "$sp" 2>/dev/null
 }
 
+# --- D11-AC-1 for a run of several files: the per-file stop, not the end-of-run sweep ---------------------------
+# A leaking file m and a companion file mw that holds the run open (until the driver touches a flag, at most 25 s):
+# what m left must be gone while the runner still runs, so the clear comes from the stop when m ended.
+# m is a leaking file like the others, but its folder is made in $rd, apart from the runner's own scratch folder
+# (which TMPDIR puts under $tmp/m/ and which the runner's processes name while it runs).
+{ sed '1s|mktemp -d|mktemp -d "$RD/mleak.XXXXXX"|' "$tmp/body.sh"; printf '%s\n' 'touch "$RD/$n.ready"' 'exit 0'; } >"$f/m.test.sh"
+cat >"$f/mw.test.sh" <<'EOT2'
+. "$COMMON"
+touch "$RD/mw.ready"
+wait_file 25 "$RD/m.release"
+echo "PASS: companion released"
+EOT2
+clear_m() { [ -z "$(named m)" ]; }
+drv_m() {
+	L="D11-AC-1:a run of several files, one leaving processes behind while another still runs"
+	sh_run m "TEST_JOBS=2" "$f/m.test.sh" "$f/mw.test.sh"
+	printf '%s\n' "$rd/mleak." >"$tmp/pat.m"
+	if ! wait_file 20 "$rd/m.ready" || ! wait_file 20 "$rd/mw.ready"; then
+		fail "$L:both fake files started"
+		touch "$rd/m.release"
+		return
+	fi
+	setup_ok "$L" m
+	if wait_until 10 clear_m; then
+		pass "$L:within 10 s of the leaking file ending no process names its folder or carries its mark"
+	else
+		fail "$L:within 10 s of the leaking file ending no process names its folder or carries its mark, while the runner still runs (left:$(named m | tr '\n' ' '))"
+	fi
+	if [ ! -e "$tmp/o.m.rc" ]; then
+		pass "$L:the runner was still running when the folder was clear (the per-file stop did it, not the end-of-run sweep)"
+	else
+		fail "$L:the runner was still running when the folder was clear (the runner had ended)"
+	fi
+	touch "$rd/m.release"
+	wait_file 30 "$tmp/o.m.rc" || { fail "$L:the runner ended once the companion was released"; return; }
+	[ "$(cat "$tmp/o.m.rc")" = 0 ] && pass "$L:the runner exits 0" || fail "$L:the runner exits 0 (got $(cat "$tmp/o.m.rc"))"
+	has "$L:a TIME line for the leaking file" "$tmp/o.m" '^TIME [0-9]+\.[0-9]{2} .*/m\.test\.sh$'
+	has "$L:a TIME line for the companion" "$tmp/o.m" '^TIME [0-9]+\.[0-9]{2} .*/mw\.test\.sh$'
+	has "$L:a TOTAL line" "$tmp/o.m" '^TOTAL [0-9]+\.[0-9]{2}$'
+	wait_until 10 clear_ex m && pass "$L:nothing is left after the run" || fail "$L:nothing is left after the run (left:$(shown m))"
+}
+
 # --- run ---------------------------------------------------------------------------------------------------------
 ids="a b c z t k ha hb hc hd"
+ids="$ids m"
 pids=""
 for id in $ids; do
 	( "drv_$id" ) >"$tmp/res.$id" 2>&1 &
