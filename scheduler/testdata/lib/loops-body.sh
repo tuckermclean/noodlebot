@@ -748,7 +748,8 @@ s08_free() { flock -n "$nb/state/alpha/loop.lock" true && flock -n "$nb/state/be
 until_ok "S08-AC-5: the alpha and beta loop locks were not both free after STOP" s08_free
 rm -f "$HOME/STOP" "$HOME/seen"/*
 run start
-for n in alpha beta; do for _ in $(seq 50); do [ -s "$HOME/seen/$n.env" ] && break; sleep 0.1; done; done
+s08_seen() { [ -s "$HOME/seen/$1.env" ]; }
+for n in alpha beta; do until_ok "S08-AC-5: loop $n wrote no seen/$n.env after the second start" s08_seen "$n"; done
 for n in alpha beta; do
 	no "S08-AC-5:$n:SCHED_HARNESS-unset-not-passed" sh -c "grep -q '^SCHED_HARNESS=' '$HOME/seen/$n.env'"
 done
