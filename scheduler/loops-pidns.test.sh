@@ -332,5 +332,68 @@ no "M02-AC-2:held-rereads:status-not-loop-not-running" has 'o/alpha: loop not ru
 kill "$m02_writer" 2>/dev/null; pkill -f "$sc/serve.sh" 2>/dev/null
 unset NOODLEBOT_PROC_LOCKS
 
+echo "# M03-AC-1, M03-AC-2: held() of site.py and api.py re-reads the lock list (up to three reads) before it says a lock is free"
+scenario m03-reread
+: >"$data/state/alpha/loop.lock"
+python3 -I "$tmp/fab.py" "$data/state/alpha/loop.lock" >"$sc/with-line"
+sed 's/:[0-9]* 0 EOF/:999999999 0 EOF/' "$sc/with-line" >"$sc/without-line"
+mkfifo "$sc/locks.fifo"
+m03_lock=$data/state/alpha/loop.lock
+# m03-serve-two.sh <without> <with> <fifo>: one list per open, the one without the line first, then the one with it;
+# a second's wait after each list, so that two lists never join in one read.
+cat >"$sc/m03-serve-two.sh" <<'EOT'
+#!/bin/sh
+while :; do
+	cat "$1" >"$3"; sleep 1
+	cat "$2" >"$3"; sleep 1
+done
+EOT
+# m03-serve-none.sh <without> <fifo> <counter>: only lists without the line; the count of lists served goes into
+# the counter file after each list is fully written (the 4th open blocks until a reader comes).
+cat >"$sc/m03-serve-none.sh" <<'EOT'
+#!/bin/sh
+n=0
+while :; do
+	cat "$1" >"$2"; n=$((n + 1))
+	echo "$n" >"$3.new" && mv "$3.new" "$3"
+	sleep 1
+done
+EOT
+# m03_probe <site|api>: the probe under a bound that covers two or three lists, so a probe that reads more often
+# than the writer serves prints nothing (and fails its case) instead of hanging.
+m03_probe() { timeout 15 python3 -I -B "$tmp/probe.py" "$1" "$m03_lock" 2>/dev/null; }
+# m03_stop: stop the writer by its recorded pid; setsid made it a group leader, so its group ends with it, a child
+# blocked on the FIFO as well.
+m03_stop() {
+	case ${m03_writer:-} in
+	'' | *[!0-9]*) return 0 ;;
+	esac
+	[ "$m03_writer" -gt 1 ] || return 0
+	kill -- "-$m03_writer" 2>/dev/null; kill "$m03_writer" 2>/dev/null
+	m03_writer=
+}
+m03_count() { cat "$sc/m03-count" 2>/dev/null; }
+m03_count3() { [ "$(m03_count)" = 3 ]; }
+export NOODLEBOT_PROC_LOCKS=$sc/locks.fifo
+ok "M03-AC-1:control-no-process-holds-the-lock" flock -n "$m03_lock" true
+for m03_mod in site api; do
+	setsid sh "$sc/m03-serve-two.sh" "$sc/without-line" "$sc/with-line" "$sc/locks.fifo" >/dev/null 2>&1 </dev/null &
+	m03_writer=$!
+	m03_res=$(m03_probe "$m03_mod")
+	m03_stop
+	ok "M03-AC-1:$m03_mod.py:held-when-the-second-read-has-the-line" test "$m03_res" = held
+done
+for m03_mod in site api; do
+	rm -f "$sc/m03-count"
+	setsid sh "$sc/m03-serve-none.sh" "$sc/without-line" "$sc/locks.fifo" "$sc/m03-count" >/dev/null 2>&1 </dev/null &
+	m03_writer=$!
+	m03_res=$(m03_probe "$m03_mod")
+	ok "M03-AC-2:$m03_mod.py:free-when-no-read-has-the-line" test "$m03_res" = free
+	wait_until 6 m03_count3
+	ok "M03-AC-2:$m03_mod.py:three-lists-served-in-all" test "$(m03_count)" = 3
+	m03_stop
+done
+unset NOODLEBOT_PROC_LOCKS
+
 [ "$fails" = 0 ] || { echo "$fails FAILED"; exit 1; }
 echo "all passed"
