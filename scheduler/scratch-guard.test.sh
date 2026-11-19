@@ -224,6 +224,130 @@ else
 	done
 fi
 
+# D14-AC-3, second corpus: the scan reports every line D12's scan reports whatever follows -d (or -qd, --directory):
+# an operator, a redirection, a quote, a backslash, a nested substitution; the one exception is a guarded
+# local/export line of D12's exact accepted form (the allowed widening).
+echo "# D14-AC-3: the second corpus (what follows -d is any character)"
+fxunguarded() {
+	printf '%s\n' "set -u" "$2" >"$fx/x-$1.sh"
+	got=$(scan "$fx/x-$1.sh")
+	[ "$got" = "$fx/x-$1.sh:2" ] && pass "D14-AC-3:an unguarded $1 line is reported by file:line" || fail "D14-AC-3:an unguarded $1 line is reported by file:line (got: ${got:-nothing})"
+}
+for _p in '' 'local ' 'export '; do
+	_k=${_p%% *}
+	fxunguarded "qd-exit${_k:+-$_k}" "${_p}tmp=$D(mktemp -qd||exit 1)"
+	fxunguarded "directory-semicolon${_k:+-$_k}" "${_p}tmp=$D(mktemp --directory;)"
+done
+c2=$fx/corpus2.sh
+_P="tmp=$D(mktemp"
+_G=" && [ -d \"${D}tmp\" ] || exit 1"
+_BQ="$BT"
+{
+	echo "# corpus2"
+	echo "$_P -d||exit 1)"
+	echo "$_P -d||true)"
+	echo "$_P -d;)"
+	echo "$_P -d&&:)"
+	echo "$_P -d<&-)"
+	echo "$_P -d>/dev/null)"
+	echo "$_P -d'')"
+	echo "$_P -d.)"
+	echo "$_P -d2>/dev/null)"
+	echo "$_P -d\\ )"
+	echo "$_P -qd||exit 1)"
+	echo "$_P --directory;)"
+	echo "local $_P -qd||exit 1)"
+	echo "export $_P -qd||exit 1)"
+	echo "local $_P --directory;)"
+	echo "export $_P --directory;)"
+	echo "tmp=${_BQ}mktemp -d $D(u=$D(mktemp -d))${_BQ}$_G"
+	echo "$_P -d|cat)"
+	echo "$_P -d|)"
+	echo "$_P -d&)"
+	echo "$_P -d>x)"
+	echo "$_P -d<x)"
+	echo "$_P -d\"\")"
+	echo "$_P -d'x')"
+	echo "$_P -d\;)"
+	echo "$_P -d#)"
+	echo "$_P -d})"
+	echo "$_P -d=)"
+	echo "$_P -d -p x||exit 1)"
+	echo "$_P -d||exit 1)$_G"
+	echo "$_P -d;)$_G"
+	echo "local $_P -d;)$_G"
+	echo "export $_P -d>/dev/null)$_G"
+	echo "local $_P -d)$_G"
+	echo "export $_P -qd||exit 1)$_G"
+	echo "	$_P -d||exit 1)"
+	echo "$_P -d	)"
+	echo "$_P -d	;)"
+	echo "	local $_P -d;)"
+	echo "export $_P -d>/dev/null)"
+	echo "tmp=${_BQ}mktemp -d||exit 1${_BQ}"
+	echo "tmp=${_BQ}mktemp -d;${_BQ}$_G"
+	echo "tmp=${_BQ}mktemp -d $D(mktemp -d)${_BQ}$_G"
+	echo "tmp=${_BQ}mktemp -d \\${_BQ}mktemp -d\\${_BQ}${_BQ}$_G"
+	echo "tmp=${_BQ}mktemp -d $D(u=$D(mktemp -d))${_BQ}"
+	echo "$_P -d)&&[ -d \"${D}tmp\" ]||exit 1"
+	echo "$_P -d) && [ -d \"${D}tmp\" ] || exit 1 | cat"
+	echo "$_P -d||exit 1) && [ -d \"${D}tmp\" ] || exit 1  "
+	echo "$_P -d --tmpdir=x||exit 1)"
+	echo "$_P -d ||exit 1)"
+	echo "$_P -d   ;)"
+	echo "x=1 $_P -d||exit 1)"
+	echo "$_P -d||exit 1); u=$D(mktemp -d)"
+	echo "$_P -d$D(u=$D(mktemp -d)))"
+	echo "$_P -d\"$D(pwd)\"||exit 1)"
+	echo "$_P -d)$D(mktemp -d)$_G"
+	echo "$_P -d \"$D(u=$D(mktemp -d))\")$_G"
+	echo "$_P -dp||exit 1)"
+	echo "tmp=\"$D(mktemp -d||exit 1)\""
+	echo "tmp=\"$D(mktemp -d;)\"$_G"
+	echo "local tmp=\"$D(mktemp -d;)\""
+	echo "tmp=$D(mktemp -d)"
+} >"$c2"
+d12=$(scan_d12 "$c2")
+head=$(scan "$c2")
+missed=
+nd12=0
+for r in $d12; do
+	nd12=$((nd12 + 1))
+	_ln=$(sed -n "${r##*:}p" "$c2")
+	_ln=${_ln#"${_ln%%[![:space:]]*}"}
+	_ex=no
+	case $_ln in
+	"local "* | "export "*)
+		_rest=${_ln#local }
+		_rest=${_rest#export }
+		_vv=${_rest%%=*}
+		case $_rest in
+		"$_vv=\$(mktemp -d"*") && [ -d \"\$$_vv\" ] || exit 1") _ex=yes ;;
+		esac
+		;;
+	esac
+	[ "$_ex" = yes ] && continue
+	case "
+$head
+" in
+	*"
+$r
+"*) ;;
+	*) missed="$missed ${r##*:}" ;;
+	esac
+done
+ncorp=$(wc -l <"$c2")
+if [ "$ncorp" -lt 60 ] || [ "$nd12" -lt 40 ]; then
+	fail "D14-AC-3:corpus2 holds at least 60 lines, and D12's scan reports at least 40 of them (lines: $ncorp, reported by D12: $nd12)"
+elif [ -z "$missed" ]; then
+	pass "D14-AC-3:the scan reports every corpus2 line D12's scan reports (D12 reports $nd12 of $ncorp)"
+else
+	fail "D14-AC-3:the scan reports every corpus2 line D12's scan reports (missed corpus2 lines:$missed)"
+	for m in $missed; do
+		fail "D14-AC-3:the scan reports corpus2 line $m, as D12's did: $(sed -n "${m}p" "$c2")"
+	done
+fi
+
 files=""
 for t in $tests; do files="$files $root/$t"; done
 for l in "$src"/testdata/lib/*.sh; do files="$files $l"; done
