@@ -177,6 +177,7 @@ TESTS = \
 	plugin/skills/node/skill-g07.test.sh \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
+	scheduler/site-u04.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
 	scheduler/pickup.test.sh \
