@@ -110,6 +110,8 @@ chk "G07-AC-3: step 6: the push after the final review is a CI fix or a resumed 
 chk "G07-AC-3: step 6: the new Fresh review comes from a new reviewer" "$s6" 6 'new reviewer' 'at <new head>'
 chk "G07-AC-3: step 6: the new 'Fresh review (<verdict>) at <new head>' is from a new reviewer (that phrase)" "$s6" 2 \
 	'at <new head>[^a-z]*from a new reviewer'
+chk "G07-AC-3: step 6: the push rule's comment names the review at <sha> that no longer covers the head (that phrase)" "$s6" 2 \
+	'the review at .?<sha>.? no longer covers'
 chk "G07-AC-3: step 6: the whole node when the node's own code changed since the reviewed head" "$s6" 6 \
 	'whole node' 'own code' 'changed' 'reviewed head'
 chk "G07-AC-3: step 6: else the diff from the reviewed head to the new head" "$s6" 6 \
@@ -125,6 +127,8 @@ for t in "$t1" "$t2"; do
 		'pr is open' 'last' 'fresh review [(]<verdict>[)] at <sha>' 'head' 'ci' 'green' 'end the run'
 	chk "G07-AC-4: $tn: the end-of-run line's 'at <sha>' is naming the PR's head (that phrase)" "$t" 2 \
 		'at <sha>[^a-z]*naming the pr.s head'
+	chk "G07-AC-4: $tn: the end-of-run line requires CI on that head to be green (that phrase)" "$t" 2 \
+		'ci on that head is green'
 done
 for t in "$t1" "$t2" "$t3" "$t4"; do
 	tn=${t##*/}
