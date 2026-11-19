@@ -71,8 +71,8 @@ for i, s in enumerate(mt):
         runs[m.group(2)].append(s)
 
 want = {
-    "pull_request": {"TEST_BUDGET_ENFORCE": "1", "TEST_FILE_BUDGET": "60", "TEST_BUDGET": "360", "SITE_TESTS": "required"},
-    "push": {"SITE_TESTS": "required", "TEST_FILE_BUDGET": "60", "TEST_BUDGET": "360"},
+    "pull_request": {"TEST_BUDGET_ENFORCE": "1", "TEST_FILE_BUDGET": "105", "TEST_BUDGET": "630", "SITE_TESTS": "required"},
+    "push": {"SITE_TESTS": "required", "TEST_FILE_BUDGET": "105", "TEST_BUDGET": "630"},
 }
 for ev in ("pull_request", "push"):
     ss = runs[ev]

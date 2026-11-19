@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | S07, D03 | none | M |
+| now | S07, D03 | D17 | M |
 
 **Owns:** in the start-queue test files `scheduler/loop-s07*.test.sh` and their fixture `scheduler/testdata/lib/loop-s07.sh`: how each case waits, the settings a case starts its loops with (ticks, `SCHED_START_GAP`, `SCHED_STARVE`, seeded waits) and when it opens or holds the throttle, the time windows its checks use, and the fixture's helpers; never what a check expects (Change 3).
 **Resolves:** #92

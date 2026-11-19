@@ -19,18 +19,21 @@ jobs:
       # run, so a slow test is caught in review. On push to main the TIME/SLOW/TOTAL lines are still
       # printed, but only a failing test fails the run: GitHub's runner times vary, and main's push
       # run gates the self-deploy (D07).
+      # The budgets (D15) come from the record of every test.yml attempt of 2026-11-14..2026-11-18 (147
+      # attempts) in D15's PR: slowest passing file 83.17 s x 1.2 rounded up to 15 s = 105; largest TOTAL
+      # 529.92 s x 1.1 rounded up to 30 s = 600, which D10's fixture f12 excludes, so 630.
       - name: make test (pull_request)
         if: github.event_name == 'pull_request'
         run: make test
         env:
           SITE_TESTS: required
           TEST_BUDGET_ENFORCE: 1
-          TEST_FILE_BUDGET: 60
-          TEST_BUDGET: 360
+          TEST_FILE_BUDGET: 105
+          TEST_BUDGET: 630
       - name: make test (push)
         if: github.event_name == 'push'
         run: make test
         env:
           SITE_TESTS: required
-          TEST_FILE_BUDGET: 60
-          TEST_BUDGET: 360
+          TEST_FILE_BUDGET: 105
+          TEST_BUDGET: 630
