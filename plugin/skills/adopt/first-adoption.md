@@ -130,8 +130,8 @@ repeated in the answer on bosnia's issue #3 above.
 Plan PR #13 found no open issue that asks for work: the only open issues were #3 (the adoption's own issue) and #12
 (the daily log). So it added no planned node, and it removed the `adoption` key and two passages of `SPEC.md` that
 still called the adoption in progress. The 41 imported nodes and the gate were unchanged. Its reviewer approved at
-once and noted that `AGENTS.md` still says "in an area or in a node", which is no longer reachable, and that the plan
-PR could not edit `AGENTS.md` because it is not a spec file.
+once and said the `AGENTS.md` wording "in an area or in a node" can wait for an issue: it is not wrong, just no longer
+reachable. The PR's own body says why it left the wording: `AGENTS.md` is outside the PR's spec files.
 
 After the adoption, issues #14 to #17 and #21 were filed; `git log a6ba2b1..origin/main` in the clone shows each
 became a spec PR, then a node PR, on bosnia's `main` (now 96d3345):
@@ -263,16 +263,16 @@ Each is a wording change in `plugin/skills/adopt/SKILL.md` (or the template), wi
 - **F6**, a wording the feedback suggests is checked against the code before it is applied (section 9). Case:
   "A09 F5/F6".
 - **F7**, the drafts state nothing the area or plan PRs make false (section 3, the drafts). Case: "A09 F7".
+- **Review 1** (RED 071e3b3, GREEN ee29b2d): the prohibitions (the Never paragraph, section 7 step 5, section 9)
+  except the scratch edits of section 7's check, reverted before any commit, and section 7 says how to undo one;
+  the `Adopt <name>` issue is named where the owner's answers are; CI's colour codes and timestamp prefix are
+  examples of what its lines may add; the branch this run works on is exempt from the earlier-attempt rule.
 - **Review 2** (RED b6434f7 and the earlier ones, GREEN = 3a0433f, plus the rewrap 3c79dd9): the drafts come from the
   default branch, its merged PRs, the issues and the owner's answers, and from nothing else; CI's colour codes and
   timestamp prefix are examples, not facts about every repository; before the commit `git status` shows only spec
   files modified or staged (untracked files the gate run leaves do not count).
 - **Review 3**: review 3 found clause reversals of F1, F4, F5 and F7 that the cases still let pass; commit 4c6ffa3
   adds cases that pass at the skill's current wording and fail under each of 59 mutations.
-- **Review 1** (RED 071e3b3, GREEN ee29b2d): the prohibitions (the Never paragraph, section 7 step 5, section 9)
-  except the scratch edits of section 7's check, reverted before any commit, and section 7 says how to undo one;
-  the `Adopt <name>` issue is named where the owner's answers are; CI's colour codes and timestamp prefix are
-  examples of what its lines may add; the branch this run works on is exempt from the earlier-attempt rule.
 
 Problems reported elsewhere, not fixed here:
 
