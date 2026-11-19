@@ -237,8 +237,9 @@ Read the owner's answers to the first PR's questions (the replies on the adoptio
      A criterion claims only what the test named in its *Verify:* asserts, and that
      test fails when the behaviour the criterion states breaks. Check each pinned criterion: break that behaviour
      in a scratch edit, run the named test, then restore the file; the scratch edit is reverted and nothing is
-     committed (the PR stays specs only). Undo one with `git checkout -- <file>` or `git restore <file>`; Before the commit,
-     `git status` has to show that only spec files are modified or staged (untracked files the gate run leaves do not count). A clause the test does not catch is `unpinned`, a criterion of its own.
+     committed (the PR stays specs only). Undo one with `git checkout -- <file>` or `git restore <file>`. Before the
+     commit, `git status` has to show that only spec files are modified or staged (untracked files the gate run leaves
+     do not count). A clause the test does not catch is `unpinned`, a criterion of its own.
      A test that cannot run here makes its criterion `unpinned` too;
      Risks. Describe what you read; do not invent intent;
    - lists as `deps` the already-mapped nodes whose code it relies on.
