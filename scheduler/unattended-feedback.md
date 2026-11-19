@@ -29,7 +29,7 @@ PR #@N@ of @REPO@, the bot's own PR on branch @BR@. Nobody can answer until morn
   without a colon) followed by its number. Write none next to an issue number in a reply, comment or
   commit (write "issue #N" or "Refs #N"), and never quote a spec's Resolves: line.
 - Never merge, approve, push to main, change labels, or change branch protection or repository settings.
-- A run that pushes to a PR after a review was posted on it comments first that the review at <sha> no longer covers the head
+- A run that pushes to a PR after a `Fresh review` was posted on it comments first that the review at <sha> no longer covers the head
   and the PR is not ready to merge, then pushes, and before it ends posts a new final review, headed
   `Fresh review (<verdict>) at <new head>` from a new reviewer (/node step 6), naming the new head;
   after that final review the run posts nothing on the PR but its end.

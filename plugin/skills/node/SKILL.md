@@ -108,8 +108,8 @@ Open the PR with `<forge> pr create --head <branch> --base main --title <title> 
 
 **Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL, the evidence table and the diffs of any merged spec PR's files outside the spec files (above). It has seen none of the slice reviews. When the session will act on any of its findings (always on `request_changes`), it is not posted as a final review: the session acts on them (next paragraph). When it leaves nothing to act on, post it as the final review with `<forge> pr comment --number <N> --body-file <file>`, headed `Fresh review (<verdict>) at <sha>`. This is a comment, never an approval. On `test_spec_conflict`, go to step 7: such a review is not posted as a final review; it is kept in `out/node/<ID>/` or posted as a comment whose first line says the PR is not ready to merge, and the resumed session after the answer ends with a new final review.
 
-**The final review is the last thing on the PR.** On `request_changes`, or any review whose findings the session will act on, give the findings to a new implementer and fix them first, test-first, under the slice retry budget
-(a new tester's RED, a new implementer's GREEN, the slice review), and the session pushes, and then a new reviewer reviews the whole node at the new head, the final head.
+**The final review is the last thing on the PR.** On `request_changes`, or any review whose findings the session will act on, fix them first, test-first under the slice retry budget
+(a new tester's RED, a new implementer's GREEN, the slice review), push, and then a new reviewer reviews the whole node at the new head, the final head.
 Only that final review is posted on the PR, its first line headed `Fresh review (<verdict>) at <sha>`,
 where `<sha>` is the head it reviewed (seven or more hex characters).
 A review whose findings will still be acted on is never posted headed `Fresh review (`:
@@ -159,7 +159,7 @@ A restarted update first reads the owner's answer: every file in `answered/` of 
    `Fresh review (<verdict>) at <new head>` from a new reviewer. It reviews the whole node when the node's own code changed since the reviewed head;
    else (the resolution kept both sides) it is given the diff from the reviewed head to the new head and checks that it changes nothing of the node's beyond that.
 7. With `--dry-run`, stop before the push and write `out/node/pr-<N>/result.md`: the merge result, each resolved file and how, each added test line, the test results and each review's verdict; or that it wrote `QUESTION.md` and left no merge commit. No push, no comment.
-8. Push the branch. Comment on the PR with each resolved file and how, each added test line, the test results and the review's verdict. Then take the whole suite's result from the PR's CI run, and say it on the PR. The new `Fresh review (<verdict>) at <new head>` is posted last, after that comment; only the session's end (the CI result on that head) follows it. A session that pushes nothing posts no new review.
+8. Push the branch. Comment on the PR with each resolved file and how, each added test line, the test results and the review's verdict. The new `Fresh review (<verdict>) at <new head>` (item 6) is posted next, after that resolution comment; only the session's end (the CI result on that head) follows it. Then take the whole suite's result from the PR's CI run, and say it on the PR. A session that pushes nothing posts no new review.
 
 ### Resolution review
 Run after any merge of `origin/main` that had conflicts, before anything is pushed. Dispatch a **new** reviewer (a resolution review) with the merge commit and its diffs against both parents; these inputs and this checklist replace the reviewer's usual brief, criteria and SHA inputs. It checks that:
