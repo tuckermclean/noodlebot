@@ -115,6 +115,108 @@ fxfirst local-first "local tmp=x; u=$D($M); tmp=$D($M)$_g"
 fxfirst export-first "export tmp=x; u=$D($M); tmp=$D($M)$_g"
 fxfirst other-var-first "u=$D($M) && tmp=$D($M)$_g"
 fxfirst local-other-var-first "local u=$D($M) && tmp=$D($M)$_g"
+fxform pwd-option '' "$D(" "mktemp -p \"$D(pwd)\" -d" ')'
+fxform dir-abbrev '' "$D(" 'mktemp --dir' ')'
+fxform di-abbrev '' "$D(" 'mktemp --di' ')'
+# D14-AC-3 loosens no check: for every corpus line D12's scan (kept below as the oracle scan_d12, verbatim from
+# D12's commit 906abb5, renamed) reports, the scan reports it too.
+scan_d12() {
+	for _f in "$@"; do
+		[ -f "$_f" ] || continue
+		grep -nE '(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=\$\(mktemp -d' "$_f" 2>/dev/null | while IFS= read -r _l; do
+			_n=${_l%%:*}
+			_t=${_l#*:}
+			_t=${_t#"${_t%%[![:space:]]*}"}
+			_v=$(printf '%s\n' "$_t" | sed -E 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)=\$\(mktemp -d.*/\2/')
+			ok_=no
+			case $_t in
+			"$_v=\$(mktemp -d"*") && [ -d \"\$$_v\" ] || exit 1") ok_=yes ;;
+			esac
+			[ "$ok_" = yes ] || echo "$_f:$_n"
+		done
+	done
+}
+
+echo "# D12-AC-1: every assignment of \$(mktemp -d ...) is guarded"
+fx=$tmp/fixture
+cf=$fx/corpus.sh
+_o="$D($M)"
+_q="\"$D($M)\""
+_b="$BT$M$BT"
+_h="$D(mktemp -u)"
+{
+	echo "# corpus"
+	echo "tmp=$D(mktemp -u); u=$_o; tmp=$_o$_g"
+	echo "tmp=\"$D(mktemp -u)\"; u=$_o; tmp=$_o$_g"
+	echo "tmp=$D(mktemp -p x); u=$_o; tmp=$_o$_g"
+	echo "tmp=$_o; u=$_o; tmp=$D(mktemp -u)$_g"
+	echo "tmp=$_h; u=$_o; tmp=$_h$_g"
+	echo "tmp=$_o $BT""x$BT$_g"
+	echo "tmp=x; u=$_o; tmp=$_o$_g"
+	echo "local tmp=x; u=$_o; tmp=$_o$_g"
+	echo "export tmp=x; u=$_o; tmp=$_o$_g"
+	echo "u=$_o && tmp=$_o$_g"
+	echo "local u=$_o && tmp=$_o$_g"
+	echo "export u=$_o; tmp=$_o$_g"
+	echo "local tmp=$_o; u=$_o; tmp=$_h$_g"
+	echo "tmp=$_q; u=$_o; tmp=$_q$_g"
+	echo "tmp=$_q$_g; u=$_o"
+	echo "tmp=$_b; u=$_o; tmp=$_b$_g"
+	echo "tmp=$_o || true"
+	echo "tmp=$_o; [ -d \"${D}tmp\" ] || exit 1"
+	echo "tmp=$_o && [ -d \"${D}u\" ] || exit 1"
+	echo "tmp=$_o && [ -d \"${D}tmp\" ] || exit 1; u=$_o"
+	echo "tmp=$_o && [ -d \"${D}tmp\" ] || exit 1 && u=$_o"
+	echo "tmp=$_o && [ -d \"${D}tmp\" ] || exit 1; echo done"
+	echo "tmp=$_o && [ -d \"${D}tmp\" ]"
+	echo "tmp=$_o && [ -d \"${D}tmp\" ] || exit 2"
+	echo "tmp=$_o$_g # trailing comment"
+	echo "# tmp=$_o"
+	echo "echo \"$D(mktemp -d) tmp=$_o\""
+	echo "x=1 tmp=$_o$_g"
+	echo "tmp=$_o tmp2=$_o$_g"
+	echo "tmp=$_o && u=$_o && [ -d \"${D}tmp\" ] || exit 1"
+	echo "tmp=$_o || u=$_o && [ -d \"${D}tmp\" ] || exit 1"
+	echo "tmp=$_o; tmp=$_o$_g"
+	echo "tmp=$_o;tmp=$_o$_g"
+	echo "tmp=$D(mktemp -d -p \"$D(pwd)\")$_g"
+	echo "tmp=$D(mktemp --dir)$_g"
+	echo "tmp=$D(mktemp -p \"$D(pwd)\" -d)$_g"
+	echo "tmp=$D(cd x && mktemp -d)$_g"
+	echo "tmp=$_o$_g && echo ok"
+	echo "tmp=$_o$_g || true"
+	echo "	tmp=$_o$_g"
+	echo "if true; then tmp=$_o$_g; fi"
+	echo "tmp=$_o$_g"
+	echo "local tmp=$_q$_g"
+	echo "export tmp=$_b$_g"
+} >"$cf"
+d12=$(scan_d12 "$cf")
+head=$(scan "$cf")
+missed=
+nd12=0
+for r in $d12; do
+	nd12=$((nd12 + 1))
+	case "
+$head
+" in
+	*"
+$r
+"*) ;;
+	*) missed="$missed ${r##*:}" ;;
+	esac
+done
+ncorp=$(wc -l <"$cf")
+if [ "$ncorp" -lt 25 ] || [ "$nd12" -lt 15 ]; then
+	fail "D14-AC-3:the corpus holds at least 25 lines, and D12's scan reports at least 15 of them (lines: $ncorp, reported by D12: $nd12)"
+elif [ -z "$missed" ]; then
+	pass "D14-AC-3:the scan reports every one of the $nd12 corpus lines D12's scan reports (of $ncorp)"
+else
+	fail "D14-AC-3:the scan reports every corpus line D12's scan reports (missed corpus lines:$missed)"
+	for m in $missed; do
+		fail "D14-AC-3:the scan reports corpus line $m, as D12's did: $(sed -n "${m}p" "$cf")"
+	done
+fi
 
 files=""
 for t in $tests; do files="$files $root/$t"; done
