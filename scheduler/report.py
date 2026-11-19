@@ -623,11 +623,12 @@ def merge_state(a, rs, pr):
     rh, verdict = rec.get("review_head"), rec.get("verdict")
     ci = rec.get("ci") if rec.get("head") == cur else None
     same = bool(rh) and bool(cur) and cur.lower().startswith(rh.lower())
-    if (str(pr) not in getattr(a, "unread", ()) and not has(a.state, task, "QUESTION.md") and same and verdict == "approve" and ci == "passed" and mg != "CONFLICTING"):
+    unread = str(pr) in getattr(a, "unread", ()) or bool(rec.get("unread"))  # this run's, or the previous run's kept record
+    if (not unread and not has(a.state, task, "QUESTION.md") and same and verdict == "approve" and ci == "passed" and mg != "CONFLICTING"):
         return "is ready to merge (reviewed at %s, CI passed)%s" % (
             rh[:7], "" if mg in ("MERGEABLE", "CONFLICTING") else "; the forge has not said whether it merges cleanly")
     why = []
-    if str(pr) in getattr(a, "unread", ()):
+    if unread:
         why.append("its comments could not be read this run")
     if has(a.state, task, "QUESTION.md"):
         why.append("its answer waits for a session" if has(a.state, task, "ANSWER.md") else "it has an open question")
@@ -1894,7 +1895,8 @@ def post_prs(a, rs, pulls):
         m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c["body"])
         return m and m.group(1)
 
-    a.unread = set()  # PR numbers whose comments could not be read this run (not persisted)
+    a.unread = set()  # PR numbers whose comments could not be read (all of them) this run; the merge record keeps "unread"
+    read = set()  # PR numbers whose comments the main loop read to the end this run
     reviews = {}  # PR number -> (head, verdict) of the last Fresh review among the comments read this run
     runs_of, logged = {}, set()
 
@@ -1932,7 +1934,7 @@ def post_prs(a, rs, pulls):
         for t, pr in node_prs():
             k, sha = str(pr["number"]), pr.get("head_sha")
             r = dict(old.get(k) or {})
-            if k not in reviews and k not in old and k not in a.unread:  # a PR whose comments this run did not read
+            if k not in read and k not in a.unread:  # a PR the loop did not read this run (no node folder, or seeding)
                 try:
                     note(pr, comments_of(pr))
                 except Exception as e:
@@ -1963,6 +1965,7 @@ def post_prs(a, rs, pulls):
             for t, pr in node_prs():
                 keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head_sha"]] if pr.get("head_sha") else [])
                 cs = comments_of(pr, True)
+                read.add(str(pr["number"]))
                 note(pr, cs)
                 keys += ["review:%s" % c["id"] for c in cs if verdict(c)]
                 if cs:
@@ -2012,8 +2015,11 @@ def post_prs(a, rs, pulls):
                     post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, v),
                          "Verdict: %s%s" % (v, " (%s)" % c["url"] if c.get("url") else ""))
                     if "review:%s" % c["id"] not in done_of(t):
-                        break  # its post failed: read from this comment again next run
+                        a.unread.add(str(n))  # its post failed: the later comments are unread; read from this one again next run
+                        break
                 rs.setdefault("pr_since", {})[str(n)] = c["created_at"] or ""
+            else:
+                read.add(str(n))
         except Exception as e:
             a.errors.append(str(e))
             a.unread.add(str(n))
