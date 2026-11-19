@@ -63,6 +63,6 @@ x6ok "S06-AC-3: K02's resumed session ends by the usual path (rc 0, QUESTION.md)
 x6ok "S06-AC-3: the resumed triage session ends by the usual path (rc 0, QUESTION.md)" test "$(x6evn issue-46 'triage of #46 ended \(rc 0\) with QUESTION.md')" = 1
 x6ok "S06-AC-3: K02 is not resumed a second time after its resumed run ended" test "$(x6runs K02)" = 2
 kill "$lp06"; wait "$lp06" 2>/dev/null
-for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
+kill_own "$tmp" "$S06"/pg.* "$S06"/pg2.*; for f in "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
 
 loop_end

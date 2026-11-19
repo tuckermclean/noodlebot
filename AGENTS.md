@@ -78,4 +78,9 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
 - **`mktemp -d` leaves its variable empty when it fails**, and `set -u` does not catch it. A test makes its
   scratch folder with `<var>=$(mktemp -d) && [ -d "$<var>" ] || exit 1` before it sets a trap. A cleanup
   never runs `pkill -f`, `kill` or `rm -rf` with a pattern or path that can be empty or `/`.
+  A cleanup or fake that signals a pid or group taken from `$PPID`, or read from a file a fake wrote from `$PPID`, first
+  checks that it is a number above 1 whose command line names the test's scratch folder
+  (`scheduler/testdata/lib/kill-own.sh`), because a parent that has ended makes `$PPID` 1 and `kill -- -1` signals every
+  process of the user; except the make recipes of `scheduler/deploy.test.sh`, whose `$$PPID` is a single make outside
+  the test's scratch folder.
   `scheduler/scratch-guard.test.sh` checks the first rule.

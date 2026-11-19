@@ -69,8 +69,18 @@ loop5() {
 	pids+=("$!"); lp5=$!
 }
 loop5
-timeout 12 sh -c "until [ \"\$(cat '$S02/runs.C01' 2>/dev/null)\" = 3 ] && [ \"\$(cat '$S02/runs.C02' 2>/dev/null)\" = 3 ] && [ \"\$(cat '$S02/runs.71' 2>/dev/null)\" = 2 ] && [ -e '$state/node/C03/FAILED' ] && [ -e '$state/node/C05/FAILED' ]; do sleep 0.2; done"
-wait_ticks 1
+# The case's whole run, waited for by what the checks below read (run records, FAILED files, status-log events), never by the clock:
+# a loaded machine only makes it later (D13: the old `timeout 12` gave up on four of the nodes' second starts and the checks ran early).
+s02_done() {
+	[ "$(cat "$S02/runs.C01" 2>/dev/null)" = 3 ] && [ "$(cat "$S02/runs.C02" 2>/dev/null)" = 3 ] && [ "$(cat "$S02/runs.71" 2>/dev/null)" = 2 ] &&
+		[ -e "$state/node/C03/FAILED" ] && [ -e "$state/node/C05/FAILED" ] &&
+		[ "$(count 'started C01 .*start 2 of 2')" = 2 ] && [ "$(count 'started C02 .*start 2 of 2')" = 2 ] &&
+		[ "$(count 'started triage of #71 .*start 1 of 2')" = 2 ] &&
+		grep -q 'session C03 ended (rc 0).*2 starts used: wrote FAILED' "$state/status.log" &&
+		grep -q 'session C05 ended (rc 7).*2 starts used: wrote FAILED' "$state/status.log"
+}
+wait_until 90 s02_done || fail "D13 setup: the loop's runs of C01, C02, C03, C05 and the triage of #71 all happened (in $(basename "$0"))"
+wait_ticks 1 || fail "D13 setup: the loop ticked once more (in $(basename "$0"))"   # a did-not-happen check below (no third run of C03) follows
 ok "S02-AC-1: by default every session (node and triage) has the variable in its environment, as 0" sh -c "[ -s '$S02/env.C01.1' ] && [ -s '$S02/env.71.1' ] && [ \"\$(cat '$S02'/env.*)\" = \"\$(for f in '$S02'/env.*; do echo 0; done)\" ]"
 ok "S02-AC-2: a node cut off (rc 0) on its second start writes no FAILED" test ! -e "$state/node/C01/FAILED"
 ok "S02-AC-2: and starts again (a third run)" test "$(s02runs C01)" = 3
@@ -96,7 +106,7 @@ kill "$lp5"; wait "$lp5" 2>/dev/null
 sleep 0.5   # nothing to observe: the loop is gone and nothing more may start
 rm -f "$state/node/C04/FAILED"
 loop5 CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=12345
-timeout 10 sh -c "until [ -s '$S02/env.C04.1' ]; do sleep 0.2; done"
+wait_until 60 test -s "$S02/env.C04.1" || fail "D13 setup: the second loop started C04 and its session recorded its environment (in $(basename "$0"))"
 ok "S02-AC-1: a value set in the loop's environment reaches the session" sh -c "[ \"\$(cat '$S02/env.C04.1')\" = 12345 ]"
 kill "$lp5"; wait "$lp5" 2>/dev/null
 for f in "$state"/node/*/session.pid "$state"/issue/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
