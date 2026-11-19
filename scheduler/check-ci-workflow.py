@@ -2,14 +2,14 @@
 # D10: read a workflow (default .github/workflows/test.yml) and report every way a failing `make test`
 # could still end in a successful run. Prints one line per problem, then `PROBLEMS <n>`; exit 1 if n > 0.
 #   python3 -I scheduler/check-ci-workflow.py [<workflow>]
-# The expected env values repeat D08-AC-1's; change them here when the CI budgets change.
+# The expected env values repeat D08-AC-1's; D15's, from the CI record in D15's PR. Change them with the budgets.
 import fnmatch
 import os
 import re
 import sys
 
 EVENTS = ("pull_request", "push")
-EXPECT = {"TEST_FILE_BUDGET": "60", "TEST_BUDGET": "360", "SITE_TESTS": "required"}
+EXPECT = {"TEST_FILE_BUDGET": "105", "TEST_BUDGET": "630", "SITE_TESTS": "required"}
 _EQ = r"github\.event_name\s*==\s*(?:'([^']*)'|\"([^\"]*)\")"
 IF_RE = re.compile(r"^(?:\$\{\{\s*" + _EQ + r"\s*\}\}|" + _EQ + r")$")
 
