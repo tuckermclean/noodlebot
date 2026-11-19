@@ -154,4 +154,47 @@ ok "V02-AC-2: the clone has the commit-msg hook (the outside commit below passes
 ok "V02-AC-2: a commit in the clone outside any session is left exactly as written, blank lines kept" sh -c "[ \"\$(git -C '$V02_CLONE' log -1 --format=%s)\" = '$sub' ] && [ \"\$(git -C '$V02_CLONE' log -1 --format=%B)\" = \"\$(cat '$V02/in/outside')\" ]"
 ok "V02-AC-2: and it has no Noodlebot-Version: trailer" sh -c "! git -C '$V02_CLONE' log -1 --format=%B | grep -q '^Noodlebot-Version:'"
 
+# ---- V02 (second review): more shapes, committed directly in the clone with the session's version (the hook runs as in a session) ----
+# three trailer-only paragraphs at the end; a paragraph before them with only its first (or only its last) line trailer-shaped;
+# a message that begins with blank lines (--cleanup=verbatim keeps them): the fix: subject is still the subject
+f1='Note: only the first line looks like a trailer.'; f2='The rest of this paragraph is prose.'
+l1='The first lines of this paragraph are prose.'; l2='Still prose, then a last line that looks like a trailer.'; l3='Note: only the last line looks like a trailer.'
+v02_extra='three first last lead'
+msg in three "$sub" "" "$pro" "" "TDD-Red-Target: $cmd" "" "$pin1" "$pin2" "" "$co"
+msg exp three "$sub" "" "$pro" "" "TDD-Red-Target: $cmd" "$pin1" "$pin2" "$co" "$nv"
+msg par three "TDD-Red-Target: $cmd" "$pin1" "$pin2" "$co" "$nv"
+msg in first "$sub" "" "$f1" "$f2" "" "TDD-Red-Target: $cmd" "" "$co"
+msg exp first "$sub" "" "$f1" "$f2" "" "TDD-Red-Target: $cmd" "$co" "$nv"
+msg par first "TDD-Red-Target: $cmd" "$co" "$nv"
+msg in last "$sub" "" "$l1" "$l2" "$l3" "" "TDD-Red-Target: $cmd" "" "$co"
+msg exp last "$sub" "" "$l1" "$l2" "$l3" "" "TDD-Red-Target: $cmd" "$co" "$nv"
+msg par last "TDD-Red-Target: $cmd" "$co" "$nv"
+msg in lead "" "" "fix: handle the empty case" "" "TDD-Red-Target: $cmd" "" "$co"
+msg exp lead "" "" "fix: handle the empty case" "" "TDD-Red-Target: $cmd" "$co" "$nv"
+msg par lead "TDD-Red-Target: $cmd" "$co" "$nv"
+for l in $v02_extra; do
+	NOODLEBOT_VERSION=$ver git -C "$V02_CLONE" -c user.name=t -c user.email=t@t commit -q --allow-empty --cleanup=verbatim -F "$V02/in/$l" 2>/dev/null \
+		&& echo "$l $(git -C "$V02_CLONE" rev-parse HEAD)" >>"$V02/commits2"
+done
+v02_sha2() { awk -v l="$1" '$1 == l { print $2 }' "$V02/commits2" 2>/dev/null; }
+for l in three first last lead; do
+	case $l in
+	three) d="TDD-Red-Target:, a Pin-Mutation: paragraph and Co-Authored-By: as three trailer-only paragraphs at the end"; a=AC-1; pr=$pro ;;
+	first) d="a paragraph before the trailers whose first line only is trailer-shaped"; a=AC-2; pr=$f1 ;;
+	last) d="a paragraph before the trailers whose last line only is trailer-shaped"; a=AC-2; pr=$l3 ;;
+	lead) d="blank lines, then a fix: subject, then TDD-Red-Target: and Co-Authored-By: paragraphs"; a=AC-2; pr='fix: handle' ;;
+	esac
+	s=$(v02_sha2 "$l")
+	ok "V02-$a: $d: every line kept in its order, only the blank lines between the joined trailer paragraphs and the other Noodlebot-Version: lines gone (exact text)" v02_exact "$s" "$l"
+	ok "V02-$a: $d: git interpret-trailers --parse lists the final block's trailers and the session's Noodlebot-Version:" v02_parse "$s" "$l"
+	ok "V02-$a: $d: exactly one Noodlebot-Version: trailer, the session's version" v02_onenv "$s"
+	ok "V02-$a: $d: git log --format='%(trailers:key=TDD-Red-Target,valueonly)' prints the command" v02_tdd "$s"
+	[ "$l" = three ] || ok "V02-AC-2: $d: git interpret-trailers --parse does not list the non-trailer paragraph" v02_noprose "$s" "$pr"
+done
+ok "V02-AC-1: three trailer-only paragraphs: every trailer is in one block with the Pin-Mutation: lines listed" sh -c "[ \"\$(git -C '$V02_CLONE' log -1 --format=%B '$(v02_sha2 three)' | git interpret-trailers --parse | grep -c '^Pin-Mutation:')\" = 2 ]"
+ok "V02-AC-2: a first line only trailer-shaped: the paragraph keeps its two lines and its blank line" v02_lines "$(v02_sha2 first)" 3 5 "$f1" "$f2" ""
+ok "V02-AC-2: a last line only trailer-shaped: the paragraph keeps its three lines and its blank line" v02_lines "$(v02_sha2 last)" 3 6 "$l1" "$l2" "$l3" ""
+ok "V02-AC-2: blank lines then a fix: subject: the subject is still the fix: line (git log %s)" v02_subj "$(v02_sha2 lead)" 'fix: handle the empty case'
+ok "V02-AC-2: blank lines then a fix: subject: the fix: line keeps its two blank lines before and the blank line after" v02_lines "$(v02_sha2 lead)" 1 4 "" "" "fix: handle the empty case" ""
+
 loop_end
