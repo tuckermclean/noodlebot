@@ -47,6 +47,10 @@ In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop
   gate in the answers; never run one earlier. A command that cannot run here (heavy install, a
   database, Docker) is recorded as "not run: <reason>" plus what CI shows. A documented command that
   is itself broken is a fact to raise in section 2.
+- Run that command, here and for the baseline in section 3, with `CI=true` and the agent session's variables
+  unset (`CLAUDECODE`, `AI_AGENT`): a runner such as vitest changes its output, colour for one, when it sees
+  them. The node skill judges CI's run of the gate with the same `fail_pattern`, so the pattern must match
+  CI's lines too, once the colour escape codes and the timestamp prefix of a fetched job log are stripped.
 - Compare the repository's test and fixture paths with the role guard's defaults (see section 3), e.g.
   a `fixtures/` directory that holds application data, or `tests.py` files the defaults miss.
 - Read the issues, closed ones too, and merged PRs: they are the history of intent.
@@ -54,6 +58,9 @@ In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop
   `<forge> pr list --state merged` and
   `<forge> issue view --number <n>` with `issue comments --number <n>` for the ones that matter. Note the work they ask for.
   They become nodes later, once the code is mapped; this PR drafts no node.
+- A closed PR that was never merged is not the owner's intent: do not read its drafts, recommend from them,
+  cite, link or copy them. The same goes for a branch other than the default branch (an earlier adoption
+  attempt): do not read or use it. The drafts come from the default branch and the owner's answers alone.
 - Write down what you found and what you could not tell in `FACTS.md` next to `QUESTION.md`, so a
   resumed run has it. Do not invent intent from the code.
 
@@ -113,6 +120,9 @@ Only after `ANSWER.md`. Order: the baseline, then the graph, then the other draf
   Drafts name no repository (no owner/name of any, not even the plugin's own). They do name the
   plugin's node skill directly as `/noodlebot:node <ID>` and the guard's config file as
   `.noodlebot/roles.yaml`; the checker is `<plugin dir>/skills/node/check-regime.py`.
+- **Drafts stay true.** `SPEC.md` and `AGENTS.md` state nothing the area or plan PRs make false: no "no node
+  yet", no "in an area or a node", no other in-progress state of the adoption. They must be true as the areas
+  are mapped and after `adoption` is removed, since later PRs cannot edit AGENTS.md.
 - **`AGENTS.md`**, a "Building a node" section (add to an existing file, do not replace it):
   build a node with `/noodlebot:node <ID>`; authority order (`SPEC.md`, `docs/graph.yaml`, the node spec, then `AGENTS.md`); role agents: the
   plugin's tester, implementer and reviewer, unless the repository has its own; the spec checkers
@@ -125,6 +135,8 @@ Only after `ANSWER.md`. Order: the baseline, then the graph, then the other draf
   "none"; what CI evidence to record; and a **Spec files:** line, one physical line naming the
   repository's spec files as paths in backticks (folders with a trailing `/`), normally `SPEC.md`,
   `docs/graph.yaml`, `nodes/`: a spec PR changes only these.
+  The AGENTS.md draft records what CI's lines add to the gate's output: colour escape codes and a fetched job
+  log's timestamp prefix.
 - **The quick gate's output.** The checks of a node's gate run judge failures with `fail_pattern`, which is
   written for the output of the gate command. Draft a quick gate only through the gate's own runner,
   where that runner takes a list of files and prints the lines `fail_pattern` reads. A quick gate that
@@ -208,6 +220,8 @@ and every earlier area's PR are merged. Work in the checkout the prompt names (n
 `spec/adopt-<name>` made from `origin/<default branch>`. Take the area's name and globs from the graph, not
 from memory. Ask the owner (QUESTION.md, as in section 2) only what the code cannot show; unattended, the run's own
 instructions for questions win.
+Read the owner's answers to the first PR's questions (the replies on the adoption's issue; in a loop
+run, the first PR unit's `answered/` folder): they bind this step.
 1. Run `python3 -I <plugin dir>/skills/adopt/inventory.py --json --glob <glob> <checkout>` for each of the area's globs
    and read the area's files. You may read other files to understand them, but you map only the area's files.
 2. Write one or more imported nodes (`status: imported`, `track: done`, in `docs/graph.yaml`, each with a
@@ -217,7 +231,11 @@ instructions for questions win.
      put out of scope, and each file once (no overlap between nodes);
    - has a spec that says what the code does, with the template's headings: Purpose; Tests, the existing tests;
      Changes, the single line "none: imported"; Gate, criteria of the current behaviour, each with a *Verify:*
-     naming the existing test that shows it (a file the repository tracks) or reading `unpinned` when no test does;
+     naming the existing test that shows it (a file the repository tracks) or reading `unpinned` when no test does. A criterion claims only what the test named in its *Verify:* asserts, and that
+     test fails when the behaviour the criterion states breaks. Check each pinned criterion: break that behaviour
+     in a scratch edit, run the named test, then restore the file; the scratch edit is reverted and nothing is
+     committed (the PR stays specs only). A clause the test does not catch is `unpinned`, a criterion of its own.
+     A test that cannot run here makes its criterion `unpinned` too;
      Risks. Describe what you read; do not invent intent;
    - lists as `deps` the already-mapped nodes whose code it relies on.
    The one change allowed to a node outside the area: the header row's Unlocks of each node a new node depends on
@@ -236,6 +254,8 @@ instructions for questions win.
 ## 8. Plan the open issues: `/adopt --plan`
 Run by the loop once no area is left under `adoption.areas`. Work in the checkout the prompt names, on
 `spec/adopt-plan`.
+Read the owner's answers to the first PR's questions (the replies on the adoption's issue; in a loop
+run, the first PR unit's `answered/` folder): they bind this step.
 1. Read the open issues (`<forge> issue list --state all`, skipping PRs; closed ones are history) with their
    comments, and the graph and node specs now on `origin/<default branch>`.
 2. Turn each open issue into a planned node (`status: planned`), or into a criterion of an existing planned
@@ -252,6 +272,8 @@ Run by the loop once no area is left under `adoption.areas`. Work in the checkou
 Run by the loop for one of the adoption's own open spec PRs (`spec/adopt`, `spec/adopt-<name>`,
 `spec/adopt-plan`) in the checkout the prompt names, which is on the PR's branch, brought to `origin/<branch>`
 (a fast-forward). Create no other branch. Mirror the triage skill's update and feedback modes.
+Read the owner's answers to the first PR's questions (the replies on the adoption's issue; in a loop
+run, the first PR unit's `answered/` folder): they bind this step.
 - **`--update <N>`**: the PR conflicts with main. `git fetch origin`, then merge `origin/<default branch>`
   into the branch: a merge commit, never a rebase, never a force push. Resolve a conflict that needs no
   judgment by keeping both sides (both graph rows, both areas' removals, and main's header row with the branch's change put back in); leave no conflict markers. A
@@ -276,7 +298,10 @@ Run by the loop for one of the adoption's own open spec PRs (`spec/adopt`, `spec
   `python3 -I <plugin dir>/skills/node/check-spec-diff.py origin/<default branch> HEAD`, with `--allow AGENTS.md [--allow .noodlebot/roles.yaml]`
   before the refs for the `spec/adopt` PR) until they pass; a coverage problem outside the PR's area is a `QUESTION.md`, never an ownership change
   outside the area, and check-spec-diff exit 2 (git failed) stops the run; either ends the run: push nothing, `git reset --hard origin/<branch>`, end (the `QUESTION.md` written last). Other nodes' header-row Unlocks are kept in sync as in section 7 step 2. A point only the owner can decide goes to QUESTION.md with your recommendation, written last.
-  Push the branch, update the PR's title and body if its nodes changed, and reply to each point: a
+  A wording the feedback suggests is checked against the code, as your own would be, before it is applied: for a
+  pinned criterion, its test must fail when the claim breaks.
+  Push the branch, then update the PR's title and body wherever the feedback's change makes them wrong, not only
+  when its nodes changed (its nodes, the `unpinned` list, a fact or risk the body repeats), and reply to each point: a
   line comment in its own thread, the others in one PR comment; each reply says what changed, with the commit,
   or why nothing did. Resolve the line threads you fixed.
 Both modes write no code and no tests, and never merge, approve or push to the default branch.

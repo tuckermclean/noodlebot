@@ -8,6 +8,8 @@ the graph regime: the unit adopt/@UNIT@. No human is watching.
 @SCAFFOLD@ - This is the first PR (the skill's sections 1 to 6): read the repository, ask the owner what only the owner can answer, then draft SPEC.md, AGENTS.md's "Building a node" section and docs/graph.yaml and open one spec PR on @BRANCH@. The plugin directory is @PLUGIN@.
 @AREA@ - This is the area "@AREA_NAME@" (the skill's section 7). Its globs are @GLOBS@. Map only its files. List them with the inventory command, once for each glob: @INVENTORY@. The plugin directory is @PLUGIN@.
 @PLAN@ - This is the last step (the skill's section 8): turn the repository's open issues into planned nodes and remove `adoption` from docs/graph.yaml, in one spec PR on @BRANCH@. The plugin directory is @PLUGIN@.
+- The owner's answers to the first PR's questions bind every later step. They are in @DIR@/../scaffold/answered/
+  (the scaffold unit's state folder, kept by the loop); for the first PR itself they are in @DIR@/answered/, which may not exist yet.
 - State folder: @DIR@. When the skill says to ask the owner, write the questions to @DIR@/QUESTION.md and end the run.
   Number them (Q1, Q2, ...), give your recommendation for each, and end the file with: "To answer: reply on this unit's issue (the loop posts the question there)." Never continue on a guess.
 - RESUMING. If @DIR@/answered/ exists, an earlier run stopped with a question or a PR. Read every file in it,
