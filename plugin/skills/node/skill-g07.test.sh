@@ -101,6 +101,11 @@ chk "G07-AC-3: step 6: a push after the final review is preceded by a comment th
 lit "G07-AC-3: step 6: followed by a new 'Fresh review (<verdict>) at <new head>'" "$s6" 'Fresh review (<verdict>) at <new head>'
 chk "G07-AC-3: step 6: the push after the final review is a CI fix or a resumed session after an answer" "$s6" 6 \
 	'push' 'no longer covers' 'ci' 'answer'
+chk "G07-AC-3: step 6: the new Fresh review comes from a new reviewer" "$s6" 6 'new reviewer' 'at <new head>'
+chk "G07-AC-3: step 6: the whole node when the node's own code changed since the reviewed head" "$s6" 6 \
+	'whole node' 'own code' 'changed' 'reviewed head'
+chk "G07-AC-3: step 6: else the diff from the reviewed head to the new head" "$s6" 6 \
+	'else|otherwise' 'diff' 'reviewed head' 'new head'
 
 # ---------- G07-AC-4: the templates ----------
 t1="$root/scheduler/unattended.md"; t2="$root/scheduler/unattended-followup.md"
