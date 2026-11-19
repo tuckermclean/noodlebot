@@ -219,6 +219,20 @@ def alive(pidfile, key):
     return harness.matches(cmd, key)
 
 
+def feedback_alive(pidfile, node):
+    """The pid file's process is a feedback session on node's PR, as loop.sh starts it: `run-session.sh <worktree>
+    <state>/node/<ID> /noodlebot:node --feedback <N>` (its command line does not end in the ID; report.py sessions())."""
+    s = read(pidfile, 64)
+    if s is None or not re.fullmatch(r"[0-9]+", s.strip()):
+        return False
+    try:
+        with open("/proc/%d/cmdline" % int(s.strip()), "rb") as f:
+            cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    except (OSError, ValueError, OverflowError):
+        return False
+    return re.search(r"run-session\.sh [^ ]+ [^ ]*/node/%s /noodlebot:node --feedback [0-9]+( |$)" % re.escape(node), cmd) is not None
+
+
 def git_show(clone, spec):
     try:
         r = subprocess.run(["git", "-C", clone, "show", spec], capture_output=True, text=True, errors="replace")
@@ -304,11 +318,12 @@ def branch_id(branch):
 
 # ---- the repository file
 
-def merge_state(state, num, head, mergeable, rec):
+def merge_state(state, num, head, mergeable, rec, node=None):
     """(merge_ready, merge_why) of a node's open PR (U04; report.py's merge_state says the same in the status issue).
     head and mergeable are the PR's, from open-prs.tsv; rec is its record in report.json "merge" (head, review_head,
-    verdict, ci); the PR's own folder pr/<N> holds its session and question. The node's own session and question make
-    the node running or question, never pr-open, so they are not read here."""
+    verdict, ci, unread); the PR's own folder pr/<N> holds its session and question. The node's own session (harness
+    match) and question make the node running or question, never pr-open, so they are not read here; a feedback session
+    in node/<ID> (node) does not, so it is read here. A not-ready PR always has a reason."""
     d = os.path.join(state, "pr", num) if num.isdigit() else None
     rec = rec if isinstance(rec, dict) else {}
     field = lambda k: rec[k] if isinstance(rec.get(k), str) else None  # noqa: E731
@@ -316,13 +331,17 @@ def merge_state(state, num, head, mergeable, rec):
     ci = field("ci") if field("head") == head else None
     same = bool(rh) and head.lower().startswith(rh.lower())
     busy = bool(d) and alive(os.path.join(d, "session.pid"), num)
+    fb = bool(node) and feedback_alive(os.path.join(state, "node", node, "session.pid"), node)
+    unread = rec.get("unread") is True
     asks = bool(d) and os.path.lexists(os.path.join(d, "QUESTION.md"))
-    if not busy and not asks and same and verdict == "approve" and ci == "passed" and mergeable != "CONFLICTING":
+    if not busy and not fb and not unread and not asks and same and verdict == "approve" and ci == "passed" and mergeable != "CONFLICTING":
         return True, (None if mergeable in ("MERGEABLE", "CONFLICTING") else
                       "the forge has not said whether it merges cleanly")
     why = []
-    if busy:
+    if busy or fb:
         why.append("a session is running on it")
+    if unread:
+        why.append("its comments could not be read")
     if asks:
         why.append("its answer waits for a session" if os.path.lexists(os.path.join(d, "ANSWER.md")) else "it has an open question")
     if mergeable == "CONFLICTING":
@@ -335,6 +354,8 @@ def merge_state(state, num, head, mergeable, rec):
         why.append("the last review's verdict is %s" % verdict)
     if ci != "passed":
         why.append({"pending": "CI pending", "failed": "CI failed"}.get(ci, "no CI result") + " on its head")
+    if not why:
+        why.append("the last review has no verdict" if not verdict else "it is not ready")
     return False, cut(text("; ".join(why)), 300)
 
 
@@ -419,7 +440,7 @@ def repo_file(root, repo, running, hold, home):
         elif any(r[1].startswith("node/%s-" % i) for r in open_rows):
             r = next(r for r in open_rows if r[1].startswith("node/%s-" % i))
             o["state"], o["pr"], o["mergeable"] = "pr-open", int(r[0]), cut(text(r[4]), 60)
-            o["merge_ready"], o["merge_why"] = merge_state(state, r[0], r[2], r[4], merges.get(r[0]))
+            o["merge_ready"], o["merge_why"] = merge_state(state, r[0], r[2], r[4], merges.get(r[0]), i)
         elif i in ready:
             o["state"] = "held" if hold else "ready"
         else:

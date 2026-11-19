@@ -639,6 +639,8 @@ def merge_state(a, rs, pr):
                    "its head %s is unreviewed (the last review names no head)" % cur[:7])
     if verdict and verdict != "approve":
         why.append("the last review's verdict is %s" % verdict)
+    elif not verdict and same:
+        why.append("the last review has no verdict")
     if ci != "passed":
         why.append({"pending": "CI pending", "failed": "CI failed"}.get(ci, "no CI result") + " on its head")
     return "is still being worked on: " + "; ".join(why)
@@ -1952,6 +1954,8 @@ def post_prs(a, rs, pulls):
                     except Exception as e:
                         ci_error(sha, e)
             new[k] = {"head": sha, "review_head": rh, "verdict": v, "ci": ci}
+            if k in a.unread:
+                new[k]["unread"] = True  # site.py reads report.json only: not ready until the comments are read
         rs["merge"] = new
 
     if not rs.get("pr_seed"):  # the open PRs already there
