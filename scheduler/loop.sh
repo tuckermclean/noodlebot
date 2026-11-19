@@ -236,23 +236,24 @@ hook_text() {
 # installed by noodlebot's loop.sh
 [ -n "${NOODLEBOT_VERSION:-}" ] || exit 0
 # join the trailer-only paragraphs at the end of the message into one final block (going back from the last paragraph, each
-# paragraph made only of "token: value" lines; stop at any other paragraph; never the subject paragraph), then drop every
+# paragraph made only of "token: value" lines; stop at any other paragraph; never the subject paragraph, the one at the first non-blank line), then drop every
 # Noodlebot-Version line from that block (the last paragraph, unless it is the subject)
 t="$1.nb.$$"
 awk '{ l[NR] = $0 } END {
+	f = 1; while (f <= NR && l[f] ~ /^[ \t]*$/) f++
 	e = NR; while (e > 0 && (l[e] ~ /^[ \t]*$/ || l[e] ~ /^#/)) e--
-	s = e; while (s > 1 && l[s-1] !~ /^[ \t]*$/) s--
+	s = e; while (s > f && l[s-1] !~ /^[ \t]*$/) s--
 	p = e; js = 0
 	while (p > 0) {
 		ps = p; while (ps > 1 && l[ps-1] !~ /^[ \t]*$/) ps--
-		if (ps <= 1) break
+		if (ps <= f) break
 		ok = 1; for (i = ps; i <= p; i++) if (l[i] !~ /^[A-Za-z0-9-]+:[ \t]+[^ \t]/) ok = 0
 		if (!ok) break
 		js = ps; p = ps - 1; while (p > 0 && l[p] ~ /^[ \t]*$/) p--
 	}
 	if (!js) js = s
 	for (i = 1; i <= NR; i++) {
-		if (js > 1 && i >= js && i <= e && (l[i] ~ /^[ \t]*$/ || l[i] ~ /^Noodlebot-Version:/)) continue
+		if (js > f && i >= js && i <= e && (l[i] ~ /^[ \t]*$/ || l[i] ~ /^Noodlebot-Version:/)) continue
 		print l[i]
 	}
 }' "$1" >"$t" && cat "$t" >"$1"
