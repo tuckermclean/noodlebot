@@ -71,6 +71,10 @@ chk "G07-AC-1: step 6: or posted as a comment whose first line says the PR is no
 	'still' 'comment' 'first line' 'not ready to merge'
 chk "G07-AC-1: step 6: the session posts nothing to the PR after its final review but its end" "$s6" 4 \
 	'nothing' 'after' 'final review' 'end'
+chk "G07-AC-1: step 6: the session posts nothing to the PR after its final review but its own end (that sentence)" "$s6" 2 \
+	'posts nothing to the pr after its final review'
+chk "G07-AC-1: step 6: the final review's <sha> is the head it reviewed" "$s6" 2 \
+	'at <sha>' 'is the head it reviewed'
 # no repository named: no owner of this repository, no repository URL, no forge kind with a real owner/name
 if grep -nEi 'tuckermclean|github[.]com|gitlab[.]com' "$sk" >"$d/repo.txt"; then
 	bad "G07-AC-1: the skill names a repository: $(head -3 "$d/repo.txt")"
@@ -91,6 +95,8 @@ for part in update feedback; do
 	chk "G07-AC-3: $tl: the PR is not ready to merge" "$tf" 6 'no longer covers' 'not ready to merge'
 	lit "G07-AC-3: $tl: followed by a new 'Fresh review (<verdict>) at <new head>'" "$tf" 'Fresh review (<verdict>) at <new head>'
 	chk "G07-AC-3: $tl: the new Fresh review comes from a new reviewer" "$tf" 6 'new reviewer' 'at <new head>'
+	chk "G07-AC-3: $tl: the new 'Fresh review (<verdict>) at <new head>' is from a new reviewer (that phrase)" "$tf" 2 \
+		'at <new head>[^a-z]*from a new reviewer'
 	chk "G07-AC-3: $tl: the whole node when the node's own code changed since the reviewed head" "$tf" 6 \
 		'whole node' 'own code' 'changed' 'reviewed head'
 	chk "G07-AC-3: $tl: else the diff from the reviewed head to the new head" "$tf" 6 \
@@ -102,6 +108,8 @@ lit "G07-AC-3: step 6: followed by a new 'Fresh review (<verdict>) at <new head>
 chk "G07-AC-3: step 6: the push after the final review is a CI fix or a resumed session after an answer" "$s6" 6 \
 	'push' 'no longer covers' 'ci' 'answer'
 chk "G07-AC-3: step 6: the new Fresh review comes from a new reviewer" "$s6" 6 'new reviewer' 'at <new head>'
+chk "G07-AC-3: step 6: the new 'Fresh review (<verdict>) at <new head>' is from a new reviewer (that phrase)" "$s6" 2 \
+	'at <new head>[^a-z]*from a new reviewer'
 chk "G07-AC-3: step 6: the whole node when the node's own code changed since the reviewed head" "$s6" 6 \
 	'whole node' 'own code' 'changed' 'reviewed head'
 chk "G07-AC-3: step 6: else the diff from the reviewed head to the new head" "$s6" 6 \
@@ -115,6 +123,8 @@ for t in "$t1" "$t2"; do
 	if [ ! -f "$t" ]; then bad "G07-AC-4: $tn is missing"; continue; fi
 	chk "G07-AC-4: $tn: the run ends when the PR is open, the last posted review is a 'Fresh review (<verdict>) at <sha>' naming the PR's head, CI on that head green" "$t" 5 \
 		'pr is open' 'last' 'fresh review [(]<verdict>[)] at <sha>' 'head' 'ci' 'green' 'end the run'
+	chk "G07-AC-4: $tn: the end-of-run line's 'at <sha>' is naming the PR's head (that phrase)" "$t" 2 \
+		'at <sha>[^a-z]*naming the pr.s head'
 done
 for t in "$t1" "$t2" "$t3" "$t4"; do
 	tn=${t##*/}
