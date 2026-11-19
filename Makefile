@@ -190,6 +190,7 @@ TESTS = \
 	scheduler/runtests-d11.test.sh \
 	scheduler/check-ci-workflow.test.sh \
 	scheduler/scratch-guard.test.sh \
+	scheduler/kill-own.test.sh \
 	container/entrypoint.test.sh \
 	container/container.test.sh
 

@@ -127,7 +127,7 @@ x6ok "S06-AC-4: update of PR #102 (claude exits 0): it is not done: the worktree
 x6ok "S06-AC-4: update of PR #102 starts again by the usual path (run 2, no --resume)" sh -c "[ '$(x6runs pr-102)' = 2 ] && ! grep -qx -- --resume '$S06/args.pr-102.2'"
 rm -f "$S06/hold.pr-102" "$S06/hold.L01"
 kill "$lp06b"; wait "$lp06b" 2>/dev/null
-for f in "$S06"/pg.* "$S06"/pg2.* "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
+kill_own "$tmp" "$S06"/pg.* "$S06"/pg2.*; for f in "$S06"/child.*; do [ -e "$f" ] || continue; kill -KILL -- "-$(cat "$f")" 2>/dev/null; kill -KILL "$(cat "$f")" 2>/dev/null; done
 
 
 loop_end
