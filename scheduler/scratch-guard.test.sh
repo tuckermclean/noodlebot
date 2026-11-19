@@ -28,26 +28,32 @@ if [ -z "$tests" ]; then
 	fail "D12-AC-1:the Makefile's TESTS list could not be read"
 fi
 
-# scan <file>...: prints file:line for each line that assigns $(mktemp -d ...) to a variable and is not
-# `<var>=$(mktemp -d ...) && [ -d "$<var>" ] || exit 1`.
+# scan <file>...: prints file:line for each line that assigns a mktemp command substitution with the -d form
+# to a variable and is not, as a whole, `<var>=$(mktemp ...) && [ -d "$<var>" ] || exit 1`.
 scan() {
 	for _f in "$@"; do
 		[ -f "$_f" ] || continue
-		grep -nE '(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*="?(\$\(|`)[[:space:]]*mktemp[[:space:]]([^)`]*[[:space:]])?(-[A-Za-z]*d[A-Za-z]*|--directory)([[:space:]]|[)`"]|$)' "$_f" 2>/dev/null | while IFS= read -r _l; do
+		grep -nE '(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*="?(\$\(|`)[[:space:]]*mktemp[[:space:]]' "$_f" 2>/dev/null | while IFS= read -r _l; do
 			_n=${_l%%:*}
 			_t=${_l#*:}
 			_t=${_t#"${_t%%[![:space:]]*}"}
-			_v=$(printf '%s\n' "$_t" | sed -E 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)="?(\$\(|`)[[:space:]]*mktemp[[:space:]].*/\2/')
+			_s=$(printf '%s\n' "$_t" | sed -E 's/([[:space:]]"?)\$\([^()]*\)/\1/g')
+			_df='(-[A-Za-z]*d[A-Za-z]*|--di(r(e(c(t(o(r(y)?)?)?)?)?)?)?)'
+			printf '%s\n' "$_s" | grep -qE "mktemp.*[[:space:]]$_df([[:space:]]|[)\`\"\$]|\$)" || continue
 			_t=${_t#local }
 			_t=${_t#export }
-			printf '%s\n' "$_t" | grep -qE "^$_v=\"?(\\\$\\(|\`)[[:space:]]*mktemp[[:space:]]" || _t=x
+			_v=$(printf '%s\n' "$_t" | sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')
+			[ -n "$_v" ] || _v=NOVAR
 			ok_=no
-			case $_t in
-			"$_v="*)
-				case $_t in
-				*") && [ -d \"\$$_v\" ] || exit 1" | *')"'" && [ -d \"\$$_v\" ] || exit 1" | *'`'" && [ -d \"\$$_v\" ] || exit 1") ok_=yes ;;
-				esac ;;
-			esac
+			_a='[^;&|()`]*'
+			_g="[[:space:]]&&[[:space:]]\\[ -d \"\\\$$_v\" \\] \\|\\| exit 1\$"
+			_p="^$_v="
+			_m="[[:space:]]*mktemp[[:space:]]($_a|$_a\"\\\$\\([^()]*\\)\"$_a)"
+			if printf '%s\n' "$_t" | grep -qE "$_p\\\$\\($_m\\)$_g" ||
+				printf '%s\n' "$_t" | grep -qE "$_p\"\\\$\\($_m\\)\"$_g" ||
+				printf '%s\n' "$_t" | grep -qE "$_p\`[[:space:]]*mktemp[[:space:]][^;&|\`]*\`$_g"; then
+				ok_=yes
+			fi
 			[ "$ok_" = yes ] || echo "$_f:$_n"
 		done
 	done
@@ -257,7 +263,7 @@ EOT
 # The namespace's pid 1. $1 scratch, $2 checkout, $3 real HOME, $4 real TMPDIR. No trap for TERM, HUP or INT.
 s=$1 co=$2 rhome=$3 rtmp=$4
 rec=$s/rec
-echo started >"$rec/state"
+echo "the scratch folder was read-only after the remount, or the driver stopped early" >"$rec/state"
 mount --bind "$s" "$s" 2>/dev/null || { echo nobind >"$rec/state"; exit 0; }
 while IFS=' ' read -r _a _b _c _d mp _rest; do
 	mp=$(printf '%s' "$mp" | sed 's/\\040/ /g')
