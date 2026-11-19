@@ -11,7 +11,8 @@ kill_own_ok() {
 	[ -d "$_ko_dir" ] || return 1
 	_ko_canon=$(cd "$_ko_dir" 2>/dev/null && pwd -P) || return 1
 	case $_ko_canon in /*) ;; *) return 1 ;; esac
-	[ "$_ko_canon" != / ] || return 1
+	case $_ko_dir in *[!/]*) ;; *) return 1 ;; esac
+	case $_ko_canon in *[!/]*) ;; *) return 1 ;; esac
 	case $_ko_pid in '' | *[!0-9]*) return 1 ;; esac
 	[ "$_ko_pid" -gt 1 ] 2>/dev/null || return 1
 	[ -r "/proc/$_ko_pid/cmdline" ] || return 1
