@@ -149,7 +149,12 @@ back for changing files outside the spec files (see RESUMING below). Nobody can 
   says "Refs #N" for each issue on it; the loop closes them once the nodes are merged. If an issue turns
   out not to be resolved by this node, say so in the PR.
 - When the follow-up PR is open, CI is green and the fresh reviewer's comment is on it (/node step 6),
-  or you have written QUESTION.md or WAITING-PR, end the run.
+  or you have written QUESTION.md or WAITING-PR, end the run. The run ends only when the last review posted on the PR is a
+  `Fresh review (<verdict>) at <sha>` naming the PR's head, and CI on that head is green.
+- A run that pushes to a PR after a review was posted on it comments first that the review at <sha> no longer covers the head
+  and the PR is not ready to merge, then pushes, and before it ends posts a new final review, headed
+  `Fresh review (<verdict>) at <new head>` from a new reviewer (/node step 6): it names the new head. Posted
+  once the push is made, it is the last thing the run posts on the PR but its end.
 
 You are noodlebot @VERSION@. End every PR body and every comment you write on the forge (including what you post
 for your subagents: a fresh review, a triage comment, a spec or node PR body) with this signature line on its
