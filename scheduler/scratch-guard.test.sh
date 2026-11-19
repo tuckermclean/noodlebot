@@ -16,6 +16,7 @@ root=$(dirname "$src")
 . "$src/testdata/lib/common.sh"
 unset TMUX USAGE_7D_MARGIN NOODLEBOT_DATA NOODLEBOT_VERSION
 tmp=$(mktemp -d) && [ -d "$tmp" ] || exit 1
+tmp=$(cd "$tmp" && pwd -P) && [ -d "$tmp" ] || exit 1
 trap 'rm -rf "$tmp"' EXIT
 # `sh scheduler/scratch-guard.test.sh late` runs the late-signal case (D14-AC-5) alone.
 late=
@@ -32,14 +33,19 @@ fi
 scan() {
 	for _f in "$@"; do
 		[ -f "$_f" ] || continue
-		grep -nE '(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=\$\(mktemp -d' "$_f" 2>/dev/null | while IFS= read -r _l; do
+		grep -nE '(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*="?(\$\(|`)[[:space:]]*mktemp[[:space:]]([^)`]*[[:space:]])?(-[A-Za-z]*d[A-Za-z]*|--directory)([[:space:]]|[)`"]|$)' "$_f" 2>/dev/null | while IFS= read -r _l; do
 			_n=${_l%%:*}
 			_t=${_l#*:}
 			_t=${_t#"${_t%%[![:space:]]*}"}
-			_v=$(printf '%s\n' "$_t" | sed -E 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)=\$\(mktemp -d.*/\2/')
+			_v=$(printf '%s\n' "$_t" | sed -E 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)="?(\$\(|`)[[:space:]]*mktemp[[:space:]].*/\2/')
+			_t=${_t#local }
+			_t=${_t#export }
 			ok_=no
 			case $_t in
-			"$_v=\$(mktemp -d"*") && [ -d \"\$$_v\" ] || exit 1") ok_=yes ;;
+			"$_v="*)
+				case $_t in
+				*") && [ -d \"\$$_v\" ] || exit 1" | *')"'" && [ -d \"\$$_v\" ] || exit 1" | *'`'" && [ -d \"\$$_v\" ] || exit 1") ok_=yes ;;
+				esac ;;
 			esac
 			[ "$ok_" = yes ] || echo "$_f:$_n"
 		done
@@ -113,8 +119,8 @@ fi
 fi
 
 echo "# D12-AC-3: every test file stops at once when its TMPDIR cannot be made, and signals nothing outside"
-if ! timeout 20 unshare --user --map-root-user --pid --fork --kill-child --mount-proc sh -c 'test -r /proc/self/status && ! test -r /proc/1/status.nonexistent' >/dev/null 2>&1; then
-	pass "D12-AC-3: unshare --user --map-root-user --pid --fork --mount-proc is refused here; the namespace case is skipped (no test file runs)"
+if ! timeout 20 unshare --user --map-root-user --net --pid --fork --kill-child --mount-proc sh -c 'test -r /proc/self/status && ! test -r /proc/1/status.nonexistent' >/dev/null 2>&1; then
+	pass "D12-AC-3: unshare --user --map-root-user --net --pid --fork --mount-proc is refused here (the availability probe failed); the namespace case is skipped (no test file runs)"
 else
 	rec=$tmp/rec
 	mkdir -p "$rec"
@@ -136,6 +142,7 @@ EOT
 # The namespace's pid 1. $1 scratch, $2 checkout, $3 real HOME, $4 real TMPDIR. No trap for TERM, HUP or INT.
 s=$1 co=$2 rhome=$3 rtmp=$4
 rec=$s/rec
+echo started >"$rec/state"
 mount --bind "$s" "$s" 2>/dev/null || { echo nobind >"$rec/state"; exit 0; }
 while IFS=' ' read -r _a _b _c _d mp _rest; do
 	mp=$(printf '%s' "$mp" | sed 's/\\040/ /g')
@@ -197,6 +204,7 @@ while IFS= read -r _f; do
 	eval "f_$total=\$_f"
 done <"$s/files"
 next=1 running= last=0
+nbrt=$(env | grep -m 1 '^NBRT_[0-9][0-9]*=')
 while [ "$next" -le "$total" ] || [ -n "$running" ]; do
 	set -- $running
 	while [ "$next" -le "$total" ] && [ "$#" -lt 8 ]; do
@@ -204,7 +212,7 @@ while [ "$next" -le "$total" ] || [ -n "$running" ]; do
 		sh_=sh
 		case ${f##*/} in loop.test.sh) sh_=bash ;; esac
 		nowms
-		env -u TMUX -u USAGE_7D_MARGIN -u NOODLEBOT_DATA -u NOODLEBOT_VERSION TMPDIR="$s/afile/missing" HOME="$s" \
+		env -i PATH="$PATH" HOME="$s" TMPDIR="$s/afile/missing" ${nbrt:+"$nbrt"} \
 			setsid "$sh_" "$f" >"$rec/out.$next" 2>&1 </dev/null &
 		eval "p_$next=$! n_$next=$next t0_$next=$last"
 		running="$running $next"
@@ -226,6 +234,8 @@ while [ "$next" -le "$total" ] || [ -n "$running" ]; do
 	running=$left
 	sleep 0.1
 done
+# a signal sent as the last file ended is recorded by the sentinel when its tick (sleep 0.2) ends
+sleep 0.6
 if alive "$spid"; then echo alive >"$rec/sentinel.state"; else echo dead >"$rec/sentinel.state"; fi
 echo done >"$rec/done"
 EOT
@@ -236,7 +246,7 @@ EOT
 	run_ns() {
 		_s=$1
 		shift
-		env "$@" timeout -k 5 110 unshare --user --map-root-user --pid --fork --kill-child --mount-proc \
+		env "$@" timeout -k 5 110 unshare --user --map-root-user --net --pid --fork --kill-child --mount-proc \
 			sh "$_s/driver.sh" "$_s" "$root" "${HOME:-/nonexistent}" "$rtmp" >"$_s/ns.out" 2>&1 </dev/null
 	}
 	# === end of the mechanism ===
@@ -405,7 +415,7 @@ EOT
 		fi
 		;;
 	*)
-		pass "D12-AC-3: the namespace could not be made read-only here (${state:-driver did not start}); the namespace case is skipped, no test file ran"
+		pass "D12-AC-3: the namespace check failed here (${state:-unshare with --net was refused, the driver did not run: $(head -c 200 "$tmp/ns.out" 2>/dev/null | tr '\n' ' ')}); the namespace case is skipped, no test file ran"
 		;;
 	esac
 	probe_case
