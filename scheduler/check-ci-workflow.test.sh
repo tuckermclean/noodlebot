@@ -62,8 +62,8 @@ defaults() {
 	WF_ENV=''
 	JOB_EXTRA=''
 	JOB_ENV="    env:
-      TEST_FILE_BUDGET: 60
-      TEST_BUDGET: 360
+      TEST_FILE_BUDGET: 105
+      TEST_BUDGET: 630
       GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}"
 	PR_ENFORCE=1
 	PUSH_IF="github.event_name == 'push'"
@@ -138,8 +138,8 @@ defaults; WF_ENV='  TEST_BUDGET_ENFORCE: 1'; mk "$tmp/f06.yml"
 bad "TEST_BUDGET_ENFORCE: 1 in workflow env" "$tmp/f06.yml" unit '(push)' 'TEST_BUDGET_ENFORCE'
 
 defaults; JOB_ENV="    env:
-      TEST_FILE_BUDGET: 60
-      TEST_BUDGET: 360
+      TEST_FILE_BUDGET: 105
+      TEST_BUDGET: 630
       TEST_BUDGET_ENFORCE: 1
       GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}"; mk "$tmp/f07.yml"
 bad "TEST_BUDGET_ENFORCE: 1 in job env" "$tmp/f07.yml" unit '(push)' 'TEST_BUDGET_ENFORCE'
@@ -152,7 +152,7 @@ bad "unreadable step if" "$tmp/f09.yml" unit '(push)' 'if'
 
 defaults; JOB_ENV="    env:
       TEST_FILE_BUDGET: \${{ vars.FILE_BUDGET }}
-      TEST_BUDGET: 360
+      TEST_BUDGET: 630
       GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}"; mk "$tmp/f10.yml"
 bad "TEST_FILE_BUDGET as an expression" "$tmp/f10.yml" unit - 'TEST_FILE_BUDGET'
 
@@ -162,7 +162,7 @@ defaults; JOB_ENV="    env:
 bad "job env as a list" "$tmp/f11.yml" unit - 'env'
 
 defaults; JOB_ENV="    env:
-      TEST_FILE_BUDGET: 60
+      TEST_FILE_BUDGET: 105
       TEST_BUDGET: 600
       GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}"; mk "$tmp/f12.yml"
 bad "TEST_BUDGET: 600" "$tmp/f12.yml" unit - 'TEST_BUDGET'
@@ -224,7 +224,7 @@ jobs:
     continue-on-error: false
     env:
       TEST_FILE_BUDGET: ${{ vars.X }}
-      TEST_BUDGET: 360
+      TEST_BUDGET: 630
     steps:
       - uses: actions/checkout@v1
       - name: make test (both)
