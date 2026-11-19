@@ -54,12 +54,21 @@ Each run:
   6. posts PR milestones on a node's home issue, each once: the PR opened, the CI result per head commit (once all
      its check runs completed), each `Fresh review (<verdict>)` PR comment's verdict, merged or closed without
      merging (from the loop's merged-prs.tsv / closed-prs.tsv), a triage ended done (with its spec PR);
+     it also keeps, for each open node PR (branch node/<ID>-*), a merge record in report.json ("merge", by PR number: "head",
+     "review_head" and "verdict" of its last `Fresh review (<verdict>) at <sha>` comment, the sha of its first line, null when
+     none, and "ci", passed / failed / pending / none, on the head), kept while no new review is read, the CI result taken
+     again for a new head and while it is not passed; a PR with no record has its comments read in full, one whose
+     comments could not be read this run is not ready (that run only);
      then closes the home issue, the Build issue and the Resolves issues of merged nodes (one comment naming the PR)
      once every node resolving the issue is merged and none of its units holds it (open or unreleased question,
      follow-up); a new QUESTION.md of a unit whose home issue is closed reopens that issue. Issues of triages are
      never closed. Merged nodes and PRs from before this bookkeeping are only recorded, never commented on or closed
      (recorded at the first run whose merged-prs.tsv / closed-prs.tsv are readable; until then none of it is posted);
   7. rewrites the issue body: usage and throttle, what waits on the owner (each item linking the unit's issue),
+     a node's open PR with no session in node/<ID> or pr/<N> and no QUESTION.md in node/<ID> is "ready to merge" when pr/<N>
+     has no QUESTION.md, `mergeable` in open-prs.tsv is not CONFLICTING, the head is the one the last review names, it approves
+     and CI on the head passed (the forge "has not said whether it merges cleanly" when mergeable is not MERGEABLE/CONFLICTING),
+     else "still being worked on" with each reason (question, conflict, head without a final review, verdict, CI);
      every running session and its latest narration, the deployed commit (HEAD of the live checkout, or of
      $NOODLEBOT_LIVE). Body edits do not notify; comments do. ($NOODLEBOT_NOW, an ISO local datetime, replaces
      the clock; for tests.)
@@ -604,6 +613,40 @@ def unit_ref(a, n):
         return ""
 
 
+def merge_state(a, rs, pr):
+    """The clause of a node's open PR in "Waiting on you" (no session runs on it, its node has no question): ready to merge, or
+    still being worked on and why. From the PR's merge record (report.json "merge"), `mergeable` in open-prs.tsv and pr/<N>."""
+    task = "PR #%s" % pr
+    rec = (rs.get("merge") or {}).get(str(pr)) or {}
+    cur = next((p.get("head_sha") for p in a.pulls if str(p.get("number")) == str(pr)), None) or rec.get("head") or ""
+    mg = next((f[4] for f in tsv(a, "open-prs.tsv") if len(f) > 4 and f[0] == str(pr)), "")
+    rh, verdict = rec.get("review_head"), rec.get("verdict")
+    ci = rec.get("ci") if rec.get("head") == cur else None
+    same = bool(rh) and bool(cur) and cur.lower().startswith(rh.lower())
+    unread = str(pr) in getattr(a, "unread", ()) or bool(rec.get("unread"))  # this run's, or the previous run's kept record
+    if (not unread and not has(a.state, task, "QUESTION.md") and same and verdict == "approve" and ci == "passed" and mg != "CONFLICTING"):
+        return "is ready to merge (reviewed at %s, CI passed)%s" % (
+            rh[:7], "" if mg in ("MERGEABLE", "CONFLICTING") else "; the forge has not said whether it merges cleanly")
+    why = []
+    if unread:
+        why.append("its comments could not be read this run")
+    if has(a.state, task, "QUESTION.md"):
+        why.append("its answer waits for a session" if has(a.state, task, "ANSWER.md") else "it has an open question")
+    if mg == "CONFLICTING":
+        why.append("it conflicts with its base")
+    if not same:
+        why.append("its head %s has no final review" % cur[:7] if not verdict else
+                   "its head %s is not the reviewed head %s" % (cur[:7], rh[:7]) if rh else
+                   "its head %s is unreviewed (the last review names no head)" % cur[:7])
+    if verdict and verdict != "approve":
+        why.append("the last review's verdict is %s" % verdict)
+    elif not verdict and same:
+        why.append("the last review has no verdict")
+    if ci != "passed":
+        why.append({"pending": "CI pending", "failed": "CI failed"}.get(ci, "no CI result") + " on its head")
+    return "is still being worked on: " + "; ".join(why)
+
+
 def waiting_items(a, sts, prs, rs):
     """The Markdown items for what waits on the owner (none when nothing does), each linking the unit's issue."""
     state = a.state
@@ -626,9 +669,10 @@ def waiting_items(a, sts, prs, rs):
             pr = open(os.path.join(tdir(state, n), "WAITING-PR")).read().strip()
             after = "the adoption ends, the graph is complete, after" if n == "adopt/plan" else "the adoption's next step starts within a minute after" if n.startswith("adopt/") else "it resumes within a minute after"
             items.append("- **%s** waits for you to merge spec PR #%s; %s.%s" % (n, pr, after, unit_ref(a, n)))
+    live = [t[0] for t in sts]
     for n, pr in sorted(prs.items()):
-        if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in [t[0] for t in sts]:
-            items.append("- %s's PR #%s: open, no session running on it (review or merge it).%s" % (n, pr, unit_ref(a, n)))
+        if not has(state, n, "QUESTION.md") and not has(state, n, "WAITING-PR") and n not in live and "PR #%s" % pr not in live:
+            items.append("- %s's PR #%s %s.%s" % (n, pr, merge_state(a, rs, pr), unit_ref(a, n)))
     return [link_nodes(a, i) for i in items]
 
 
@@ -1843,7 +1887,7 @@ def post_prs(a, rs, pulls):
 
     def comments_of(pr, every=False):
         """The PR's comments since the cursor (every page on the seed run), in order."""
-        since = (rs.get("pr_since") or {}).get(str(pr["number"]))
+        since = (rs.get("pr_since") or {}).get(str(pr["number"])) if str(pr["number"]) in (rs.get("merge") or {}) else None  # a PR with no merge record: every comment
         out = a.forge.issue_comments(number=pr["number"], **({"since": since} if since else {}))  # every page
         return sorted(out, key=lambda c: c["id"])
 
@@ -1851,11 +1895,78 @@ def post_prs(a, rs, pulls):
         m = re.match(r"[^\w>]*Fresh review \((\w+)\)", c["body"])
         return m and m.group(1)
 
+    a.unread = set()  # PR numbers whose comments could not be read (all of them) this run; the merge record keeps "unread"
+    read = set()  # PR numbers whose comments the main loop read to the end this run
+    reviews = {}  # PR number -> (head, verdict) of the last Fresh review among the comments read this run
+    runs_of, logged = {}, set()
+
+    def note(pr, cs):
+        for c in cs:
+            v = verdict(c)
+            if v:
+                m = re.match(r"[^\w>]*Fresh review \(\w+\) at ([0-9a-fA-F]{7,40})\b", (c["body"].splitlines() or [""])[0])
+                reviews[str(pr["number"])] = (m and m.group(1), v)
+
+    def checks(sha):  # one read per head and run, for the CI milestone and the merge record
+        if sha not in runs_of:
+            try:
+                runs_of[sha] = (a.forge.commit_checks(sha=sha), None)
+            except Exception as e:
+                runs_of[sha] = (None, e)
+        if runs_of[sha][1]:
+            raise runs_of[sha][1]
+        return runs_of[sha][0]
+
+    def ci_error(sha, e):
+        if sha in logged:
+            return
+        logged.add(sha)
+        if re.search(r"\(HTTP (403|404)\)", str(e)) and "rate limit" not in str(e).lower():  # check runs not readable for this commit: log once, stop asking
+            rs.setdefault("ci_off", []).append(sha)
+            print("report.py: no CI result for %s: %s" % (sha[:7], e), file=sys.stderr)
+        else:
+            a.errors.append(str(e))
+
+    def merge_records():
+        """report.json "merge": per open node PR its head, the head and verdict of its last Fresh review and the CI result on
+        the head; kept while no new review is read, the CI result taken again for a new head and while not passed."""
+        old, new = rs.get("merge") or {}, {}
+        for t, pr in node_prs():
+            k, sha = str(pr["number"]), pr.get("head_sha")
+            r = dict(old.get(k) or {})
+            if k not in read and k not in a.unread:  # a PR the loop did not read this run (no node folder, or seeding)
+                try:
+                    note(pr, comments_of(pr))
+                except Exception as e:
+                    a.errors.append(str(e))
+                    a.unread.add(k)
+            if k in a.unread and k not in old:
+                continue  # no record yet and its comments unread: read them in full next run
+            rh, v = reviews.get(k) or (r.get("review_head"), r.get("verdict"))
+            ci = r.get("ci") if r.get("head") == sha and r.get("ci") == "passed" else None
+            if ci is None:
+                ci = "none"
+                if sha and sha not in rs.get("ci_off", []):
+                    try:
+                        runs = checks(sha)
+                        if runs and all(x.get("status") == "completed" for x in runs):
+                            ci = "passed" if all(x.get("conclusion") in ("success", "neutral", "skipped") for x in runs) else "failed"
+                        elif runs:
+                            ci = "pending"
+                    except Exception as e:
+                        ci_error(sha, e)
+            new[k] = {"head": sha, "review_head": rh, "verdict": v, "ci": ci}
+            if k in a.unread:
+                new[k]["unread"] = True  # site.py reads report.json only: not ready until the comments are read
+        rs["merge"] = new
+
     if not rs.get("pr_seed"):  # the open PRs already there
         try:
             for t, pr in node_prs():
                 keys = ["pr:%s" % pr["number"]] + (["ci:%s" % pr["head_sha"]] if pr.get("head_sha") else [])
                 cs = comments_of(pr, True)
+                read.add(str(pr["number"]))
+                note(pr, cs)
                 keys += ["review:%s" % c["id"] for c in cs if verdict(c)]
                 if cs:
                     rs.setdefault("pr_since", {})[str(pr["number"])] = max(c["created_at"] or "" for c in cs)
@@ -1866,6 +1977,7 @@ def post_prs(a, rs, pulls):
         else:
             seed_events(a, rs, done_of)
             seed_closing(a, rs)
+            merge_records()
         a.save()
         return
     seed_events(a, rs, done_of)
@@ -1885,7 +1997,7 @@ def post_prs(a, rs, pulls):
         sha = pr.get("head_sha")
         if sha and "ci:" + sha not in done_of(t) and sha not in rs.get("ci_off", []):
             try:
-                runs = a.forge.commit_checks(sha=sha)
+                runs = checks(sha)
                 if runs and all(r.get("status") == "completed" for r in runs):
                     bad = [r.get("name") or "?" for r in runs if r.get("conclusion") not in ("success", "neutral", "skipped")]
                     if bad:
@@ -1894,22 +2006,24 @@ def post_prs(a, rs, pulls):
                     else:
                         post(t, "ci:" + sha, "PR #%s: CI passed" % n, "All %d checks on %s passed." % (len(runs), sha[:7]))
             except Exception as e:
-                if re.search(r"\(HTTP (403|404)\)", str(e)) and "rate limit" not in str(e).lower():  # check runs not readable for this commit: log once, stop asking
-                    rs.setdefault("ci_off", []).append(sha)
-                    print("report.py: no CI result for %s: %s" % (sha[:7], e), file=sys.stderr)
-                else:
-                    a.errors.append(str(e))
+                ci_error(sha, e)
         try:
             for c in comments_of(pr):
                 v = verdict(c)
                 if v:
+                    note(pr, [c])
                     post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, v),
                          "Verdict: %s%s" % (v, " (%s)" % c["url"] if c.get("url") else ""))
                     if "review:%s" % c["id"] not in done_of(t):
-                        break  # its post failed: read from this comment again next run
+                        a.unread.add(str(n))  # its post failed: the later comments are unread; read from this one again next run
+                        break
                 rs.setdefault("pr_since", {})[str(n)] = c["created_at"] or ""
+            else:
+                read.add(str(n))
         except Exception as e:
             a.errors.append(str(e))
+            a.unread.add(str(n))
+    merge_records()
     for t, key, kind, n in pr_events(a, rs):
         if t not in tasks or (rs.get("merge_seed") is None if kind == "merged" else not rs.get("closedpr_seed")):
             continue  # its list is not seeded yet: what is in it may be from before
