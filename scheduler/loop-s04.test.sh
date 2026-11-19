@@ -68,7 +68,7 @@ E02.1) commits 1; brief; echo more >>base.txt; git rev-parse HEAD >"$S04/head1.$
 E03.1) commits 2; brief; exit 3 ;;
 E04.1) q ;;
 E05.1) brief; exit 4 ;;
-E06.1) commits 1; brief; echo more >>base.txt; kill -KILL $PPID; exit 0 ;;
+E06.1) commits 1; brief; echo more >>base.txt; . "$S04_LIB/kill-own.sh" && kill_own_ok "${S04%/*}" "$PPID" && kill -KILL $PPID; exit 0 ;;
 E07.1) commits 1; brief; echo more >>base.txt; echo not-a-dir >"$S04_STATE/node/$id/leftover"; exit 1 ;;
 *.2) q ;;
 esac
