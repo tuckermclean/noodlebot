@@ -531,5 +531,45 @@ a09_sen1 F6 "$a09d/s9" "for a pinned criterion its test must fail when the claim
 a09_sen1 F7 "$a09d/s3" "the drafts stay true as the areas are mapped and after adoption is removed" 'true' 'after|once|when' 'adoption' 'remov'
 a09_sen1 F7 "$a09d/s3" "later PRs cannot edit AGENTS.md" 'agents[.]md' 'prs?' 'cannot|can +not|can.t|may +not|unable|not +able'
 
+
+# ----- A09 review 2: clauses a reversal would leave standing (negation guards), merged PRs, CI's decoration as examples -----
+# a09_senn <fix> <file> <label> <neg-ere> <ere>...: as a09_sen1, and the sentence must not match <neg-ere>
+a09_senn() {
+	_fx=$1; _sf=$2; _lb=$3; _neg=$4; shift 4
+	_pats=$(printf '%s\n' "$@")
+	if [ -s "$_sf" ] && awk -v neg="$_neg" -v pats="$_pats" '
+		BEGIN { k = split(pats, P, "\n") }
+		{ gsub(/[*]/, ""); t = t " " tolower($0) }
+		END {
+			gsub(/e[.]g[.]/, "for example", t); gsub(/i[.]e[.]/, "that is", t)
+			n = split(t, S, /[.] /)
+			for (i = 1; i <= n; i++) {
+				s = S[i]
+				if (s ~ neg) continue
+				good = 1; for (p = 1; p <= k; p++) if (s !~ P[p]) { good = 0; break }
+				if (good) exit 0
+			}
+			exit 1 }' "$_sf"; then ok "A09-AC-2 $_fx: $_lb"; else bad "A09-AC-2 $_fx: $_lb"; fi
+}
+
+# F1: a clause the test does not catch makes its criterion unpinned (not "keeps it pinned")
+a09_senn F1 "$a09d/s7" "a clause the test does not catch makes its criterion unpinned (it does not stay pinned)" 'not +[`]?unpinned|keeps|stays? +pinned|remains? +pinned|pinned,? +not' 'not +catch|does.t +catch|misses|fails +to +catch|cannot +catch' '(is|makes? +its +criterion|becomes?|are|make +it) +[`]?unpinned'
+# F4: the node skill judges CI's run with the same fail_pattern, not a pattern of its own (section 1); the AGENTS.md draft says fail_pattern matches once they are stripped (section 3)
+a09_senn F4 "$a09d/s1" "section 1: the node skill judges CI's run of the gate with the same fail_pattern, not another pattern" 'not +[`]?fail_pattern|own +pattern|different +pattern|another +pattern|separate +pattern|other +pattern' 'node +skill' '(same|identical) +([a-z]+ +)?[`]?fail_pattern' 'ci'
+a09_senn F4 "$a09d/s3" "the AGENTS.md draft says fail_pattern matches once the additions are stripped (it does not say it never matches)" 'never +match|not +match|no +longer +match|even +(once|after|when)|does +not|doesn.t|cannot|fails? +to' 'agents[.]md' '[`]?fail_pattern[`]? +matches? +(once|after|when)' 'strip'
+# F6: a wording the feedback suggests is checked (not applied as given)
+a09_senn F6 "$a09d/s9" "a wording the feedback suggests is checked against the code, not applied as given or unchecked" 'never +(be +)?(checked|verified)|not +(be +)?(checked|verified)|without +(any +)?(check|verif)|as +given|unchecked' 'suggest' '(is|be|are) +(checked|verified)|verify +it|check +it|verify +them|check +them' 'code' 'before'
+# F7: the drafts state nothing the area or plan PRs make false; they must stay true after adoption is removed
+a09_senn F7 "$a09d/s3" "SPEC.md and AGENTS.md state nothing the area or plan PRs make false" 'state +what|may +state|can +state' 'spec[.]md' 'agents[.]md' '(state|say|claim) +nothing|must +not +(state|say|claim)|do +not +(state|say|claim)|never +(state|say|claim)' 'false'
+a09_senn F7 "$a09d/s3" "the drafts must be true after adoption is removed (not that they need not be)" 'need +not|no +need|not +(need|have|required)|do +not +(need|have)|does +not +(need|have)|may +be +(false|untrue)' 'adoption' 'remov' '(must|should|stay|remain|have +to|has +to|need +to|needs +to) +(be +)?true'
+
+# F2 (review 2, finding 3): the drafts come from the default branch, its merged PRs, the issues and the owner's answers, and from nothing else
+a09_senn F2 "$a09d/s1" "the drafts come from the default branch, its merged PRs, the issues and the owner's answers, and from nothing else" 'not +(from +)?(its +|the +)?merged|except|excluding|without +(its +|the +)?merged|never' 'draft' 'come|comes|draw|drawn|derive' 'default +branch' 'merged +prs?' 'issues?' 'answers' 'nothing +else|alone|only|no +other'
+
+# F4 (review 2, finding 6): section 1 gives what CI adds as examples, not as a fact for every repository
+a09_sen1 F4 "$a09d/s1" "section 1: colour escape codes and the timestamp prefix are examples of what CI adds, stripped before the pattern must match" 'ci' 'fail_pattern|pattern' 'strip' 'must +match|should +match|has +to +match|have +to +match|needs? +to +match' '(for +example|for +instance|such +as|like)[^.]*(colou?r|escape)[^.]*timestamp|(for +example|for +instance|such +as|like)[^.]*timestamp[^.]*(colou?r|escape)'
+# F1 (review 2, finding 6): git status shows only spec files changed or staged, not that it lists only spec files
+a09_senn F1 "$a09d/s7" "section 7 says only spec files are modified or staged before the commit (git status does not just show only spec files)" 'status +(shows|lists|prints|reports|displays) +(only|just|nothing +but) |non-spec|not +spec|no +spec|other +than +spec' 'git +status' 'only' 'spec +files' 'before' '(modified|changed)[^.]*staged|staged[^.]*(modified|changed)'
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
