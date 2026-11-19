@@ -39,6 +39,19 @@
 #    With a live session in node/<ID> or in pr/<N> there is no such line; with a QUESTION.md in node/<ID> there is none
 #    either (the node's own "asks a question" item is listed instead). A pr/<N> QUESTION.md also keeps its own
 #    "PR #<N> asks a question" item.
+#
+# 3. More of the contract (the record and the item are written as above):
+#    - the first line's `at <sha>` is the one of the heading `Fresh review (<verdict>) at <sha>`: a first line that has
+#      an "at <sha>" elsewhere ("Fresh review (approve) - I looked at <sha> closely") names no head either;
+#    - a failed read of a PR's comments leaves the PR not ready for that run (the item says it is still being worked
+#      on; the reason is the implementation's), its stored review is kept, and the next run that reads them gives the
+#      verdict (request_changes) as for any new comment;
+#    - the CI result is taken again for the same head while it is not "passed": a re-run that turns "failed" into
+#      "passed" is recorded, and the PR is ready once it has;
+#    - a PR with no record (a report.json from before the record, with pr_since but no "merge") has its comments read in
+#      full, not since pr_since: its last review is found and the PR can be ready on the first run that has the record;
+#    - a reason that does not hold is not said: the item of a PR whose review names its head (request_changes there,
+#      CONFLICTING, a question in pr/<N>) has no text about an unreviewed head and names no other sha than the head.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fakegh_lib=$src/testdata/lib
@@ -306,5 +319,127 @@ ok "U04-AC-2: (13) the conflict gone: ready to merge" isready 13
 ok "U04-AC-2: (13) and no note, mergeable is MERGEABLE" lacks 13 'has not said whether it merges cleanly'
 ok "U04-AC-1: (19) the check runs read again: the record's ci is passed" rc 19 ci passed
 ok "U04-AC-2: (19) and the PR is ready to merge" isready 19
+
+# Phase 2b. The items of the PRs whose review names their head (4: request_changes, 10, 11: a question in pr/<N>, 20: a
+# conflict) do not say the head is unreviewed; 6 (a new head, the review names the old one) does.
+MISM='no final review|not the reviewed head|unreviewed|no head'
+othersha() { # <i> <review head>: the item names no sha but the PR's head (7 characters) and the review's head
+	item "$1"; use "$1"
+	[ -s "$tmp/item" ] || return 1
+	grep -oE '[0-9a-f]{7,}' "$tmp/item" | grep -vxF -e "$sh7" -e "$2" -e "$head" >"$tmp/othersha"
+	[ ! -s "$tmp/othersha" ]
+}
+for c in 4 10 11 20; do
+	ok "U04-AC-2: ($c) the review names the head: the item has no text about an unreviewed head" nothas "$c" "$MISM"
+	ok "U04-AC-2: ($c) the item names no sha other than the PR's head" othersha "$c" "$(short "$c")"
+done
+hasmism() { item "$1"; grep -qE "$MISM" "$tmp/item"; }
+ok "U04-AC-2: (6) a new head the review does not name: the item has the text about the unreviewed head (the check is not loose)" hasmism 6
+for c in 4 10 11 20; do
+	ok "U04-AC-2: ($c) the item says the PR is still being worked on" isnot "$c"
+done
+
+# Phase 3. A state of its own (no report.json: its first run is the seed run), the PRs 31-36 already open, their reviews
+# and check runs there. 31: approve at the head, CI passed. 32: the same, then request_changes and the comments unreadable.
+# 33: CI failed, then re-run and passed on the same head. 35, 36: a review whose first line names no head (a later
+# line's sha, or an "at <sha>" that is not the heading's).
+reviewl() { # <i> <first line> <second line>: a bot comment of two lines, the newline written literally
+	use "$1"
+	rn=$((rn + 1))
+	ucomment "$pr" "$2
+$3" "2026-02-03T00:$(printf %02d "$rn"):00Z" bot NONE Bot "https://x/$pr/$rn"
+}
+sinceb=$tmp/sinceb
+mkdir -p "$sinceb"
+cat >"$sinceb/gh" <<GHEOF
+#!/bin/sh
+# the fake gh, but a comments call with &since=<time> gets the comments created at or after it, as the forge does
+out=\$("$ubin/gh" "\$@") || { rc=\$?; printf '%s\n' "\$out"; exit \$rc; }
+since=
+for a in "\$@"; do case \$a in *"&since="*) since=\${a#*&since=}; since=\${since%%&*} ;; esac; done
+if [ -z "\$since" ]; then printf '%s\n' "\$out"; else
+	printf '%s\n' "\$out" | python3 -I -c 'import json, sys; print(json.dumps([c for c in json.load(sys.stdin) if c["created_at"] >= sys.argv[1]]))' "\$since"
+fi
+GHEOF
+chmod +x "$sinceb/gh"
+urun3() { env PATH="$sinceb:$ubin:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$1" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"; }
+publish3() { # <i>...: the PR list and open-prs.tsv of these cases
+	pulls=
+	: >"$state/open-prs.tsv"
+	for i in "$@"; do
+		use "$i"
+		pulls="$pulls${pulls:+, }$(upull "$pr" "node/$id-x" "$head")"
+		printf '%s\tnode/%s-x\t%s\tfalse\tMERGEABLE\n' "$pr" "$id" "$head" >>"$state/open-prs.tsv"
+	done
+	usetpulls "[$pulls]"
+}
+state=$tmp/s2
+mkdir -p "$state"
+: >"$state/status.log"
+for i in 31 32 33 35 36; do
+	use "$i"
+	mkdir -p "$state/node/$id"
+	chk "$head" passed
+done
+use 33; chk "$head" failed
+review 31 approve "$(short 31)"
+review 32 approve "$(short 32)"
+review 33 approve "$(short 33)"
+reviewl 35 "Fresh review (approve)" "I looked at $(use 35; echo "$head") and it is fine"
+reviewl 36 "Fresh review (approve) - I looked at $(short 36) closely" "looks fine"
+rm -f "$tmp/ufail"
+publish3 31 32 33 35 36
+urun3 "$state"
+ok "U04-AC-1: (seed 31) the first run records the PR's head" rc 31 head "$(use 31; echo "$head")"
+ok "U04-AC-1: (seed 31) the first run records the review's head" rc 31 review_head "$(short 31)"
+ok "U04-AC-1: (seed 31) the first run records the verdict" rc 31 verdict approve
+ok "U04-AC-1: (seed 31) the first run records ci passed" rc 31 ci passed
+ok "U04-AC-1: (seed 33) the first run records ci failed" rc 33 ci failed
+ok "U04-AC-1: (seed 35) a sha on the review's second line is not its head" rc 35 review_head None
+ok "U04-AC-1: (seed 36) an 'at <sha>' that is not the heading's is not the review's head" rc 36 review_head None
+ok "U04-AC-1: (seed 36) the verdict is still approve" rc 36 verdict approve
+urun3 "$state"; show
+ok "U04-AC-2: (35, a newline in the review) the review's first line names no head: still being worked on, not ready" isnot 35
+ok "U04-AC-2: (35) the item names the PR's head and says the review names no head" mentions 35 "$(short 35)" 'no head'
+ok "U04-AC-2: (36) an 'at <sha>' that is not the heading's: still being worked on, not ready" isnot 36
+ok "U04-AC-2: (36) the item says the review names no head" mentions 36 'no head'
+ok "U04-AC-2: (32) (precondition) ready to merge at run k" isready 32
+ok "U04-AC-2: (33) CI failed on the head: still being worked on, saying CI failed" ciis 33 'CI failed' 'CI pending|no CI result'
+# 32: a request_changes comment and the comments of the PR unreadable
+review 32 request_changes "$(short 32)" "now it fails"
+use 32; echo "GET .*/issues/$pr/comments" >"$tmp/ufail"
+# 33: the checks are re-run on the same head and pass
+use 33; chk "$head" passed
+urun3 "$state"; show
+ok "U04-AC-1: (32, failed read) the comments could not be read: the failure is logged" grep -q 'comments' "$tmp/uerr"
+ok "U04-AC-2: (32, failed read) the item says the PR is still being worked on and not that it is ready to merge" isnot 32
+ok "U04-AC-1: (33, CI re-run) the same head's check runs now pass: the record's ci is passed" rc 33 ci passed
+ok "U04-AC-2: (33, CI re-run) the PR is ready to merge" isready 33
+rm -f "$tmp/ufail"
+urun3 "$state"; show
+ok "U04-AC-1: (32, read again) the record has the verdict request_changes" rc 32 verdict request_changes
+ok "U04-AC-2: (32, read again) request_changes: still being worked on, not ready" isnot 32
+ok "U04-AC-2: (32, read again) the item names the verdict request_changes" mentions 32 request_changes
+ok "U04-AC-2: (32, read again) the item has no text about an unreviewed head" nothas 32 "$MISM"
+
+# Phase 4. The upgrade: a report.json written before the record (pr_since set after the approving review, a chat comment
+# after it, no "merge"). 34: approve at the head, CI passed.
+state=$tmp/s3
+mkdir -p "$state"
+: >"$state/status.log"
+use 34; mkdir -p "$state/node/$id"; chk "$head" passed
+review 34 approve "$(short 34)"
+ucomment "$pr" 'thanks, looking' 2026-02-03T00:58:00Z owner OWNER User "https://x/$pr/chat"
+publish3 34
+urun3 "$state"
+pyc "
+import json
+p = '$state/report.json'; r = json.load(open(p)); assert r.get('pr_seed') and r.get('pr_since', {}).get('$pr') == '2026-02-03T00:58:00Z', r
+del r['merge']; json.dump(r, open(p, 'w'))"
+urun3 "$state"; show
+ok "U04-AC-1: (34, upgrade) the run with no record reads the PR's comments in full: the record has the review's head" rc 34 review_head "$(short 34)"
+ok "U04-AC-1: (34, upgrade) the record has the verdict approve" rc 34 verdict approve
+ok "U04-AC-1: (34, upgrade) the record has ci passed" rc 34 ci passed
+ok "U04-AC-2: (34, upgrade) the PR is ready to merge" isready 34
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
