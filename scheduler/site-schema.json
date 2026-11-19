@@ -23,6 +23,8 @@
         "text": {"nullable": "string"},
         "url": {"nullable": "string"},
         "mergeable": {"nullable": "string"},
+        "merge_ready": {"nullable": "boolean"},
+        "merge_why": {"nullable": "string"},
         "waiting_for": {"array": "string"}
       }}},
       "open_prs": {"array": {"object": {

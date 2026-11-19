@@ -9,7 +9,8 @@ Writes to --out (replacing its contents), as sorted-key JSON without spaces:
   activity.json             the last 100 status-log events, the triage issues, the deploy record
 scheduler/site-schema.json names every key and type. Fields are chosen by name, never dumped; every
 string read from a file goes through text() (local paths and token-shaped strings removed), then the
-length cuts apply. Node states: ready.py is run over the files the loop cached (never re-implemented),
+length cuts apply. A pr-open node has merge_ready and merge_why (report.json's merge record of its PR, its head and
+mergeable from open-prs.tsv, pr/<N>'s session and QUESTION.md; null in other states). Node states: ready.py is run over the files the loop cached (never re-implemented),
 a loop's lock is read from /proc/locks as loops.sh does. Session logs, session.stderr, environment
 files, prompts and ~/.config/noodlebot/ (but for the --repos list) are never opened.
 Exits 1 when the list is unreadable or --out is unwritable; a repository's own bad files give defaults.
@@ -303,6 +304,40 @@ def branch_id(branch):
 
 # ---- the repository file
 
+def merge_state(state, num, head, mergeable, rec):
+    """(merge_ready, merge_why) of a node's open PR (U04; report.py's merge_state says the same in the status issue).
+    head and mergeable are the PR's, from open-prs.tsv; rec is its record in report.json "merge" (head, review_head,
+    verdict, ci); the PR's own folder pr/<N> holds its session and question. The node's own session and question make
+    the node running or question, never pr-open, so they are not read here."""
+    d = os.path.join(state, "pr", num) if num.isdigit() else None
+    rec = rec if isinstance(rec, dict) else {}
+    field = lambda k: rec[k] if isinstance(rec.get(k), str) else None  # noqa: E731
+    rh, verdict = field("review_head"), field("verdict")
+    ci = field("ci") if field("head") == head else None
+    same = bool(rh) and head.lower().startswith(rh.lower())
+    busy = bool(d) and alive(os.path.join(d, "session.pid"), num)
+    asks = bool(d) and os.path.lexists(os.path.join(d, "QUESTION.md"))
+    if not busy and not asks and same and verdict == "approve" and ci == "passed" and mergeable != "CONFLICTING":
+        return True, (None if mergeable in ("MERGEABLE", "CONFLICTING") else
+                      "the forge has not said whether it merges cleanly")
+    why = []
+    if busy:
+        why.append("a session is running on it")
+    if asks:
+        why.append("its answer waits for a session" if os.path.lexists(os.path.join(d, "ANSWER.md")) else "it has an open question")
+    if mergeable == "CONFLICTING":
+        why.append("it conflicts with its base")
+    if not same:
+        why.append("its head %s has no final review" % head[:7] if not verdict else
+                   "its head %s is not the reviewed head %s" % (head[:7], rh[:7]) if rh else
+                   "its head %s is unreviewed (the last review names no head)" % head[:7])
+    if verdict and verdict != "approve":
+        why.append("the last review's verdict is %s" % verdict)
+    if ci != "passed":
+        why.append({"pending": "CI pending", "failed": "CI failed"}.get(ci, "no CI result") + " on its head")
+    return False, cut(text("; ".join(why)), 300)
+
+
 def repo_file(root, repo, running, hold, home):
     owner, name = repo.split("/")
     state = os.path.join(root, "state", name)
@@ -326,6 +361,11 @@ def repo_file(root, repo, running, hold, home):
     except Exception:  # noqa: BLE001
         pass
 
+    try:
+        merges = json.loads(report)["merge"]
+        merges = merges if isinstance(merges, dict) else {}
+    except Exception:  # noqa: BLE001
+        merges = {}
     adopted = {n["id"] for n in nodes if n["status"] in ("imported", "pinned")}
     out_nodes = []
     for n in nodes:
@@ -335,7 +375,8 @@ def repo_file(root, repo, running, hold, home):
         o = {"id": text(i), "name": text(n["name"]), "track": text(n["track"]), "deps": [text(x) for x in n["deps"]],
              "unlocks": [text(m["id"]) for m in nodes if i in m["deps"]], "summary": cut(text(n["summary"]), 300),
              "size": None, "has_spec": False, "criteria": [], "starts": 0, "state": "waiting", "pr": None,
-             "started": None, "text": None, "url": None, "mergeable": None, "waiting_for": []}
+             "started": None, "text": None, "url": None, "mergeable": None, "merge_ready": None, "merge_why": None,
+             "waiting_for": []}
         sp = spec_of(clone, n) if SAFE.match(i) else None
         if sp is not None:
             o["has_spec"], (o["size"], o["criteria"]) = True, sp
@@ -378,6 +419,7 @@ def repo_file(root, repo, running, hold, home):
         elif any(r[1].startswith("node/%s-" % i) for r in open_rows):
             r = next(r for r in open_rows if r[1].startswith("node/%s-" % i))
             o["state"], o["pr"], o["mergeable"] = "pr-open", int(r[0]), cut(text(r[4]), 60)
+            o["merge_ready"], o["merge_why"] = merge_state(state, r[0], r[2], r[4], merges.get(r[0]))
         elif i in ready:
             o["state"] = "held" if hold else "ready"
         else:
