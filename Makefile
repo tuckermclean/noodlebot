@@ -22,6 +22,7 @@ TESTS = \
 	scheduler/report-g02.test.sh \
 	scheduler/report-queue.test.sh \
 	scheduler/report-queue-answers.test.sh \
+	scheduler/report-u04.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
