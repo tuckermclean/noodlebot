@@ -34,8 +34,8 @@ no graph.
 | https://github.com/tuckermclean/bosnia/pull/11 | area deploy | 11-19 06:07 | 11-19 13:52 | 2 (1, approve) | bcc48c9 |
 | https://github.com/tuckermclean/bosnia/pull/13 | plan, ends the adoption | 11-19 13:54 | 11-19 14:16 | 1 (approve) | a6ba2b1 |
 
-Numbers #5 and #12 are not adoption PRs: #12 is the loop's daily status issue "noodlebot log 2026-11-19" (the
-earlier one is #2); #5 is not in the data this record used. Each PR was opened by the loop within eight minutes of
+Numbers #2, #5 and #12 are not adoption PRs: they are the loop's daily log issues, "noodlebot log 2026-11-19" (#12)
+and "noodlebot log 2026-11-18" (#5, opened 2026-11-18T08:01Z; #2 is the earlier one). Each PR was opened by the loop within eight minutes of
 the previous merge, so the waiting was for review and merge, and for the throttle (below). The final `main` of the
 adoption is a6ba2b1, the merge of #13.
 
@@ -156,8 +156,9 @@ Both exit 0. On bosnia's main at 96d3345 (after B12 to B14, D05 and D06 were add
 
 ## What went wrong
 
-The adoption wrote specs only, every PR had an approving review before it merged, and `main` passes both checkers. The adoption cost
-many review rounds, and the record lists why.
+The adoption wrote specs only, and `main` passes both checkers. Of the eight PRs, seven had an approving review
+before they merged; #4 merged after five review rounds that were all "changes requested", with no approving review
+(the owner merged it). The adoption cost many review rounds, and the record lists why.
 
 1. **The old PR #1, and how it was cleared.** bosnia had an open PR #1, "Spec: adopt the repository into the graph
    regime" (https://github.com/tuckermclean/bosnia/pull/1, opened 2026-11-11, branch `spec/adopt` at e6dbe18). It came
@@ -251,11 +252,16 @@ Each is a wording change in `plugin/skills/adopt/SKILL.md` (or the template), wi
 - **F6**, a wording the feedback suggests is checked against the code before it is applied (section 9). Case:
   "A09 F5/F6".
 - **F7**, the drafts state nothing the area or plan PRs make false (section 3, the drafts). Case: "A09 F7".
+- **Review 1** (RED 071e3b3, GREEN ee29b2d): the prohibitions (the Never paragraph, section 7 step 5, section 9)
+  except the scratch edits of section 7's check, reverted before any commit, and section 7 says how to undo one;
+  the `Adopt <name>` issue is named where the owner's answers are; CI's colour codes and timestamp prefix are
+  examples of what its lines may add; the branch this run works on is exempt from the earlier-attempt rule.
 
 Problems reported elsewhere, not fixed here:
 
 - The node skill's pass condition judges CI job logs whose lines carry a timestamp and colour codes, and the forge CLI
-  cannot fetch a job log, so an adopt session cannot check a real CI log. Reported as a noodlebot issue.
+  cannot fetch a job log, so an adopt session cannot check a real CI log. Reported as noodlebot issue #211
+  (https://github.com/tuckermclean/noodlebot/issues/211).
 - `plugin/skills/adopt/example-baseline/SPEC.md` and `AGENTS.md` (the example of the earlier recorded run) carry the
   in-progress wording F7 forbids ("lists no node yet", "in an area or in a node"). bosnia's drafts took both phrases
   verbatim. Reported with the previous item.
@@ -268,5 +274,8 @@ Problems reported elsewhere, not fixed here:
 - The reviewer, merger and throttle statements are the owner's account; the PR data has no merger name.
 - Merge times follow the forge's `merged_at`; the "about 37 hours" is the owner's figure and matches the first and
   last timestamps above.
-- PR #5, and D05's node PR, were not found in the data this record used.
+- D05's node PR was not found in the data this record used. (#5 is the loop's daily log issue of 2026-11-18, checked
+  with `issue view`.)
+- That #4 had no approving review rests on its five reviews in the data, all "changes requested"; a review given
+  outside the forge's review list would not show there.
 - The owner's earlier answers (bosnia chosen, PR #1 cleared) are quoted from noodlebot's state, not from bosnia.
