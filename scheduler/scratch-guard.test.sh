@@ -40,6 +40,7 @@ scan() {
 			_v=$(printf '%s\n' "$_t" | sed -E 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)="?(\$\(|`)[[:space:]]*mktemp[[:space:]].*/\2/')
 			_t=${_t#local }
 			_t=${_t#export }
+			printf '%s\n' "$_t" | grep -qE "^$_v=\"?(\\\$\\(|\`)[[:space:]]*mktemp[[:space:]]" || _t=x
 			ok_=no
 			case $_t in
 			"$_v="*)
