@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D08 | none | S |
+| now | D08 | D15 | S |
 
 **Owns:** `scheduler/check-ci-workflow.py` (new), `scheduler/check-ci-workflow.test.sh` (new) and its line in the `Makefile`'s `TESTS`; in `.github/workflows/test.yml`, only when the check fails on it as D08 left it: the smallest fix within D08's two `make test` steps and their settings (change 3).
 **Resolves:** #141, #144
