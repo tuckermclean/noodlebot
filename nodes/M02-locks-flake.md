@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | M01, D06, D12 | none | S |
+| now | M01, D06, D12 | M03 | S |
 
 **Owns:** the checks of `scheduler/loops*.test.sh` that go through `/proc/locks` (M01-AC-3's status check among them)
 and their waits; `scheduler/testdata/lib/loops-body.sh`, which the five `loops*` tests that share it
