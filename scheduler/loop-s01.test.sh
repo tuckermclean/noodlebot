@@ -11,26 +11,42 @@ p1=$(pg B01) p2=$(pg B02) p3=$(pg B03) p4=$(pg B04) p5=$(pg B05) p6=$(pg B06)
 c1=$(cat "$S01/child.B01.1" 2>/dev/null)
 s01ok "S01 setup: a session's child is in the session's process group" sh -c "[ \"\$(ps -o pgid= -p '$c1' | tr -d ' ')\" = '$p1' ]"
 # the loop has logged the start of all six sessions (the old fixed sleep of 2 s let it settle)
-wait_until 5 s01_started 6
+wait_until 30 s01_started 6 || fail "D13 setup: the loop logged the start of all six sessions (in $(basename "$0"))"
 now=$(date +%s)
 # open.txt first: the loop reads both files in one tick, and B04's open PR must be there when its closed PR is
 echo node/B04-n4 >"$S01/open.txt"
-wait_polls "$S01/polls" "$(polls "$S01/polls")" 2   # two ticks that read open.txt, so none sees #14 closed without its open PR
+wait_polls "$S01/polls" "$(polls "$S01/polls")" 2 || fail "D13 setup: two ticks read open.txt (in $(basename "$0"))"   # so none sees #14 closed without its open PR
 printf '13 node/B03-n3 %s 0\n14 node/B04-n4 %s 0\n' $((now - 3600)) "$now" >"$S01/closed.tsv"
-wait_ticks 4   # the old fixed sleep was 3.5 s: a did-not-happen check waits that many ticks, rounded up
+wait_ticks 4 || fail "D13 setup: four ticks passed after closed.tsv was written (in $(basename "$0"))"   # the old fixed sleep was 3.5 s: a did-not-happen check waits that many ticks, rounded up
 s01ok "S01-AC-3: a PR closed before the session started does not stop it" grp_up "$p3"
 s01ok "S01-AC-3: a closed PR does not stop the session of a node that also has an open PR" grp_up "$p4"
 s01ok "S01-AC-3: nodes with no PR are untouched" grp_up "$p5"
 s01ok "S01-AC-3: no stop event for them" sh -c "! grep -i stop '$state/status.log' | grep -qE 'B0[345]'"
 
+# "Within a tick", counted in the loop's own ticks (its heartbeat file, replaced with mv at the start of every tick: a tick is a change of its modification time, in nanoseconds,
+# as the content is one epoch second and two tick starts in one second would count as one) and not in
+# seconds: a tick that starts after the PR is marked merged reads it and stops the session (stop_done waits until the group is gone)
+# before it ends, so the group is gone when the next tick's heartbeat is written. gone_by_next_tick: the heartbeat's mtime is read after the
+# PR is marked merged, the first change of it is that tick, the second is the next one; the group is gone by then, else FAIL.
+gone_by_next_tick() {
+	local g=$1 last h n=0 end=$(($(date +%s) + 120))   # the end: a loop that stopped ticking is a failure, not a hang
+	last=$(stat -c %.9Y "$state/heartbeat" 2>/dev/null)
+	until grp_gone "$g"; do
+		h=$(stat -c %.9Y "$state/heartbeat" 2>/dev/null)
+		[ "$h" = "$last" ] || { last=$h; n=$((n + 1)); }
+		[ "$n" -lt 2 ] || { grp_gone "$g"; return; }   # the second heartbeat: the group must be gone now
+		[ "$(date +%s)" -lt "$end" ] || return 1
+		sleep 0.1
+	done
+}
 echo "11 node/B01-n1" >>"$S01/merged.tsv"; printf '11 node/B01-n1 %s 1\n' "$(date +%s)" >>"$S01/closed.tsv"
-s01ok "S01-AC-1: a session whose PR merged while it ran: its process group is gone within a tick" waitf 4 grp_gone "$p1"
+s01ok "S01-AC-1: a session whose PR merged while it ran: its process group is gone within a tick" gone_by_next_tick "$p1"
 s01ok "S01-AC-1: and its child with it" waitf 2 dead "$c1"
 s01ok "S01-AC-1: one status-log event names the node and the merged PR" waitf 3 evis B01 11 1
 s01ok "S01-AC-1: its evidence is archived to state/archive/B01-out" waitf 3 test -f "$state/archive/B01-out/brief.md"
 s01ok "S01-AC-1: its worktree is removed" waitf 3 test ! -d "$wt4/B01"
 m1=$(polls "$S01/polls")   # its "not repeated" checks are made below, three ticks on
-wait_polls "$S01/polls" "$m1" 3
+wait_polls "$S01/polls" "$m1" 3 || fail "D13 setup: three more ticks passed after B01 was stopped (in $(basename "$0"))"
 s01ok "S01-AC-1: the event is not repeated on later ticks" test "$(ev B01 11)" = 1
 s01ok "S01-AC-1: the merged node is not started again" test "$(s01runs B01)" = 1
 
