@@ -31,30 +31,65 @@ fi
 # scan <file>...: prints file:line for each line that assigns a mktemp command substitution with the -d form
 # to a variable and is not, as a whole, `<var>=$(mktemp ...) && [ -d "$<var>" ] || exit 1`.
 scan() {
+	# (A) D12's rule, as D12 wrote it (see scan_d12): its candidate grep, its variable and its accepted form
+	_d12='(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=\$\(mktemp -d'
+	# (B) the wider rule: the -d form of mktemp (-d alone or among short options, --di ... --directory) followed by
+	# any character that is not a letter or digit, or the end of the line
+	_df='(-[A-Za-z]*d[A-Za-z]*|--di(r(e(c(t(o(r(y)?)?)?)?)?)?)?)'
+	# mktemp's arguments in an accepted line: no operator, parenthesis, backtick or backslash
+	_a='[^;&|()`\\]*'
 	for _f in "$@"; do
 		[ -f "$_f" ] || continue
-		grep -nE '(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*="?(\$\(|`)[[:space:]]*mktemp[[:space:]]' "$_f" 2>/dev/null | while IFS= read -r _l; do
+		grep -nE '(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*="?(\$\(|`)[[:space:]]*mktemp[[:space:]]|'"$_d12" "$_f" 2>/dev/null | while IFS= read -r _l; do
 			_n=${_l%%:*}
 			_t=${_l#*:}
 			_t=${_t#"${_t%%[![:space:]]*}"}
-			_s=$(printf '%s\n' "$_t" | sed -E 's/([[:space:]]"?)\$\([^()]*\)/\1/g')
-			_df='(-[A-Za-z]*d[A-Za-z]*|--di(r(e(c(t(o(r(y)?)?)?)?)?)?)?)'
-			printf '%s\n' "$_s" | grep -qE "mktemp.*[[:space:]]$_df([[:space:]]|[)\`\"\$]|\$)" || continue
-			_t=${_t#local }
-			_t=${_t#export }
-			_v=$(printf '%s\n' "$_t" | sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p')
-			[ -n "$_v" ] || _v=NOVAR
-			ok_=no
-			_a='[^;&|()`]*'
-			_g="[[:space:]]&&[[:space:]]\\[ -d \"\\\$$_v\" \\] \\|\\| exit 1\$"
-			_p="^$_v="
-			_m="[[:space:]]*mktemp[[:space:]]($_a|$_a\"\\\$\\([^()]*\\)\"$_a)"
-			if printf '%s\n' "$_t" | grep -qE "$_p\\\$\\($_m\\)$_g" ||
-				printf '%s\n' "$_t" | grep -qE "$_p\"\\\$\\($_m\\)\"$_g" ||
-				printf '%s\n' "$_t" | grep -qE "$_p\`[[:space:]]*mktemp[[:space:]][^;&|\`]*\`$_g"; then
-				ok_=yes
+			_rep=no
+			# (A): a line D12's scan reports is reported, but for `local ` or `export ` followed by exactly a line
+			# D12's check accepts (the one widening D14-AC-3 allows)
+			if printf '%s\n' "$_t" | grep -qE "$_d12"; then
+				_v=$(printf '%s\n' "$_t" | sed -E 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)=\$\(mktemp -d.*/\2/')
+				case $_t in
+				"$_v=\$(mktemp -d"*") && [ -d \"\$$_v\" ] || exit 1") ;;
+				*) _rep=yes ;;
+				esac
+				case $_t in
+				"local "* | "export "*)
+					_r=${_t#* }
+					_v=$(printf '%s\n' "$_r" | sed -E 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)=\$\(mktemp -d.*/\2/')
+					case $_r in
+					"$_v=\$(mktemp -d"*") && [ -d \"\$$_v\" ] || exit 1") _rep=no ;;
+					esac
+					;;
+				esac
 			fi
-			[ "$ok_" = yes ] || echo "$_f:$_n"
+			# (B): a line with the -d form (one level of $( ... ) in an option value left out) is reported unless
+			# the whole line, after an optional `local ` or `export `, is
+			# <var>=<open>mktemp <args><close> && [ -d "$<var>" ] || exit 1
+			# with <open><close> one of $( ), "$( )" or backticks, and in the $( forms at most one "$( ... )" in <args>
+			if [ "$_rep" = no ]; then
+				_s=$(printf '%s\n' "$_t" | sed -E 's/([[:space:]]"?)\$\([^()]*\)/\1/g')
+				if printf '%s\n' "$_s" | grep -qE "mktemp.*[[:space:]]$_df([^A-Za-z0-9]|\$)"; then
+					_rep=yes
+					case $_t in
+					"local "* | "export "*) _r=${_t#* } ;;
+					*) _r=$_t ;;
+					esac
+					_v=${_r%%=*}
+					case $_v in
+					'' | [!A-Za-z_]* | *[!A-Za-z0-9_]*) ;;
+					*)
+						_m="[[:space:]]*mktemp[[:space:]]"
+						_x="$_a(\"\\\$\\($_a\\)\"$_a)?"
+						_g=" && \\[ -d \"\\\$$_v\" \\] \\|\\| exit 1\$"
+						if printf '%s\n' "$_r" | grep -qE "^$_v=(\\\$\\($_m$_x\\)|\"\\\$\\($_m$_x\\)\"|\`$_m$_a\`)$_g"; then
+							_rep=no
+						fi
+						;;
+					esac
+				fi
+			fi
+			[ "$_rep" = no ] || echo "$_f:$_n"
 		done
 	done
 }
