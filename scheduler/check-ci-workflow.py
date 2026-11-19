@@ -2,7 +2,8 @@
 # D10: read a workflow (default .github/workflows/test.yml) and report every way a failing `make test`
 # could still end in a successful run. Prints one line per problem, then `PROBLEMS <n>`; exit 1 if n > 0.
 #   python3 -I scheduler/check-ci-workflow.py [<workflow>]
-# The expected env values repeat D08-AC-1's; D15's, from the CI record in D15's PR. Change them with the budgets.
+# The expected env values are D08-AC-1's, with the budgets D15 set from the CI record in D15's PR.
+# Change them here (and in test.yml) when the CI budgets change.
 import fnmatch
 import os
 import re
