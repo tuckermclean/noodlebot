@@ -189,6 +189,7 @@ TESTS = \
 	scheduler/runtests.test.sh \
 	scheduler/runtests-d08.test.sh \
 	scheduler/runtests-d11.test.sh \
+	scheduler/runtests-d16.test.sh \
 	scheduler/check-ci-workflow.test.sh \
 	scheduler/scratch-guard.test.sh \
 	scheduler/kill-own.test.sh \
@@ -196,6 +197,6 @@ TESTS = \
 	container/container.test.sh
 
 test:
-	env -u NOODLEBOT_FORGE -u NOODLEBOT_FORGE_REPO -u NOODLEBOT_FORGE_TOKEN_SCRIPT sh scheduler/runtests.sh $(TESTS)
+	env -u MAKEFLAGS -u MAKEOVERRIDES -u MFLAGS -u MAKELEVEL -u NOODLEBOT_FORGE -u NOODLEBOT_FORGE_REPO -u NOODLEBOT_FORGE_TOKEN_SCRIPT sh scheduler/runtests.sh $(TESTS)
 
 .PHONY: test
