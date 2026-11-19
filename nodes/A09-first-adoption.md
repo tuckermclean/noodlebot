@@ -29,7 +29,7 @@ or its template is fixed here, test-first.
    case in `adopt.test.sh`; a problem elsewhere is reported to the owner as a question or an issue. *A09-AC-2.*
 
 ## Gate
-- **A09-AC-1** — A real repository the owner chose was adopted by the deployed loop from no graph to a graph without `adoption`, through the first PR, one PR per area and the plan PR, all merged. *Verify:* the record's PR links.
+- **A09-AC-1** — A real repository the owner chose was adopted by the deployed loop from no graph to a graph without `adoption`, through the first PR, one PR per area and the plan PR, all merged. *Verify:* the record's PR links (in a file under `plugin/` a link is the forge reference, the repository as `<kind>:<owner/name>` and the PR number, checkable with the forge CLI's `pr view`: R02-AC-2 allows no URL there).
 - **A09-AC-2** — The record holds every adoption PR's link, the areas and their nodes, the gate, the questions, and `check-regime.py` and `check-coverage.py` reporting `PROBLEMS 0` on the final `main`; each fix to the skill or template has its case. *Verify:* `plugin/skills/adopt/first-adoption.md` and `sh plugin/skills/adopt/adopt.test.sh`.
 
 ## Risks
