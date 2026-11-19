@@ -38,6 +38,11 @@ bad_file|a folder that is a file signals nothing (the leader names a path under 
 symlink_canon|a folder given through a symlink kills the group whose leader names the canonical path
 symlink_given|a folder given through a symlink kills the group whose leader names the path as given
 sibling|a command line that names a sibling <folder>x/ does not match <folder>
+bash_main|under bash sourcing kill-own.sh, pid files holding 1, nothing, a non-number, the sentinel's pid and the leader's pid kill the leader's group only, and kill_own_ok answers 0 for the leader's pid
+bash_nonnum|under bash as under sh, kill_own_ok refuses 2x, -1, 0, abc, an empty value and 1 for a leader that names <folder>/
+bash_bad_slashes|under bash, the folder // (canonical form // under bash) signals nothing (the leader's command line holds ///)
+bash_bad_proc|under bash, the folder //proc/.. (canonical form // under bash) signals nothing (the leader's command line holds //proc/../ and ///)
+bash_bad_others|under bash, an empty folder, /, /proc/.., a relative folder, a missing folder and a file signal nothing
 EOT
 
 echo "# D14-AC-2: the guarded kill, in a namespace of its own"
@@ -154,6 +159,42 @@ kills() {
 c_symlink_canon() { kills "$F/lnk" "$F/sub/leader"; }
 c_symlink_given() { kills "$F/lnk" "$F/lnk/leader"; }
 c_sibling() { bad "$F/sub" "${F}/subx/leader"; }
+# the same under bash: bk <function> <argument>... runs the function of kill-own.sh sourced by bash, from /
+bk() { (cd / && bash -c '. "$1/kill-own.sh" || exit 99; shift; "$@"' bash "$lib" "$@"); }
+c_bash_main() {
+	mkgroup "$F/leader"
+	bk kill_own_ok "$F" "$gp" || { why="bash: kill_own_ok refused the leader's pid"; endgroup; return 1; }
+	bk kill_own "$F" "$F/pf.one" "$F/pf.nothing" "$F/pf.abc" "$F/pf.sent" "$F/pid.g"
+	gone "$gp" "$gc" || { endgroup; return 1; }
+	stays "$sp" "$sc"
+}
+c_bash_nonnum() {
+	mkgroup "$F/leader"
+	for _v in 2x -1 0 abc "" 1; do
+		if bk kill_own_ok "$F" "$_v"; then why="bash: kill_own_ok accepted '$_v'"; endgroup; return 1; fi
+		if at_root kill_own_ok "$F" "$_v"; then why="sh: kill_own_ok accepted '$_v'"; endgroup; return 1; fi
+	done
+	stays "$gp" "$gc" "$sp" "$sc"; _r=$?
+	endgroup
+	return "$_r"
+}
+# bbad <folder>: under bash, the leader's command line holds /// and <folder>/; the folder is refused by both
+bbad() {
+	mkgroup "/// $1/"
+	if bk kill_own_ok "$1" "$gp"; then why="bash: kill_own_ok accepted the folder '$1'"; endgroup; return 1; fi
+	bk kill_own "$1" "$F/pid.g"
+	stays "$gp" "$gc"; _r=$?
+	endgroup
+	[ "$_r" -eq 0 ] || why="bash: the folder '$1' was acted on ($why)"
+	return "$_r"
+}
+c_bash_bad_slashes() { bbad //; }
+c_bash_bad_proc() { bbad //proc/..; }
+c_bash_bad_others() {
+	for _b in "" / /proc/.. "${F#/}" "$F/missing" "$F/afile"; do
+		bbad "$_b" || { why="$why [folder '$_b']"; return 1; }
+	done
+}
 
 while IFS='|' read -r id _what; do
 	why=
