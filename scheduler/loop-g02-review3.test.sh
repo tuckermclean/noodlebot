@@ -17,7 +17,7 @@ g02_prs 254 CONFLICTING
 g02_lines=$(wc -l <"$state/status.log")
 # D17: SCHED_TICK=2 (g02b_loop's 4th argument; review2 keeps tick 1). turn.py counts a loop live only while its heartbeat is
 # less than 3 x tick old (6 s at tick 2), and the loop asks at the end of its tick. Loaded (2 `yes` per pinned CPU) a tick's work was
-# about 2-5 s and the heartbeat spacing (work plus a pause of up to a tick) 4-7 s; an ask that finds the loop stale only puts the turn off to a later tick.
+# about 2-5 s and the heartbeat spacing (work plus a pause of up to a tick) 4-5 s; an ask that finds the loop stale only puts the turn off to a later tick.
 g02r_tick=2
 g02b_loop 0 "$g02_data" 1 $g02r_tick
 ok "G02-AC-1 (review1d #5, ramp=1): the throttle engages" waitf 8 sh -c "tail -n +$((g02_lines + 1)) '$state/status.log' | grep -q 'throttle engaged'"
