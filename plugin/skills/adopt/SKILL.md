@@ -50,7 +50,8 @@ In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop
 - Run that command, here and for the baseline in section 3, with `CI=true` and the agent session's variables
   unset (`CLAUDECODE`, `AI_AGENT`): a runner such as vitest changes its output, colour for one, when it sees
   them. The node skill judges CI's run of the gate with the same `fail_pattern`, so the pattern must match
-  CI's lines too, once the colour escape codes and the timestamp prefix of a fetched job log are stripped.
+  CI's lines too, once what CI adds is stripped (for example colour escape codes, or a fetched job log's
+  timestamp prefix).
 - Compare the repository's test and fixture paths with the role guard's defaults (see section 3), e.g.
   a `fixtures/` directory that holds application data, or `tests.py` files the defaults miss.
 - Read the issues, closed ones too, and merged PRs: they are the history of intent.
@@ -60,8 +61,8 @@ In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop
   They become nodes later, once the code is mapped; this PR drafts no node.
 - A closed PR that was never merged is not the owner's intent: do not read its drafts, recommend from them,
   cite, link or copy them. The same goes for a branch other than the default branch and the one this run works on
-  (an earlier adoption attempt): do not read or use it. The drafts come from the default branch, the owner's
-  answers and the issues, and from nothing else.
+  (an earlier adoption attempt): do not read or use it. The drafts come from the default branch, its merged PRs,
+  the issues and the owner's answers, and from nothing else.
 - Write down what you found and what you could not tell in `FACTS.md` next to `QUESTION.md`, so a
   resumed run has it. Do not invent intent from the code.
 
@@ -236,8 +237,8 @@ Read the owner's answers to the first PR's questions (the replies on the adoptio
      A criterion claims only what the test named in its *Verify:* asserts, and that
      test fails when the behaviour the criterion states breaks. Check each pinned criterion: break that behaviour
      in a scratch edit, run the named test, then restore the file; the scratch edit is reverted and nothing is
-     committed (the PR stays specs only). Undo one with `git checkout -- <file>` or `git restore <file>`; `git status`
-     shows only spec files before the commit. A clause the test does not catch is `unpinned`, a criterion of its own.
+     committed (the PR stays specs only). Undo one with `git checkout -- <file>` or `git restore <file>`; Before the commit,
+     `git status` has to show that only spec files are modified or staged (untracked files the gate run leaves do not count). A clause the test does not catch is `unpinned`, a criterion of its own.
      A test that cannot run here makes its criterion `unpinned` too;
      Risks. Describe what you read; do not invent intent;
    - lists as `deps` the already-mapped nodes whose code it relies on.
