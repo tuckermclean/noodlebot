@@ -5,34 +5,38 @@ answers A09-AC-1 and A09-AC-2. All times are UTC. The facts come from bosnia's i
 reviews, comments, merge commits), from bosnia's history, from the checkers run on its final `main`, and from the
 owner's account of what went wrong. Where a fact rests on the owner's word alone, the text says so.
 
+The repository is `github:tuckermclean/bosnia` (the forge CLI's `--repo` form). Every `#N` below is a bosnia PR or
+issue number unless it says noodlebot. Each is checkable with the forge CLI and that `--repo`: `pr view --number N`
+or `issue view --number N`. (The record gives no URLs: R02's rule keeps them out of files under `plugin/`.)
+
 ## Who did what
 
 - The repository, `tuckermclean/bosnia` (a language-learning app: backend, content pipeline, Expo app, voice agent,
   deploy files), was the owner's choice. It had no `docs/graph.yaml`. The owner added it to the loop's list of
   repositories and started its loop.
 - The loop's sessions drafted every PR. The bot's comments are signed by `n00dl3b0t[bot]`.
-- Every review by `tuckermclean` on #4 to #13 was written by a Claude Code session using the owner's account, not by
+- Every review by `tuckermclean` on #4 to #13 was written by an agent session on the owner's account, not by
   the owner in person (owner's account). The owner merged #4 to #9. From #10 on the owner had that session merge each
   PR itself once its approving review covered the head and CI was green (the owner's decision of 2026-11-19). So the
   owner chose the repository, set the rules and decided how merging worked, and the reviewing and later merging were
-  done by a Claude Code session on the owner's behalf. The record does not hide this.
+  done by an agent session on the owner's behalf. The record does not hide this.
 
 ## The adoption, start to end
 
-Issue: https://github.com/tuckermclean/bosnia/issues/3 ("Adopt bosnia", opened 2026-11-18T01:23Z, closed by the loop
+Issue: bosnia issue #3 ("Adopt bosnia", opened 2026-11-18T01:23Z, closed by the loop
 at 2026-11-19T14:17Z after the plan PR merged). About 37 hours, 8 PRs. The base was bosnia's `main` at 460501b, with
 no graph.
 
-| PR | Step | Opened | Merged | Review rounds | Merge commit |
+| bosnia PR | Step | Opened | Merged | Review rounds | Merge commit |
 |---|---|---|---|---|---|
-| https://github.com/tuckermclean/bosnia/pull/4 | first PR (scaffold) | 11-18 01:43 | 11-18 13:39 | 5, all changes requested | 969b2c9 |
-| https://github.com/tuckermclean/bosnia/pull/6 | area repo-root | 11-18 13:42 | 11-18 16:06 | 4 (3 changes requested, approve) | 514280e |
-| https://github.com/tuckermclean/bosnia/pull/7 | area content-pipeline | 11-18 16:11 | 11-18 17:29 | 4 (3, approve) | a5ea0c1 |
-| https://github.com/tuckermclean/bosnia/pull/8 | area backend | 11-18 17:36 | 11-18 22:22 | 4 (3, approve) | 8fa9590 |
-| https://github.com/tuckermclean/bosnia/pull/9 | area app | 11-18 22:28 | 11-18 23:39 | 3 (2, approve) | 416c509 |
-| https://github.com/tuckermclean/bosnia/pull/10 | area voice-agent | 11-18 23:43 | 11-19 06:04 | 3 (2, approve) | 75052fe |
-| https://github.com/tuckermclean/bosnia/pull/11 | area deploy | 11-19 06:07 | 11-19 13:52 | 2 (1, approve) | bcc48c9 |
-| https://github.com/tuckermclean/bosnia/pull/13 | plan, ends the adoption | 11-19 13:54 | 11-19 14:16 | 1 (approve) | a6ba2b1 |
+| #4 | first PR (scaffold) | 11-18 01:43 | 11-18 13:39 | 5, all changes requested | 969b2c9 |
+| #6 | area repo-root | 11-18 13:42 | 11-18 16:06 | 4 (3 changes requested, approve) | 514280e |
+| #7 | area content-pipeline | 11-18 16:11 | 11-18 17:29 | 4 (3, approve) | a5ea0c1 |
+| #8 | area backend | 11-18 17:36 | 11-18 22:22 | 4 (3, approve) | 8fa9590 |
+| #9 | area app | 11-18 22:28 | 11-18 23:39 | 3 (2, approve) | 416c509 |
+| #10 | area voice-agent | 11-18 23:43 | 11-19 06:04 | 3 (2, approve) | 75052fe |
+| #11 | area deploy | 11-19 06:07 | 11-19 13:52 | 2 (1, approve) | bcc48c9 |
+| #13 | plan, ends the adoption | 11-19 13:54 | 11-19 14:16 | 1 (approve) | a6ba2b1 |
 
 Numbers #2, #5 and #12 are not adoption PRs: they are the loop's daily log issues, "noodlebot log 2026-11-19" (#12)
 and "noodlebot log 2026-11-18" (#5, opened 2026-11-18T08:01Z; #2 is the earlier one). Each PR was opened by the loop within eight minutes of
@@ -79,15 +83,19 @@ empty (from #4's body; CI's four jobs reported the same counts in the reviews). 
 How the `fail_pattern` changed during #4:
 
 1. The owner's answer to Q6 accepted the one proposed in the question: `^ FAIL  \S+ > |^  ● .+ › |^(FAIL|ERROR): test`.
-2. The first PR (ff13090) widened the jest part to `^  ● (?!Test suite failed to run)`, because `● .+ › ` missed a
+2. The first PR's first commit (ff13090) widened the jest part to `^  ● (?!Test suite failed to run)`, because `● .+ › ` missed a
    jest test written outside a `describe`.
-3. After review round 3 (commit d7bb2a2) it also skipped `Console$`: jest prints `  ● Console` above a test's
+3. After review round 3 (commit d7bb2a2) the pattern also skipped `Console$`: jest prints `  ● Console` above a test's
    console output in a multi-file run, even for a passing one, and the pattern matched it.
-4. That is the final pattern. Rounds 3 and 4 then changed AGENTS.md's wording about CI output, not the pattern: vitest
-   colours its output in GitHub Actions, and a fetched job log starts every line with a timestamp, so both the
-   timestamp (`^\S+Z `) and the colour codes (`\x1b\[[0-9;]*m`) must be stripped before matching a CI log. The first
-   draft had said CI's lines carry no colour. That was false: the bot's probe ran inside an agent session, where
-   vitest turns colour off.
+4. That is the final pattern. The AGENTS.md wording about CI output changed three times:
+   - a552d15 (after round 2) said the failure lines "carry no colour codes (checked with probes)" and that
+     `FORCE_COLOR` would colour them.
+   - d7bb2a2 (after round 3) said vitest colours its output in GitHub Actions and is off only in an agent session,
+     so a CI log's ANSI codes are stripped before matching. Jest's failure lines carry none.
+   - 3cfdbcc (after round 4) added that every line of a fetched job log starts with a timestamp, so both the
+     timestamp (`^\S+Z `) and the colour codes (`\x1b\[[0-9;]*m`) are stripped before matching, and made the agent
+     variables examples.
+   The earlier claim was wrong because the probes ran inside an agent session, where vitest turns colour off.
 
 Round 2 also fixed AGENTS.md's app quick gate to `(cd app && npx jest --runTestsByPath <path>)`: without it jest
 reads a path such as `app/(tabs)/__tests__/home.test.tsx` as a regular expression and finds no tests.
@@ -161,7 +169,7 @@ before they merged; #4 merged after five review rounds that were all "changes re
 (the owner merged it). The adoption cost many review rounds, and the record lists why.
 
 1. **The old PR #1, and how it was cleared.** bosnia had an open PR #1, "Spec: adopt the repository into the graph
-   regime" (https://github.com/tuckermclean/bosnia/pull/1, opened 2026-11-11, branch `spec/adopt` at e6dbe18). It came
+   regime" (bosnia PR #1, opened 2026-11-11, branch `spec/adopt` at e6dbe18). It came
    from the earlier one-shot `/adopt` and held a full 15-node plan with no `adoption` key. With it open, the loop
    would have taken it for the scaffold's own PR and never started the scaffold. Merging it would have skipped the
    area PRs. The owner closed it unmerged and renamed its branch to `old/adopt-2026-11-11` (still at e6dbe18), before
@@ -182,10 +190,12 @@ before they merged; #4 merged after five review rounds that were all "changes re
    - None of this reached a file on `main`: `git grep` for `old/adopt`, `AUDIT.md`, `PR #1` and `2026-11-11` finds
      nothing at a6ba2b1 or at 96d3345, apart from an unrelated code comment "Provider seam #1" and a binary icon.
      This record checked the final PR bodies and bot comments of #4 to #13, not the histories of body edits.
-3. **Reviews and merges** were by a Claude Code session on the owner's account (see the top). The owner's account
+3. **Reviews and merges** were by an agent session on the owner's account (see the top). The owner's account
    lists this as item 1.
-4. **The area PRs overclaimed what their tests prove** (owner's item 3). In every area PR, mutation checks found
-   criteria whose named test still passed with the behaviour broken. #8 had nine in its first round. Each round
+4. **The area PRs overclaimed what their tests prove** (owner's item 3). The owner's account says
+   mutation checks found criteria whose named test still passed with the behaviour broken in every area PR. The
+   reviews show it in #7, #8, #9 and #10, a note about freezing another area's tests in #6, and a false criterion
+   in #11, as the table below has it. #8 had nine in its first round. Each round
    narrowed the wording or marked the criterion `unpinned`. Some of the reviewer's own suggested wordings overclaimed
    too and were corrected next round.
 5. **The `fail_pattern` evidence ran in an agent session** (owner's item 4). See the gate's history: vitest turns
@@ -252,6 +262,10 @@ Each is a wording change in `plugin/skills/adopt/SKILL.md` (or the template), wi
 - **F6**, a wording the feedback suggests is checked against the code before it is applied (section 9). Case:
   "A09 F5/F6".
 - **F7**, the drafts state nothing the area or plan PRs make false (section 3, the drafts). Case: "A09 F7".
+- **Review 2** (RED b6434f7 and the earlier ones, GREEN = the commit "adopt skill, review 2"): the drafts come from the
+  default branch, its merged PRs, the issues and the owner's answers, and from nothing else; CI's colour codes and
+  timestamp prefix are examples, not facts about every repository; before the commit `git status` shows only spec
+  files modified or staged (untracked files the gate run leaves do not count).
 - **Review 1** (RED 071e3b3, GREEN ee29b2d): the prohibitions (the Never paragraph, section 7 step 5, section 9)
   except the scratch edits of section 7's check, reverted before any commit, and section 7 says how to undo one;
   the `Adopt <name>` issue is named where the owner's answers are; CI's colour codes and timestamp prefix are
@@ -260,8 +274,7 @@ Each is a wording change in `plugin/skills/adopt/SKILL.md` (or the template), wi
 Problems reported elsewhere, not fixed here:
 
 - The node skill's pass condition judges CI job logs whose lines carry a timestamp and colour codes, and the forge CLI
-  cannot fetch a job log, so an adopt session cannot check a real CI log. Reported as noodlebot issue #211
-  (https://github.com/tuckermclean/noodlebot/issues/211).
+  cannot fetch a job log, so an adopt session cannot check a real CI log. Reported as noodlebot issue #211.
 - `plugin/skills/adopt/example-baseline/SPEC.md` and `AGENTS.md` (the example of the earlier recorded run) carry the
   in-progress wording F7 forbids ("lists no node yet", "in an area or in a node"). bosnia's drafts took both phrases
   verbatim. Reported with the previous item.
@@ -271,6 +284,8 @@ Problems reported elsewhere, not fixed here:
 
 ## Not verified
 
+- The record names PRs and issues in forge form (`github:tuckermclean/bosnia`, `#N`), not as links, because R02's
+  rule (`scheduler/agnostic.test.sh`) forbids URLs under `plugin/`. This deviates from the usual PR links.
 - The reviewer, merger and throttle statements are the owner's account; the PR data has no merger name.
 - Merge times follow the forge's `merged_at`; the "about 37 hours" is the owner's figure and matches the first and
   last timestamps above.
