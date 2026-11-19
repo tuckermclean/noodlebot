@@ -102,6 +102,18 @@ fxform local 'local ' "$D(" "$M" ')'
 fxform export 'export ' "$D(" "$M" ')'
 fxform local-quoted 'local ' "\"$D(" "$M" ')"'
 fxform export-backtick 'export ' "$BT" "$M" "$BT"
+# fxfirst <name> <line>: a fixture line whose first assignment is not the guarded mktemp assignment is still reported, as D12 reported it
+fxfirst() {
+	printf '%s\n' "set -u" "$2" >"$fx/f-$1.sh"
+	got=$(scan "$fx/f-$1.sh")
+	[ "$got" = "$fx/f-$1.sh:2" ] && pass "D14-AC-3:a line whose first assignment is not the guarded mktemp one ($1) is reported by file:line" || fail "D14-AC-3:a line whose first assignment is not the guarded mktemp one ($1) is reported by file:line (got: ${got:-nothing})"
+}
+_g=" && [ -d \"${D}tmp\" ] || exit 1"
+fxfirst plain-first "tmp=x; u=$D($M); tmp=$D($M)$_g"
+fxfirst local-first "local tmp=x; u=$D($M); tmp=$D($M)$_g"
+fxfirst export-first "export tmp=x; u=$D($M); tmp=$D($M)$_g"
+fxfirst other-var-first "u=$D($M) && tmp=$D($M)$_g"
+fxfirst local-other-var-first "local u=$D($M) && tmp=$D($M)$_g"
 
 files=""
 for t in $tests; do files="$files $root/$t"; done
