@@ -106,10 +106,10 @@ Open the PR with `<forge> pr create --head <branch> --base main --title <title> 
 - files that a merged spec PR of this node carried outside the spec files (above), or "none";
 - deviations and open questions.
 
-**Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL, the evidence table and the diffs of any merged spec PR's files outside the spec files (above). It has seen none of the slice reviews. Post its verdict and findings on the PR with `<forge> pr comment --number <N> --body-file <file>`, headed `Fresh review (<verdict>)`. This is a comment, never an approval. On `request_changes`, give the findings to a new implementer (the slice retry budget applies), push, then run a new reviewer and post a new comment. On `test_spec_conflict`, go to step 7.
+**Fresh review on the PR.** Once the PR is open, dispatch a **new** reviewer over the whole node: the brief, the node's base (the `origin/main` commit the branch started from), every slice's RED SHA, the head SHA, the PR URL, the evidence table and the diffs of any merged spec PR's files outside the spec files (above). It has seen none of the slice reviews. On `request_changes` its review is not posted as a final review: the session acts on the findings (next paragraph). Otherwise post it as the final review with `<forge> pr comment --number <N> --body-file <file>`, headed `Fresh review (<verdict>) at <sha>`. This is a comment, never an approval. On `test_spec_conflict`, go to step 7.
 
-**The final review is the last thing on the PR.** Fix the findings the session will act on first, test-first
-(a new tester's RED, a new implementer's GREEN, the slice review), and then a **new** reviewer reviews the whole node at the final head.
+**The final review is the last thing on the PR.** On `request_changes`, give the findings to a new implementer and fix them first, test-first, under the slice retry budget
+(a new tester's RED, a new implementer's GREEN, the slice review), and the session pushes, and then a new reviewer reviews the whole node at the new head, the final head.
 Only that final review is posted on the PR, its first line headed `Fresh review (<verdict>) at <sha>`,
 where `<sha>` is the head it reviewed (seven or more hex characters).
 A review whose findings will still be acted on is never posted headed `Fresh review (`:
