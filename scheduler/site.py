@@ -144,7 +144,10 @@ def held(lockfile):
     """Some process holds a lock on the file, as /proc/locks shows it (as loops.sh held() reads it).
     NOODLEBOT_PROC_LOCKS names the file read instead (tests only); with no line there, the lock lines
     in /proc/<pid>/fdinfo/<fd> of the fds with the file's inode are tried, only where scan_fdinfo() says
-    so (not in the initial pid namespace, whose /proc/locks lists every lock: the scan would be pure cost)."""
+    so (not in the initial pid namespace, whose /proc/locks lists every lock: the scan would be pure cost).
+    /proc/locks is a seq_file read by position: when other locks come and go during one read, a line can be
+    skipped, and a skipped line is a false "not held". A new open fixes it, so when the list has no line for
+    the file it is read again, up to three reads in all (as loops.sh held() does), before the fdinfo fallback."""
     try:
         st = os.stat(lockfile)
     except OSError:
@@ -177,12 +180,13 @@ def held(lockfile):
                 return True
         return False
 
-    try:
-        with open(os.environ.get("NOODLEBOT_PROC_LOCKS") or "/proc/locks", encoding="utf-8", errors="replace") as f:
-            if match(f.read().splitlines()):
-                return True
-    except OSError:
-        return False
+    for _ in range(3):
+        try:
+            with open(os.environ.get("NOODLEBOT_PROC_LOCKS") or "/proc/locks", encoding="utf-8", errors="replace") as f:
+                if match(f.read().splitlines()):
+                    return True
+        except OSError:
+            return False
     if not scan_fdinfo():
         return False
     want = "ino:\t%d" % st.st_ino
