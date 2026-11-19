@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D03, R02 | none | S |
+| now | D03, R02 | D16 | S |
 
 **Owns:** in `AGENTS.md`, the `make test` line of Commands and the **Tests:** and **CI evidence:** lines of "Building a
 node" (the quick gate and the whole suite); in `plugin/skills/node/SKILL.md`, the wording of the quick test gate at
