@@ -142,5 +142,60 @@ for t in "$t1" "$t2" "$t3" "$t4"; do
 	else ok "G07-AC-4: $tn names no repository and no forge"; fi
 done
 
+# ---------- order: the "no longer covers" comment comes before the push, the new final review after it ----------
+chk "G07-AC-3: the update procedure: before the push, comment on the PR that the review at <sha> no longer covers the head" "$up" 3 \
+	'before the push, comment on the pr.{0,8}that the review at .?<sha>.? no longer covers'
+chk "G07-AC-3: the update procedure: after the push, post the new 'Fresh review'" "$up" 3 \
+	'after it, post a +new +.?fresh review'
+chk "G07-AC-3: the feedback procedure: a push is preceded by a PR comment that the review at <sha> no longer covers the head" "$fb" 3 \
+	'is preceded by a pr comment that the review at .?<sha>.? no longer covers'
+chk "G07-AC-3: the feedback procedure: ... and followed by the new 'Fresh review'" "$fb" 3 \
+	'not ready to merge, and followed by a new .?fresh review'
+chk "G07-AC-3: step 6: first comment on the PR that the review at <sha> no longer covers the head" "$s6" 3 \
+	'first comment on the pr.{0,8}that the review at .?<sha>.? no longer covers'
+chk "G07-AC-3: step 6: not ready to merge, then push, then post the new 'Fresh review'" "$s6" 3 \
+	'not ready to merge, then push, then post a new .?fresh review'
+for t in "$t1" "$t2" "$t3" "$t4"; do
+	tn=${t##*/}
+	[ -f "$t" ] || continue
+	chk "G07-AC-4: $tn: the run comments first that the review at <sha> no longer covers the head" "$t" 2 \
+		'comments first that the review at .?<sha>.? no longer covers'
+	chk "G07-AC-4: $tn: ... then pushes, and before it ends posts a new final review" "$t" 3 \
+		'then pushes, and before it ends posts a new final review'
+	chk "G07-AC-4: $tn: the run that pushes to a PR after a posted Fresh review" "$t" 2 \
+		'pushes to a pr after a .?fresh review.? was posted on it'
+	chk "G07-AC-4: $tn: the new final review is headed 'Fresh review (<verdict>) at <new head>'" "$t" 3 \
+		'headed +.?fresh review [(]<verdict>[)] at <new head>'
+done
+
+# ---------- clauses a criterion requires that a looser check above could miss ----------
+chk "G07-AC-1: step 6: fix them first, test-first, then a new reviewer reviews the whole node at the final head" "$s6" 3 \
+	'fix them first.*test-first.*then a new reviewer reviews the whole node.*final head'
+chk "G07-AC-1: step 6: the session posts nothing to the PR after its final review but its own end" "$s6" 2 \
+	'posts nothing to the pr after its final review but its (own )?end'
+chk "G07-AC-2: every review comment the skill posts names on its first line the commit it covers, as 'at <sha>'" "$sk" 3 \
+	'every review comment.*names on its first line the commit it covers, as .?at <sha>'
+for part in update feedback; do
+	case $part in update) tf=$up; tl="the update procedure";; *) tf=$fb; tl="the feedback procedure";; esac
+	chk "G07-AC-3: $tl: ... else the diff from the reviewed head to the new head" "$tf" 3 \
+		'(else|otherwise).{0,70}the diff from the reviewed head to the new head'
+	chk "G07-AC-3: $tl: ... the whole node when the node's own code changed since the reviewed head" "$tf" 3 \
+		'whole node when the node.s own code +changed since the reviewed head'
+done
+chk "G07-AC-3: the update procedure: a push to a PR with a posted Fresh review follows the rule" "$up" 2 \
+	'a push to a pr with a posted .?fresh review.? follows'
+chk "G07-AC-3: the feedback procedure: a push to a PR with a posted Fresh review is preceded by the comment" "$fb" 2 \
+	'a push to a pr with a posted .?fresh review.? is preceded'
+chk "G07-AC-3: step 6: else the diff from the reviewed head to the new head" "$s6" 3 \
+	'(else|otherwise).{0,70}the diff from the reviewed head to the new head'
+chk "G07-AC-3: step 6: a push after the final review (a CI fix, a resumed session after an answer): first comment" "$s6" 2 \
+	'a push after the final review[*]* [(]a ci fix, a resumed session after an answer[)]: first comment on the pr'
+for t in "$t1" "$t2"; do
+	tn=${t##*/}
+	[ -f "$t" ] || continue
+	chk "G07-AC-4: $tn: the run ends only when the last review posted on the PR is a Fresh review" "$t" 3 \
+		'end the run only when the last review posted on the pr is a +.?fresh review'
+done
+
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"
