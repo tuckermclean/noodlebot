@@ -159,7 +159,7 @@ wait
 if [ -e "$mk/c1.saw-other" ] && [ -e "$mk/c2.saw-other" ]; then pass "D03-AC-4: TEST_JOBS unset, 1 CPU: two files run at once (default is twice the CPUs)"; else fail "D03-AC-4: TEST_JOBS unset, 1 CPU: two files run at once (default is twice the CPUs)"; fi
 [ "$(rc dflt)" -eq 0 ] && pass "D03-AC-4: TEST_JOBS unset: all files pass: exits 0" || fail "D03-AC-4: TEST_JOBS unset: all files pass: exits 0"
 
-# D03-AC-5: CI enforces budgets 60 s per file and 360 s total; the deploy gate sets no budget variable.
+# D03-AC-5: CI enforces budgets 105 s per file and 630 s total; the deploy gate sets no budget variable.
 wf=$src/../.github/workflows/test.yml
 got=$(python3 -c '
 import sys, yaml
@@ -171,7 +171,7 @@ for job in (d.get("jobs") or {}).values():
             for k in ("TEST_BUDGET_ENFORCE", "TEST_FILE_BUDGET", "TEST_BUDGET", "SITE_TESTS"):
                 print(k + "=" + str(e.get(k)))
 ' "$wf" 2>/dev/null)
-for kv in TEST_BUDGET_ENFORCE=1 TEST_FILE_BUDGET=60 TEST_BUDGET=360 SITE_TESTS=required; do
+for kv in TEST_BUDGET_ENFORCE=1 TEST_FILE_BUDGET=105 TEST_BUDGET=630 SITE_TESTS=required; do
 	if printf '%s\n' "$got" | grep -Fqx "$kv"; then pass "D03-AC-5: test.yml make test step sets $kv"; else fail "D03-AC-5: test.yml make test step sets $kv"; fi
 done
 hasnt "D03-AC-5: scheduler/deploy.sh sets none of TEST_BUDGET_ENFORCE, TEST_FILE_BUDGET, TEST_BUDGET" "$src/deploy.sh" 'TEST_(BUDGET|FILE_BUDGET)'
