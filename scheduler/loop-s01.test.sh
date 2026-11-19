@@ -23,15 +23,16 @@ s01ok "S01-AC-3: a closed PR does not stop the session of a node that also has a
 s01ok "S01-AC-3: nodes with no PR are untouched" grp_up "$p5"
 s01ok "S01-AC-3: no stop event for them" sh -c "! grep -i stop '$state/status.log' | grep -qE 'B0[345]'"
 
-# "Within a tick", counted in the loop's own ticks (its heartbeat, one epoch second written at the start of every tick) and not in
+# "Within a tick", counted in the loop's own ticks (its heartbeat file, replaced with mv at the start of every tick: a tick is a change of its modification time, in nanoseconds,
+# as the content is one epoch second and two tick starts in one second would count as one) and not in
 # seconds: a tick that starts after the PR is marked merged reads it and stops the session (stop_done waits until the group is gone)
-# before it ends, so the group is gone when the next tick's heartbeat is written. gone_by_next_tick: the heartbeat is read after the
+# before it ends, so the group is gone when the next tick's heartbeat is written. gone_by_next_tick: the heartbeat's mtime is read after the
 # PR is marked merged, the first change of it is that tick, the second is the next one; the group is gone by then, else FAIL.
 gone_by_next_tick() {
 	local g=$1 last h n=0 end=$(($(date +%s) + 120))   # the end: a loop that stopped ticking is a failure, not a hang
-	last=$(cat "$state/heartbeat" 2>/dev/null)
+	last=$(stat -c %.9Y "$state/heartbeat" 2>/dev/null)
 	until grp_gone "$g"; do
-		h=$(cat "$state/heartbeat" 2>/dev/null)
+		h=$(stat -c %.9Y "$state/heartbeat" 2>/dev/null)
 		[ "$h" = "$last" ] || { last=$h; n=$((n + 1)); }
 		[ "$n" -lt 2 ] || { grp_gone "$g"; return; }   # the second heartbeat: the group must be gone now
 		[ "$(date +%s)" -lt "$end" ] || return 1
