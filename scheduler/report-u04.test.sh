@@ -60,6 +60,13 @@
 #      session in node/<ID>: the PR has no item while it runs, and its ready item comes when it ends;
 #    - a record whose review_head names the PR's head but whose verdict is null (a hand-edited report.json) is not ready,
 #      and the item says what is missing after "still being worked on" (a reason, never an empty list).
+#    - an open node PR whose node has no node/<ID> state folder has its new comments read on every run too: an approve and
+#      then a request_changes at the same head gives the record verdict request_changes and an item that is not ready; a run
+#      that reads no new comment keeps the record;
+#    - a run whose milestone post for a review comment of the PR fails (the home issue's comment call) does not read the
+#      comments after it and so leaves the PR not ready for that run ("unread": true); the next run reads them all;
+#    - a record with "unread": true is not ready in any item built from it, also the morning overview's, which is built
+#      before the run reads the PR's comments again.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fakegh_lib=$src/testdata/lib
@@ -485,5 +492,77 @@ ok "U04-AC-2: (41, verdict null) the item says a reason after 'still being worke
 kill "$spid42" 2>/dev/null; wait "$spid42" 2>/dev/null; spids=
 urun3 "$state"; show
 ok "U04-AC-2: (42, feedback session ended) the PR is ready to merge" isready 42
+
+# Phase 6 (B1). A state of its own; K51 has no node/<ID> folder. Its record follows its comments at every run: approve ready,
+# a run that reads nothing new keeps it, then request_changes at the same head.
+state=$tmp/s5
+mkdir -p "$state"
+: >"$state/status.log"
+use 51; chk "$head" passed
+review 51 approve "$(short 51)"
+publish3 51
+urun3 "$state"
+urun3 "$state"; show
+ok "U04-AC-1: (51, no node folder) the record has the verdict approve" rc 51 verdict approve
+ok "U04-AC-2: (51, no node folder) approve at the head, CI passed: ready to merge" isready 51
+urun3 "$state"; show
+ok "U04-AC-1: (51, no new comment) the record keeps the verdict approve" rc 51 verdict approve
+ok "U04-AC-2: (51, no new comment) the PR is still ready to merge" isready 51
+review 51 request_changes "$(short 51)" "now it fails"
+urun3 "$state"; show
+ok "U04-AC-1: (51, no node folder) a new request_changes at the same head: the record has the verdict request_changes" rc 51 verdict request_changes
+ok "U04-AC-2: (51, no node folder) the item says the PR is still being worked on, not ready to merge" isnot 51
+ok "U04-AC-2: (51, no node folder) the item names the verdict request_changes" mentions 51 request_changes
+
+# Phase 7 (N1). K52 has a node folder and is ready at run k. Then an approve and a request_changes are posted, and the
+# milestone post on the node's home issue fails: the run reads no further than the first comment, so the PR is not ready.
+state=$tmp/s6
+mkdir -p "$state/node/K52"
+echo 45 >"$state/node/K52/issue"   # the node's home issue (a seeded one of the fake)
+: >"$state/status.log"
+use 52; chk "$head" passed
+review 52 approve "$(short 52)"
+publish3 52
+urun3 "$state"
+urun3 "$state"; show
+ok "U04-AC-2: (52, precondition) ready to merge at run k" isready 52
+home52=45
+review 52 approve "$(short 52)" "again"
+review 52 request_changes "$(short 52)" "no, it fails"
+echo "POST .*/issues/$home52/comments" >"$tmp/ufail"
+urun3 "$state"; show
+ok "U04-AC-2: (52, failed milestone post) the failure was injected" grep -q "injected failure for POST .*/issues/$home52/comments" "$tmp/uerr"
+ok "U04-AC-2: (52, failed milestone post) the item does not say ready to merge, says still being worked on" isnot 52
+ok "U04-AC-1: (52, failed milestone post) the record has \"unread\": true (the comments after the failed post were not read)" rc 52 unread True
+rm -f "$tmp/ufail"
+urun3 "$state"; show
+ok "U04-AC-1: (52, posts work again) the record has the verdict request_changes" rc 52 verdict request_changes
+ok "U04-AC-2: (52, posts work again) the item says still being worked on and names request_changes" mentions 52 'still being worked on' request_changes
+ok "U04-AC-2: (52, posts work again) the item does not say ready to merge" isnot 52
+ok "U04-AC-1: (52, posts work again) the record has no \"unread\": true" notunread 52
+
+# Phase 8 (N2). K53 is ready; its record is edited to "unread": true (as if the comments of the last run could not be read),
+# and the next run, on a new day, reads the PR's comments again and fails. The overview is built before that read: its line for
+# the PR does not say ready to merge.
+state=$tmp/s7
+mkdir -p "$state/node/K53"
+: >"$state/status.log"
+use 53; chk "$head" passed
+review 53 approve "$(short 53)"
+publish3 53
+urun3 "$state"
+urun3 "$state"; show
+ok "U04-AC-2: (53, precondition) ready to merge" isready 53
+pyc "
+import json
+p = '$state/report.json'; r = json.load(open(p)); r['merge']['553']['unread'] = True; json.dump(r, open(p, 'w'))"
+use 53; echo "GET .*/issues/$pr/comments" >"$tmp/ufail"
+env PATH="$sinceb:$ubin:$PATH" TZ=UTC NOODLEBOT_NOW=2026-11-21T09:00:00 python3 -I "$src/report.py" --repo owner/repo --state "$state" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"
+rm -f "$tmp/ufail"
+uq "[c['body'] for c in db['comments'] if c['body'].startswith('## Morning overview') and 'K53' in c['body']][-1]" >"$tmp/overview"
+grep -F K53 "$tmp/overview" | grep -E "PR #553([^0-9]|\$)" >"$tmp/item"
+ok "U04-AC-2: (53, unread record) the morning overview has a line for the PR" test -s "$tmp/item"
+ok "U04-AC-2: (53, unread record) the overview's line does not say ready to merge" sh -c "[ -s '$tmp/item' ] && ! grep -qF 'ready to merge' '$tmp/item'"
+ok "U04-AC-2: (53, unread record) the overview's line says still being worked on" has 'still being worked on'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
