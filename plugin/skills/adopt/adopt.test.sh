@@ -571,5 +571,44 @@ a09_sen1 F4 "$a09d/s1" "section 1: colour escape codes and the timestamp prefix 
 # F1 (review 2, finding 6): git status shows only spec files changed or staged, not that it lists only spec files
 a09_senn F1 "$a09d/s7" "section 7 says only spec files are modified or staged before the commit (git status does not just show only spec files)" 'status +(shows|lists|prints|reports|displays) +(only|just|nothing +but) |non-spec|not +spec|no +spec|other +than +spec' 'git +status' 'only' 'spec +files' 'before' '(modified|changed)[^.]*staged|staged[^.]*(modified|changed)'
 
+# ----- A09 review 3: every clause of F1-F7 tied to its own sentence, so a reversal or a removal of one fails a case -----
+# F4 (finding 1): the node skill judges CI's run, the pattern must match CI's lines, once what CI adds is stripped
+a09_senn F4 "$a09d/s1" "section 1: the node skill judges CI's run (not the session's), so the pattern must match CI's lines once what CI adds is stripped" 'session.s +(run|lines)|not +ci|even +if' 'judges +ci.s +run' 'match +ci.s +lines' 'once +what +ci +adds +is +stripped'
+a09_sen1 F4 "$a09d/s1" "section 1: the command runs here and for the baseline in section 3 with CI=true and the session's variables unset" 'run +that +command' 'here +and +for +the +baseline +in +section +3' 'with +.?ci=true.? +and +the +agent +session.s +variables +unset'
+a09_senn F4 "$a09d/s1" "section 1: a runner such as vitest changes its output (colour for one) when it sees the session's variables" 'never +change|not +change|does +not|does.t|unchanged' 'runner' 'changes +its +output' 'colou?r' 'sees +them'
+a09_senn F4 "$a09d/s1" "section 1: the command is not run in the agent session's own environment (never run with CI=false or the variables set)" 'never +run|do +not +run|ci=false|variables +set' 'run +that +command' 'ci=true' 'unset' 'claudecode' 'ai_agent'
+a09_senn F4 "$a09d/s3" "the AGENTS.md draft records what CI's lines may add to the gate's output (it does not skip or deny it)" 'never|not +record|no +line|session.s +lines|does +not' 'agents[.]md +draft +records +what +ci.s +lines +may +add +to +the +gate.s +output' 'colou?r' 'timestamp' 'fail_pattern[`]? +matches +once +they +are +stripped'
+# F5 (finding 2): title and body, wherever the change makes them wrong, not only when its nodes changed
+a09_senn F5 "$a09d/s9" "--feedback updates the PR's title and body wherever the feedback's change makes them wrong, not only when its nodes changed" 'not +wherever|only +wherever|never' 'update +the +pr.s +title +and +body +wherever' 'wherever[^.]*wrong[^.]*not +only +when +its +nodes +changed'
+a09_sen1 F5 "$a09d/s9" "the title and body cover its nodes, the unpinned list, a fact or risk the body repeats" 'title +and +body' 'nodes, +the +.?unpinned.? +list, +a +fact +or +risk +the +body +repeats'
+a09_sen1 F5 "$a09d/s9" "the branch is pushed, then the title and body are updated and each point is replied to" 'push +the +branch, +then +update' 'reply +to +each +point'
+# F7 (finding 3): true as the areas are mapped and after adoption is removed; no other in-progress state
+a09_senn F7 "$a09d/s3" "the drafts must be true as the areas are mapped and after adoption is removed (not before or only while it is there)" 'not +after|not +before|before +.?adoption|is +fine|need +not|may +be' 'they +must +be +true +as +the +areas +are +mapped +and +after +.?adoption.? +is +removed'
+a09_senn F7 "$a09d/s3" "SPEC.md and AGENTS.md state no node yet, no in an area or a node, and no other in-progress state of the adoption" 'is +fine|may|allowed|and +the +in-progress|can +state' 'state +nothing +the +area +or +plan +prs +make +false' 'no +node +yet' 'in +an +area +or +a +node' 'no +other +in-progress +state +of +the +adoption'
+a09_senn F7 "$a09d/s3" "later PRs cannot edit AGENTS.md is the reason the drafts must stay true" 'can +edit|may +edit|can +also|can +change' 'must +be +true' 'since +later +prs +cannot +edit +agents[.]md'
+# F1 (finding 4): the whole check of section 7 step 2, clause by clause
+a09_senn F1 "$a09d/s7" "section 7: the criterion's test fails when the behaviour breaks (it does not just have to run)" 'need +not|no +need|not +have +to|passes +when|may +pass|holds' 'criterion +claims +only' 'verify' 'test +fails +when +the +behaviou?r +the +criterion +states +breaks'
+a09_senn F1 "$a09d/s7" "section 7: each pinned criterion is checked (not skipped, not one only)" 'skip|never|do +not +check|check +one|check +no|check +only' 'check +each +pinned +criterion'
+a09_sen1 F1 "$a09d/s7" "section 7: the behaviour is broken in a scratch edit, the named test run, and the file restored" 'break +that +behaviou?r +in +a +scratch +edit' 'run +the +named +test' 'then +(restore|revert|undo|discard)[a-z]* +the +file'
+a09_senn F1 "$a09d/s7" "section 7: the scratch edit is reverted and nothing is committed (the PR stays specs only)" 'scratch +edit +is +(kept|committed)|pr +(may|can|holds|includes)|then +commit +the +file|it +is +committed' 'scratch +edit +is +(reverted|restored|undone|discarded) +and +nothing +is +committed' '(pr +stays +specs +only|pr +stays +only +specs)'
+a09_senn F1 "$a09d/s7" "section 7: before the commit git status has to show that only spec files are modified or staged (untracked files do not count)" 'need +not|no +need|count +too|do +count|does +count|after|other +files +are|no +spec +files' 'before +the +commit' 'git +status.? +(has +to|must|should) +show +that +only +spec +files +are +modified +or +staged' 'untracked +files[^.]*do +not +count'
+a09_senn F1 "$a09d/s7" "section 7: undoing a scratch edit is done with git checkout or git restore (not kept)" 'keep +one|git +add|git +commit' 'undo +one +with' 'git +(checkout|restore)'
+# F2 (finding 4): a branch other than the default branch is not read or used; merged PRs are read as intent
+a09_senn F2 "$a09d/s1" "section 1: the same goes for a branch other than the default branch (an earlier attempt): do not read or use it" 'same +does +not|same +is +not|same +(goes|applies) +not' 'the +same +goes +for +a +branch +other +than +the +default +branch' 'earlier +adoption +attempt' 'not +read +or +use +it|not +use +or +read +it|neither +read +nor +use +it'
+a09_sen1 F2 "$a09d/s1" "section 1: the merged PRs are read with the issues, closed ones too, as the history of intent" 'read +the +issues, +closed +ones +too, +and +merged +prs' 'history +of +intent'
+a09_sen1 F2 "$a09d/s1" "section 1: the merged PRs are listed with pr list --state merged" 'pr +list +--state +merged' 'issue +list +--state +all'
+a09_senn F2 "$a09d/s1" "section 1: a closed PR never merged: do not read its drafts, recommend from them, cite, link or copy them" 'do +read|can +read|may +read|you +may|do +recommend' 'closed +pr +that +was +never +merged +is +not +the +owner.s +intent' 'do +not +read +its +drafts' 'recommend +from +them' 'cite' 'link +or +copy +them'
+# F3 (finding 4): the answers of the FIRST PR bind this step; the first PR unit's answered folder; the template names where they are
+for a09_pair in "7:s7" "8:s8" "9:s9"; do
+	a09_senn F3 "$a09d/${a09_pair#*:}" "section ${a09_pair%%:*}: the owner's answers to the first PR's questions (not the last's), also the first PR unit's answered folder in a loop run, bind this step (not only the first)" 'last +pr|bind +(the +)?(first|next|last)|only|not +bind|ignore|later +pr' 'answers +to +the +first +pr.s +questions' 'also +the +first +pr +unit.s +.?answered/?.? +folder' 'they +bind +this +step'
+done
+a09_sen1 F3 "$a09_tpl" "the template names @DIR@/../scaffold/answered/ as the scaffold unit's state folder, kept by the loop" '@dir@/[.][.]/scaffold/answered/' 'the +scaffold +unit.s +state +folder, +kept +by +the +loop'
+a09_sen1 F3 "$a09_tpl" "the template says that for the first PR itself the answers are in @DIR@/answered/, which may not exist yet" 'for +the +first +pr +itself +they +are +in +@dir@/answered/' 'may +not +exist +yet'
+# F6 and F7 (finding 4): the session's own wording is checked the same way; the bullet's examples; the heading
+a09_senn F6 "$a09d/s9" "a wording the feedback suggests is checked against the code as your own would be, before it is applied" 'unlike +your +own|not +as +your +own' 'suggests +is +checked +against +the +code, +as +your +own +would +be, +before +it +is +applied'
+a09_senn F6 "$a09d/s9" "the test-must-fail rule is for a pinned criterion (not an unpinned one)" 'unpinned|need +not|may +pass|must +pass|holds' 'for +a +pinned +criterion' 'its +test +must +fail +when +the +claim +breaks'
+a09_sen1 F7 "$a09d/s3" "the bullet is headed 'Drafts stay true'" 'drafts +stay +true'
+a09_sen1 F7 "$a09d/s3" "what the area or plan PRs make false is then named by examples: no 'no node yet', no 'in an area or a node'" 'make +false: +no +.no +node +yet'
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
