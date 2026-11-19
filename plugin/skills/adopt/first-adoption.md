@@ -39,9 +39,9 @@ no graph.
 | #13 | plan, ends the adoption | 11-19 13:54 | 11-19 14:16 | 1 (approve) | a6ba2b1 |
 
 Numbers #2, #5 and #12 are not adoption PRs: they are the loop's daily log issues, "noodlebot log 2026-11-19" (#12)
-and "noodlebot log 2026-11-18" (#5, opened 2026-11-18T08:01Z; #2 is the earlier one). Each PR was opened by the loop within eight minutes of
-the previous merge, so the waiting was for review and merge, and for the throttle (below). The final `main` of the
-adoption is a6ba2b1, the merge of #13.
+and "noodlebot log 2026-11-18" (#5, opened 2026-11-18T08:01Z; #2 is the earlier one). Each PR was opened by the loop
+within eight minutes of the previous merge, so the waiting was for review and merge, and for the throttle (below).
+The final `main` of the adoption is a6ba2b1, the merge of #13.
 
 ## The areas and the nodes each gave
 
@@ -82,9 +82,10 @@ empty (from #4's body; CI's four jobs reported the same counts in the reviews). 
 
 How the `fail_pattern` changed during #4:
 
-1. The owner's answer to Q6 accepted the one proposed in the question: `^ FAIL  \S+ > |^  ● .+ › |^(FAIL|ERROR): test`.
-2. The first PR's first commit (ff13090) widened the jest part to `^  ● (?!Test suite failed to run)`, because `● .+ › ` missed a
-   jest test written outside a `describe`.
+1. The owner's answer to Q6 accepted the one proposed in the question:
+   `^ FAIL  \S+ > |^  ● .+ › |^(FAIL|ERROR): test`.
+2. The first PR's first commit (ff13090) widened the jest part to `^  ● (?!Test suite failed to run)`,
+   because `● .+ › ` missed a jest test written outside a `describe`.
 3. After review round 3 (commit d7bb2a2) the pattern also skipped `Console$`: jest prints `  ● Console` above a test's
    console output in a multi-file run, even for a passing one, and the pattern matched it.
 4. That is the final pattern. The AGENTS.md wording about CI output changed three times:
@@ -262,10 +263,12 @@ Each is a wording change in `plugin/skills/adopt/SKILL.md` (or the template), wi
 - **F6**, a wording the feedback suggests is checked against the code before it is applied (section 9). Case:
   "A09 F5/F6".
 - **F7**, the drafts state nothing the area or plan PRs make false (section 3, the drafts). Case: "A09 F7".
-- **Review 2** (RED b6434f7 and the earlier ones, GREEN = the commit "adopt skill, review 2"): the drafts come from the
+- **Review 2** (RED b6434f7 and the earlier ones, GREEN = 3a0433f, plus the rewrap 3c79dd9): the drafts come from the
   default branch, its merged PRs, the issues and the owner's answers, and from nothing else; CI's colour codes and
   timestamp prefix are examples, not facts about every repository; before the commit `git status` shows only spec
   files modified or staged (untracked files the gate run leaves do not count).
+- **Review 3**: review 3 found clause reversals of F1, F4, F5 and F7 that the cases still let pass; commit 4c6ffa3
+  adds cases that pass at the skill's current wording and fail under each of 59 mutations.
 - **Review 1** (RED 071e3b3, GREEN ee29b2d): the prohibitions (the Never paragraph, section 7 step 5, section 9)
   except the scratch edits of section 7's check, reverted before any commit, and section 7 says how to undo one;
   the `Adopt <name>` issue is named where the owner's answers are; CI's colour codes and timestamp prefix are
