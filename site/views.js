@@ -212,6 +212,8 @@ export function renderRepo(data, ctx) {
     if (n.pr) det.push(`PR ${prLink(r.repo, n.pr)}`);
     if (issueNo(n)) det.push(`issue ${issueLink(r.repo, issueNo(n))}`);
     if (n.mergeable) det.push(e(n.mergeable));
+    if (n.state === 'pr-open' && n.merge_ready === true) det.push(`ready to merge${n.merge_why ? `: ${e(n.merge_why)}` : ''}`);
+    else if (n.state === 'pr-open' && n.merge_ready === false) det.push(`still being worked on${n.merge_why ? `: ${e(n.merge_why)}` : ''}`);
     if ((n.waiting_for || []).length) det.push(`waiting for ${n.waiting_for.map(e).join(', ')}`);
     return `<tr data-node="${e(n.id)}" data-selected="${n.id === view.node}"${changed.has(n.id) ? NEW : ''}><td>${link(`https://github.com/${r.repo}/blob/main/nodes/${n.id}-${n.name}.md`, n.id)}</td>` +
       `<td><a data-select="${e(n.id)}" href="${e(buildHash(r.repo, { ...view, node: n.id }))}">${e(n.name)}</a></td><td>${e(n.track)}</td><td>${stateBadge(n.state)}${det.length ? ` (${det.join('; ')})` : ''}</td>` +
