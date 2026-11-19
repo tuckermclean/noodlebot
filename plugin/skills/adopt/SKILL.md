@@ -15,8 +15,8 @@ gate, the out-of-scope paths and the adoption areas, and no nodes yet), proposed
 You also record which tests already fail. Mapping the areas into nodes is later work. The owner decides scope,
 the gate and the areas; you never guess them.
 
-**Never** write implementation or tests, change the repository's code, merge, approve or push to its
-main branch. Every forge operation goes through the forge CLI, written `<forge>` below: the command the run's environment and prompt name for it, used as `<forge> <family> <op> --opt value` (JSON out). With none (a run by hand), use `<plugin dir>/../scheduler/forge-cli.sh --repo <kind>:<owner/name>` (for example `github:owner/name`), the same command with the repository named. It fetches credentials itself: never print, echo or log a token, and use no other forge client.
+**Never** write implementation or tests, change the repository's code (apart from the scratch edits of section 7
+step 2's check, reverted before any commit), merge, approve or push to its main branch. Every forge operation goes through the forge CLI, written `<forge>` below: the command the run's environment and prompt name for it, used as `<forge> <family> <op> --opt value` (JSON out). With none (a run by hand), use `<plugin dir>/../scheduler/forge-cli.sh --repo <kind>:<owner/name>` (for example `github:owner/name`), the same command with the repository named. It fetches credentials itself: never print, echo or log a token, and use no other forge client.
 With `--dry-run` the argument may also be a local directory instead of `owner/name`. A dry run works
 offline and stops with files in an output directory: no push, no PR, no comment (see "Dry run").
 In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop and say so (it already has a graph; changing its plan is a triage job). The modes of sections 7 to 9 work on a repository that already has its first PR (and, for 7 and 8, a graph) and never stop for that graph.
@@ -59,8 +59,9 @@ In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop
   `<forge> issue view --number <n>` with `issue comments --number <n>` for the ones that matter. Note the work they ask for.
   They become nodes later, once the code is mapped; this PR drafts no node.
 - A closed PR that was never merged is not the owner's intent: do not read its drafts, recommend from them,
-  cite, link or copy them. The same goes for a branch other than the default branch (an earlier adoption
-  attempt): do not read or use it. The drafts come from the default branch and the owner's answers alone.
+  cite, link or copy them. The same goes for a branch other than the default branch and the one this run works on
+  (an earlier adoption attempt): do not read or use it. The drafts come from the default branch, the owner's
+  answers and the issues, and from nothing else.
 - Write down what you found and what you could not tell in `FACTS.md` next to `QUESTION.md`, so a
   resumed run has it. Do not invent intent from the code.
 
@@ -135,8 +136,8 @@ Only after `ANSWER.md`. Order: the baseline, then the graph, then the other draf
   "none"; what CI evidence to record; and a **Spec files:** line, one physical line naming the
   repository's spec files as paths in backticks (folders with a trailing `/`), normally `SPEC.md`,
   `docs/graph.yaml`, `nodes/`: a spec PR changes only these.
-  The AGENTS.md draft records what CI's lines add to the gate's output: colour escape codes and a fetched job
-  log's timestamp prefix.
+  The AGENTS.md draft records what CI's lines may add to the gate's output, for example colour escape codes and a
+  fetched job log's timestamp prefix, and says that `fail_pattern` matches once they are stripped.
 - **The quick gate's output.** The checks of a node's gate run judge failures with `fail_pattern`, which is
   written for the output of the gate command. Draft a quick gate only through the gate's own runner,
   where that runner takes a list of files and prints the lines `fail_pattern` reads. A quick gate that
@@ -220,8 +221,8 @@ and every earlier area's PR are merged. Work in the checkout the prompt names (n
 `spec/adopt-<name>` made from `origin/<default branch>`. Take the area's name and globs from the graph, not
 from memory. Ask the owner (QUESTION.md, as in section 2) only what the code cannot show; unattended, the run's own
 instructions for questions win.
-Read the owner's answers to the first PR's questions (the replies on the adoption's issue; in a loop
-run, the first PR unit's `answered/` folder): they bind this step.
+Read the owner's answers to the first PR's questions (the replies on the adoption's issue, which the loop titles
+`Adopt <name>`; in a loop run, also the first PR unit's `answered/` folder): they bind this step.
 1. Run `python3 -I <plugin dir>/skills/adopt/inventory.py --json --glob <glob> <checkout>` for each of the area's globs
    and read the area's files. You may read other files to understand them, but you map only the area's files.
 2. Write one or more imported nodes (`status: imported`, `track: done`, in `docs/graph.yaml`, each with a
@@ -231,10 +232,12 @@ run, the first PR unit's `answered/` folder): they bind this step.
      put out of scope, and each file once (no overlap between nodes);
    - has a spec that says what the code does, with the template's headings: Purpose; Tests, the existing tests;
      Changes, the single line "none: imported"; Gate, criteria of the current behaviour, each with a *Verify:*
-     naming the existing test that shows it (a file the repository tracks) or reading `unpinned` when no test does. A criterion claims only what the test named in its *Verify:* asserts, and that
+     naming the existing test that shows it (a file the repository tracks) or reading `unpinned` when no test does.
+     A criterion claims only what the test named in its *Verify:* asserts, and that
      test fails when the behaviour the criterion states breaks. Check each pinned criterion: break that behaviour
      in a scratch edit, run the named test, then restore the file; the scratch edit is reverted and nothing is
-     committed (the PR stays specs only). A clause the test does not catch is `unpinned`, a criterion of its own.
+     committed (the PR stays specs only). Undo one with `git checkout -- <file>` or `git restore <file>`; `git status`
+     shows only spec files before the commit. A clause the test does not catch is `unpinned`, a criterion of its own.
      A test that cannot run here makes its criterion `unpinned` too;
      Risks. Describe what you read; do not invent intent;
    - lists as `deps` the already-mapped nodes whose code it relies on.
@@ -249,13 +252,14 @@ run, the first PR unit's `answered/` folder): they bind this step.
 5. Push `spec/adopt-<name>` and open one spec PR (one PR for the area, as in section 5), body: the
    nodes, what each owns, the criteria marked `unpinned`, any new out_of_scope entry; `Refs #N` for issues the
    nodes touch, no closing keyword. End with a `WAITING-PR` marker in the state folder as the prompt says. You write no code and no
-   tests, never change a file outside the spec files, and never merge.
+   tests, never change a file outside the spec files (apart from the scratch edits of step 2's check, reverted before
+   any commit), and never merge.
 
 ## 8. Plan the open issues: `/adopt --plan`
 Run by the loop once no area is left under `adoption.areas`. Work in the checkout the prompt names, on
 `spec/adopt-plan`.
-Read the owner's answers to the first PR's questions (the replies on the adoption's issue; in a loop
-run, the first PR unit's `answered/` folder): they bind this step.
+Read the owner's answers to the first PR's questions (the replies on the adoption's issue, which the loop titles
+`Adopt <name>`; in a loop run, also the first PR unit's `answered/` folder): they bind this step.
 1. Read the open issues (`<forge> issue list --state all`, skipping PRs; closed ones are history) with their
    comments, and the graph and node specs now on `origin/<default branch>`.
 2. Turn each open issue into a planned node (`status: planned`), or into a criterion of an existing planned
@@ -272,8 +276,8 @@ run, the first PR unit's `answered/` folder): they bind this step.
 Run by the loop for one of the adoption's own open spec PRs (`spec/adopt`, `spec/adopt-<name>`,
 `spec/adopt-plan`) in the checkout the prompt names, which is on the PR's branch, brought to `origin/<branch>`
 (a fast-forward). Create no other branch. Mirror the triage skill's update and feedback modes.
-Read the owner's answers to the first PR's questions (the replies on the adoption's issue; in a loop
-run, the first PR unit's `answered/` folder): they bind this step.
+Read the owner's answers to the first PR's questions (the replies on the adoption's issue, which the loop titles
+`Adopt <name>`; in a loop run, also the first PR unit's `answered/` folder): they bind this step.
 - **`--update <N>`**: the PR conflicts with main. `git fetch origin`, then merge `origin/<default branch>`
   into the branch: a merge commit, never a rebase, never a force push. Resolve a conflict that needs no
   judgment by keeping both sides (both graph rows, both areas' removals, and main's header row with the branch's change put back in); leave no conflict markers. A
@@ -304,4 +308,5 @@ run, the first PR unit's `answered/` folder): they bind this step.
   when its nodes changed (its nodes, the `unpinned` list, a fact or risk the body repeats), and reply to each point: a
   line comment in its own thread, the others in one PR comment; each reply says what changed, with the commit,
   or why nothing did. Resolve the line threads you fixed.
-Both modes write no code and no tests, and never merge, approve or push to the default branch.
+Both modes write no code and no tests (apart from the scratch edits of section 7 step 2's check, reverted before any
+commit), and never merge, approve or push to the default branch.
