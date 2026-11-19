@@ -149,8 +149,8 @@ back for changing files outside the spec files (see RESUMING below). Nobody can 
   says "Refs #N" for each issue on it; the loop closes them once the nodes are merged. If an issue turns
   out not to be resolved by this node, say so in the PR.
 - When the follow-up PR is open, CI is green and the fresh reviewer's comment is on it (/node step 6),
-  or you have written QUESTION.md or WAITING-PR, end the run. With the PR open, that comment is the last review posted on it, a
-  `Fresh review (<verdict>) at <sha>` naming the PR's head, and CI on that head is green.
+  or you have written QUESTION.md or WAITING-PR, end the run. In that first case, with the PR open, the fresh reviewer's comment is the last review posted on it, a
+  `Fresh review (<verdict>) at <sha>` naming the PR's head, and CI on that head is green, then end the run.
 - A run that pushes to a PR after a review was posted on it comments first that the review at <sha> no longer covers the head
   and the PR is not ready to merge, then pushes, and before it ends posts a new final review, headed
   `Fresh review (<verdict>) at <new head>` from a new reviewer (/node step 6), naming the new head;
