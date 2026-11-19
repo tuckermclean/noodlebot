@@ -30,6 +30,14 @@
 #       ci pending / failed / none (or the record is for another head)   "CI pending" / "CI failed" / "no CI result"
 #     a live session in pr/<N>: any non-empty text.
 #   Every text goes through site.py's text(): a path or a token in the report.json verdict is removed, as everywhere.
+#   Added (S3 fixes):
+#     a node-PR feedback session, started by loop.sh as `run-session.sh <worktree> <state>/node/<ID> /noodlebot:node
+#       --feedback <N>` (harness.matches(<ID>) does not match it), alive in node/<ID> makes the PR not ready (merge_ready
+#       false, a non-empty merge_why; the node's state is not read here); the same with that session ended: ready;
+#     a record with "unread": true (report.py sets it on the run whose comments read for the PR failed) is not ready, a
+#       non-empty merge_why; the same record without it is ready;
+#     a record whose review_head names the PR's head but whose verdict is null (a hand-edited report.json) is not
+#       ready, a non-empty merge_why.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fx=$src/testdata/site
@@ -93,6 +101,11 @@ case(19, rec=rec(19), session="node", state="running")         # a session in no
 case(20, rec=rec(20), nodeq=True, state="question")            # QUESTION.md in node/<ID>
 case(21, rec=rec(21), mergeable="CONFLICTING", has=["conflicts with its base"])
 case(22, rec=rec(22, ci="pending"), prq="q", has=["open question", "CI pending"])
+case(23, rec=rec(23), fb=True, has=[])                          # a live node-PR feedback session in node/<ID>
+case(24, rec=rec(24), fb="ended", ready=True, why=None)        # the same, the session ended
+case(25, rec=dict(rec(25), unread=True), has=[])               # the comments read failed in the last run
+case(26, rec=rec(26), ready=True, why=None)                    # the control of 25: no "unread"
+case(27, rec=rec(27, verdict=None), has=[])                    # review_head names the head, the verdict is null
 with open(sa + "/graph.yaml", "a") as g:
     for c in cases:
         g.write("  - {id: %s, track: now, name: pr-%s, deps: [], summary: \"open PR\"}\n" % (c["id"], c["id"].lower()))
@@ -128,6 +141,15 @@ sess() { # <state folder> <key>
 sess "$sa/node/R01" R01
 sess "$sa/node/K19" K19
 sess "$sa/pr/605" 605
+fbsess() { # <ID> <N>: a node-PR feedback session as loop.sh starts it (sets fbpid)
+	fixture_start sh "$tmp/bin/run-session.sh" "$tmp/cwd" "$sa/node/$1" /noodlebot:node --feedback "$2" >/dev/null 2>&1 </dev/null &
+	fbpid=$!
+	pids="$pids $!"
+	echo $! >"$sa/node/$1/session.pid"
+}
+fbsess K23 623
+fbsess K24 624
+fb24=$fbpid
 for p in $pids; do
 	i=0
 	until case $(tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null) in *run-session.sh*) true ;; *) false ;; esac || [ $i -ge 500 ]; do
@@ -136,6 +158,12 @@ for p in $pids; do
 	done
 done
 
+kill "$fb24" 2>/dev/null   # K24's feedback session ends before the build
+i=0
+while [ -e "/proc/$fb24" ] && ! sed 's/^.*) //' "/proc/$fb24/stat" 2>/dev/null | grep -q '^[ZX]' && [ $i -lt 500 ]; do
+	sleep 0.02
+	i=$((i + 1))
+done
 (cd "$tmp/cwd" && python3 -I "$src/site.py" build --data-root "$root" --repos "$HOME/.config/noodlebot/repos" --out "$tmp/out" --now 1700001000 >"$tmp/build.log" 2>&1 </dev/null)
 echo $? >"$tmp/rc"
 

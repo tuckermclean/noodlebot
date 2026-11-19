@@ -52,6 +52,14 @@
 #      full, not since pr_since: its last review is found and the PR can be ready on the first run that has the record;
 #    - a reason that does not hold is not said: the item of a PR whose review names its head (request_changes there,
 #      CONFLICTING, a question in pr/<N>) has no text about an unreviewed head and names no other sha than the head.
+#    - the record of a PR whose comments could not be read in a run has "unread": true (set on the run whose comments
+#      read for that PR failed; removed, or false, on the next run that reads them; a run that read them has no
+#      "unread": true), so that site.py, which reads report.json only, does not call that PR ready;
+#    - a live session started by loop.sh for a node's PR feedback, `run-session.sh <worktree> <state>/node/<ID>
+#      /noodlebot:node --feedback <N>` (a session in node/<ID> whose command line does not end in the ID), is a live
+#      session in node/<ID>: the PR has no item while it runs, and its ready item comes when it ends;
+#    - a record whose review_head names the PR's head but whose verdict is null (a hand-edited report.json) is not ready,
+#      and the item says what is missing after "still being worked on" (a reason, never an empty list).
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 fakegh_lib=$src/testdata/lib
@@ -412,6 +420,9 @@ use 32; echo "GET .*/issues/$pr/comments" >"$tmp/ufail"
 use 33; chk "$head" passed
 urun3 "$state"; show
 ok "U04-AC-1: (32, failed read) the comments could not be read: the failure is logged" grep -q 'comments' "$tmp/uerr"
+notunread() { v=$(rec "$1" unread); [ "$v" = ABSENT ] || [ "$v" = False ]; } # <i>: the record has no "unread": true
+ok "U04-AC-1: (32, failed read) the record has \"unread\": true" rc 32 unread True
+ok "U04-AC-1: (31, comments read) the record has no \"unread\": true" notunread 31
 ok "U04-AC-2: (32, failed read) the item says the PR is still being worked on and not that it is ready to merge" isnot 32
 ok "U04-AC-1: (33, CI re-run) the same head's check runs now pass: the record's ci is passed" rc 33 ci passed
 ok "U04-AC-2: (33, CI re-run) the PR is ready to merge" isready 33
@@ -421,6 +432,7 @@ ok "U04-AC-1: (32, read again) the record has the verdict request_changes" rc 32
 ok "U04-AC-2: (32, read again) request_changes: still being worked on, not ready" isnot 32
 ok "U04-AC-2: (32, read again) the item names the verdict request_changes" mentions 32 request_changes
 ok "U04-AC-2: (32, read again) the item has no text about an unreviewed head" nothas 32 "$MISM"
+ok "U04-AC-1: (32, read again) the record has no \"unread\": true any more" notunread 32
 
 # Phase 4. The upgrade: a report.json written before the record (pr_since set after the approving review, a chat comment
 # after it, no "merge"). 34: approve at the head, CI passed.
@@ -441,5 +453,37 @@ ok "U04-AC-1: (34, upgrade) the run with no record reads the PR's comments in fu
 ok "U04-AC-1: (34, upgrade) the record has the verdict approve" rc 34 verdict approve
 ok "U04-AC-1: (34, upgrade) the record has ci passed" rc 34 ci passed
 ok "U04-AC-2: (34, upgrade) the PR is ready to merge" isready 34
+
+# Phase 5. A state of its own. 41: a record whose review names the head but whose verdict is null (hand-edited), a run
+# that reads no new comment. 42: a node-PR feedback session in node/<ID>, as loop.sh starts it.
+state=$tmp/s4
+mkdir -p "$state"
+: >"$state/status.log"
+for i in 41 42; do
+	use "$i"
+	mkdir -p "$state/node/$id"
+	chk "$head" passed
+	review "$i" approve "$(short "$i")"
+	ucomment "$pr" 'thanks, looking' 2026-02-03T00:59:00Z owner OWNER User "https://x/$pr/chat"
+done
+publish3 41 42
+urun3 "$state"
+urun3 "$state"; show
+ok "U04-AC-2: (41, 42; precondition) both PRs are ready to merge" sh -c "grep -F K41 '$tmp/wait' | grep -qF 'ready to merge' && grep -F K42 '$tmp/wait' | grep -qF 'ready to merge'"
+use 42
+sh "$tmp/rs/run-session.sh" "$tmp/wt" "$state/node/$id" /noodlebot:node --feedback "$pr" &
+spid42=$!; echo "$spid42" >"$state/node/$id/session.pid"
+spids="$spid42"
+rs_wait "$spid42"
+pyc "
+import json
+p = '$state/report.json'; r = json.load(open(p)); r['merge']['541']['verdict'] = None; json.dump(r, open(p, 'w'))"
+urun3 "$state"; show
+ok "U04-AC-2: (42, feedback session) a live node-PR feedback session in node/<ID>: no PR item" noitem 42
+ok "U04-AC-2: (41, verdict null) the review's head and a null verdict: still being worked on, not ready" isnot 41
+ok "U04-AC-2: (41, verdict null) the item says a reason after 'still being worked on'" sh -c "grep -F -- 'still being worked on' '$tmp/item' | sed 's/.*still being worked on//' | grep -qE '[A-Za-z0-9]'"
+kill "$spid42" 2>/dev/null; wait "$spid42" 2>/dev/null; spids=
+urun3 "$state"; show
+ok "U04-AC-2: (42, feedback session ended) the PR is ready to merge" isready 42
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
