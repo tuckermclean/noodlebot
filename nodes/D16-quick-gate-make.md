@@ -25,11 +25,16 @@ instead of its fixture's, and 13 D04 checks fail under the quick gate while `sh 
     `fixture-list` and whose recipe prints `TESTS=[$(TESTS)] OUTER=[$(D16_OUTER)] MAKEFLAGS=[$(MAKEFLAGS)]`. The fake
     also prints whether `MAKEFLAGS`, `MAKEOVERRIDES`, `MFLAGS` and `MAKELEVEL` are set in its own environment. The test
     runs the repository's `test` target on it, `make -k -C <checkout> test TESTS="<fake>" D16_OUTER=1`. It checks that
-    the inner make prints `TESTS=[fixture-list]` and an empty `OUTER`, that `k` is not among the inner make's flags,
-    and that none of the four variables is set in the fake's environment.
-  - The control: the same run through a planted Makefile in the scratch folder whose `test` recipe is
-    `sh scheduler/runtests.sh $(TESTS)` (no clearing) shows the outer list in the inner make
-    (`TESTS=[<fake>]` and `OUTER=[1]`). This proves that the check can fail.
+    the inner make prints `TESTS=[fixture-list]` and an empty `OUTER`, that `k` is not among the inner make's flags
+    (only the flag word of the printed `MAKEFLAGS` is read, the part before any ` -- `: the fake's path contains a `k`,
+    and in the control the overrides are printed in the same variable), and that none of the four variables is set in
+    the fake's environment.
+  - The control: a planted Makefile in the scratch folder whose `test` recipe is `sh scheduler/runtests.sh $(TESTS)`
+    (no clearing), run from the checkout as `make -k -f <planted Makefile, absolute path> -C <checkout> test
+    TESTS="<fake>" D16_OUTER=1`, so that the recipe's relative `scheduler/runtests.sh` is the checkout's. The control
+    passes only when the inner make's output line itself is found and shows the outer list (`TESTS=[<fake>]` and
+    `OUTER=[1]`), so a run that never reaches the inner make cannot count as the control passing. This proves that the
+    check can fail.
   - `TEST_JOBS=2 make -C <checkout> test TESTS="scheduler/deploy-d04.test.sh"` exits 0 and prints no `FAIL` line.
 
 ## Changes
@@ -42,7 +47,7 @@ instead of its fixture's, and 13 D04 checks fail under the quick gate while `sh 
    `TEST_FILE_BUDGET`. *D16-AC-1, D16-AC-2.*
 
 ## Gate
-- **D16-AC-1** — The `Makefile`'s `test` target, run as `make -k test TESTS="<fake test file>" D16_OUTER=1`, starts the test files with none of `MAKEFLAGS`, `MAKEOVERRIDES`, `MFLAGS` and `MAKELEVEL` in their environment, so the fake test file's own `make -s -C <fixture> test` sees its fixture Makefile's `TESTS`, no `D16_OUTER` and no `k` among its flags; the same fake run through a planted Makefile whose recipe is `sh scheduler/runtests.sh $(TESTS)` shows the outer `TESTS` and `D16_OUTER=1` in the inner make. *Verify:* `sh scheduler/runtests-d16.test.sh`.
+- **D16-AC-1** — The `Makefile`'s `test` target, run as `make -k test TESTS="<fake test file>" D16_OUTER=1`, starts the test files with none of `MAKEFLAGS`, `MAKEOVERRIDES`, `MFLAGS` and `MAKELEVEL` in their environment, so the fake test file's own `make -s -C <fixture> test` sees its fixture Makefile's `TESTS`, no `D16_OUTER` and no `k` among its flags (the flag word of its `MAKEFLAGS`, before any ` -- `); the control, the same fake run through a planted Makefile whose recipe is `sh scheduler/runtests.sh $(TESTS)` as `make -k -f <planted Makefile, absolute path> -C <checkout> test TESTS="<fake>" D16_OUTER=1`, finds the inner make's output line and it shows `TESTS=[<fake>]` and `OUTER=[1]`, so a run that never reaches the inner make does not pass the control. *Verify:* `sh scheduler/runtests-d16.test.sh`.
 - **D16-AC-2** — `TEST_JOBS=2 make test TESTS="scheduler/deploy-d04.test.sh"` exits 0 with no `FAIL` line, as `sh scheduler/deploy-d04.test.sh` does. *Verify:* `sh scheduler/runtests-d16.test.sh`.
 - **D16-AC-3** — The node changes no existing line of a frozen test path: its diff from `origin/main` under `*.test.sh` and `scheduler/testdata/` adds `scheduler/runtests-d16.test.sh` and nothing else. *Verify:* a recorded run of `git diff --name-status origin/main...HEAD -- '*.test.sh' scheduler/testdata` in the node's PR.
 
