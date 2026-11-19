@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D01 | none | M |
+| now | D01 | V02 | M |
 
 **Owns:** `scheduler/version.sh`, `scheduler/version.test.sh`, its line in the `Makefile`'s `test` target; the version taken at loop start, the start line, the `@VERSION@` rendering of the session templates and the session's version in `scheduler/loop.sh` and `scheduler/run-session.sh`; the commit trailer hook; the version in `scheduler/deploy.sh`'s events; the `@VERSION@` placeholder and the signature instructions in every `scheduler/unattended*.md` template; the signature and version header in `scheduler/report.py`; the version lines in `scheduler/status.sh` and `scheduler/loops.sh status`; their cases in `scheduler/loop.test.sh`, `scheduler/deploy.test.sh`, `scheduler/report.test.sh` and `scheduler/loops.test.sh`.
 **Resolves:** #35
