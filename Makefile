@@ -148,6 +148,7 @@ TESTS = \
 	scheduler/loop-g02-gone.test.sh \
 	scheduler/loop-g02-gone2.test.sh \
 	scheduler/feedback-g06.test.sh \
+	scheduler/feedback-u05.test.sh \
 	scheduler/loop-g06-limit.test.sh \
 	scheduler/loop-s06-review.test.sh \
 	scheduler/loop-s02.test.sh \
@@ -177,6 +178,7 @@ TESTS = \
 	plugin/skills/triage/nodes.test.sh \
 	plugin/skills/node/skill.test.sh \
 	plugin/skills/node/skill-g07.test.sh \
+	plugin/skills/node/skill-u05.test.sh \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/site-u04.test.sh \
