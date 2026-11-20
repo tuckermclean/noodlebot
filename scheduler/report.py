@@ -65,10 +65,10 @@ Each run:
      never closed. Merged nodes and PRs from before this bookkeeping are only recorded, never commented on or closed
      (recorded at the first run whose merged-prs.tsv / closed-prs.tsv are readable; until then none of it is posted);
   7. rewrites the issue body: usage and throttle, what waits on the owner (each item linking the unit's issue),
-     a node's open PR with no session in node/<ID> or pr/<N> and no QUESTION.md in node/<ID> is "ready to merge" when pr/<N>
-     has no QUESTION.md, `mergeable` in open-prs.tsv is not CONFLICTING, the head is the one the last review names, it approves
+     a node's open PR with no session in node/<ID> or pr/<N>, no FAILED and no QUESTION.md in node/<ID> is "ready to merge" when pr/<N>
+     has no FAILED and no QUESTION.md, `mergeable` in open-prs.tsv is not CONFLICTING, the head is the one the last review names, it approves
      and CI on the head passed (the forge "has not said whether it merges cleanly" when mergeable is not MERGEABLE/CONFLICTING),
-     else "still being worked on" with each reason (question, conflict, head without a final review, verdict, CI);
+     else "still being worked on" with each reason (its run failed, question, conflict, head without a final review, verdict, CI);
      every running session and its latest narration, the deployed commit (HEAD of the live checkout, or of
      $NOODLEBOT_LIVE). Body edits do not notify; comments do. ($NOODLEBOT_NOW, an ISO local datetime, replaces
      the clock; for tests.)
@@ -1933,7 +1933,8 @@ def post_prs(a, rs, pulls):
 
     def merge_records():
         """report.json "merge": per open node PR its head, the head and verdict of its last Fresh review and the CI result on
-        the head; kept while no new review is read, the CI result taken again for a new head and while not passed."""
+        the head, the id of that review's comment ("id"); kept while no new review is read (only a review with an id not lower than the kept one
+        replaces the record's review; an older comment read again, edited, does not), the CI result taken again for a new head and while not passed."""
         old, new = rs.get("merge") or {}, {}
         for t, pr in node_prs():
             k, sha = str(pr["number"]), pr.get("head_sha")

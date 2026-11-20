@@ -10,7 +10,7 @@ Writes to --out (replacing its contents), as sorted-key JSON without spaces:
 scheduler/site-schema.json names every key and type. Fields are chosen by name, never dumped; every
 string read from a file goes through text() (local paths and token-shaped strings removed), then the
 length cuts apply. A pr-open node has merge_ready and merge_why (report.json's merge record of its PR, its head and
-mergeable from open-prs.tsv, pr/<N>'s session and QUESTION.md; null in other states). Node states: ready.py is run over the files the loop cached (never re-implemented),
+mergeable from open-prs.tsv, pr/<N>'s session, FAILED and QUESTION.md; null in other states). Node states: ready.py is run over the files the loop cached (never re-implemented),
 a loop's lock is read from /proc/locks as loops.sh does. Session logs, session.stderr, environment
 files, prompts and ~/.config/noodlebot/ (but for the --repos list) are never opened.
 Exits 1 when the list is unreadable or --out is unwritable; a repository's own bad files give defaults.
@@ -323,7 +323,8 @@ def merge_state(state, num, head, mergeable, rec, node=None):
     head and mergeable are the PR's, from open-prs.tsv; rec is its record in report.json "merge" (head, review_head,
     verdict, ci, unread); the PR's own folder pr/<N> holds its session and question. The node's own session (harness
     match) and question make the node running or question, never pr-open, so they are not read here; a feedback session
-    in node/<ID> (node) does not, so it is read here. A not-ready PR always has a reason."""
+    in node/<ID> (node) does not, so it is read here. A FAILED in pr/<N> makes the PR not ready ("its run failed"); a FAILED in
+    node/<ID> makes the node state failed, so merge_state is not reached for it. A not-ready PR always has a reason."""
     d = os.path.join(state, "pr", num) if num.isdigit() else None
     rec = rec if isinstance(rec, dict) else {}
     field = lambda k: rec[k] if isinstance(rec.get(k), str) else None  # noqa: E731
