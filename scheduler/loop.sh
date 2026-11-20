@@ -1049,7 +1049,7 @@ is_adopt_br() { [ "$1" = spec/adopt ] || [[ $1 == spec/adopt-* ]]; }
 answers_sed() {
 	local sc=$state/adopt/scaffold/answered
 	if is_adopt_br "$1" && [ -d "$sc" ]; then
-		ased=(-e "s|^@ANSWERS@\$|The owner's answers to the first adoption PR's questions are kept in $(sedesc "$sc")/ (read them with the replies on the \"Adopt\" issue).|")
+		ased=(-e "s|^@ANSWERS@\$|The owner's answers to the first adoption PR's questions are kept in $(sedesc "$sc")/ (read them with the replies on the \"Adopt $(sedesc "${repo##*/}")\" issue).|")
 	else ased=(-e '/^@ANSWERS@$/d'); fi
 }
 
