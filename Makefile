@@ -151,6 +151,7 @@ TESTS = \
 	scheduler/loop-s06-review.test.sh \
 	scheduler/loop-s02.test.sh \
 	scheduler/loop-v01.test.sh \
+	scheduler/loop-v02.test.sh \
 	scheduler/loop-s04-ignored.test.sh \
 	scheduler/loop-p03.test.sh \
 	scheduler/loop-p03-ramp.test.sh \
