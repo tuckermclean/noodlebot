@@ -220,7 +220,7 @@ site_sed() {
 	else ssed=(-e '/^@SITE@$/d'); fi
 }
 
-# The commit-msg hook: adds "Noodlebot-Version: $NOODLEBOT_VERSION" (replacing the message's own) to
+# The commit-msg hook: joins the trailer-only paragraphs at the end of the message into one final block, adds "Noodlebot-Version: $NOODLEBOT_VERSION" (replacing the message's own) to
 # every commit made in a session, in the clone and all its worktrees; does nothing outside one.
 install_hook() {
 	local hooks h
@@ -235,12 +235,27 @@ hook_text() {
 #!/bin/sh
 # installed by noodlebot's loop.sh
 [ -n "${NOODLEBOT_VERSION:-}" ] || exit 0
-# drop every Noodlebot-Version line from the trailer block (the last paragraph, unless it is the subject)
+# join the trailer-only paragraphs at the end of the message into one final block (going back from the last paragraph, each
+# paragraph made only of "token: value" lines; stop at any other paragraph; never the subject paragraph, the one at the first non-blank line), then drop every
+# Noodlebot-Version line from that block (the last paragraph, unless it is the subject)
 t="$1.nb.$$"
 awk '{ l[NR] = $0 } END {
+	f = 1; while (f <= NR && l[f] ~ /^[ \t]*$/) f++
 	e = NR; while (e > 0 && (l[e] ~ /^[ \t]*$/ || l[e] ~ /^#/)) e--
-	s = e; while (s > 1 && l[s-1] !~ /^[ \t]*$/) s--
-	for (i = 1; i <= NR; i++) if (!(s > 1 && i >= s && i <= e && l[i] ~ /^Noodlebot-Version:/)) print l[i]
+	s = e; while (s > f && l[s-1] !~ /^[ \t]*$/) s--
+	p = e; js = 0
+	while (p > 0) {
+		ps = p; while (ps > 1 && l[ps-1] !~ /^[ \t]*$/) ps--
+		if (ps <= f) break
+		ok = 1; for (i = ps; i <= p; i++) if (l[i] !~ /^[A-Za-z0-9-]+:[ \t]+[^ \t]/) ok = 0
+		if (!ok) break
+		js = ps; p = ps - 1; while (p > 0 && l[p] ~ /^[ \t]*$/) p--
+	}
+	if (!js) js = s
+	for (i = 1; i <= NR; i++) {
+		if (js > f && i >= js && i <= e && (l[i] ~ /^[ \t]*$/ || l[i] ~ /^Noodlebot-Version:/)) continue
+		print l[i]
+	}
 }' "$1" >"$t" && cat "$t" >"$1"
 rm -f "$t"
 git interpret-trailers --in-place --if-exists replace --trailer "Noodlebot-Version: $NOODLEBOT_VERSION" "$1"

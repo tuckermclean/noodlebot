@@ -89,6 +89,17 @@ qev() { cat "$(qlog qa)" "$(qlog qb)" 2>/dev/null | grep -E "; started $1"; }
 qev_has() { qev "$1" | grep -qE "$2"; }
 qev_hasnt() { qev "$1" | grep -qE '; turn: ' && ! qev "$1" | grep -qiE "$2"; }
 qgap_n() { [ "$(qn)" = "$1" ] && qgap_ok "$2"; }
+# (D17) The queue's own record of the turns, not the sessions' clocks in starts.log (they lag a turn by a delay that grows with
+# load and differs from one start to the next): $qd/state/starts.json holds the last turn granted (unit, time) and the one before
+# it as "prev". qturn_rec <unit> <prev unit> [<min seconds>]: the last turn is <unit>'s, the one before <prev unit>'s, that far apart.
+qturn_rec() {
+	python3 -I -c 'import json,sys
+d=json.load(open(sys.argv[1])); p=d["prev"]
+sys.exit(0 if d["unit"] == sys.argv[2] and p["unit"] == sys.argv[3] and d["time"] - p["time"] >= float(sys.argv[4]) else 1)' \
+		"$qd/state/starts.json" "$1" "$2" "${3:-0}" 2>/dev/null
+}
+# qturn_gap_n <n> <min seconds> <unit> <prev unit>: n sessions have started (as qgap_n) and qturn_rec <unit> <prev unit> <min seconds>.
+qturn_gap_n() { [ "$(qn)" = "$1" ] && qturn_rec "$3" "$4" "$2"; }
 # qwait <seconds> <command...>: a positive wait (the check that follows fails if it ran out). Three times the time asked: a
 # loop on a loaded machine needs more, and a wait that succeeds costs nothing; no check states its bound through qwait.
 qwait() { local to=$(( $1 * 3 )) end; shift; end=$(( $(date +%s) + to )); until "$@"; do [ "$(date +%s)" -ge "$end" ] && return 1; sleep 0.1; done; }

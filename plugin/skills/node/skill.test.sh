@@ -496,4 +496,30 @@ g08c "A08-AC-2 strict2: the reviewer reads each mutation with its failing case, 
 g08c "A08-AC-2 strict2: the reviewer checks the pinned and superseded choices against the node's Changes and the deps' owns, a missed pin is a finding" "$a05/reviewer.md" 1 'check the choices of pinned and superseded criteria against the node.s [*][*]changes[*][*] and the deps. .owns.; a missed pin is a finding'
 g08c "A08-AC-2 strict2: the reviewer checks the dep amendments: the pin named, superseded by <ID>-AC-<n> for a changed one, status pinned only when no unpinned criterion is left" "$a05/reviewer.md" 1 'check the dep amendments in the spec amendments: the pin named in the criterion, .superseded by <id>-ac-<n>. for a changed one, and the dep.s .status. set to .pinned. only when no .unpinned. criterion is left'
 
+# --- V02-AC-3: the tester agents say the TDD-Red-Target: and Pin-Mutation: trailers go in the final paragraph with Co-Authored-By: and any other trailer, no blank line between ---
+# One check per file and trailer, each in a one-line window (a clause on its own line cannot satisfy another trailer's check). A line that
+# also holds a contrary clause (a paragraph of its own, a blank line between them, not together) fails the check.
+v02="$tmp/V02"; mkdir -p "$v02"
+cp "$pa/tester.md" "$v02/tester.md"; cp "$src/../../../.claude/agents/noodlebot-tester.md" "$v02/noodlebot-tester.md"
+v02_contra='paragraph of its own|own paragraph|separate paragraph|separate trailer|with a blank line|separated by (a )?blank|a blank line between|not (together|in the same|in the final|in one)|never (together|in the same)|apart from'
+v02c() { # v02c <label> <file> <trailer-key-ere>
+	if g02_win "$2" 1 "$3" 'final paragraph' 'together with .?co-authored-by' 'any other trailer' '(^| )no blank line between' && ! g02_win "$2" 1 "$3" "$v02_contra"; then ok "$1"; else bad "$1"; fi
+}
+for v02p in "plugin/agents/tester.md|$v02/tester.md" ".claude/agents/noodlebot-tester.md|$v02/noodlebot-tester.md"; do
+	v02_who=${v02p%%|*}; v02_f=${v02p#*|}
+	v02c "V02-AC-3: $v02_who: the TDD-Red-Target: trailer goes in the message's final paragraph together with Co-Authored-By: and any other trailer, with no blank line between them" "$v02_f" 'tdd-red-target:'
+	v02c "V02-AC-3: $v02_who: a pin's Pin-Mutation: trailers go in the message's final paragraph together with Co-Authored-By: and any other trailer, with no blank line between them" "$v02_f" 'pin-mutation:'
+done
+
+# V02-AC-3 (second review): wordings the first check let through: a negated "go in", the paragraph before the final one, each trailer as a paragraph by itself
+v02_contra2='do not go|does not go|not go in|not the final|never|before the final|by itself|on its own|paragraph before|each as a paragraph|as a paragraph'
+v02d() { # v02d <label> <file> <trailer-key-ere>: the trailer's line holds none of the contrary wordings
+	if g02_win "$2" 1 "$3" && ! g02_win "$2" 1 "$3" "$v02_contra2"; then ok "$1"; else bad "$1"; fi
+}
+for v02p in "plugin/agents/tester.md|$v02/tester.md" ".claude/agents/noodlebot-tester.md|$v02/noodlebot-tester.md"; do
+	v02_who=${v02p%%|*}; v02_f=${v02p#*|}
+	v02d "V02-AC-3: $v02_who: the TDD-Red-Target: line does not put the trailer before the final paragraph, by itself, or out of the trailer block" "$v02_f" 'tdd-red-target:'
+	v02d "V02-AC-3: $v02_who: the Pin-Mutation: line does not put the trailers before the final paragraph, by itself, or out of the trailer block" "$v02_f" 'pin-mutation:'
+done
+
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

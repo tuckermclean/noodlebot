@@ -27,9 +27,9 @@ fi
 exec "$G02_GD/../bin/claude" "$@"
 EOT
 chmod +x "$G02/bin3/claude"
-g02b_loop() {   # g02b_loop <SCHED_MAX> <data root> <SCHED_RAMP>: the wrapper first on PATH
+g02b_loop() {   # g02b_loop <SCHED_MAX> <data root> <SCHED_RAMP> [<SCHED_TICK>, default 1]: the wrapper first on PATH
 	rm -f "$HOME/STOP-g02"
-	NOODLEBOT_DATA=$2 PATH=$G02/bin3:$G02/bin:$PATH SCHED_RAMP=$3 SCHED_START_GAP=0 SCHED_REPORT=0 SCHED_TICK=1 SCHED_POLL=0.2 SCHED_MAX=$1 \
+	NOODLEBOT_DATA=$2 PATH=$G02/bin3:$G02/bin:$PATH SCHED_RAMP=$3 SCHED_START_GAP=0 SCHED_REPORT=0 SCHED_TICK=${4:-1} SCHED_POLL=0.2 SCHED_MAX=$1 \
 		bash "$G02/nb/scheduler/loop.sh" o/g02 >>"$G02/loop.out" 2>&1 &
 	pids+=("$!"); g02_lp=$!
 }
