@@ -119,11 +119,29 @@ The session posts nothing to the PR after its final review but its own end (CI o
 Every review comment the skill posts (the fresh review, the resolution review, a review posted as not ready)
 names on its first line the commit it covers, as `at <sha>`.
 
+**Frozen test lines in the final review.** Every final review posted as `Fresh review (<verdict>) at <sha>`, the first
+final review and the new final review after a push, carries a line of its own: `Frozen test lines changed: none` or
+`Frozen test lines changed: <n>`. `<n>` counts each line once over the repository's frozen test and fixture paths,
+of two kinds:
+- (a) the `-` lines of `git diff <merge-base>..<head> -- <frozen paths>`: lines that existed at the merge base
+  and that the PR changes or removes;
+- (b) lines that a RED or pin commit of this node added and that a later commit of the node changes or removes. The
+  node's commits are the non-merge commits of the branch's first-parent history after the merge base
+  (`git rev-list --first-parent --no-merges <merge-base>..<head>`). For each such commit, a `-` line of
+  `git diff <commit>^..<commit> -- <frozen paths>` counts when `git blame` at `<commit>^` gives it to a RED or pin
+  commit of this node. Changes brought in by merging the base branch are not counted under (b): merge commits are
+  left out. A line of kind (a) is not counted again under (b).
+
+When `<n>` is 1 or more, the line is followed by those lines, each as its path, its line number and the commit that
+number refers to: the merge base for (a), the RED or pin commit that added the line for (b). Then it says that the PR
+needs the owner's approval: a comment by the owner on the PR whose first line is `Frozen lines approved at <head>`.
+The reviewer checks the line and the list against those diffs.
+
 **A push after the final review** (a CI fix, a resumed session after an answer): first comment on the PR
 that the review at `<sha>` no longer covers the head and the PR is not ready to merge, then push, then post a new
 `Fresh review (<verdict>) at <new head>` from a new reviewer. It reviews the whole node when the node's own code
 changed since the reviewed head; else it is given the diff from the reviewed head to the new head and checks
-that it changes nothing of the node's beyond that.
+that it changes nothing of the node's beyond that. The new final review carries the `Frozen test lines changed:` line too, counted at the new head.
 
 Give the owner the PR URL. You never approve or merge.
 
