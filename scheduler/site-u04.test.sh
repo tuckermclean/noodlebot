@@ -249,4 +249,70 @@ def valid():
 check("U04-AC-3 the repository file passes site-schema.json", valid)
 sys.exit(1 if fails else 0)
 PY
+u04rc=$?
+
+# U06 (U06-AC-2): a failed run. A copy of the root above ($tmp/U06/data, the same live sessions); K26 (ready: approve at its
+# head, CI passed, MERGEABLE) gets FAILED in pr/626, K01 (ready) gets FAILED in node/K01; K04 stays the ready control.
+u6=$tmp/U06
+mkdir -p "$u6"
+cp -R "$root" "$u6/data"
+echo "gave up" >"$u6/data/state/alpha/pr/626/FAILED"
+echo "gave up" >"$u6/data/state/alpha/node/K01/FAILED"
+(cd "$tmp/cwd" && python3 -I "$src/site.py" build --data-root "$u6/data" --repos "$HOME/.config/noodlebot/repos" --out "$u6/out" --now 1700001000 >"$u6/build.log" 2>&1 </dev/null)
+echo $? >"$u6/rc"
+python3 -I - "$u6" "$src" <<'PY'
+import json, sys
+u6, src = sys.argv[1:3]
+fails = 0
+def check(name, fn):
+    global fails
+    try:
+        ok, why = fn(), ""
+    except Exception as e:  # a missing file or key is a failed check, never a crash
+        ok, why = False, " (%s: %s)" % (type(e).__name__, str(e)[:160])
+    if ok: print("PASS: " + name)
+    else:
+        fails += 1; print("FAIL: " + name + why)
+repo = lambda: json.load(open(u6 + "/out/repo.acme.alpha.json", encoding="utf-8"))
+node = lambda i: next(n for n in repo()["nodes"] if n["id"] == i)
+check("U06-AC-2 build exits 0 on the root with FAILED in pr/<N> and node/<ID>", lambda: open(u6 + "/rc").read().strip() == "0")
+check("U06-AC-2 (K26) FAILED in pr/626: the node is still pr-open", lambda: node("K26")["state"] == "pr-open")
+check("U06-AC-2 (K26) FAILED in pr/626, approve at the head and CI passed: merge_ready is false", lambda: node("K26")["merge_ready"] is False)
+check("U06-AC-2 (K26) merge_why is a text naming that its run failed", lambda: isinstance(node("K26")["merge_why"], str) and "run failed" in node("K26")["merge_why"])
+check("U06-AC-2 (K26) merge_why does not say a reason that does not hold (CI, review, conflict, question)",
+      lambda: isinstance(node("K26")["merge_why"], str) and not [p for p in ("CI ", "no final review", "no head", "request_changes", "conflicts with its base", "open question", "has not said") if p in node("K26")["merge_why"]])
+check("U06-AC-2 (K01) FAILED in node/K01: the node's state is failed", lambda: node("K01")["state"] == "failed")
+check("U06-AC-2 (K01) merge_ready and merge_why are null", lambda: (node("K01")["merge_ready"], node("K01")["merge_why"]) == (None, None))
+check("U06-AC-2 (K04) a ready node of the same root stays ready, merge_why null", lambda: (node("K04")["state"], node("K04")["merge_ready"], node("K04")["merge_why"]) == ("pr-open", True, None))
+def validate(t, v, path="$"):
+    if t == "string": return isinstance(v, str) or [path + " not a string"]
+    if t == "integer": return (isinstance(v, int) and not isinstance(v, bool)) or [path + " not an integer"]
+    if t == "number": return (isinstance(v, (int, float)) and not isinstance(v, bool)) or [path + " not a number"]
+    if t == "boolean": return isinstance(v, bool) or [path + " not a boolean"]
+    if isinstance(t, dict) and "nullable" in t: return True if v is None else validate(t["nullable"], v, path)
+    if isinstance(t, dict) and "array" in t:
+        if not isinstance(v, list): return [path + " not an array"]
+        e = []
+        for k, x in enumerate(v):
+            r = validate(t["array"], x, "%s[%d]" % (path, k))
+            if r is not True: e += r
+        return e or True
+    if isinstance(t, dict) and "object" in t:
+        if not isinstance(v, dict): return [path + " not an object"]
+        e = [path + " keys differ: " + ",".join(sorted(set(v) ^ set(t["object"])))] if set(v) != set(t["object"]) else []
+        for k, kt in t["object"].items():
+            if k in v:
+                r = validate(kt, v[k], path + "." + k)
+                if r is not True: e += r
+        return e or True
+    return [path + " unknown type in schema"]
+def valid():
+    r = validate(json.load(open(src + "/site-schema.json"))["files"]["repo"], repo())
+    if r is not True: raise AssertionError("; ".join(r[:3]))
+    return True
+check("U06-AC-2 the repository file with a failed run passes site-schema.json", valid)
+sys.exit(1 if fails else 0)
+PY
+u6rc=$?
+[ "$u04rc" -eq 0 ] && [ "$u6rc" -eq 0 ]
 exit $?
