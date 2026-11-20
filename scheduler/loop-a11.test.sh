@@ -61,4 +61,11 @@ ok "A11-AC-2: no leftover @...@ in the adopt feedback prompt" noleft "$u16"
 ok "A11-AC-2: no leftover @...@ in the triage update prompt" noleft "$u17"
 ok "A11-AC-2: no leftover @...@ in the triage feedback prompt" noleft "$u18"
 ok "A11-AC-2: no leftover @...@ in the node feedback prompt" noleft "$u11"
+# AC1line <prompt> <text>: the one line holding the folder's absolute path also holds <text> (Change 1: the line names the
+# folder as where the owner's answers are kept, to be read with the replies on the "Adopt up" issue)
+ac1line() { grep -F -- "$sc" "$1" | grep -qF -- "$2"; }
+ok "A11-AC-1: the update prompt's line naming the folder speaks of the owner's answers" ac1line "$u15" "owner's answers"
+ok "A11-AC-1: the update prompt's line naming the folder names the \"Adopt up\" issue (the repo's name)" ac1line "$u15" 'Adopt up'
+ok "A11-AC-1: the feedback prompt's line naming the folder speaks of the owner's answers" ac1line "$u16" "owner's answers"
+ok "A11-AC-1: the feedback prompt's line naming the folder names the \"Adopt up\" issue (the repo's name)" ac1line "$u16" 'Adopt up'
 loop_end
