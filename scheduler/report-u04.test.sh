@@ -565,4 +565,157 @@ ok "U04-AC-2: (53, unread record) the morning overview has a line for the PR" te
 ok "U04-AC-2: (53, unread record) the overview's line does not say ready to merge" sh -c "[ -s '$tmp/item' ] && ! grep -qF 'ready to merge' '$tmp/item'"
 ok "U04-AC-2: (53, unread record) the overview's line says still being worked on" has 'still being worked on'
 
+# Phase U06 (U06-AC-1, U06-AC-3). Every scratch path is under $tmp/U06. The fake gh of these runs filters a comments call's
+# `since` by the comment's update time (updated_at, or created_at when never edited), strictly after it, as the forge does for
+# an edited comment: an edited older comment comes back with an update time after the cursor.
+u6=$tmp/U06
+mkdir -p "$u6/bin"
+cat >"$u6/bin/gh" <<GHEOF
+#!/bin/sh
+out=\$("$ubin/gh" "\$@") || { rc=\$?; printf '%s\n' "\$out"; exit \$rc; }
+since=
+for a in "\$@"; do case \$a in *"&since="*) since=\${a#*&since=}; since=\${since%%&*} ;; esac; done
+if [ -z "\$since" ]; then printf '%s\n' "\$out"; else
+	printf '%s\n' "\$out" | python3 -I -c 'import json, sys; print(json.dumps([c for c in json.load(sys.stdin) if (c.get("updated_at") or c["created_at"]) > sys.argv[1]]))' "\$since"
+fi
+GHEOF
+chmod +x "$u6/bin/gh"
+urun6() { env PATH="$u6/bin:$ubin:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$1" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"; }
+u6n=0
+u6review() { # <i> <verdict> [extra]: a Fresh review at the case's head, created later than the one before; $u6id is its id
+	use "$1"
+	u6n=$((u6n + 1))
+	ucomment "$pr" "Fresh review ($2) at $sh7
+${3:-looks fine}" "2026-03-01T00:$(printf %02d "$u6n"):00Z" bot NONE Bot "https://x/$pr/u6$u6n"
+	u6id=$(uq "[c['id'] for c in db['comments'] if c['issue'] == '$pr'][-1]")
+}
+u6edit() { # <comment id> <verdict> <i> <update time>: the comment edited to another verdict
+	use "$3"
+	pyc "
+import json, sys
+db = json.load(open('$udb'))
+for c in db['comments']:
+    if c['id'] == int(sys.argv[1]):
+        c['body'] = 'Fresh review (%s) at %s\nedited' % (sys.argv[2], sys.argv[3]); c['updated_at'] = sys.argv[4]
+json.dump(db, open('$udb', 'w'))" "$1" "$2" "$sh7" "$4"
+}
+u6kept() { # <i>: the values of the merge record other than head, review_head, verdict, ci, unread (the kept comment id)
+	use "$1"
+	pyc "
+import json, sys
+m = (json.load(open(sys.argv[1])).get('merge') or {}).get(sys.argv[2]) or {}
+print(' '.join(str(v) for k, v in sorted(m.items()) if k not in ('head', 'review_head', 'verdict', 'ci', 'unread')))" "$state/report.json" "$pr"
+}
+u6pub() { # <i>...: the PR list and open-prs.tsv of these cases
+	publish3 "$@"
+}
+
+# U06-A. 71: FAILED in node/<ID>; 72: FAILED in pr/<N>; 74: FAILED in node/<ID> and CI failed; 75: the control, no FAILED.
+# Each is a PR U04 makes ready (approve at its head, CI passed, MERGEABLE, no session, no question) but for the FAILED.
+state=$u6/f
+mkdir -p "$state"
+: >"$state/status.log"
+for i in 71 72 74 75; do
+	use "$i"
+	mkdir -p "$state/node/$id"
+	chk "$head" passed
+	u6review "$i" approve
+done
+use 74; chk "$head" failed
+use 71; echo "gave up" >"$state/node/$id/FAILED"
+use 74; echo "gave up" >"$state/node/$id/FAILED"
+use 72; mkdir -p "$state/pr/$pr"; echo "$id" >"$state/pr/$pr/node"; echo "gave up" >"$state/pr/$pr/FAILED"
+u6pub 71 72 74 75
+urun6 "$state"
+urun6 "$state"
+env PATH="$u6/bin:$ubin:$PATH" TZ=UTC NOODLEBOT_NOW=2026-12-01T09:00:00 python3 -I "$src/report.py" --repo owner/repo --state "$state" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"
+show
+uq "[c['body'] for c in db['comments'] if c['body'].startswith('## Morning overview') and 'K71' in c['body']][-1]" >"$tmp/u6overview"
+ovitem() { # <i>: the overview's line for the node's PR ($tmp/item)
+	use "$1"
+	grep -F "$id" "$tmp/u6overview" | grep -E "PR #$pr([^0-9]|\$)" >"$tmp/item"
+}
+ovnot() { ovitem "$1"; has 'still being worked on' && has 'its run failed' && ! has 'ready to merge'; }
+ok "U06-AC-1: (precondition) the control 75 without FAILED is ready to merge" isready 75
+ok "U06-AC-1: (71) FAILED in node/<ID>: the item says the PR is still being worked on, not ready to merge" isnot 71
+ok "U06-AC-1: (71) the item names that its run failed" mentions 71 'its run failed'
+ok "U06-AC-1: (71) the item does not blame CI, a question, a conflict or the review" nothas 71 "$ONLYQ|$ONLYC|$ONLYCI|request_changes|no head|no final review"
+ok "U06-AC-1: (71) the **K71 FAILED** item is still listed" grep -qF '**K71 FAILED**' "$tmp/wait"
+ok "U06-AC-1: (71) the record still says the review approves the head (the failed run is not a verdict)" test "$(rec 71 verdict)/$(rec 71 review_head)/$(rec 71 ci)" = "approve/$(short 71)/passed"
+ok "U06-AC-1: (72) FAILED in pr/<N>: the item says the PR is still being worked on, not ready to merge" isnot 72
+ok "U06-AC-1: (72) the item names that its run failed" mentions 72 'its run failed'
+ok "U06-AC-1: (72) the **PR #572 FAILED** item is still listed" grep -qF '**PR #572 FAILED**' "$tmp/wait"
+ok "U06-AC-1: (74) FAILED and CI failed: still being worked on, not ready to merge" isnot 74
+ok "U06-AC-1: (74) the item names both reasons, its run failed and CI failed" mentions 74 'its run failed' 'CI failed'
+ok "U06-AC-1: (74) the **K74 FAILED** item is still listed" grep -qF '**K74 FAILED**' "$tmp/wait"
+ok "U06-AC-1: (75) the control's item does not name a failed run" lacks 75 'run failed'
+ok "U06-AC-1: (precondition) the morning overview has a line for the control's PR" sh -c "grep -F K75 '$tmp/u6overview' | grep -qE 'PR #575([^0-9]|\$)'"
+ok "U06-AC-1: (71, overview) the line for the PR says still being worked on, its run failed, not ready to merge" ovnot 71
+ok "U06-AC-1: (72, overview) the line for the PR says still being worked on, its run failed, not ready to merge" ovnot 72
+ovmentions() { ovitem "$1"; shift; for t in "$@"; do has "$t" || return 1; done; }
+ok "U06-AC-1: (74, overview) the line for the PR names both reasons" ovmentions 74 'its run failed' 'CI failed'
+ok "U06-AC-1: (75, overview) the control's line says ready to merge" sh -c "grep -F K75 '$tmp/u6overview' | grep -E 'PR #575([^0-9]|\$)' | grep -qF 'ready to merge'"
+# the owner deletes FAILED to retry
+use 71; rm -f "$state/node/$id/FAILED"
+use 72; rm -f "$state/pr/$pr/FAILED"
+urun6 "$state"; show
+ok "U06-AC-1: (71, FAILED removed) the PR's item is U04's ready item again" isready 71
+ok "U06-AC-1: (71, FAILED removed) the item names the reviewed head and no failed run" sh -c "grep -F K71 '$tmp/wait' | grep -E 'PR #571([^0-9]|\$)' | grep -qF '$(short 71)' && ! grep -F K71 '$tmp/wait' | grep -qF 'run failed'"
+ok "U06-AC-1: (72, FAILED removed) the PR's item is U04's ready item again" isready 72
+ok "U06-AC-1: (71, 72, FAILED removed) no FAILED item for them any more" sh -c "! grep -qE 'K71 FAILED|PR #572 FAILED' '$tmp/wait'"
+ok "U06-AC-1: (74, FAILED still there) the item is not ready" isnot 74
+
+# U06-B. State $u6/e: 61 is an edited-review sequence, 62 a record from before this node (no comment id kept).
+# 61: approve (a), then request_changes (b), both at the head.  62: request_changes (c1), then approve (c2).
+state=$u6/e
+mkdir -p "$state"
+: >"$state/status.log"
+for i in 61 62; do
+	use "$i"
+	mkdir -p "$state/node/$id"
+	chk "$head" passed
+done
+u6pub 61 62
+urun6 "$state"   # the seed run: the PRs are open, no comment yet
+u6review 61 approve; ida=$u6id
+u6review 61 request_changes "the lint failure"; idb=$u6id
+u6review 62 request_changes "not yet"; idc1=$u6id
+u6review 62 approve; idc2=$u6id
+urun6 "$state"; show
+ok "U06-AC-3: (61) an approve and a newer request_changes at the head: not ready, the verdict named" mentions 61 'still being worked on' request_changes
+ok "U06-AC-3: (61) the record has the verdict request_changes" rc 61 verdict request_changes
+ok "U06-AC-3: (61) the record keeps the id of the last Fresh review (the newer comment)" test "$(u6kept 61)" = "$idb"
+ok "U06-AC-3: (62) the record keeps the id of its last Fresh review (the approving comment)" test "$(u6kept 62)" = "$idc2"
+ok "U06-AC-3: (62, precondition) approve last: ready to merge" isready 62
+# the older approving comment of 61 and the older request_changes of 62 are edited; 62's record is made one from before this node
+u6edit "$ida" approve 61 2026-03-01T05:00:00Z
+u6edit "$idc1" request_changes 62 2026-03-01T05:00:00Z
+pyc "
+import json
+p = '$state/report.json'; r = json.load(open(p))
+r['merge']['562'] = {k: r['merge']['562'][k] for k in ('head', 'review_head', 'verdict', 'ci')}; json.dump(r, open(p, 'w'))"
+ok "U06-AC-3: (62, precondition) the edited record has no kept id" test -z "$(u6kept 62)"
+urun6 "$state"; show
+ok "U06-AC-3: (61, older review edited) the record keeps the verdict request_changes" rc 61 verdict request_changes
+ok "U06-AC-3: (61, older review edited) the record keeps the review head" rc 61 review_head "$(short 61)"
+ok "U06-AC-3: (61, older review edited) the record keeps the newer comment's id" test "$(u6kept 61)" = "$idb"
+ok "U06-AC-3: (61, older review edited) the PR is still not ready, the verdict named" mentions 61 'still being worked on' request_changes
+ok "U06-AC-3: (61, older review edited) the item does not say ready to merge" isnot 61
+ok "U06-AC-3: (62, no kept id) a record without an id takes the run's last review as U04 does: request_changes" rc 62 verdict request_changes
+ok "U06-AC-3: (62, no kept id) the PR is not ready, the verdict named" mentions 62 'still being worked on' request_changes
+ok "U06-AC-3: (62, no kept id) the record now keeps the id of that review" test "$(u6kept 62)" = "$idc1"
+# a new approving review with a higher id
+u6review 61 approve "fixed"; idd=$u6id
+urun6 "$state"; show
+ok "U06-AC-3: (61, newer review) a new approve at the head with a higher id: the record has the verdict approve" rc 61 verdict approve
+ok "U06-AC-3: (61, newer review) the record keeps the new comment's id" test "$(u6kept 61)" = "$idd"
+ok "U06-AC-3: (61, newer review) the PR is ready to merge" isready 61
+# the newest review itself is edited (same id) to request_changes
+u6edit "$idd" request_changes 61 2026-03-01T07:00:00Z
+urun6 "$state"; show
+ok "U06-AC-3: (61, newest review edited) the record has the verdict request_changes" rc 61 verdict request_changes
+ok "U06-AC-3: (61, newest review edited) the record keeps the same comment id" test "$(u6kept 61)" = "$idd"
+ok "U06-AC-3: (61, newest review edited) the PR is not ready, the verdict named" mentions 61 'still being worked on' request_changes
+ok "U06-AC-3: (61, newest review edited) the item does not say ready to merge" isnot 61
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
