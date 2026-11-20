@@ -139,6 +139,73 @@ chk "U05-AC-1: step 6: (b) lists the node's commits with 'git rev-list --first-p
 chk "U05-AC-1: step 6: (b) uses 'git blame' at the commit's parent to give the line to a RED or pin commit of this node" "$s6" 4 \
 	'git blame' 'at [`]<commit>' 'gives it to a red or pin +commit of this node'
 
+# Sentence-by-sentence guards (second slice review): the final-review block and the push sentence are cut into
+# sentences and list items; each gets an affirmative check tight to its operative words and a guard that rejects a
+# negation or a modal weakening (not, never, no, n't, may, might, can, could, should, optional, no longer, without,
+# unless) once code spans and the sentence's own legitimate negation are taken out.
+sents="$d/sents.txt"
+tr '\n' ' ' <"$s6" | tr -s ' ' | sed -E 's/[.] /.\n/g; s/ - [(]([ab])[)]/\n- (\1)/g; s/^ +//' >"$sents"
+pick() { grep -iF -e "$1" "$sents" >"$2"; }
+AP="'"
+NEGW="(^|[^a-z])(not|never|no|may|might|can|could|should|optional|optionally|longer|without|unless|nor|neither)([^a-z]|$)|n($AP|’)t"
+# negs <label> <sentence file> [<legit ERE removed first>]
+negs() {
+	if [ ! -s "$2" ]; then bad "$1 (sentence missing)"; return; fi
+	if tr 'A-Z' 'a-z' <"$2" | sed -E 's/`[^`]*`/ /g' | sed -E "s/${3:-@@@@}/ /g" | grep -Eq -e "$NEGW"
+	then bad "$1"; else ok "$1"; fi
+}
+v="$d/s"
+pick 'Every final review posted as' "${v}1"
+pick 'counts each line once' "${v}2"
+pick 'the `-` lines of' "${v}3"
+pick 'lines that a RED or pin commit' "${v}4"
+pick 'non-merge commits' "${v}5"
+pick 'gives it to a RED' "${v}6"
+pick 'brought in by merging' "${v}7"
+pick 'kind (a) is' "${v}8"
+pick 'is followed by those lines' "${v}9"
+pick 'needs the owner' "${v}10"
+pick 'The reviewer checks' "${v}11"
+pick 'counted at the new head' "${v}12"
+chk "U05-AC-1: step 6: sentence 1 says the first and the new final review carry a line of their own" "${v}1" 1 \
+	'every final review posted as .fresh review [(]<verdict>[)] at <sha>., the first final review and the new final review after a push, carries a line of its own'
+negs "U05-AC-1: step 6: sentence 1 has no negation or modal (not, never, may, can, optional, no longer ...)" "${v}1"
+chk "U05-AC-1: step 6: sentence 2: <n> counts each line once over the frozen test and fixture paths, of two kinds" "${v}2" 1 \
+	'<n>. counts each line once over the repository.s frozen test and fixture paths, of two kinds'
+negs "U05-AC-1: step 6: sentence 2 has no negation or modal" "${v}2"
+chk "U05-AC-1: step 6: kind (a): the '-' lines of git diff <merge-base>..<head> that existed at the merge base and that the PR changes or removes" "${v}3" 1 \
+	'^ - [(]a[)] the .-. lines of .git diff <merge-base>[.][.]<head> -- <frozen paths>.: lines that existed at the merge base and that the pr changes or removes;'
+negs "U05-AC-1: step 6: kind (a) has no negation or modal" "${v}3"
+chk "U05-AC-1: step 6: kind (b): lines that a RED or pin commit of this node added and that a later commit of the node changes or removes" "${v}4" 1 \
+	'^ - [(]b[)] lines that a red or pin commit of this node added and that a later commit of the node changes or removes'
+negs "U05-AC-1: step 6: kind (b) has no negation or modal" "${v}4"
+chk "U05-AC-1: step 6: the node's commits are the non-merge commits of the first-parent history after the merge base, by git rev-list" "${v}5" 1 \
+	"the node.s commits are the non-merge commits of the branch.s first-parent history after the merge base [(].git rev-list --first-parent --no-merges <merge-base>[.][.]<head>.[)]"
+negs "U05-AC-1: step 6: the node's commits sentence has no negation or modal" "${v}5"
+chk "U05-AC-1: step 6: for each such commit a '-' line of git diff <commit>^..<commit> counts when git blame at <commit>^ gives it to a RED or pin commit" "${v}6" 1 \
+	'for each such commit, a .-. line of .git diff <commit>.[.][.]<commit> -- <frozen paths>. counts when .git blame. at .<commit>.. gives it to a red or pin commit of this node'
+negs "U05-AC-1: step 6: the blame sentence has no negation or modal" "${v}6"
+chk "U05-AC-1: step 6: changes brought in by merging the base branch are not counted under (b): merge commits are left out" "${v}7" 1 \
+	'^ changes brought in by merging the base branch are not counted under [(]b[)]: merge commits are left out'
+negs "U05-AC-1: step 6: the merge sentence has no negation or modal beyond 'are not counted'" "${v}7" 'are not counted'
+chk "U05-AC-1: step 6: a line of kind (a) is not counted again under (b)" "${v}8" 1 \
+	'^ a line of kind [(]a[)] is not counted again under [(]b[)]'
+negs "U05-AC-1: step 6: the (a)-not-again sentence has no negation or modal beyond 'is not counted'" "${v}8" 'is not counted'
+chk "U05-AC-1: step 6: when <n> is 1 or more the line is followed by those lines: path, line number, the commit the number refers to (merge base for (a), RED or pin commit for (b))" "${v}9" 1 \
+	'^ when .<n>. is 1 or more, the line is followed by those lines, each as its path, its line number and the commit that number refers to: the merge base for [(]a[)], the red or pin commit that added the line for [(]b[)]'
+negs "U05-AC-1: step 6: the list sentence has no negation or modal (is not followed, may be followed ...)" "${v}9"
+chk "U05-AC-1: step 6: then it says that the PR needs the owner's approval: a comment by the owner on the PR whose first line is 'Frozen lines approved at <head>'" "${v}10" 1 \
+	'^ then it says that the pr needs the owner.s approval: a comment by the owner on the pr whose first line is .frozen lines approved at <head>.[.]?$'
+negs "U05-AC-1: step 6: the approval sentence has no negation or modal (does not say, never says, may say, needs no ...)" "${v}10"
+chk "U05-AC-1: step 6: the reviewer checks the line and the list against those diffs" "${v}11" 1 \
+	'^ the reviewer checks the line and the list against those diffs'
+negs "U05-AC-1: step 6: the reviewer sentence has no negation or modal (does not check, may check ...)" "${v}11"
+chk "U05-AC-1: step 6: push: the new final review carries the Frozen test lines changed line too, counted at the new head" "${v}12" 1 \
+	'the new final review carries the .frozen test lines changed:. line too, counted at the new head[.]?$'
+negs "U05-AC-1: step 6: the push sentence has no negation or modal (does not carry, may carry, need not ...)" "${v}12"
+if [ "$(grep -ci 'counted at the new head' "$push")" = 1 ]; then ok "U05-AC-1: step 6: the 'counted at the new head' sentence is in the push paragraph"
+else bad "U05-AC-1: step 6: the 'counted at the new head' sentence is in the push paragraph"; fi
+
 # no repository named: no owner/name, no repository URL, no forge kind with a real owner/name
 if grep -nEi 'tuckermclean|github[.]com|gitlab[.]com|https?://' "$sk" >"$d/repo.txt"; then
 	bad "U05-AC-1: the skill names a repository: $(head -3 "$d/repo.txt")"
