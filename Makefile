@@ -23,6 +23,7 @@ TESTS = \
 	scheduler/report-queue.test.sh \
 	scheduler/report-queue-answers.test.sh \
 	scheduler/report-u04.test.sh \
+	scheduler/report-u05.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
@@ -179,6 +180,7 @@ TESTS = \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/site-u04.test.sh \
+	scheduler/site-u05.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
 	scheduler/pickup.test.sh \
