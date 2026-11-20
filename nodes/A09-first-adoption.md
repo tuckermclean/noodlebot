@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| later | A07, A08 | none | M |
+| later | A07, A08 | A10 | M |
 
 **Owns:** the record of the run, `plugin/skills/adopt/first-adoption.md` (new); fixes to `plugin/skills/adopt/SKILL.md`
 and `scheduler/unattended-adopt.md` that the run shows are needed, each made test-first with its case in

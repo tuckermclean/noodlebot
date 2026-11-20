@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | A04, A06 | A09 | L |
+| now | A04, A06 | A09, A11 | L |
 
 **Owns:** in `scheduler/loop.sh`, the adoption state read from `origin/main`, the adoption units (when one starts, its
 worktree and state, its end), triage waiting during an adoption, and the skill and template used for updates and

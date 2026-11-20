@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | A01, A03, A04 | A07 | M |
+| now | A01, A03, A04 | A07, A10 | M |
 
 **Owns:** in `plugin/skills/adopt/SKILL.md`, the facts (section 1), the questions (section 2), the drafts of the first
 adoption PR (section 3), its checks (section 4) and the dry run, and where they say what the first PR holds, the
