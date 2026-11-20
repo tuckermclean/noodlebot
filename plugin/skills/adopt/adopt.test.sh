@@ -610,5 +610,62 @@ a09_senn F6 "$a09d/s9" "the test-must-fail rule is for a pinned criterion (not a
 a09_sen1 F7 "$a09d/s3" "the bullet is headed 'Drafts stay true'" 'drafts +stay +true'
 a09_sen1 F7 "$a09d/s3" "what the area or plan PRs make false is then named by examples: no 'no node yet', no 'in an area or a node'" 'make +false: +no +.no +node +yet'
 
+# ---------- A10: the strip of the probe's and the baseline's own output; the example stays true ----------
+a10d="$tmp/A10"; mkdir -p "$a10d"
+# a10_sen <label> <file> <ere>...: one sentence of the file (joined, split at ". ", emphasis and backticks removed,
+# lower-cased) matches every ERE; with a10_pair=1 a sentence together with the one after it.
+a10_pair=0
+a10_sen() {
+	_l=$1; _sf=$2; shift 2
+	_pats=$(printf '%s\n' "$@")
+	if [ -s "$_sf" ] && awk -v pair="$a10_pair" -v pats="$_pats" '
+		BEGIN { k = split(pats, P, "\n") }
+		{ gsub(/[*`]/, ""); t = t " " tolower($0) }
+		END {
+			gsub(/e[.]g[.]/, "for example", t); gsub(/i[.]e[.]/, "that is", t)
+			n = split(t, S, /[.] /)
+			for (i = 1; i <= n; i++) {
+				s = S[i]; if (pair == 1 && i < n) s = s " " S[i + 1]
+				good = 1; for (p = 1; p <= k; p++) if (s !~ P[p]) { good = 0; break }
+				if (good) exit 0
+			}
+			exit 1 }' "$_sf"; then ok "$_l"; else bad "$_l"; fi
+}
+# the probe bullet of section 1 and the baseline bullet of section 3
+awk '!on && /^- Run that command/ { on = 1; print; next } on && /^- |^## / { exit } on { print }' "$a09d/s1" >"$a10d/probe" 2>/dev/null || : >"$a10d/probe"
+awk '!on && /^- [*][*]The baseline[.][*][*]/ { on = 1; print; next } on && /^- |^## / { exit } on { print }' "$a09d/s3" >"$a10d/baseline" 2>/dev/null || : >"$a10d/baseline"
+if [ -s "$a10d/probe" ]; then ok "A10-AC-2: section 1's probe bullet is found"; else bad "A10-AC-2: section 1's probe bullet is not found"; fi
+if [ -s "$a10d/baseline" ]; then ok "A10-AC-2: section 3's baseline rule is found"; else bad "A10-AC-2: section 3's baseline rule is not found"; fi
+a10_sen "A10-AC-2: section 1's probe bullet: the same additions are stripped from the probe's own output before it is matched against fail_pattern" "$a10d/probe" \
+	'same' 'probe' 'own output' '(strip[a-z]* .*before .*fail_pattern|^ *before .*fail_pattern.*strip)'
+a10_sen "A10-AC-2: section 3's baseline rule: the same additions are stripped from the baseline's own output before it is matched against fail_pattern" "$a10d/baseline" \
+	'same' 'baseline' 'own output' '(strip[a-z]* .*before .*fail_pattern|^ *before .*fail_pattern.*strip)'
+
+# A10-AC-3: the example stays true
+for a10f in SPEC.md AGENTS.md; do
+	a10_txt=$(tr '\n' ' ' <"$bex/$a10f" 2>/dev/null | tr -s ' \t' '  ' | tr 'A-Z' 'a-z')
+	for a10p in 'no node yet' 'lists no node' 'in an area or' 'no nodes yet' 'lists no nodes'; do
+		case $a10_txt in
+			'') bad "A10-AC-3: example-baseline/$a10f is missing or empty (cannot check for '$a10p')";;
+			*"$a10p"*) bad "A10-AC-3: example-baseline/$a10f still says '$a10p'";;
+			*) ok "A10-AC-3: example-baseline/$a10f does not say '$a10p'";;
+		esac
+	done
+done
+# SPEC.md names the adoption areas only as held while the adoption is in progress
+if [ -s "$bex/SPEC.md" ] && awk '
+	{ gsub(/[*`]/, ""); t = t " " tolower($0) }
+	END {
+		n = split(t, S, /[.] /)
+		for (i = 1; i <= n; i++) if (S[i] ~ /adoption area|adoption.s area|areas of the adoption|adoption: *areas/ && S[i] !~ /while .*adoption.*in progress/) exit 1
+		exit 0 }' "$bex/SPEC.md"; then ok "A10-AC-3: example-baseline/SPEC.md names the adoption areas only while the adoption is in progress"; else bad "A10-AC-3: example-baseline/SPEC.md names the adoption areas without 'while the adoption is in progress'"; fi
+if [ -s "$bex/SPEC.md" ] && tr '\n' ' ' <"$bex/SPEC.md" | tr -s ' ' | tr 'A-Z' 'a-z' | grep -q 'adoption'; then ok "A10-AC-3: example-baseline/SPEC.md still speaks of the adoption (the regime's in-progress state)"; else bad "A10-AC-3: example-baseline/SPEC.md does not speak of the adoption in progress"; fi
+a10_sen "A10-AC-3: example-baseline/FACTS.md records that the passages are a hand correction of A06's recorded dry run" "$bex/FACTS.md" \
+	'hand' 'correction|corrected' 'a06' 'recorded' 'dry run'
+a10_pair=1
+a10_sen "A10-AC-3: example-baseline/FACTS.md names the SPEC.md and AGENTS.md passages it corrects by hand" "$bex/FACTS.md" \
+	'spec[.]md' 'agents[.]md' 'hand' 'correct'
+a10_pair=0
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $fails check(s) failed"; exit 1; fi
 echo "PASS: all adopt checks"
