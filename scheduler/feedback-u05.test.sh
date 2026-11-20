@@ -68,6 +68,26 @@ with open(prs, "w") as p:
         p.write("%d node/N%d-x %040d true MERGEABLE\n" % (n, n, n))
 EOS
 
+# More cases (added after the slice review): the approval is a conversation comment only; a line comment or a review by
+# the owner whose first line is the approval line is still feedback.
+python3 -I - "$data" "$U/prs.tsv" "$APPR" <<'EOS'
+import json, sys
+data, prs, appr = sys.argv[1:4]
+who = {"login": "owner", "type": "User"}
+def url(n, k, i): return "https://github.com/o/r/pull/%d#%s%d" % (n, k, i)
+line = [{"id": 4401, "html_url": url(44, "discussion_r", 4401), "user": who, "author_association": "OWNER",
+         "body": appr, "path": "src/a.py", "line": 7, "original_line": 7, "in_reply_to_id": None,
+         "pull_request_review_id": 9, "created_at": "2026-11-09T09:30:00Z"}]
+json.dump(line, open(data + "/pulls-44-comments.json", "w"))
+for n, i, st in ((45, 4501, "CHANGES_REQUESTED"), (46, 4601, "COMMENTED")):
+    rev = [{"id": i, "html_url": url(n, "pullrequestreview-", i), "user": who, "author_association": "OWNER",
+            "state": st, "body": appr + "\nand a word below", "submitted_at": "2026-11-09T09:30:00Z"}]
+    json.dump(rev, open("%s/pulls-%d-reviews.json" % (data, n), "w"))
+with open(prs, "a") as p:
+    for n in (44, 45, 46):
+        p.write("%d node/N%d-x %040d true MERGEABLE\n" % (n, n, n))
+EOS
+
 state=$U/state
 mkdir -p "$state/feedback"          # a record folder exists: not the first run; every record is empty
 fb() { python3 -I "$src/feedback.py" --repo o/r --state "$state" --owner owner --prs "$U/prs.tsv" "$@"; }
@@ -99,6 +119,13 @@ ok "U05-AC-5: an approval with a non-hex character is not an approval: prints th
 ok "U05-AC-5: a quoted approval line is feedback: prints the PR" printed_ok 41
 ok "U05-AC-5: an approval line followed by a blank line and a quote prints nothing" quiet 42
 ok "U05-AC-5: a different spelling (lower case) is not an approval: prints the PR" printed_ok 43
+
+ok "U05-AC-5: an owner line comment whose first line is the approval line is feedback: prints the PR" printed_ok 44
+ok "U05-AC-5: ... FEEDBACK.md holds that line comment (kind: line, id 4401)" sh -c 'grep -qxF "kind: line" "$1" && grep -qxF "id: 4401" "$1"' x "$state/feedback/44.md"
+ok "U05-AC-5: an owner review (CHANGES_REQUESTED) whose first line is the approval line is feedback: prints the PR" printed_ok 45
+ok "U05-AC-5: ... FEEDBACK.md holds that review (kind: review, id 4501)" sh -c 'grep -qxF "kind: review" "$1" && grep -qxF "id: 4501" "$1"' x "$state/feedback/45.md"
+ok "U05-AC-5: an owner review (COMMENTED, with a body) whose first line is the approval line is feedback: prints the PR" printed_ok 46
+ok "U05-AC-5: ... FEEDBACK.md holds that review (kind: review, id 4601)" sh -c 'grep -qxF "kind: review" "$1" && grep -qxF "id: 4601" "$1"' x "$state/feedback/46.md"
 
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

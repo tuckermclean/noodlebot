@@ -111,12 +111,45 @@ chk "U05-AC-1: step 6: the reviewer checks the line and the list against those d
 never "U05-AC-1: step 6: the reviewer's check is not reversed" "$s6" \
 	'reviewer (does not|never|need not) check'
 
+# Guards against a reversed or weakened main clause (added after the slice review). The sentences of the final-review
+# block and of the push paragraph that name the `Frozen test lines changed:` line must say the final review carries it:
+# no negation, permission or omission before the verb, and the plain affirmative stays.
+sentences() { tr '\n' ' ' <"$1" | sed 's/[.] /.\n/g' | grep -iF -e "$2"; }
+main="$d/main.txt"; psent="$d/psent.txt"
+awk '
+	!on && /^[*][*]Frozen test lines in the final review[.][*][*]/ { on = 1 }
+	on && /^$/ { exit }
+	on && /^- [(]/ { exit }
+	on { print }' "$s6" >"$main"
+sentences "$main" 'frozen test lines changed' >"$d/msent.txt"
+sentences "$push" 'frozen test lines changed' >"$psent"
+NEG='(never|not|n.t|may|might|can|could|should|need not|optional|optionally|without|omit|omits|skip|skips|lacks?|leaves? out)[ a-z,`]{0,40}(carr|has|have|includes?|contains?|bears?|posts?|states?|gives?)|without an? [`]?frozen test lines changed|no [`]?frozen test lines changed'
+never "U05-AC-1: step 6: the final review's main clause is not reversed or made optional (does not / need not / may / can carry, without the line)" "$d/msent.txt" "$NEG"
+if [ -s "$psent" ]; then
+	never "U05-AC-1: step 6: the push paragraph's sentence is not reversed or made optional (does not / need not / may carry ... either)" "$psent" "$NEG"
+else ok "U05-AC-1: step 6: the push paragraph has no sentence about the line (the main block covers the new review after a push)"; fi
+chk "U05-AC-1: step 6: the main clause is affirmative: the first and the new final review carry a line of their own" "$d/msent.txt" 3 \
+	'every final review' 'after a push, (carries|has|includes|contains) a line of its own' 'frozen test lines changed: none'
+if [ -s "$psent" ]; then
+	chk "U05-AC-1: step 6: the push sentence is affirmative: the new final review carries the line too" "$psent" 3 \
+		'the new final review (carries|has|includes|contains) the [`]?frozen test lines changed:' ' too'
+fi
+chk "U05-AC-1: step 6: (b) lists the node's commits with 'git rev-list --first-parent --no-merges <merge-base>..<head>'" "$s6" 4 \
+	'git rev-list' '--first-parent' '--no-merges' '<merge-base>[.][.]<head>'
+chk "U05-AC-1: step 6: (b) uses 'git blame' at the commit's parent to give the line to a RED or pin commit of this node" "$s6" 4 \
+	'git blame' 'at [`]<commit>' 'gives it to a red or pin +commit of this node'
+
 # no repository named: no owner/name, no repository URL, no forge kind with a real owner/name
 if grep -nEi 'tuckermclean|github[.]com|gitlab[.]com|https?://' "$sk" >"$d/repo.txt"; then
 	bad "U05-AC-1: the skill names a repository: $(head -3 "$d/repo.txt")"
 elif grep -nE '(github|gitlab|gitea|forgejo):[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$sk" | grep -v 'owner/name' >"$d/repo.txt"; then
 	bad "U05-AC-1: the skill names a repository: $(head -3 "$d/repo.txt")"
 else ok "U05-AC-1: the skill names no repository"; fi
+# a bare owner/name slug (not the placeholder owner/name) right after a word that introduces a repository or an example
+if grep -oEi '(--repo|repositor(y|ies)|repo|for example|e[.]g[.]|such as|forge)[ :=]+[`]?[a-z0-9_.-]+/[a-z0-9_.-]+' "$sk" |
+	grep -viE 'owner/name$' >"$d/repo.txt"; then
+	bad "U05-AC-1: the skill names a bare owner/name repository slug: $(head -3 "$d/repo.txt")"
+else ok "U05-AC-1: the skill names no bare owner/name repository slug"; fi
 
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"
