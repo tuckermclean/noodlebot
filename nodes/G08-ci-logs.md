@@ -73,6 +73,10 @@ being off. It is never read as an empty log, and so never as a pass.
   only the lines the pattern matches. A size limit, if one is needed, is a later change.
 - Logs expire after the forge's retention period, and an expired log is a failed call (exit 1), not a refusal. Step
   5 reads the log of the run it just recorded, so it should not meet one.
+- GitHub also answers 403 for its secondary rate limit, not only for a missing permission. Change 2 reads every
+  403 on a log read as the capability off. That is the safe direction, since it never passes a run, but an exit 3
+  alone does not show that the App lacks the permission: a session that meets one does not assume so, and its
+  question to the owner gives the run URL and both causes.
 - The App's permissions are the owner's settings. If G08-AC-4 shows a refusal, sessions keep asking the owner for a
   red run, as today, until the permission is granted.
 - `scheduler/agnostic.test.sh` keeps every `gh` call and GitHub URL in the backend, and the skill text names no forge
