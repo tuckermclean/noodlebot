@@ -333,11 +333,14 @@ def merge_state(state, num, head, mergeable, rec, node=None):
     busy = bool(d) and alive(os.path.join(d, "session.pid"), num)
     fb = bool(node) and feedback_alive(os.path.join(state, "node", node, "session.pid"), node)
     unread = rec.get("unread") is True
+    failed = bool(d) and os.path.lexists(os.path.join(d, "FAILED"))
     asks = bool(d) and os.path.lexists(os.path.join(d, "QUESTION.md"))
-    if not busy and not fb and not unread and not asks and same and verdict == "approve" and ci == "passed" and mergeable != "CONFLICTING":
+    if not failed and not busy and not fb and not unread and not asks and same and verdict == "approve" and ci == "passed" and mergeable != "CONFLICTING":
         return True, (None if mergeable in ("MERGEABLE", "CONFLICTING") else
                       "the forge has not said whether it merges cleanly")
     why = []
+    if failed:
+        why.append("its run failed")
     if busy or fb:
         why.append("a session is running on it")
     if unread:
