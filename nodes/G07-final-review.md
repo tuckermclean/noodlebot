@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G02, G03, G06 | U04 | S |
+| now | G02, G03, G06 | U04, U05 | S |
 
 **Owns:** in `plugin/skills/node/SKILL.md`, the fresh review on the PR (step 6: the final review, the head it names, a review still to be acted on), the push after a posted review in the update procedure (`--update <PR>`) and in the feedback procedure (`--feedback <PR>`), and the head named in the resolution review's heading; in `scheduler/unattended.md` and `scheduler/unattended-followup.md`, the end-of-run line and the push after a posted review; in `scheduler/unattended-feedback.md` and `scheduler/unattended-node-update.md`, the end-of-run line and the push after a posted review; the new test `plugin/skills/node/skill-g07.test.sh` and its line in the `Makefile`'s `TESTS`.
 **Resolves:** #105
