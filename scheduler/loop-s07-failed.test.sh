@@ -49,9 +49,11 @@ qboth 1 2 SCHED_START_GAP=4 SCHED_STARVE=3600
 qcompete A03 "B01 B04"
 { kill -KILL "${qp[qa]}"; wait "${qp[qa]}"; } 2>/dev/null
 qopen
-qwait_n 15 2; wait_until 15 qev_ge 2
+qwait_n 15 2 || fail "D17 setup: two sessions started (in loop-s07-failed.test.sh, Phase F)"
+wait_until 15 qev_ge 2 || fail "D17 setup: two start events in the status logs (in loop-s07-failed.test.sh, Phase F)"
+wait_until 15 qturn_rec B04 B01 || fail "D17 setup: turn.py recorded B04's turn after B01's (in loop-s07-failed.test.sh, Phase F)"
 qok "S07-AC-4: a loop whose heartbeat is older than three ticks is left out: the live loop's units start" test "$(qseq)" = "B01 B04"
-qok "S07-AC-4: and the queue still spaces them by the gap (4 s)" qgap_n 2 3.6
+qok "S07-AC-4: and the queue still spaces them by the gap (4 s)" qturn_gap_n 2 3.6 B04 B01   # the turns of the two starts as turn.py recorded them (D17), not the sessions' own clocks
 qstop
 
 
