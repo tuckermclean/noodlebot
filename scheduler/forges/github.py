@@ -201,8 +201,12 @@ class Backend:
         import subprocess   # loaded with the first call (a URL needs none)
         env, tok = self._env()
         try:
-            r = subprocess.run(cmd, input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL,
-                               capture_output=True, text=True, errors="replace", timeout=timeout, env=env)
+            r = subprocess.run(cmd, input=stdin.encode() if stdin is not None else None,
+                               stdin=None if stdin is not None else subprocess.DEVNULL,
+                               capture_output=True, timeout=timeout, env=env)
+            # bytes decoded as UTF-8, no newline translation: a log is returned as served
+            r.stdout = r.stdout.decode("utf-8", errors="replace")
+            r.stderr = r.stderr.decode("utf-8", errors="replace")
         except (OSError, subprocess.SubprocessError) as e:
             raise forge.ForgeError("%s failed: %s" % (label, type(e).__name__))
         if r.returncode != 0:

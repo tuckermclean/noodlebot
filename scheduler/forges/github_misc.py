@@ -30,7 +30,7 @@ def ci_rerun(self, run):
 
 
 def ci_logs(self, run, job=None):
-    jobs, dec, page = [], json.JSONDecoder(), 1
+    jobs, dec = [], json.JSONDecoder()
     out = self._gh(["api", "--paginate", self._r("/actions/runs/%d/jobs?per_page=100" % int(run))], None,
                    "gh api GET actions/runs jobs")
     pos = 0
@@ -40,7 +40,9 @@ def ci_logs(self, run, job=None):
         if pos >= len(out):
             break
         doc, pos = dec.raw_decode(out, pos)
-        jobs += doc.get("jobs", [])
+        if not isinstance(doc, dict) or not isinstance(doc.get("jobs"), list):
+            raise forge.ForgeError("gh api GET actions/runs jobs: no jobs list in the answer")
+        jobs += doc["jobs"]
     res = []
     for j in jobs:
         if job is not None and j.get("name") != job:
