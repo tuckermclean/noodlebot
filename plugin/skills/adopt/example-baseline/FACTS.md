@@ -33,3 +33,9 @@ make: *** [Makefile:3: test] Error 1
 
 `fail_pattern` `^FAIL ` matches one line, `FAIL t_narrow`; the summary line names no test and is not matched.
 `known_red`: `t_narrow`. The quick gate `sh tests/run.sh tests/t_fold.sh` printed the same line format.
+
+## Hand correction
+
+Two passages of the example are a hand correction of A06's recorded dry run, not a re-recording: the regime
+passage of `SPEC.md` and the Owns bullet of `AGENTS.md`. They now follow the adopt skill's "Drafts stay true":
+they say only what stays true while the areas are mapped and after `adoption` is removed.
