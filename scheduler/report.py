@@ -627,7 +627,11 @@ def merge_state(a, rs, pr, node=None):
     unread = str(pr) in getattr(a, "unread", ()) or bool(rec.get("unread"))  # this run's, or the previous run's kept record
     failed = has(a.state, task, "FAILED") or bool(node) and has(a.state, node, "FAILED")
     if (not failed and not unread and not has(a.state, task, "QUESTION.md") and same and verdict == "approve" and ci == "passed" and mg != "CONFLICTING"):
-        return "is ready to merge (reviewed at %s, CI passed)%s" % (
+        fz, ap = rec.get("frozen"), rec.get("approved")
+        num = isinstance(fz, int) and not isinstance(fz, bool)
+        ok = isinstance(ap, str) and bool(ap) and cur.lower().startswith(ap.lower())
+        return "%s (%sreviewed at %s, CI passed)%s" % (
+            "changes frozen test lines: needs your approval" if num and not ok else "is ready to merge", "frozen test line changes approved; " if num and ok else "",
             rh[:7], "" if mg in ("MERGEABLE", "CONFLICTING") else "; the forge has not said whether it merges cleanly")
     why = []
     if failed:
@@ -1901,7 +1905,8 @@ def post_prs(a, rs, pulls):
 
     a.unread = set()  # PR numbers whose comments could not be read (all of them) this run; the merge record keeps "unread"
     read = set()  # PR numbers whose comments the main loop read to the end this run
-    reviews = {}  # PR number -> (head, verdict, comment id) of the last Fresh review among the comments read this run
+    reviews = {}  # PR number -> (head, verdict, comment id, frozen) of the last Fresh review among the comments read this run
+    approvals = {}  # PR number -> the sha of the owner's last `Frozen lines approved at <sha>` comment among those read this run
     runs_of, logged = {}, set()
 
     def note(pr, cs):
@@ -1909,7 +1914,11 @@ def post_prs(a, rs, pulls):
             v = verdict(c)
             if v:
                 m = re.match(r"[^\w>]*Fresh review \(\w+\) at ([0-9a-fA-F]{7,40})\b", (c["body"].splitlines() or [""])[0])
-                reviews[str(pr["number"])] = (m and m.group(1), v, c["id"])
+                f = re.search(r"^[ \t]*Frozen test lines changed: (none|[1-9][0-9]*)[ \t]*$", c["body"], re.M)
+                reviews[str(pr["number"])] = (m and m.group(1), v, c["id"], f and (f.group(1) if f.group(1) == "none" else int(f.group(1))))
+            m = re.fullmatch(r"Frozen lines approved at ([0-9a-fA-F]{7,40})", ((c["body"] or "").strip().splitlines() or [""])[0].strip())  # as feedback.py approval()
+            if m and from_owner(a, c):
+                approvals[str(pr["number"])] = m.group(1)
 
     def checks(sha):  # one read per head and run, for the CI milestone and the merge record
         if sha not in runs_of:
@@ -1947,10 +1956,10 @@ def post_prs(a, rs, pulls):
                     a.unread.add(k)
             if k in a.unread and k not in old:
                 continue  # no record yet and its comments unread: read them in full next run
-            rh, v, rid = r.get("review_head"), r.get("verdict"), r.get("id")
+            rh, v, rid, fz = r.get("review_head"), r.get("verdict"), r.get("id"), r.get("frozen")
             nr = reviews.get(k)
             if nr and (not isinstance(rid, int) or nr[2] >= rid):  # an older comment read again (edited) keeps the record's
-                rh, v, rid = nr
+                rh, v, rid, fz = nr
             ci = r.get("ci") if r.get("head") == sha and r.get("ci") == "passed" else None
             if ci is None:
                 ci = "none"
@@ -1964,6 +1973,9 @@ def post_prs(a, rs, pulls):
                     except Exception as e:
                         ci_error(sha, e)
             new[k] = {"head": sha, "review_head": rh, "verdict": v, "ci": ci}
+            for fk, fv in (("frozen", fz), ("approved", approvals.get(k) or r.get("approved"))):
+                if fv is not None:
+                    new[k][fk] = fv
             if rid is not None:
                 new[k]["id"] = rid
             if k in a.unread:
@@ -2020,8 +2032,8 @@ def post_prs(a, rs, pulls):
         try:
             for c in comments_of(pr):
                 v = verdict(c)
+                note(pr, [c])
                 if v:
-                    note(pr, [c])
                     post(t, "review:%s" % c["id"], "PR #%s: fresh review (%s)" % (n, v),
                          "Verdict: %s%s" % (v, " (%s)" % c["url"] if c.get("url") else ""))
                     if "review:%s" % c["id"] not in done_of(t):
