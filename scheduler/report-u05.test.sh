@@ -125,6 +125,7 @@ go
 # Phase 1. Every case is a node with its open PR that U04 makes ready (an approving review at the head, CI passed, no
 # session, no question) unless it says otherwise; the owner's comments and the review's frozen line are what differ.
 mg16=UNKNOWN; mg17=UNKNOWN
+N=33 # cases 27-33 (the line's markdown forms) are added to the same state folder and runs
 i=1
 while [ "$i" -le "$N" ]; do
 	use "$i"
@@ -170,6 +171,14 @@ use 23; approve 23 "Frozen lines approved at $sh7"
 use 24; review 24 approve "$sh7" "looks fine${nl}one${nl}two${nl}Frozen test lines changed: 3${nl}more"
 use 25; frozen 25 "$sh7" 2; approve 25 "Frozen lines approved at zzzzzzz"
 use 26; frozen 26 "$sh7" 2; approve 26 "Frozen lines approved at ${head}a"
+# 27: a list item.  28, 29: bold.  30: backticks, none.  31: CRLF line endings.  32: quoted.  33: more text after the count.
+use 27; review 27 approve "$sh7" "looks fine${nl}- Frozen test lines changed: 2"
+use 28; review 28 approve "$sh7" "looks fine${nl}**Frozen test lines changed:** 3"
+use 29; review 29 approve "$sh7" "looks fine${nl}**Frozen test lines changed: 3**"
+use 30; review 30 approve "$sh7" "looks fine${nl}\`Frozen test lines changed: none\`"
+use 31; review 31 approve "$sh7" "$(printf 'looks fine\r\nFrozen test lines changed: 4\r\nscheduler/a.test.sh:1 at c0ffee1\r')"
+use 32; review 32 approve "$sh7" "looks fine${nl}> Frozen test lines changed: 2"
+use 33; review 33 approve "$sh7" "looks fine${nl}Frozen test lines changed: 2 lines"
 publish
 go
 show
@@ -242,6 +251,16 @@ ok "U05-AC-3: (24) the item says the PR needs the owner's approval" needs 24
 ok "U05-AC-2: (25) seven characters that are not hex: approved is null" rc 25 approved null
 ok "U05-AC-2: (26) 41 characters: approved is null" rc 26 approved null
 ok "U05-AC-3: (26) 41 characters is no approval: needs approval" needs 26
+# 27-33: how the frozen line is written
+ok "U05-AC-2: (27) the line as a list item: frozen is 2" rc 27 frozen 2
+ok "U05-AC-2: (28) the line in bold with the colon inside: frozen is 3" rc 28 frozen 3
+ok "U05-AC-2: (29) the whole line in bold: frozen is 3" rc 29 frozen 3
+ok "U05-AC-2: (30) the line in backticks, none: frozen is \"none\"" rc 30 frozen '"none"'
+ok "U05-AC-2: (31) CRLF line endings: frozen is 4" rc 31 frozen 4
+ok "U05-AC-2: (32) the line quoted is not read: frozen is null" rc 32 frozen null
+ok "U05-AC-2: (33) more text after the count is not read: frozen is null" rc 33 frozen null
+ok "U05-AC-3: (27) a list-item line with a count: the item says the PR needs the owner's approval" needs 27
+ok "U05-AC-3: (31) a CRLF line with a count: the item says the PR needs the owner's approval" needs 31
 
 # Phase 2. Runs that read no new comment keep the record; a push after the approval; an approval that comes later.
 pyc "
