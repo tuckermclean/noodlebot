@@ -138,7 +138,7 @@ _PARTS = {
     "issue": ("issue_list", "issue_view", "issue_comments", "issue_create", "issue_edit", "issue_comment", "issue_close",
               "issue_reopen", "issue_pin", "issue_unpin", "issue_events", "issue_react", "_pin", "_seen", "label_list",
               "label_ensure", "label_add", "label_remove", "_labels", "commit_checks"),
-    "misc": ("ci_runs", "ci_rerun", "site_publish", "branch_push"),
+    "misc": ("ci_runs", "ci_rerun", "ci_logs", "site_publish", "branch_push"),
 }
 _PART_OF = {m: p for p, ms in _PARTS.items() for m in ms}
 _LOADED = set()

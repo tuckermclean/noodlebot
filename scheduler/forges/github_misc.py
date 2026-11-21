@@ -29,6 +29,32 @@ def ci_rerun(self, run):
     return {}
 
 
+def ci_logs(self, run, job=None):
+    jobs, dec, page = [], json.JSONDecoder(), 1
+    out = self._gh(["api", "--paginate", self._r("/actions/runs/%d/jobs?per_page=100" % int(run))], None,
+                   "gh api GET actions/runs jobs")
+    pos = 0
+    while pos < len(out):
+        while pos < len(out) and out[pos].isspace():
+            pos += 1
+        if pos >= len(out):
+            break
+        doc, pos = dec.raw_decode(out, pos)
+        jobs += doc.get("jobs", [])
+    res = []
+    for j in jobs:
+        if job is not None and j.get("name") != job:
+            continue
+        try:
+            log = self._gh(["api", self._r("/actions/jobs/%d/logs" % int(j["id"]))], None, "gh api GET actions/jobs logs")
+        except forge.ForgeError as e:
+            if e.status == 403:
+                raise forge.CapabilityOff("github", "ci_logs")
+            raise
+        res.append({"id": j["id"], "name": j.get("name"), "conclusion": j.get("conclusion"), "log": log})
+    return res
+
+
 def site_publish(self, target, input):
     self._gh(["api", "-X", "PATCH", "gists/" + target, "--input", input], None, "gh api -X PATCH gists",
              PATCH_TIMEOUT)
@@ -57,4 +83,4 @@ def branch_push(self, path, branch):
     return {}
 
 
-_register(ci_runs, ci_rerun, site_publish, branch_push)
+_register(ci_runs, ci_rerun, ci_logs, site_publish, branch_push)
