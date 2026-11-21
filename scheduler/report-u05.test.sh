@@ -90,9 +90,9 @@ show() {
 	awk '/^## Waiting on you/ {f=1; next} /^## / {f=0} f' "$tmp/body" >"$tmp/wait"
 }
 item() { use "$1"; grep -F "$id" "$tmp/wait" | grep -E "PR #$pr([^0-9]|\$)" >"$tmp/item"; }
-rec() { # <i> <key>: the merge record's value as JSON (ABSENT when the PR or the key has no record)
+rec() { # <i> <key>: the merge record's value as JSON (ABSENT when the PR has no record; null when the record lacks frozen or approved)
 	use "$1"
-	pyc "import json,sys; m = (json.load(open(sys.argv[1])).get('merge') or {}).get(sys.argv[2]); print('ABSENT' if m is None or sys.argv[3] not in m else json.dumps(m[sys.argv[3]]))" "$state/report.json" "$pr" "$2"
+	pyc "import json,sys; m = (json.load(open(sys.argv[1])).get('merge') or {}).get(sys.argv[2]); print('ABSENT' if m is None else json.dumps(m[sys.argv[3]]) if sys.argv[3] in m else 'null' if sys.argv[3] in ('frozen', 'approved') else 'ABSENT')" "$state/report.json" "$pr" "$2"
 }
 rc() { [ "$(rec "$1" "$2")" = "$3" ]; }
 has() { grep -qF -- "$1" "$tmp/item"; }
