@@ -1,0 +1,82 @@
+# D19 — u04-date
+
+| Track | Deps | Unlocks | Size |
+|---|---|---|---|
+| now | U04 | none | S |
+
+**Owns:** in U04's test `scheduler/report-u04.test.sh`, the lines of case 53's runs (Phase 8, "unread record"; lines
+553–560 at `f984b60`) that set or compute the clock of its three `report.py` runs: the two `urun3 "$state"` runs
+(lines 553 and 554) and the "new day" run (line 560, `TZ=UTC NOODLEBOT_NOW=2026-11-21T09:00:00`), and lines added
+between lines 552 and 560 that only compute or set that clock; the record of the runs, in the node's PR and under
+`out/node/D19/`. These are frozen test lines: the owner approved changing them, and only them, in issue #226 (quoted in
+the PR, Change 3).
+**Resolves:** #226
+
+## Purpose
+After this node case 53 of `scheduler/report-u04.test.sh` passes on any date. Its "new day" run is fixed at
+`NOODLEBOT_NOW=2026-11-21T09:00:00` while the two runs before it use the real clock, so whether it is a new day depends
+on the day the suite runs. On 2026-11-21 it is the same day: no morning overview is posted, and three checks fail on
+`main` and on every PR (CI runs 44949913403 at `ddc29b2` and 44950000079 at `f984b60`; green at `362268c` on
+2026-11-20). On other days it is a different day, earlier from 2026-11-22 on, which `report.py` also takes as a new log
+day. The node makes the new-day run always fall on a later day, as `report.py` dates its runs, than the two runs before
+it, and changes no assertion.
+
+## Tests
+- `scheduler/report-u04.test.sh`, changed only as Change 3 allows. At the head its case 53 lines pass:
+  `U04-AC-2: (53, precondition) ready to merge` and the three `U04-AC-2: (53, unread record)` checks (the morning overview
+  has a line for the PR; the line does not say ready to merge; the line says still being worked on). Every other
+  `PASS:` line of the file at the node's base is the same `PASS:` line at the head.
+- The recorded clock sweep of Change 2, at the node's base and at its head.
+
+## Changes
+1. **The new day is always later.** Case 53's runs get their clock in one of the two ways issue #226 names, or an
+   equivalent one: the two earlier runs get a fixed `NOODLEBOT_NOW` on one day and the new-day run one on the next day,
+   or the new-day run's `NOODLEBOT_NOW` is computed as the earlier runs' day plus one, at 09:00. The day that counts is
+   the one `report.py` uses (`a.today`, from `now()`: `NOODLEBOT_NOW` read as a local datetime in the run's own `TZ`,
+   else the local clock). The earlier runs use the time zone of the test's environment and the new-day run `TZ=UTC`, so
+   a computed day is taken in the zone each run is dated in, not from `date -u` alone. `urun3` and every other case stay
+   as they are: an earlier run that needs a clock of its own is written out on its own line (the `env … report.py`
+   command `urun3` runs, with the clock added) instead of changing the shared helper. *D19-AC-1.*
+2. **Sweep the clock.** Run the whole file, `sh scheduler/report-u04.test.sh`, with the clock its earlier runs read set
+   by exporting `NOODLEBOT_NOW` (and `TZ`) to the file's run, which `urun3` passes on to `report.py`:
+   - at 12:00 with `TZ=UTC` on each of: the day of the run, one month after it, one year after it, and 2026-11-01
+     (before 2026-11-21);
+   - on the day of the run at 00:01 and at 23:59, each with `TZ=Etc/GMT-14` (UTC+14) and with `TZ=Etc/GMT+12`
+     (UTC−12);
+   - and once with neither variable set (the real clock).
+
+   Each run's output goes under `out/node/D19/`, at the node's base and at its head. At the head, case 53's four
+   lines are `PASS:` in every run. A `FAIL:` line of another case in a run with an exported clock is not this node's
+   (other cases may expect the clock to move between runs, and U06's case fixes its own overview run at
+   `2026-12-01T09:00:00`); the PR lists each such line with whether the base run with the same settings has it too.
+   *D19-AC-1.*
+3. **Only the approved lines change.** The diff of `scheduler/report-u04.test.sh` touches only the lines **Owns** names:
+   no check, expected value, pattern, check name or other case changes, `urun3` and the fixtures stay unchanged, and no
+   other test file changes. The PR lists every frozen line it changes (line at the base, before and after) and quotes
+   the owner's approval from issue #226: "Approve, separate fix", given in chat on 2026-11-21 for "that case's frozen
+   lines (l.560's fixed NOODLEBOT_NOW, made relative to the earlier runs' clock, or the earlier runs given a fixed
+   earlier date), with no assertion changed", covering the lines of case 53's runs (l.553–560 at `f984b60`) and nothing
+   else. *D19-AC-2.*
+4. **CI is green again.** The quick gate (`sh scheduler/report-u04.test.sh`) passes, and CI passes on the PR, whose CI
+   run is the whole suite's evidence. *D19-AC-1.*
+
+## Gate
+- **D19-AC-1** — At the node's head case 53's four lines (`U04-AC-2: (53, precondition) ready to merge` and the three `U04-AC-2: (53, unread record)` checks) are `PASS:` in every run of Change 2's sweep (four dates from 2026-11-01 to a year after the run at 12:00 UTC, the day of the run at 00:01 and 23:59 in UTC+14 and UTC−12, and the real clock), because its new-day run is on a later day, as `report.py` dates it, than the two runs before it; the file passes in the quick gate and CI passes on the PR. *Verify:* the sweep's recorded runs at the base and the head under `out/node/D19/` with their case 53 lines in the PR, the quick gate's output and the CI run URL, checked by the fresh reviewer.
+- **D19-AC-2** — The node changes only the lines of case 53's runs that **Owns** names: every `PASS:` line of `scheduler/report-u04.test.sh` in a base run is the same `PASS:` line at the head, no check, expected value, pattern or check name changes, `urun3` and every other case are unchanged, no other file outside **Owns** changes, and the PR lists each changed frozen line (base line, before and after) with the owner's approval quoted from issue #226. *Verify:* the fresh reviewer's check of `git diff <base>..HEAD` against the PR's list of changed frozen lines and the approval, recorded in the PR with the sorted `PASS:` lines of a base run (with a clock at which case 53 passes there, such as `NOODLEBOT_NOW=2026-11-20T12:00:00`) and of a head run and their diff.
+
+## Risks
+- U06's case in the same file (Phase U06-A, line 631 at `f984b60`) fixes its overview run at
+  `NOODLEBOT_NOW=2026-12-01T09:00:00` after runs on the real clock, the same pattern. Runs of the file at `f984b60`
+  with `NOODLEBOT_NOW` exported (`TZ=UTC`, 12:00) failed 29 of its checks on 2026-12-01 and 12 on 2026-12-02 and on
+  2026-12-21, and none on 2026-11-20 or 2026-11-22, so `main` is likely red again from 2026-12-01 on every later date.
+  The owner's approval covers case 53 only, so this node does not change it; changing it needs its own approval and
+  node.
+- The same runs passed case 53 on 2026-11-20 and 2026-11-22 and failed its three checks on 2026-11-21 only, so CI may
+  pass case 53 again from 2026-11-22 before this node merges; the case still depends on the date until it does.
+- With node U05 (PR #225) merged, a node PR that changes frozen test lines reads as needing the owner's approval until
+  the owner comments `Frozen lines approved at <head>` on it; the approval quoted from issue #226 does not take that
+  comment's place.
+- A sweep that exports `NOODLEBOT_NOW` freezes the clock of every case of the file, so cases that expect time to pass
+  between runs may fail in it; Change 2 records those and does not count them.
+- Case 53's checks may pass at a clock the sweep does not try and still fail at one it misses (a daylight-saving
+  change, say); the sweep's two extreme zones near midnight cover the day boundary.
