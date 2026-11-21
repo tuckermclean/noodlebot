@@ -116,6 +116,7 @@ TESTS = \
 	scheduler/loop-a07-release.test.sh \
 	scheduler/loop-a07-reorder.test.sh \
 	scheduler/loop-a07-e2e.test.sh \
+	scheduler/loop-a11.test.sh \
 	scheduler/loop-g04-cap.test.sh \
 	scheduler/loop-R02-prompts.test.sh \
 	scheduler/loop-R02-node.test.sh \
@@ -179,6 +180,7 @@ TESTS = \
 	plugin/skills/node/skill.test.sh \
 	plugin/skills/node/skill-g07.test.sh \
 	plugin/skills/node/skill-u05.test.sh \
+	plugin/skills/node/skill-a10.test.sh \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/site-u04.test.sh \

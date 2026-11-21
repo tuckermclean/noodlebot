@@ -1044,6 +1044,15 @@ on_branch() {
 # is_adopt_br <branch>: the branch of the adoption's PR (spec/adopt for the scaffold, spec/adopt-<key> for an area or the plan).
 is_adopt_br() { [ "$1" = spec/adopt ] || [[ $1 == spec/adopt-* ]]; }
 
+# answers_sed <branch>: sets ased, the sed arguments that render a template's @ANSWERS@ line: for an adoption PR's branch,
+# the scaffold unit's folder of the owner's answers (when it exists); removed for any other branch.
+answers_sed() {
+	local sc=$state/adopt/scaffold/answered
+	if is_adopt_br "$1" && [ -d "$sc" ]; then
+		ased=(-e "s|^@ANSWERS@\$|The owner's answers to the first adoption PR's questions are kept in $(sedesc "$sc")/ (read them with the replies on the \"Adopt $(sedesc "${repo##*/}")\" issue).|")
+	else ased=(-e '/^@ANSWERS@$/d'); fi
+}
+
 # start_update <N> <branch> <main> <head> <saw> [<node ID>]: update spec PR N (/noodlebot:triage --update N); /noodlebot:adopt --update N for a spec/adopt* branch
 # in a worktree on its branch (by name: nodes.py recognises a spec branch by name). <main> and <head> are the
 # commits it starts from. With a node ID, N is the bot's node PR of that node (/noodlebot:node --update N,
@@ -1070,8 +1079,9 @@ start_update() {
 		git -C "$clone" worktree add -q -B "$br" "$wt" "origin/$br" || { note "$saw; worktree for PR #$n failed"; return 1; }
 	fi
 	site_sed
+	answers_sed "$br"; [ -z "$nid" ] || ased=()
 	cmd=$(python3 -I -B "$here/harness.py" skill-command "$skill" "--update $n") || { note "$saw; PR #$n: the harness gave no skill command; not started"; return 1; }
-	sed "${ssed[@]}" -e "s|@CMD@|$(sedesc "$cmd")|g" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
+	sed "${ssed[@]}" "${ased[@]}" -e "s|@CMD@|$(sedesc "$cmd")|g" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$d|g" -e "s|@WT@|$wt|g" \
 		-e "s|@LOOP@|$here/loop.sh|g" -e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/$tmpl" >"$d/unattended.md"
 	echo "$mainc $head" >"$d/from"
 	[ -z "$nid" ] || echo "$nid" >"$d/node"
@@ -1187,7 +1197,8 @@ start_feedback() {
 	ni=$(grep -c '^kind: ' "$d/FEEDBACK.md")
 	while read -r u; do list+="${list:+\n}- $(sedesc "$u")"; done < <(sed -n 's/^url: //p' "$d/FEEDBACK.md")
 	site_sed
-	sed "${ssed[@]}" -e "s|^@ITEMS@\$|${list:-- (none)}|" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
+	answers_sed "$br"
+	sed "${ssed[@]}" "${ased[@]}" -e "s|^@ITEMS@\$|${list:-- (none)}|" -e "s|@N@|$n|g" -e "s|@REPO@|$repo|g" -e "s|@DIR@|$(sedesc "$d")|g" -e "s|@WT@|$(sedesc "$wt")|g" \
 		-e "s|@BR@|$(sedesc "$br")|g" -e "s|@FB@|$(sedesc "$d/FEEDBACK.md")|g" -e "s|@CMD@|$(sedesc "$cmd")|g" -e "s|@LOOP@|$here/loop.sh|g" \
 		-e "s|@VERSION@|$vsub|g" -e "s|@SIGNATURE@|$ssub|g" "$here/unattended-feedback.md" >"$d/unattended.md" ||
 		{ fbsay "$name" "$saw; $name: rendering unattended-feedback.md failed; not started"; return 1; }
