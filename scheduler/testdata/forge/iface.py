@@ -127,3 +127,15 @@ except ValueError:
     perms = None
 line(r.returncode == 0 and isinstance(perms, dict) and set(perms) >= {"read", "write", "admin"}, "R02-AC-6: `repo permissions` prints one JSON object with read, write and admin",
      "rc %s, stdout %r, stderr %r" % (r.returncode, r.stdout[:100], r.stderr[:200]))
+
+# --- G08: the ci_logs capability and the `ci logs` operation ---
+line("ci logs" in ops and "ci logs" in (cl or []), "G08-AC-1: forge.OPERATIONS and `forge.py ops` list `ci logs`", "ops %s" % ops)
+got, e = attempt(lambda: forge.CAPABILITIES)
+line(got is not None and "ci_logs" in got, "G08-AC-1: forge.CAPABILITIES has ci_logs", e or "got %r" % (got,))
+r = cli("--repo", "acme/widgets", "caps")
+try:
+    gcaps = json.loads(r.stdout)
+except ValueError:
+    gcaps = None
+line(r.returncode == 0 and isinstance(gcaps, list) and "ci_logs" in gcaps, "G08-AC-1: `forge.py caps` of the GitHub backend lists ci_logs",
+     "rc %s, stdout %r, stderr %r" % (r.returncode, r.stdout[:100], r.stderr[:100]))

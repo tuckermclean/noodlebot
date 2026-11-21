@@ -454,4 +454,76 @@ def route(w, method, path, qs, body):  # noqa: F811
     return res
 
 
+# --- G08: a run's jobs and a job's log (added; the forms above are unchanged) ---
+# GET repos/R/actions/runs/ID/jobs[?per_page=&page=] answers {"total_count", "jobs": [{"id", "run_id", "name", "status",
+# "conclusion", "html_url"}]} (404 for a run that does not exist; --paginate prints one such object per page of
+# $FAKE_GH_PAGE jobs, like gh; per_page is honoured, at most 100; the default is 30, or $FAKE_GH_JOBS_PER_PAGE). `.jobs[]` and `.jobs[] | ...` work as -q.
+# GET repos/R/actions/jobs/ID/logs: GitHub answers 302 to a download address that needs no token and `gh api` follows it,
+# so the emulator prints the job's log text as the body, exactly as stored, with no JSON around it and no added newline
+# (404 for an unknown job). forge.json "refuse_logs" (true, or a list of job ids) makes it answer 403 ("Resource not
+# accessible by integration"), "logs_gone" 410 ("Logs expired"); the stderr is gh's `gh: <message> (HTTP <status>)`.
+_route_before_g08, _jq_before_g08, _paginate_before_g08, _out_before_g08 = route, jq, paginate, out
+
+
+class Raw(str):
+    pass
+
+
+class Jobs(list):
+    total = 0
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return {"total_count": self.total, "jobs": list(list.__getitem__(self, i))}
+        return list.__getitem__(self, i)
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s" % (w.forge["owner"], w.forge["name"])
+    rest = path[len(own):].strip("/") if path == own or path.startswith(own + "/") else None
+    m = re.fullmatch(r"actions/runs/(\d+)/jobs", rest or "")
+    if m and method == "GET":
+        lst = W.ci_jobs(w, m[1])
+        if lst is None:
+            return None
+        gj = Jobs({"id": j["id"], "run_id": int(m[1]), "name": j["name"], "status": "completed", "conclusion": j["conclusion"],
+                   "html_url": "%s/actions/runs/%s/job/%d" % (base_url(w), m[1], j["id"])} for j in lst)
+        gj.total = len(lst)
+        if "per_page" not in qs:  # GitHub's default is 30; a run's test sets a smaller one to make paging matter
+            qs = dict(qs, per_page=os.environ.get("FAKE_GH_JOBS_PER_PAGE", "30"))
+        return page_of(qs, gj)
+    m = re.fullmatch(r"actions/jobs/(\d+)/logs", rest or "")
+    if m and method == "GET":
+        j = W.ci_job(w, m[1])
+        if j is None:
+            return None
+        if W.log_flag(w, "refuse_logs", j["id"]):
+            raise Fail(403, "Resource not accessible by integration", {"message": "Resource not accessible by integration"})
+        if W.log_flag(w, "logs_gone", j["id"]):
+            raise Fail(410, "Logs expired", {"message": "Logs expired"})
+        return Raw(j["log"])
+    return _route_before_g08(w, method, path, qs, body)
+
+
+def paginate(data):  # noqa: F811
+    if isinstance(data, Jobs):
+        n = int(os.environ.get("FAKE_GH_PAGE", "2"))
+        return [{"total_count": data.total, "jobs": list(data)[i:i + n]} for i in range(0, max(len(data), 1), n)]
+    return _paginate_before_g08(data)
+
+
+def jq(expr, data):  # noqa: F811
+    m = re.match(r"\.jobs\[\]\s*(.*)$", expr.strip(), re.S)
+    if m and isinstance(data, dict):
+        return _jq_before_g08(".[] " + m[1], data["jobs"])
+    return _jq_before_g08(expr, data)
+
+
+def out(data, q):  # noqa: F811
+    if isinstance(data, Raw):
+        sys.stdout.write(data)
+        return
+    return _out_before_g08(data, q)
+
+
 main()
