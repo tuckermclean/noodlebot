@@ -177,6 +177,7 @@ TESTS = \
 	plugin/skills/node/skill.test.sh \
 	plugin/skills/node/skill-g07.test.sh \
 	plugin/skills/node/skill-a10.test.sh \
+	plugin/skills/node/skill-g08.test.sh \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/site-u04.test.sh \
