@@ -321,7 +321,7 @@ def branch_id(branch):
 def merge_state(state, num, head, mergeable, rec, node=None):
     """(merge_ready, merge_why) of a node's open PR (U04; report.py's merge_state says the same in the status issue).
     head and mergeable are the PR's, from open-prs.tsv; rec is its record in report.json "merge" (head, review_head,
-    verdict, ci, unread); the PR's own folder pr/<N> holds its session and question. The node's own session (harness
+    verdict, ci, unread, frozen, approved; frozen and approved are left out when null); the PR's own folder pr/<N> holds its session and question. The node's own session (harness
     match) and question make the node running or question, never pr-open, so they are not read here; a feedback session
     in node/<ID> (node) does not, so it is read here. A FAILED in pr/<N> makes the PR not ready ("its run failed"); a FAILED in
     node/<ID> makes the node state failed, so merge_state is not reached for it. A not-ready PR always has a reason."""

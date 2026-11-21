@@ -1914,7 +1914,7 @@ def post_prs(a, rs, pulls):
             v = verdict(c)
             if v:
                 m = re.match(r"[^\w>]*Fresh review \(\w+\) at ([0-9a-fA-F]{7,40})\b", (c["body"].splitlines() or [""])[0])
-                f = re.search(r"^[ \t]*Frozen test lines changed: (none|[1-9][0-9]*)[ \t]*$", c["body"], re.M)
+                f = re.search(r"^[^\w>\n]*Frozen test lines changed:[*_` \t]*(none|[1-9][0-9]*)[*_` \t\r]*$", c["body"], re.M)
                 reviews[str(pr["number"])] = (m and m.group(1), v, c["id"], f and (f.group(1) if f.group(1) == "none" else int(f.group(1))))
             m = re.fullmatch(r"Frozen lines approved at ([0-9a-fA-F]{7,40})", ((c["body"] or "").strip().splitlines() or [""])[0].strip())  # as feedback.py approval()
             if m and from_owner(a, c):
@@ -1942,7 +1942,8 @@ def post_prs(a, rs, pulls):
 
     def merge_records():
         """report.json "merge": per open node PR its head, the head and verdict of its last Fresh review and the CI result on
-        the head, the id of that review's comment ("id"); kept while no new review is read (only a review with an id not lower than the kept one
+        the head, the id of that review's comment ("id"), the review's frozen-line count ("frozen": "none" or a number) and the head the owner approved
+        the frozen lines at ("approved"), each left out when null; kept while no new review is read (only a review with an id not lower than the kept one
         replaces the record's review; an older comment read again, edited, does not), the CI result taken again for a new head and while not passed."""
         old, new = rs.get("merge") or {}, {}
         for t, pr in node_prs():
