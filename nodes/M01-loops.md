@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| later | none | D06, M02, P01, T03 | S |
+| later | none | D06, M02, M04, P01, T03 | S |
 
 **Owns:** `scheduler/loops.sh`, `scheduler/loops.test.sh`, the README's run instructions.
 
