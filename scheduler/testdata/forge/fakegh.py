@@ -526,4 +526,34 @@ def out(data, q):  # noqa: F811
     return _out_before_g08(data, q)
 
 
+# --- G08 (second round): a page cap, a malformed jobs page, a log written as bytes (added) ---
+# $FAKE_GH_JOBS_MAX_PER_PAGE caps the jobs a page holds whatever per_page asks for (GitHub's own cap is 100): a call without
+# --paginate gets at most that many jobs, so a backend that does not page loses jobs. forge.json "jobs_page" ("empty": {},
+# "null": {"jobs": null}, "list": []) answers the jobs listing with that document at exit 0. A log is written to stdout
+# as UTF-8 bytes, unchanged (no newline translation, whatever the locale).
+_route_before_g08b, _out_before_g08b = route, out
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s" % (w.forge["owner"], w.forge["name"])
+    rest = path[len(own):].strip("/") if path == own or path.startswith(own + "/") else None
+    if method == "GET" and re.fullmatch(r"actions/runs/\d+/jobs", rest or ""):
+        shape = w.forge.get("jobs_page")
+        if shape is not None:
+            return {"empty": {}, "null": {"jobs": None}, "list": []}[shape]
+        cap = os.environ.get("FAKE_GH_JOBS_MAX_PER_PAGE")
+        if cap and "per_page" in qs:
+            qs = dict(qs, per_page=str(min(int(qs["per_page"]), int(cap))))
+    return _route_before_g08b(w, method, path, qs, body)
+
+
+def out(data, q):  # noqa: F811
+    if isinstance(data, Raw):
+        sys.stdout.flush()
+        sys.stdout.buffer.write(data.encode("utf-8"))
+        sys.stdout.buffer.flush()
+        return
+    return _out_before_g08b(data, q)
+
+
 main()
