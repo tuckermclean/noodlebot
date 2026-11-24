@@ -164,5 +164,39 @@ d_sen "D18-AC-3: adopt SKILL.md: the flags are the adopted repository's own fact
 	'bounded[- ]worker' 'flags' "(adopted repository.s own|repository.s own|taken from the (adopted )?repository|from the repository)" \
 	'!(not|never) taken'
 
+# Review fix: for the three repository agent files, the rule also says one test runner at a time, and "one test file at a time"
+# belongs to the script that repeats the tests, never to the sentence that bounds the quick gate with TEST_JOBS=2.
+# d_nosen <label> <unit> <ere>...: no sentence of the unit matches every ERE (an empty unit fails).
+d_nosen() {
+	s_l=$1; s_f=$2; shift 2
+	printf '%s\n' "$@" >"$tmp/pats"
+	if [ -s "$s_f" ] && awk '
+		NR == FNR { P[++k] = $0; next }
+		{ gsub(/[*`]/, ""); gsub(/’/, "\047"); t = t " " tolower($0) }
+		END {
+			t = t " "
+			n = split(t, S, /[.] /)
+			for (i = 1; i <= n; i++) {
+				s = S[i]
+				all = 1
+				for (p = 1; p <= k; p++) if (s !~ P[p]) { all = 0; break }
+				if (all) exit 1
+			}
+			exit 0 }' "$tmp/pats" "$s_f"; then ok "$s_l"; else bad "$s_l"; fi
+}
+for p in "noodlebot-tester agent|.claude/agents/noodlebot-tester.md" "noodlebot-implementer agent|.claude/agents/noodlebot-implementer.md" \
+	"noodlebot-reviewer agent|.claude/agents/noodlebot-reviewer.md"; do
+	who=${p%%|*}; k=$(echo "$who" | tr -c 'A-Za-z0-9\n' '_')
+	[ -f "$root/${p#*|}" ] || continue
+	d_sen "D18-AC-2: $who: one test runner at a time" "$tmp/$k.unit" \
+		'one (test )?runner at a time' '!more than one' '!(never|not) (run |runs |use |uses )?one'
+	d_sen "D18-AC-2: $who: one test file at a time is said of the script that repeats the tests (the sweep's sentence)" "$tmp/$k.unit" \
+		'script|sweep|repeat' 'mutant' 'one test file at a time' '!more than one'
+	d_nosen "D18-AC-2: $who: no sentence puts one test file at a time together with TEST_JOBS=2" "$tmp/$k.unit" \
+		'one test file at a time' 'test_jobs=2'
+done
+d_sen "D18-AC-2: AGENTS.md Tests: one test file at a time is said of the script that repeats the tests (the sweep's sentence)" "$tmp/agents.unit" \
+	'script|sweep|repeat' 'mutant' 'one test file at a time' '!more than one'
+
 echo "$fails failed"
 [ "$fails" = 0 ]
