@@ -204,6 +204,8 @@ TESTS = \
 	scheduler/check-ci-workflow.test.sh \
 	scheduler/scratch-guard.test.sh \
 	scheduler/kill-own.test.sh \
+	scheduler/run-session-s12.test.sh \
+	scheduler/loop-s12.test.sh \
 	container/entrypoint.test.sh \
 	container/container.test.sh
 
