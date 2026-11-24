@@ -140,7 +140,7 @@ other.
 - **Stopping a loop never stops a session.** Sessions run detached; a restarted loop takes over the running ones.
 - `start` starts the loops that are not running and removes a stale `~/STOP-<name>`; it refuses while `~/STOP` exists.
 - Loops run in tmux sessions `sched-<name>` (the API in `sched-api`). Use `loops.sh`, not tmux, to start and stop them.
-- With `~/.config/noodlebot/units`, `start` also checks lingering (`loginctl show-user`, read only) and says so when it is off:
+- With `~/.config/noodlebot/units`, `start` and `status` also check lingering (`loginctl show-user`, read only) and says so when it is off:
   a logout then stops the loops and the API; `loginctl enable-linger <user>` (run by you, never by `loops.sh`) keeps them.
   Without the file, `start` prints one line saying the loops run in the calling shell's session.
 - A forge that lacks a feature the loop uses (the site, pinning, resolving threads, visibility) gets one status line
