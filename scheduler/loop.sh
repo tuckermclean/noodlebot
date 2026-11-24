@@ -481,7 +481,7 @@ has_pr() {
 # oom_ceiling <dir>: when run-session.sh's session.unit says the unit ended with oom-kill, print its MemoryMax and succeed.
 oom_ceiling() {
 	local u r m
-	read -r u r m <"$1/session.unit" 2>/dev/null && [ "$r" = oom-kill ] && [ -n "$m" ] && printf '%s' "$m"
+	{ read -r u r m <"$1/session.unit"; } 2>/dev/null && [ "$r" = oom-kill ] && [ -n "$m" ] && printf '%s' "$m"
 }
 # oom_note <dir>: " (out of memory in its unit, MemoryMax <ceiling>)" for such an end, else nothing; follows "(rc N)" in end lines.
 oom_note() { local m; m=$(oom_ceiling "$1") && printf ' (out of memory in its unit, MemoryMax %s)' "$m"; return 0; }
