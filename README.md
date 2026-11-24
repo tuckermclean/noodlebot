@@ -140,6 +140,9 @@ other.
 - **Stopping a loop never stops a session.** Sessions run detached; a restarted loop takes over the running ones.
 - `start` starts the loops that are not running and removes a stale `~/STOP-<name>`; it refuses while `~/STOP` exists.
 - Loops run in tmux sessions `sched-<name>` (the API in `sched-api`). Use `loops.sh`, not tmux, to start and stop them.
+- With `~/.config/noodlebot/units`, `start` and `status` also check lingering (`loginctl show-user`, read only) and says so when it is off:
+  a logout then stops the loops and the API; `loginctl enable-linger <user>` (run by you, never by `loops.sh`) keeps them.
+  Without the file, `start` prints one line saying the loops run in the calling shell's session.
 - A forge that lacks a feature the loop uses (the site, pinning, resolving threads, visibility) gets one status line
   per loop start, `forge <name> lacks <capability>: <feature> off`, and that feature is skipped.
 - Only one loop runs per repository (a lock in its state folder). Each repository has its own lock, state, clone,
@@ -160,6 +163,7 @@ repositories' builds use containers. Or run [the container](#running-it-in-a-con
    | `token` | An executable that prints a GitHub App installation token for the repository it's given (`token owner/name`). | yes |
    | `oauth-token` | The Claude Code credential the sessions use. | yes |
    | `gitconfig` | Git identity for the container's sessions' commits. | container only |
+   | `units` | Present (its contents do not matter): `loops.sh start` runs the tmux server in a systemd user unit, `noodlebot-loops`, so the loops outlive the login session. Without a user manager or without the file the loops run in the calling shell's session. | no |
    | `deploy-ci` | Deploy on CI instead of local tests ([How it deploys itself](#how-it-deploys-itself)). | no |
    | `gist`, `gist-token`, `site` | The status site ([Status site](#status-site)). | no |
 
