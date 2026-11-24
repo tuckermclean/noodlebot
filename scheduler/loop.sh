@@ -58,6 +58,13 @@
 #                            the one adoption session, in the triage's slot. Each tick reads docs/graph.yaml at origin/main: no graph is
 #                            scaffold, adoption with areas is the first area, adoption with no area is plan; a triage waits while the
 #                            graph is missing or has adoption. The unit's worktree is removed once it wrote WAITING-PR or FAILED.
+# Session scope (S12): with the file ~/.config/noodlebot/units present the loop hands SCHED_UNITS=1 to run-session.sh alone (not to the rest of what it runs) and run-session.sh starts the
+# first stage of each session in a systemd user scope (systemd-run --user --scope) with a memory ceiling; without the file, or if
+# systemd-run fails, the session runs as before. SCHED_MEMORY_MAX and SCHED_SWAP_MAX (MemoryMax and MemorySwapMax; default half of
+# MemTotal and of SwapTotal; `infinity` sets no ceiling) and SCHED_OOM_ADJ (the agent CLI's oom_score_adj, default 500, never below
+# the value the session started with) pass through the environment. The unit's end is in node/<ID>/session.unit; an oom-kill ends the
+# session as "out of memory in its unit (MemoryMax <ceiling>, rc N)" in stopped, the end line and the resume prompt, and counts as any
+# other end without a PR or question.
 # An older installation (repos/, worktrees/, state/ in the checkout) is moved once with
 # scheduler/move-runtime.sh <checkout>, after stopping the loops (touch ~/STOP) and waiting for no session.
 # At the start of every iteration (before the ~/STOP check) it logs each API request record under
@@ -109,6 +116,9 @@ state=$root/state/$rtname
 oauth=$HOME/.config/noodlebot/oauth-token
 unset GH_TOKEN   # the forge's credential is the token script's (a caller's GH_TOKEN is used as given); only site.py publish gets one, per call
 export NOODLEBOT_FORGE_REPO=$repo NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token
+# the session scope (S12): run-session.sh puts the first stage in a systemd scope when SCHED_UNITS=1, which says ~/.config/noodlebot/units exists;
+# given to run-session.sh only (deploy.sh's tests and the other children never see it)
+unset SCHED_UNITS; units=; [ -e "$HOME/.config/noodlebot/units" ] && units=1
 log=$state/status.log
 tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note='' mhold=0
 declare -A relheld=()   # released nodes the machine budget holds (their line is written once)
@@ -480,11 +490,20 @@ has_pr() {
 	fi
 }
 
+# oom_ceiling <dir>: when run-session.sh's session.unit says the unit ended with oom-kill, print its MemoryMax and succeed.
+oom_ceiling() {
+	local u r m
+	{ read -r u r m <"$1/session.unit"; } 2>/dev/null && [ "$r" = oom-kill ] && [ -n "$m" ] && printf '%s' "$m"
+}
+# oom_note <dir>: " (out of memory in its unit, MemoryMax <ceiling>)" for such an end, else nothing; follows "(rc N)" in end lines.
+oom_note() { local m; m=$(oom_ceiling "$1") && printf ' (out of memory in its unit, MemoryMax %s)' "$m"; return 0; }
+
 # record_stop <dir> <rc>: write <dir>/stopped, "<UTC time> <reason>", for a session that ended with no
 # PR, QUESTION.md or WAITING-PR. rc is the session.rc value, or ? when there is none.
 record_stop() {
-	local why="rc $2"
-	if [ "$2" != 0 ] && limit_exit "$1"; then why='usage limit'
+	local why="rc $2" mm
+	if mm=$(oom_ceiling "$1"); then why="out of memory in its unit (MemoryMax $mm, rc $2)"
+	elif [ "$2" != 0 ] && limit_exit "$1"; then why='usage limit'
 	elif [ "$2" = '?' ]; then why='stopped (no exit code)'
 	elif [[ $2 =~ ^[0-9]+$ ]] && [ "$2" -gt 128 ]; then why="stopped (signal $(($2 - 128)))"
 	fi
@@ -493,11 +512,12 @@ record_stop() {
 
 # ended <dir> <saw>: a recorded session is gone; report how it ended and clear its pid file.
 ended() {
-	local d=$1 saw=$2 id rc p
+	local d=$1 saw=$2 id rc p oo
 	id=$(basename "$d")
 	p=$(cat "$d/session.pid"); wait "$p" 2>/dev/null
 	rc=$(cat "$d/session.rc" 2>/dev/null || echo '?')
 	rm -f "$d/session.pid"
+	oo=$(oom_note "$d")
 	if [ -e "$d/resume.starts" ]; then
 		[ "$(hev starts "$d" 2>/dev/null || echo 0)" -gt "$(cat "$d/resume.starts")" ] || {
 			say "$saw; session $(task_name "$d") could not be resumed: the resumed session wrote no start (rc $rc)"
@@ -512,14 +532,14 @@ ended() {
 	if [ "$(basename "$(dirname "$d")")" = issue ]; then triage_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = pr ]; then update_ended "$d" "$saw" "$rc"; return; fi
 	if [ "$(basename "$(dirname "$d")")" = adopt ]; then adopt_ended "$d" "$saw" "$rc"; return; fi
-	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; session $id ended (rc $rc), held by FAILED"
+	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; session $id ended (rc $rc)$oo, held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) with QUESTION.md"
 	elif [ -e "$d/WAITING-PR" ]; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) waiting for spec PR #$(cat "$d/WAITING-PR")"
 	elif has_pr "$d" "$id"; then rm -f "$d/stopped"; say "$saw; session $id ended (rc $rc) with a PR"
 	elif bg_cut_off "$d"; then
 		record_stop "$d" "$rc"
 		not_counted "$d"
-		say "$saw; session $id ended (rc $rc) with its background work cut off; start not counted"
+		say "$saw; session $id ended (rc $rc)$oo with its background work cut off; start not counted"
 	elif [ "$rc" != 0 ] && limit_exit "$d"; then
 		record_stop "$d" "$rc"
 		not_counted "$d"
@@ -527,17 +547,17 @@ ended() {
 	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) with no PR and no QUESTION.md" >"$d/FAILED"
 		set_starts "$d" 0   # deleting FAILED gives the node 2 fresh starts
-		say "$saw; session $id ended (rc $rc), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
-	else say "$saw; session $id ended (rc $rc), no PR, no QUESTION.md; may start again"
+		say "$saw; session $id ended (rc $rc)$oo, no PR, no QUESTION.md, 2 starts used: wrote FAILED"
+	else say "$saw; session $id ended (rc $rc)$oo, no PR, no QUESTION.md; may start again"
 	fi
 }
 
 # feedback_ended <dir> <saw> <rc>: a feedback session (node/<ID> or pr/<N>) is gone. FEEDBACK.md stays while there
 # is feedback work left: after a question, a failed end or a limit exit; rc 0 with no question moves it into answered/.
 feedback_ended() {
-	local d=$1 saw=$2 rc=$3 name ts n
-	name=$(task_name "$d") n=$(basename "$d")
-	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; feedback session of $name ended (rc $rc), held by FAILED"
+	local d=$1 saw=$2 rc=$3 name ts n oo
+	name=$(task_name "$d") n=$(basename "$d") oo=$(oom_note "$d")
+	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; say "$saw; feedback session of $name ended (rc $rc)$oo, held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then rm -f "$d/stopped"; say "$saw; feedback session of $name ended (rc $rc) with QUESTION.md"
 	elif bg_cut_off "$d"; then
 		not_counted "$d"
@@ -555,16 +575,16 @@ feedback_ended() {
 	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) of a feedback session without finishing" >"$d/FAILED"
 		set_starts "$d" 0
-		say "$saw; feedback session of $name ended (rc $rc), 2 starts used: wrote FAILED"
-	else say "$saw; feedback session of $name ended (rc $rc); may start again"
+		say "$saw; feedback session of $name ended (rc $rc)$oo, 2 starts used: wrote FAILED"
+	else say "$saw; feedback session of $name ended (rc $rc)$oo; may start again"
 	fi
 }
 
 # triage_ended <dir> <saw> <rc>: an issue's triage session is gone. Done (rc 0, no question): the
 # label becomes noodlebot-triaged (issues.py done) and its worktree goes.
 triage_ended() {
-	local d=$1 saw=$2 rc=$3 n
-	n=$(basename "$d")
+	local d=$1 saw=$2 rc=$3 n oo
+	n=$(basename "$d") oo=$(oom_note "$d")
 	if [ -e "$d/QUESTION.md" ]; then say "$saw; triage of #$n ended (rc $rc) with QUESTION.md"
 	elif bg_cut_off "$d"; then
 		not_counted "$d"
@@ -584,8 +604,8 @@ triage_ended() {
 	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing" >"$d/FAILED"
 		set_starts "$d" 0
-		say "$saw; triage of #$n ended (rc $rc), 2 starts used: wrote FAILED"
-	else say "$saw; triage of #$n ended (rc $rc); may start again"
+		say "$saw; triage of #$n ended (rc $rc)$oo, 2 starts used: wrote FAILED"
+	else say "$saw; triage of #$n ended (rc $rc)$oo; may start again"
 	fi
 }
 
@@ -593,9 +613,9 @@ triage_ended() {
 # branch is pushed by then) or FAILED, so that an update or feedback session of its PR can check the branch out; on any
 # other end it stays for the resume (a usage limit, a stop, a question).
 adopt_ended() {
-	local d=$1 saw=$2 rc=$3 k
-	k=$(basename "$d")
-	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; adopt_unwt "$k"; say "$saw; adopt/$k ended (rc $rc), held by FAILED"
+	local d=$1 saw=$2 rc=$3 k oo
+	k=$(basename "$d") oo=$(oom_note "$d")
+	if [ -e "$d/FAILED" ]; then record_stop "$d" "$rc"; adopt_unwt "$k"; say "$saw; adopt/$k ended (rc $rc)$oo, held by FAILED"
 	elif [ -e "$d/QUESTION.md" ]; then set_starts "$d" 0; rm -f "$d/stopped"; say "$saw; adopt/$k ended (rc $rc) with QUESTION.md"
 	elif [ -s "$d/WAITING-PR" ]; then
 		set_starts "$d" 0; rm -f "$d/stopped"; adopt_unwt "$k"
@@ -609,8 +629,8 @@ adopt_ended() {
 	elif record_stop "$d" "$rc"; [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) with no PR and no QUESTION.md" >"$d/FAILED"
 		set_starts "$d" 0; adopt_unwt "$k"
-		say "$saw; adopt/$k ended (rc $rc), no PR, no QUESTION.md, 2 starts used: wrote FAILED"
-	else say "$saw; adopt/$k ended (rc $rc), no PR, no QUESTION.md; may start again"
+		say "$saw; adopt/$k ended (rc $rc)$oo, no PR, no QUESTION.md, 2 starts used: wrote FAILED"
+	else say "$saw; adopt/$k ended (rc $rc)$oo, no PR, no QUESTION.md; may start again"
 	fi
 }
 # adopt_unwt <key>: remove the unit's worktree (its branch stays).
@@ -623,13 +643,13 @@ adopt_unwt() { git -C "$clone" worktree remove --force "$wtroot/adopt-$1" 2>/dev
 # On every end without rc 0 the worktree keeps its branch: the next start resets it to origin/<branch>
 # (start_update), and a node's session takes the branch without the update's unpushed commits (free_branch).
 update_ended() {
-	local d=$1 saw=$2 rc=$3 n ub dropped=0 why=''
-	n=$(basename "$d")
+	local d=$1 saw=$2 rc=$3 n ub dropped=0 why='' oo
+	n=$(basename "$d") oo=$(oom_note "$d")
 	if [ -e "$d/node" ] && [ -e "$d/QUESTION.md" ]; then
 		say "$saw; update of PR #$n ended (rc $rc) with QUESTION.md"
 	elif bg_cut_off "$d"; then
 		not_counted "$d"
-		say "$saw; update of PR #$n ended (rc $rc) with its background work cut off; start not counted"
+		say "$saw; update of PR #$n ended (rc $rc)$oo with its background work cut off; start not counted"
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
 		# a commit it made and did not push is its own: its worktree lets go of the branch, which goes back to
@@ -651,8 +671,8 @@ update_ended() {
 	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing the update" >"$d/FAILED"
 		set_starts "$d" 0
-		say "$saw; update of PR #$n ended (rc $rc), 2 starts used: wrote FAILED"
-	else say "$saw; update of PR #$n ended (rc $rc); may start again"
+		say "$saw; update of PR #$n ended (rc $rc)$oo, 2 starts used: wrote FAILED"
+	else say "$saw; update of PR #$n ended (rc $rc)$oo; may start again"
 	fi
 }
 
@@ -738,8 +758,8 @@ resume_idle() {
 		echo "$reset" >"$d/resumed"
 		{ cat "$here/limit-resume.md"; printf '\nThe limit window reset at %s UTC (epoch %s).\n' "$(date -u -d "@$reset" +%H:%M:%S)" "$reset"; } >"$d/resume-prompt.md"
 		hev starts "$d" >"$d/resume.starts"
-		rm -f "$d/session.rc"
-		NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$wt" "${a[3]}" "${a[4]}" "$sid" </dev/null 9>&- >>"$d/session.jsonl" 2>>"$d/session.stderr" &
+		rm -f "$d/session.rc" "$d/session.unit"
+		SCHED_UNITS=$units NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$wt" "${a[3]}" "${a[4]}" "$sid" </dev/null 9>&- >>"$d/session.jsonl" 2>>"$d/session.stderr" &
 		pr=$!
 		echo "$pr" >"$d/session.pid"
 		live+=("$pr $id")
@@ -791,9 +811,9 @@ stop_done() {
 # launch <worktree> <dir> <prompt>: start a session in the background; sets pid and node (the
 # prompt's last word: a node ID or an issue number).
 launch() {
-	rm -f "$2/session.rc" "$2/resumed" "$2/resume.starts" "$2/resume.size" "$2/force-limit" "$2/session.kind"
+	rm -f "$2/session.rc" "$2/session.unit" "$2/resumed" "$2/resume.starts" "$2/resume.size" "$2/force-limit" "$2/session.kind"
 	# 9>&-: the session must not hold the loop's lock.
-	NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
+	SCHED_UNITS=$units NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
 	pid=$! node=${3##* }
 	echo "$pid" >"$2/session.pid"
 	set_starts "$2" $(($(starts_of "$2") + 1))
@@ -1543,7 +1563,7 @@ start_node() {
 			[ -f "$d/leftover/$pn" ] || continue
 			plist+="${plist:+\n}    - $(sedesc "$state/node/$id/leftover/$pn")${pb:+ (it applies to commit $(sedesc "$pb"), the HEAD of a rebase in progress when it was saved, not the branch tip)}"
 		done <"$d/leftover.pending"
-		rsed=(-e "s|@REASON@|$reason|g" -e "s|@COMMITS@|${ncommits:-0}|g" -e "s|^@PATCH@\$|$plist|")
+		rsed=(-e "s|@REASON@|$(sedesc "$reason")|g" -e "s|@COMMITS@|${ncommits:-0}|g" -e "s|^@PATCH@\$|$plist|")
 	fi
 	# the resume section sits between @RESUME-BEGIN@/@RESUME-END@, the patch lines between @PATCH-BEGIN@/@PATCH-END@,
 	# the reason between @REASON-BEGIN@/@REASON-END@; the pending patches are shown (and their list cleared) only with it
