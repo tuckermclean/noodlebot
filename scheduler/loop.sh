@@ -56,7 +56,7 @@
 #                            the one adoption session, in the triage's slot. Each tick reads docs/graph.yaml at origin/main: no graph is
 #                            scaffold, adoption with areas is the first area, adoption with no area is plan; a triage waits while the
 #                            graph is missing or has adoption. The unit's worktree is removed once it wrote WAITING-PR or FAILED.
-# Session scope (S12): with the file ~/.config/noodlebot/units present the loop exports SCHED_UNITS=1 and run-session.sh starts the
+# Session scope (S12): with the file ~/.config/noodlebot/units present the loop hands SCHED_UNITS=1 to run-session.sh alone (not to the rest of what it runs) and run-session.sh starts the
 # first stage of each session in a systemd user scope (systemd-run --user --scope) with a memory ceiling; without the file, or if
 # systemd-run fails, the session runs as before. SCHED_MEMORY_MAX and SCHED_SWAP_MAX (MemoryMax and MemorySwapMax; default half of
 # MemTotal and of SwapTotal; `infinity` sets no ceiling) and SCHED_OOM_ADJ (the agent CLI's oom_score_adj, default 500, never below
@@ -111,8 +111,9 @@ state=$root/state/$rtname
 oauth=$HOME/.config/noodlebot/oauth-token
 unset GH_TOKEN   # the forge's credential is the token script's (a caller's GH_TOKEN is used as given); only site.py publish gets one, per call
 export NOODLEBOT_FORGE_REPO=$repo NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token
-# the session scope (S12): run-session.sh puts the first stage in a systemd scope when SCHED_UNITS=1, which says ~/.config/noodlebot/units exists
-unset SCHED_UNITS; [ -e "$HOME/.config/noodlebot/units" ] && export SCHED_UNITS=1
+# the session scope (S12): run-session.sh puts the first stage in a systemd scope when SCHED_UNITS=1, which says ~/.config/noodlebot/units exists;
+# given to run-session.sh only (deploy.sh's tests and the other children never see it)
+unset SCHED_UNITS; units=; [ -e "$HOME/.config/noodlebot/units" ] && units=1
 log=$state/status.log
 tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note=''
 # The runtime root must not lie inside a Git working tree (sessions would load its CLAUDE.md and
@@ -630,13 +631,13 @@ adopt_unwt() { git -C "$clone" worktree remove --force "$wtroot/adopt-$1" 2>/dev
 # On every end without rc 0 the worktree keeps its branch: the next start resets it to origin/<branch>
 # (start_update), and a node's session takes the branch without the update's unpushed commits (free_branch).
 update_ended() {
-	local d=$1 saw=$2 rc=$3 n ub dropped=0 why=''
-	n=$(basename "$d")
+	local d=$1 saw=$2 rc=$3 n ub dropped=0 why='' oo
+	n=$(basename "$d") oo=$(oom_note "$d")
 	if [ -e "$d/node" ] && [ -e "$d/QUESTION.md" ]; then
 		say "$saw; update of PR #$n ended (rc $rc) with QUESTION.md"
 	elif bg_cut_off "$d"; then
 		not_counted "$d"
-		say "$saw; update of PR #$n ended (rc $rc) with its background work cut off; start not counted"
+		say "$saw; update of PR #$n ended (rc $rc)$oo with its background work cut off; start not counted"
 	elif [ "$rc" = 0 ]; then
 		set_starts "$d" 0
 		# a commit it made and did not push is its own: its worktree lets go of the branch, which goes back to
@@ -658,8 +659,8 @@ update_ended() {
 	elif [ "$(starts_of "$d")" -ge 2 ]; then
 		echo "$(date -u +%FT%TZ) second exit (rc $rc) without finishing the update" >"$d/FAILED"
 		set_starts "$d" 0
-		say "$saw; update of PR #$n ended (rc $rc), 2 starts used: wrote FAILED"
-	else say "$saw; update of PR #$n ended (rc $rc); may start again"
+		say "$saw; update of PR #$n ended (rc $rc)$oo, 2 starts used: wrote FAILED"
+	else say "$saw; update of PR #$n ended (rc $rc)$oo; may start again"
 	fi
 }
 
@@ -746,7 +747,7 @@ resume_idle() {
 		{ cat "$here/limit-resume.md"; printf '\nThe limit window reset at %s UTC (epoch %s).\n' "$(date -u -d "@$reset" +%H:%M:%S)" "$reset"; } >"$d/resume-prompt.md"
 		hev starts "$d" >"$d/resume.starts"
 		rm -f "$d/session.rc" "$d/session.unit"
-		NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$wt" "${a[3]}" "${a[4]}" "$sid" </dev/null 9>&- >>"$d/session.jsonl" 2>>"$d/session.stderr" &
+		SCHED_UNITS=$units NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$wt" "${a[3]}" "${a[4]}" "$sid" </dev/null 9>&- >>"$d/session.jsonl" 2>>"$d/session.stderr" &
 		pr=$!
 		echo "$pr" >"$d/session.pid"
 		live+=("$pr $id")
@@ -800,7 +801,7 @@ stop_done() {
 launch() {
 	rm -f "$2/session.rc" "$2/session.unit" "$2/resumed" "$2/resume.starts" "$2/resume.size" "$2/force-limit" "$2/session.kind"
 	# 9>&-: the session must not hold the loop's lock.
-	NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
+	SCHED_UNITS=$units NOODLEBOT_VERSION=$version setsid "$here/run-session.sh" "$1" "$2" "$3" </dev/null 9>&- >"$2/session.jsonl" 2>"$2/session.stderr" &
 	pid=$! node=${3##* }
 	echo "$pid" >"$2/session.pid"
 	set_starts "$2" $(($(starts_of "$2") + 1))
