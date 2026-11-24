@@ -557,7 +557,14 @@ pyc "
 import json
 p = '$state/report.json'; r = json.load(open(p)); r['merge']['553']['unread'] = True; json.dump(r, open(p, 'w'))"
 use 53; echo "GET .*/issues/$pr/comments" >"$tmp/ufail"
-env PATH="$sinceb:$ubin:$PATH" TZ=UTC NOODLEBOT_NOW=2026-11-21T09:00:00 python3 -I "$src/report.py" --repo owner/repo --state "$state" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"
+d19day1=$(python3 -I -c 'import os, datetime as d
+v = os.environ.get("NOODLEBOT_NOW")
+try:
+    t = d.datetime.fromisoformat(v).astimezone() if v else d.datetime.now().astimezone()
+except ValueError:
+    t = d.datetime.now().astimezone()
+print((t.date() + d.timedelta(days=1)).isoformat() + "T09:00:00")') # the day after the two runs above, as report.py dates it
+env PATH="$sinceb:$ubin:$PATH" TZ=UTC NOODLEBOT_NOW=$d19day1 python3 -I "$src/report.py" --repo owner/repo --state "$state" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"
 rm -f "$tmp/ufail"
 uq "[c['body'] for c in db['comments'] if c['body'].startswith('## Morning overview') and 'K53' in c['body']][-1]" >"$tmp/overview"
 grep -F K53 "$tmp/overview" | grep -E "PR #553([^0-9]|\$)" >"$tmp/item"
@@ -628,7 +635,14 @@ use 72; mkdir -p "$state/pr/$pr"; echo "$id" >"$state/pr/$pr/node"; echo "gave u
 u6pub 71 72 74 75
 urun6 "$state"
 urun6 "$state"
-env PATH="$u6/bin:$ubin:$PATH" TZ=UTC NOODLEBOT_NOW=2026-12-01T09:00:00 python3 -I "$src/report.py" --repo owner/repo --state "$state" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"
+d19day2=$(python3 -I -c 'import os, datetime as d
+v = os.environ.get("NOODLEBOT_NOW")
+try:
+    t = d.datetime.fromisoformat(v).astimezone() if v else d.datetime.now().astimezone()
+except ValueError:
+    t = d.datetime.now().astimezone()
+print((t.date() + d.timedelta(days=2)).isoformat() + "T09:00:00")') # two days after the two runs above (case 53 already used the day after), as report.py dates it
+env PATH="$u6/bin:$ubin:$PATH" TZ=UTC NOODLEBOT_NOW=$d19day2 python3 -I "$src/report.py" --repo owner/repo --state "$state" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"
 show
 uq "[c['body'] for c in db['comments'] if c['body'].startswith('## Morning overview') and 'K71' in c['body']][-1]" >"$tmp/u6overview"
 ovitem() { # <i>: the overview's line for the node's PR ($tmp/item)

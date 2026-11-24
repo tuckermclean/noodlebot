@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G03, G07, U04 | none | M |
+| now | G03, G07, U04 | U07 | M |
 
 **Owns:** in `plugin/skills/node/SKILL.md`, the frozen-line record of the final review (step 6: the `Frozen test lines changed:` line, the list of those lines and the approval line it names); in `scheduler/report.py`, the frozen-line fields of each open node PR's merge record in `report.json` (the frozen-line count of its last `Fresh review`, the head of the owner's last approval comment) and the frozen-line wording of a ready PR's "Waiting on you" item; in `scheduler/site.py`, the frozen-line note in a ready node's `merge_why`; in `scheduler/feedback.py`, leaving out the owner's approval comment; the new tests `plugin/skills/node/skill-u05.test.sh`, `scheduler/report-u05.test.sh`, `scheduler/site-u05.test.sh` and `scheduler/feedback-u05.test.sh`, their lines in the `Makefile`'s `TESTS`, and any fixtures they add under `scheduler/testdata/u05/`.
 **Resolves:** #198
