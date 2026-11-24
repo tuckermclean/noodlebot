@@ -232,3 +232,37 @@ class World:
             else:
                 cur[fname] = v["content"] if isinstance(v, dict) else v
         self.save("site")
+
+
+# --- G08: the jobs and logs of a CI run (added; the rules above are unchanged) ---
+# ci_jobs.json  {"<run id>": [{"id", "name", "conclusion", "log"}]}: the jobs of a run and each job's whole log text. A run
+#               of ci_runs.json with no entry has no jobs; a run id that is not in ci_runs.json is unknown.
+# forge.json may also hold "refuse_logs" and "logs_gone": true (every job's log) or a list of job ids. A refused log read
+# is the forge refusing the credential (the fake gh answers 403, the fake forge raises CapabilityOff `ci_logs`); a gone log
+# is an expired one (the fake gh answers 410, the fake forge raises ForgeError). The jobs list itself is never refused.
+def _ci_jobs_all(w):
+    p = os.path.join(w.path, "ci_jobs.json")
+    if not os.path.exists(p):
+        return {}
+    with open(p) as f:
+        return json.load(f)
+
+
+def ci_jobs(w, run):
+    """The jobs of run `run` (a list, empty when it has none), None when the run is unknown."""
+    if not any(r["id"] == int(run) for r in w.ci_runs):
+        return None
+    return list(_ci_jobs_all(w).get(str(int(run)), []))
+
+
+def ci_job(w, job_id):
+    for lst in _ci_jobs_all(w).values():
+        for j in lst:
+            if j["id"] == int(job_id):
+                return j
+    return None
+
+
+def log_flag(w, key, job_id):
+    v = w.forge.get(key)
+    return v is True or (isinstance(v, list) and int(job_id) in v)

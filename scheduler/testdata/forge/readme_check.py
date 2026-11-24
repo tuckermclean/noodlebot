@@ -93,4 +93,14 @@ for r in rows:
             bad.append("%s / %s: %r" % (r[0], col, cell[:60]))
 line(rows and not bad, "G04-AC-8: every row has four filled cells, each a link to https://... API documentation or `none: capability off`",
      *bad[:8])
+
+# --- G08: the row of `ci logs` ---
+row = [r for r in rows if r and r[0].strip("`") == "ci logs"]
+line(bool(row) and len(row[0]) == 5, "G08-AC-1: the operations table has a row for `ci logs`", "rows: %s" % [r[0] for r in rows][:60])
+bad = []
+for col, cell in zip(("GitHub", "GitLab", "Gitea", "Forgejo"), (row[0][1:] if row and len(row[0]) == 5 else [""] * 4)):
+    if not (re.search(r"\]\(https://[^)\s]+\)", cell) or cell.startswith("none: capability off")):
+        bad.append("%s: %r" % (col, cell[:60]))
+line(bool(row) and not bad, "G08-AC-1: the `ci logs` row has four filled cells, each a link to https://... API documentation or `none: capability off`", *bad)
+line("ci logs" in ops, "G08-AC-1: `forge.py ops` lists `ci logs`", "missing from %s" % ops)
 sys.exit(0)

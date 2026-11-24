@@ -165,6 +165,13 @@ ok "G04-AC-3: the token is in no argv git saw" sh -c '[ -s "$1" ] && ! grep -qF 
 ok "G04-AC-3: the token is in no git configuration (the checkout, the bare repository, HOME) and in no file there" sh -c '[ -s "$1/gitlog" ] && ! grep -rqaF "$2" "$1/gh/checkout/.git" "$1/bare-cred.git" "$1/home" 2>/dev/null' sh "$G" "$TOK"
 ok "G04-AC-3: the token is in no stdout or stderr of the push" sh -c '[ -s "$1/gitlog" ] && ! grep -qF "$2" "$1/push.out" "$1/push.err"' sh "$G" "$TOK"
 
+# G08: a log read with a token script: gh saw the token in GH_TOKEN only (never in argv), the token is in no output
+cred cilogs NOODLEBOT_FORGE_TOKEN_SCRIPT="$ts" -- python3 -I "$src/forge.py" --repo acme/widgets ci logs --run 9001
+ok "G08-AC-1: (precondition) ci logs over the emulator with a token script exits 0 and prints the jobs" sh -c 'test "$(cat "$1/cilogs.rc")" = 0 && grep -q "\"lint\"" "$1/cilogs.out"' sh "$G"
+ok "G08-AC-1: every gh call of ci logs saw the token script's token in GH_TOKEN and no other" test "$(calls_tokens | sort -u)" = "$TOK"
+ok "G08-AC-1: the token is in no argv of the ci logs gh calls" argv_clean "$TOK"
+ok "G08-AC-1: the token is in no stdout or stderr of ci logs" quiet "$TOK" cilogs
+
 # --- wait for the conformance runs, then compare --------------------------------------------------------------------
 wait "$p1" "$p2" 2>/dev/null
 if [ -s "$G/gh.json" ] && [ -s "$G/fake.json" ]; then

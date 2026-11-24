@@ -263,6 +263,26 @@ def cases():
     add("R02-AC-6 repo permissions read-only", "repo permissions", {}, "raw",
         expect=lambda b, m: {"read": True, "write": False, "admin": False},
         setup=lambda s: edit_forge(s, permissions={"read": True, "write": False, "admin": False}))
+    # --- G08: ci logs (the fake forge is configured with the capability; the default fixture has the four of G04) ---
+    on = lambda s: edit_forge(s, capabilities=G08_CAPS)
+    add("G08-AC-1 ci logs --run of a failed run", "ci logs", {"run": 9001}, "list:cilog", expect=lambda b, m: g08_jobs(9001), setup=on)
+    add("G08-AC-1 ci logs --run of a green run", "ci logs", {"run": 9002}, "list:cilog", expect=lambda b, m: g08_jobs(9002), setup=on)
+    add("G08-AC-1 ci logs --run --job returns only that job", "ci logs", {"run": 9001, "job": "lint"}, "list:cilog",
+        expect=lambda b, m: g08_jobs(9001, "lint"), setup=on)
+    add("G08-AC-1 ci logs --run --job of the failed job", "ci logs", {"run": 9001, "job": "test"}, "list:cilog",
+        expect=lambda b, m: g08_jobs(9001, "test"), setup=on)
+    add("G08-AC-1 ci logs --run of a run with no jobs is an empty list", "ci logs", {"run": 9003}, "list:cilog",
+        expect=lambda b, m: [], setup=on)
+    add("G08-AC-1 ci logs --run of a run with more jobs than the default page (3 jobs, 2 per page)", "ci logs", {"run": 9004}, "list:cilog",
+        expect=lambda b, m: g08_jobs(9004), setup=on)
+    # --- G08 (second round): the log as the forge serves it, and paging past the page a call is given ---
+    add("G08-AC-1 ci logs returns a log byte for byte (CRLF, a lone CR, a non-ASCII character, no final newline)", "ci logs",
+        {"run": 9100}, "list:cilog", expect=lambda b, m: g08_extra_jobs(9100), setup=lambda s: (on(s), g08_extra_runs(s)))
+    add("G08-AC-1 ci logs of a run with more jobs than a page holds (5 jobs, a page of at most 2) returns them all", "ci logs",
+        {"run": 9101}, "list:cilog", expect=lambda b, m: g08_extra_jobs(9101), setup=lambda s: (on(s), g08_extra_runs(s)))
+    add("G08-AC-1 ci logs --job of a run with more jobs than a page holds returns the job from the last page", "ci logs",
+        {"run": 9101, "job": "job-5"}, "list:cilog", expect=lambda b, m: g08_extra_jobs(9101, "job-5"),
+        setup=lambda s: (on(s), g08_extra_runs(s)))
     return cs
 
 
@@ -310,6 +330,152 @@ def edit_forge(s, **kw):
 
 def put(s, name, value):
     json.dump(value, open(os.path.join(s, name + ".json"), "w"))
+
+
+# G08: ci logs
+SHAPES["cilog"] = ["id", "name", "conclusion", "log"]
+G08_CAPS = ["pin", "resolve_threads", "site", "visibility", "ci_logs"]
+G08_FOUR = ["pin", "resolve_threads", "site", "visibility"]
+
+
+def g08_jobs(run, job=None):
+    """The expected result of `ci logs`: the fixture's jobs of the run (only the job named `job` when given)."""
+    with open(os.path.join(HERE, "fixture", "ci_jobs.json")) as f:
+        return [dict(j) for j in json.load(f).get(str(run), []) if job is None or j["name"] == job]
+
+
+def run_g08(backend, ctx, spec):
+    """The failing and refused log reads of both backends, and the fake forge without ci_logs: raw py/cli results."""
+    out = {}
+    for tag, run, kw, edits, fail in (
+            ("fail", 9001, {}, {}, True),
+            ("missing run", 99999, {}, {}, False),
+            ("expired log", 9001, {}, {"logs_gone": True}, False),
+            ("refused", 9001, {}, {"refuse_logs": True}, False),
+            ("refused one log of two", 9001, {}, {"refuse_logs": [7002]}, False),
+            ("refused with --job", 9001, {"job": "lint"}, {"refuse_logs": True}, False)):
+        res = {}
+        for mode in ("py", "cli"):
+            reset(ctx)
+            edit_forge(ctx.state, capabilities=G08_CAPS, **edits)
+            if fail:
+                open(os.path.join(ctx.state, "fail"), "w").close()
+            res[mode] = (run_py if mode == "py" else run_cli)(spec, "ci logs", dict(kw, run=run))
+        out["G08: " + tag] = res
+    if backend == "fake":
+        for tag, caps, fail in (("default fixture", None, False), ("four capabilities listed", G08_FOUR, False),
+                                ("no ci_logs and the fail switch on", G08_FOUR, True)):
+            res = {}
+            for mode in ("py", "cli"):
+                reset(ctx)
+                if caps is not None:
+                    edit_forge(ctx.state, capabilities=caps)
+                if fail:
+                    open(os.path.join(ctx.state, "fail"), "w").close()
+                res[mode] = (run_py if mode == "py" else run_cli)(spec, "ci logs", {"run": 9001})
+            out["G08: lacks: " + tag] = res
+    return out
+
+
+# G08 (second round): two runs added to a case's state (the fixture files are untouched)
+G08_LOG_BYTES = "step 1\r\nprogress 10%\rprogress 100%\r\ncaf\u00e9 \u2713 done\nlast line without a newline"
+G08_EXTRA = {
+    "9100": [{"id": 7201, "name": "build", "conclusion": "failure", "log": G08_LOG_BYTES}],
+    "9101": [{"id": 7300 + n, "name": "job-%d" % n, "conclusion": "success", "log": "log of job-%d\n" % n} for n in range(1, 6)],
+}
+
+
+def g08_extra_jobs(run, job=None):
+    return [dict(j) for j in G08_EXTRA[str(run)] if job is None or j["name"] == job]
+
+
+def g08_extra_runs(s):
+    p = os.path.join(s, "ci_runs.json")
+    runs = json.load(open(p))
+    for rid in (9100, 9101):
+        runs.append({"workflow": "ci.yml", "branch": "feat/g08", "event": "push", "id": rid, "status": "completed",
+                     "conclusion": "failure" if rid == 9100 else "success", "head_sha": "e" * 40,
+                     "created_at": "2026-05-04T10:00:00Z"})
+    json.dump(runs, open(p, "w"))
+    p = os.path.join(s, "ci_jobs.json")
+    jobs = json.load(open(p))
+    jobs.update(G08_EXTRA)
+    json.dump(jobs, open(p, "w"))
+
+
+def run_g08b(backend, ctx, spec):
+    """The GitHub backend given a jobs listing that is not {"jobs": [...]}: raw py/cli results."""
+    out = {}
+    if backend != "github":
+        return out
+    for tag in ("empty", "null", "list"):
+        res = {}
+        for mode in ("py", "cli"):
+            reset(ctx)
+            edit_forge(ctx.state, capabilities=G08_CAPS, jobs_page=tag)
+            res[mode] = (run_py if mode == "py" else run_cli)(spec, "ci logs", {"run": 9001})
+        out["G08b: " + tag] = res
+    return out
+
+
+def g08b_check(data):
+    for tag, what in (("empty", "{}"), ("null", '{"jobs": null}'), ("list", "[]")):
+        probs = []
+        rec = data["github"].get("G08b: " + tag)
+        if not rec:
+            probs.append("github: not run")
+        else:
+            p, k = rec["py"], rec["cli"]
+            if p.get("exc") != "ForgeError":
+                probs.append("github py: expected ForgeError, got %s" % summ(p))
+            if k.get("rc") != 1 or k.get("stdout") or not k.get("stderr"):
+                probs.append("github cli: expected exit 1, empty stdout, a stderr line; got %s" % summ(k))
+        line(not probs, "G08-AC-1: ci logs when the jobs listing answers %s at exit 0 is a failed call (ForgeError / exit 1, nothing on stdout), never an empty list" % what, probs)
+
+
+def g08_check(data):
+    AC1, AC2 = "G08-AC-1", "G08-AC-2"
+    for tag in ("fail", "missing run", "expired log"):
+        probs = []
+        for b in data:
+            rec = data[b].get("G08: " + tag)
+            if not rec:
+                probs.append("%s: not run" % b)
+                continue
+            p, k = rec["py"], rec["cli"]
+            if p.get("exc") != "ForgeError":
+                probs.append("%s py: expected ForgeError, got %s" % (b, summ(p)))
+            if k.get("rc") != 1 or k.get("stdout") or not k.get("stderr"):
+                probs.append("%s cli: expected exit 1, empty stdout, a stderr line; got %s" % (b, summ(k)))
+        line(not probs, "%s: ci logs (%s) raises ForgeError / exits 1 with nothing on stdout, never an empty list" % (AC1, tag), probs)
+    for tag in ("refused", "refused one log of two", "refused with --job"):
+        probs = []
+        for b in data:
+            rec = data[b].get("G08: " + tag)
+            if not rec:
+                probs.append("%s: not run" % b)
+                continue
+            p, k = rec["py"], rec["cli"]
+            want = "forge %s lacks ci_logs" % b
+            if p.get("exc") != "CapabilityOff" or p.get("cap") != "ci_logs" or want not in p.get("msg", ""):
+                probs.append("%s py: expected CapabilityOff(ci_logs) '%s', got %s" % (b, want, summ(p)))
+            if k.get("rc") != 3 or k.get("stdout") or want not in k.get("stderr", ""):
+                probs.append("%s cli: expected exit 3, empty stdout, stderr '%s'; got %s" % (b, want, summ(k)))
+        line(not probs, "%s: ci logs with a log read the forge refuses (%s) raises CapabilityOff / exits 3 naming ci_logs, no list, no empty log" % (AC2, tag), probs)
+    fk = data["fake"]
+    for tag in ("default fixture", "four capabilities listed", "no ci_logs and the fail switch on"):
+        rec = fk.get("G08: lacks: " + tag)
+        probs = []
+        if not rec:
+            probs.append("not run")
+        else:
+            p, k = rec["py"], rec["cli"]
+            want = "forge fake lacks ci_logs"
+            if p.get("exc") != "CapabilityOff" or p.get("cap") != "ci_logs" or want not in p.get("msg", ""):
+                probs.append("py: expected CapabilityOff(ci_logs) '%s', got %s" % (want, summ(p)))
+            if k.get("rc") != 3 or k.get("stdout") or want not in k.get("stderr", ""):
+                probs.append("cli: expected exit 3, empty stdout, stderr '%s'; got %s" % (want, summ(k)))
+        line(not probs, "%s: ci logs on a fake forge configured without ci_logs (%s) exits 3 naming ci_logs, before any call" % (AC2, tag), probs)
 
 
 # ------------------------------------------------------------------ running
@@ -418,6 +584,8 @@ def run_all(backend, work, outfile):
     if backend == "github":
         env["PATH"] = os.path.join(work, "bin") + ":" + env["PATH"]
         env["FAKE_GH_DIR"] = ctx.state
+        env["FAKE_GH_JOBS_PER_PAGE"] = "2"  # G08: a run list without per_page or --paginate gets 2 jobs, not all
+        env["FAKE_GH_JOBS_MAX_PER_PAGE"] = "2"  # G08: a page holds at most 2 jobs whatever per_page asks: a call that does not page loses jobs
         env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="url.%s.insteadOf" % ctx.bare, GIT_CONFIG_VALUE_0=GH_URL)
     sys.path.insert(0, SCHED)
     out = {"_meta": meta}
@@ -458,6 +626,8 @@ def run_all(backend, work, outfile):
             out["%s: %s" % (tag, op)] = res
     if backend == "fake":
         out["_caps"] = run_caps(ctx, work)
+    out.update(run_g08(backend, ctx, spec))
+    out.update(run_g08b(backend, ctx, spec))
     json.dump(out, open(outfile, "w"))
 
 
@@ -580,6 +750,8 @@ def check(ghfile, fakefile):
                     probs.append("%s cli: expected exit 1, empty stdout, a stderr line; got %s" % (b, summ(k)))
             line(not probs, "%s: %s (%s) raises ForgeError / exits 1 with nothing on stdout, never an empty result" % (AC, op, what), probs)
     caps_check(data["fake"]["_caps"])
+    g08_check(data)
+    g08b_check(data)
 
 
 def caps_check(caps):

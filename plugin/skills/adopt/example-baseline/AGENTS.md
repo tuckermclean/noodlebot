@@ -19,7 +19,7 @@
   that is not listed is a failure of the change. A node that fixes a listed test removes it from the list in
   its own PR.
 - **Owns.** A node changes only the files it owns (its `owns` globs) and its direct deps' files, and places
-  every file it adds in an area or in a node.
+  every file it adds where the graph's globs cover it.
 - **Red target.** A command that exits non-zero before the node's change and 0 after, normally
   `sh tests/run.sh tests/<test file>` for the node's own test file.
 - **Tests and fixtures.** Tests are POSIX sh files `tests/t_<topic>.sh` run by `tests/run.sh`. There are no

@@ -62,6 +62,7 @@ _OPS = [
     ("commit checks", None, {"sha": "str!"}),
     ("ci runs", None, {"workflow": "str", "sha": "str", "branch": "str", "event": "str"}),
     ("ci rerun", None, {"run": "int!"}),
+    ("ci logs", "ci_logs", {"run": "int!", "job": "str"}),
     ("site publish", "site", {"target": "str!", "input": "str!"}),
     ("branch push", None, {"path": "str!", "branch": "str!"}),
 ]
@@ -69,7 +70,7 @@ OPERATIONS = [o[0] for o in _OPS]
 _CAP = {o[0]: o[1] for o in _OPS}
 _ARGS = {o[0]: o[2] for o in _OPS}
 _METHODS = {o.replace(" ", "_").replace("-", "_"): o for o in OPERATIONS}
-CAPABILITIES = ("visibility", "pin", "resolve_threads", "site")
+CAPABILITIES = ("visibility", "pin", "resolve_threads", "site", "ci_logs")
 BACKENDS = {"github": os.path.join(HERE, "forges", "github.py"),
             "fake": os.path.join(HERE, "testdata", "forge", "fake.py")}
 

@@ -19,8 +19,8 @@ run by `sh tests/run.sh` (`make test`). Third-party code in `vendor/` is out of 
 
 ## The regime
 The graph (`docs/graph.yaml`) holds the gate (the test command and the failures it already had), the paths out of
-scope, and the adoption areas: `wrap`, `tests` and `build`. It lists no node yet: the areas are mapped into
-nodes, and open issues become nodes, in later pull requests.
+scope, and, while the adoption is in progress, the adoption areas: `wrap`, `tests` and `build`. The areas are
+mapped into nodes, and open issues become nodes, in later pull requests; the areas are then gone from the graph.
 
 ## Node spec template
 A node spec `nodes/<ID>-<name>.md` has the headings Purpose, Tests, Changes, Gate and Risks, a header row

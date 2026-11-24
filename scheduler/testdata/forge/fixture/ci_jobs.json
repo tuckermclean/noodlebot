@@ -1,0 +1,44 @@
+{
+ "9001": [
+  {
+   "id": 7001,
+   "name": "test",
+   "conclusion": "failure",
+   "log": "2026-05-03T10:00:01.1234567Z ##[group]Run make test\n2026-05-03T10:00:02.5000000Z \u001b[31mFAIL: S01-AC-3 flaky\u001b[0m\n2026-05-03T10:00:03.0000000Z ##[error]Process completed with exit code 1.\n"
+  },
+  {
+   "id": 7002,
+   "name": "lint",
+   "conclusion": "success",
+   "log": "no timestamp here\nlast line without a newline"
+  }
+ ],
+ "9002": [
+  {
+   "id": 7003,
+   "name": "test",
+   "conclusion": "success",
+   "log": "ok\n"
+  }
+ ],
+ "9004": [
+  {
+   "id": 7101,
+   "name": "job-01",
+   "conclusion": "success",
+   "log": "log of job-01\n"
+  },
+  {
+   "id": 7102,
+   "name": "job-02",
+   "conclusion": "success",
+   "log": "log of job-02\n"
+  },
+  {
+   "id": 7103,
+   "name": "job-03",
+   "conclusion": "success",
+   "log": "log of job-03\n"
+  }
+ ]
+}

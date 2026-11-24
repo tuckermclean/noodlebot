@@ -51,7 +51,8 @@ In the first-PR mode only: if the repository already has `docs/graph.yaml`, stop
   unset (`CLAUDECODE`, `AI_AGENT`): a runner such as vitest changes its output, colour for one, when it sees
   them. The node skill judges CI's run of the gate with the same `fail_pattern`, so the pattern must match
   CI's lines too, once what CI adds is stripped (for example colour escape codes, or a fetched job log's
-  timestamp prefix).
+  timestamp prefix). The same additions are stripped from the probe's own output before it is matched against
+  `fail_pattern`.
 - Compare the repository's test and fixture paths with the role guard's defaults (see section 3), e.g.
   a `fixtures/` directory that holds application data, or `tests.py` files the defaults miss.
 - Read the issues, closed ones too, and merged PRs: they are the history of intent.
@@ -98,7 +99,8 @@ resumes past that question only when the answers file (the owner's newer `ANSWER
 ## 3. The baseline and the drafts of the first PR
 Only after `ANSWER.md`. Order: the baseline, then the graph, then the other drafts, so they agree.
 - **The baseline.** Run the confirmed gate command once in the clone (a dry run: its temporary copy) and
-  keep its output in `FACTS.md`. If the gate cannot run here (it needs something the machine lacks, or
+  keep its output in `FACTS.md`. The same additions are stripped from the baseline's own output before it is
+  matched against `fail_pattern`. If the gate cannot run here (it needs something the machine lacks, or
   it does not start), append a question to `QUESTION.md` (numbered after the earlier ones, with a recommendation) and stop;
   on resume read its answer from `ANSWER.md` (the owner's newer answer, or the `--answers` file). An
   adoption needs a gate that runs. Unattended, the run's own instructions for questions win.
