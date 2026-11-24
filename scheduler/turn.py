@@ -29,7 +29,7 @@ The machine budget SCHED_MACHINE_MAX (a positive number; unset, empty, 0 or anyt
 under the same lock as the start record, count the sessions running on the machine. A session is a
 DATA/state/*/{node,issue,pr,adopt}/*/session.pid whose pid is a live process with run-session.sh in its command line
 (any repository); the last start in starts.json counts as one more while it is within the gap and its unit has no
-session.pid yet (the session is about to start). With the count at or over the budget, ask prints nothing and records
+session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the gap. With the count at or over the budget, ask prints nothing and records
 nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the machine" on stderr and exits 3.
 
   place     read-only: how far KEY is from a turn. KEY is looked up in this loop's list (--repo may be
@@ -198,9 +198,7 @@ def ask(state, repo, now, args):
         text += ", first by the starvation limit"
     if ahead:
         text += ", ahead of " + ", ".join(ahead[:3]) + (", +%d more" % (len(ahead) - 3) if len(ahead) > 3 else "")
-    prev = None
-    if last is not None:
-        prev = {k: v for k, v in last.items() if k != "prev"}
+    prev = keep_chain(last, now, gap)
     write_json(spath, {"time": now, "repo": repo, "unit": u["key"], "prev": prev})
     return "%s\t%s" % (u["key"], text)
 
@@ -243,6 +241,21 @@ def machine_max():
     return v if v is not None and math.isfinite(v) and v > 0 else None
 
 
+def keep_chain(last, now, gap):
+    """LAST as a previous record: its own prev is kept while it is a start within the gap (they may still be pending)."""
+    if not valid_start(last):
+        return None
+    rec = {k: v for k, v in last.items() if k != "prev"}
+    p = last.get("prev")
+    if valid_start(p) and p["time"] <= now + gap and now - p["time"] < gap:
+        rec["prev"] = keep_chain(p, now, gap)
+    return rec
+
+
+def fmt_n(x):
+    return "%d" % x if x == int(x) else "%g" % x
+
+
 def running(state, now, gap):
     """The number of sessions running on the machine, with the last granted start not yet running."""
     n = 0
@@ -256,20 +269,22 @@ def running(state, now, gap):
                         n += 1
             except (OSError, ValueError, OverflowError):
                 pass  # junk, a dead process, an unreadable entry: not a session
-    last = read_json(os.path.join(state, "starts.json"))
-    if valid_start(last) and last["time"] <= now + gap and now - last["time"] < gap:
-        u, r = last.get("unit"), last.get("repo")
-        if isinstance(u, str) and isinstance(r, str) and u:
-            if u.startswith("PR#"):
-                sub = ("pr", u[3:])
-            elif u.startswith("#"):
-                sub = ("issue", u[1:])
-            elif u.startswith("adopt-"):
-                sub = ("adopt", u[6:])
-            else:
-                sub = ("node", u)
-            if sub[1] and not os.path.exists(os.path.join(state, r.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")):
-                n += 1
+    rec = read_json(os.path.join(state, "starts.json"))
+    while valid_start(rec):  # every start recorded within the gap, the last and its prev chain, each by the same rule
+        if rec["time"] <= now + gap and now - rec["time"] < gap:
+            u, r = rec.get("unit"), rec.get("repo")
+            if isinstance(u, str) and isinstance(r, str) and u:
+                if u.startswith("PR#"):
+                    sub = ("pr", u[3:])
+                elif u.startswith("#"):
+                    sub = ("issue", u[1:])
+                elif u.startswith("adopt-"):
+                    sub = ("adopt", u[6:])
+                else:
+                    sub = ("node", u)
+                if sub[1] and not os.path.exists(os.path.join(state, r.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")):
+                    n += 1
+        rec = rec.get("prev")
     return n
 
 
@@ -279,7 +294,7 @@ def full(state, now, gap):
     if budget is None:
         return None
     n = running(state, now, gap)
-    return "%d of %g sessions running on the machine" % (n, budget) if n >= budget else None
+    return "%d of %s sessions running on the machine" % (n, fmt_n(budget)) if n >= budget else None
 
 
 def took(state, repo, now, key, args):
@@ -288,11 +303,12 @@ def took(state, repo, now, key, args):
     # as ask: a start far in the future (more than the gap) is a bad record, not a previous start
     if valid_start(last) and last["time"] > now + start_gap(live_lists(state, now), args):
         last = None
-    prev = {k: v for k, v in last.items() if k != "prev"} if valid_start(last) else None
+    gap = start_gap(live_lists(state, now), args)
     if machine_max() is not None:
-        msg = full(state, now, start_gap(live_lists(state, now), args))
+        msg = full(state, now, gap)
         if msg:
             return msg
+    prev = keep_chain(last, now, gap) if valid_start(last) else None
     write_json(spath, {"time": now, "repo": repo, "unit": key, "prev": prev})
     # a later giveback of KEY must restore this record, not be taken for an undone grant
     wpath = os.path.join(state, repo, "waiting.json")
@@ -357,7 +373,7 @@ def main():
                 except OSError:
                     gap = 0.0
                 budget = machine_max()
-                print("%d of %g sessions running on the machine" % (running(state, now, gap), budget or 0))
+                print("%d of %s sessions running on the machine" % (running(state, now, gap), fmt_n(budget or 0)))
         finally:
             if lock:
                 lock.close()

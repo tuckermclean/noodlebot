@@ -69,6 +69,7 @@
 # with the throttle open it waits for its turn like any node), otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
 # With SCHED_MACHINE_MAX full, turn.py took refuses (exit 3): the node is not started, that is no failed took, one line says it waits, and the
 # RELEASE marker is put back, so the next tick takes it again and the node starts, released, once a session ends.
+# That kept release is dropped like every RELEASE when a tick ends before the ready list (a fetch, forge or graph failure).
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
 # After each tick's report it publishes the status site (site.py publish) when ~/.config/noodlebot/gist and
 # ~/.config/noodlebot/gist-token exist and SCHED_SITE is not 0; the gist token goes only to that one command.
@@ -111,7 +112,7 @@ export NOODLEBOT_FORGE_REPO=$repo NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noo
 log=$state/status.log
 tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note='' mhold=0
 declare -A relheld=()   # released nodes the machine budget holds (their line is written once)
-mmax=0; [[ ${SCHED_MACHINE_MAX:-} =~ ^[0-9]*\.?[0-9]*$ && ${SCHED_MACHINE_MAX:-} =~ [1-9] ]] && mmax=1   # a budget is set: a positive number
+mmax=0   # 1 when turn.py count says a machine budget is set (read once at the start; the loop does not parse SCHED_MACHINE_MAX)
 # The runtime root must not lie inside a Git working tree (sessions would load its CLAUDE.md and
 # AGENTS.md). The root may not exist yet: ask from its nearest existing ancestor.
 probe=$root
@@ -166,6 +167,10 @@ signature=$(sh "$here/version.sh" --signature "$nb" 2>/dev/null) || signature=
 [ -n "$signature" ] || signature="— n00dl3b0t unknown"
 { echo "$version" >"$state/version.tmp" && mv "$state/version.tmp" "$state/version"; } 2>/dev/null || say "could not write $state/version"
 say "loop started for $spec, version $version"
+if [ -n "${SCHED_MACHINE_MAX:-}" ] && mc=$(python3 -I "$here/turn.py" count --root "$root" --repo "$rtname" 2>/dev/null); then
+	mc=${mc#* of }   # "<n> of <N> sessions ...": N is 0 without a budget
+	awk -v m="${mc%% *}" 'BEGIN { exit !(m + 0 > 0) }' && mmax=1
+fi
 [ "$mmax" = 1 ] && [ "$ramp" != 1 ] && say "SCHED_MACHINE_MAX=$SCHED_MACHINE_MAX is set, but the start queue is off (SCHED_RAMP=0): the machine budget is off"
 [ "$caps_failed" = 0 ] || say "could not read the harness's capabilities; assuming all"
 has_cap usage || say "harness $hname lacks usage: throttle off"
@@ -1623,7 +1628,7 @@ machine_hold() {
 	[ "$mmax" = 1 ] && [ "$mhold" = 0 ] && [ "${#wlist[@]}" -gt 0 ] || return 0
 	local c rest
 	c=$(python3 -I "$here/turn.py" count --root "$root" --repo "$rtname" 2>/dev/null) || return 0
-	rest=${c#* of }; [ "${c%% of *}" -ge "${rest%%[ .]*}" ] 2>/dev/null || return 0
+	rest=${c#* of }; awk -v n="${c%% of *}" -v m="${rest%% *}" 'BEGIN { exit !(n + 0 >= m + 0) }' || return 0
 	mhold=1; say "$1; machine budget: $c; the waiting units are held"
 }
 
@@ -1905,6 +1910,7 @@ tick_run() {
 	local -A isrel=() handled=() isready=() started=()
 	local out took_failed=0 trc=0
 	for id in "${rels[@]}"; do isrel[$id]=1; done
+	for id in "${!relheld[@]}"; do [ -n "${isrel[$id]:-}" ] || unset "relheld[$id]"; done   # a release that ended another way: its next hold is a new line
 	while read -r id name kind; do [ -z "$id" ] || isready[$id]=1; done <<<"$ready"   # all of them, also past a break below
 	while read -r id name kind; do
 		[ -n "$id" ] || continue
