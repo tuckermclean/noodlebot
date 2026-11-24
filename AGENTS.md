@@ -40,7 +40,7 @@ Build a node with `/noodlebot:node <ID>`. This section is this repository's part
   `scheduler/<name>.sh` or `.py`, `scheduler/<name>.test.sh` and `scheduler/<name>-*.test.sh`; for another file, the
   test files that name it), run through `TEST_JOBS=2 make test TESTS="<files>"`, so that a change to
   `scheduler/loop.sh`, whose quick gate is about a hundred test files, runs two at a time. The whole `make test` runs
-  in CI on the PR (`.github/workflows/test.yml`); a session does not run it locally. Tests are the `*.test.sh` files
+  in CI on the PR (`.github/workflows/test.yml`); a session does not run it locally. A script that repeats the tests (a mutation sweep) applies each mutant in a scratch copy of the tree, never in the node's own worktree, and runs one test file at a time. Tests are the `*.test.sh` files
   and `scheduler/testdata/` (the frozen paths). A red target has the form
   `sh scheduler/<name>.test.sh` (or `bash` for `loop.test.sh`). A new script gets its own
   `*.test.sh`. A new case waits for the condition it checks (no

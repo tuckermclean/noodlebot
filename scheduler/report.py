@@ -1368,6 +1368,35 @@ def post_failed(a, rs):
             a.errors.append(str(e))
 
 
+def post_oom(a, rs):
+    """One milestone on the unit's home issue for each end of its session killed out of memory in its unit (the loop's stopped file
+    says "out of memory in its unit (MemoryMax <ceiling>, rc N)"), once per stopped file."""
+    for n in nodes(a.state):
+        if n.startswith("PR #") or not has(a.state, n, "stopped"):
+            continue
+        path = os.path.join(tdir(a.state, n), "stopped")
+        try:
+            with open(path, errors="replace") as fh:
+                why = fh.readline().strip()
+        except OSError:
+            continue
+        m = re.search(r"out of memory in its unit \(MemoryMax (\S+), rc", why)
+        if not m:
+            continue
+        key = "oom:" + mtime_key(path)
+        done = rs.setdefault("units", {}).setdefault(n, {}).setdefault("done", [])
+        if key in done:
+            continue
+        if a.first_run:  # ends from before the first run were seen, not new
+            done.append(key)
+            continue
+        try:
+            milestone(a, rs, n, key, "session killed out of memory (the unit's memory ceiling, MemoryMax %s, was reached)" % m.group(1),
+                      "The kernel's out-of-memory killer ended its session in the unit's scope: MemoryMax %s. Stopped: %s" % (m.group(1), why))
+        except Exception as e:
+            a.errors.append(str(e))
+
+
 def post_queued(a, rs):
     """One "queued for triage" milestone on each issue the owner labelled that has no triage started or done (issues.json,
     status.log) and none posted yet (rs["queued"]); the issue has no state folder yet, so it is posted directly."""
@@ -2162,6 +2191,7 @@ def main():
         collect_starts(a, rs)
         flush(a, rs)
         post_failed(a, rs)
+        post_oom(a, rs)
         post_queued(a, rs)
         post_spec_merged(a, rs)
         if merges_unknown(a):  # logged once per spell; the run still succeeds
