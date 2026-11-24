@@ -39,11 +39,14 @@ case $adj in '' | *[!0-9]*) ;; *)
 esac
 
 # TMPDIR of the session: <state-dir>/tmp, emptied; when it cannot be, the inherited one stays
-# (only below a <state-dir> that resolves to a real folder other than "/": "//", "/." or an empty one must never make this an rm -rf of /tmp)
+# (only for an absolute <state-dir> that resolves to a folder other than "/" or "//": an empty one, "/", "//", "/." or one
+# that cannot be entered is refused, so this is never an rm -rf of /tmp; tmpd stays empty and no rm below runs)
 tmpd= tmpmade=
-real=$(cd "$dir" 2>/dev/null && pwd -P)
-case $real in
-/?*) tmpd=$dir/tmp ;;
+case $dir in
+/?*)
+	real=$(cd "$dir" 2>/dev/null && pwd -P) || real=
+	case $real in /*[!/]*) tmpd=$dir/tmp ;; esac
+	;;
 esac
 if [ -n "$tmpd" ] && rm -rf "$tmpd" 2>/dev/null && mkdir -p "$tmpd" 2>/dev/null; then
 	tmpmade=1; export TMPDIR=$tmpd
