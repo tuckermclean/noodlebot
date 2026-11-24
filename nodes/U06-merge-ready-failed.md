@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | U04 | none | S |
+| now | U04 | D19 | S |
 
 **Owns:** in `scheduler/report.py`: the failed-run reason of a node PR's "Waiting on you" item (`merge_state`, and the morning overview's line built from it) and the comment id of the last `Fresh review` kept in each open node PR's merge record in `report.json` (`post_prs`); in `scheduler/site.py`, the failed-run reason of a node's `merge_ready` and `merge_why` (`merge_state`); the cases this node appends to U04's tests `scheduler/report-u04.test.sh` and `scheduler/site-u04.test.sh` (added lines only, their scratch paths under a folder named `U06`), and any fixtures they add under `scheduler/testdata/u06/`.
 **Resolves:** #210
