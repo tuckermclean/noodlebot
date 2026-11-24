@@ -35,6 +35,7 @@ TESTS = \
 	scheduler/turn-lock.test.sh \
 	scheduler/turn-took.test.sh \
 	scheduler/turn-place.test.sh \
+	scheduler/turn-budget.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	plugin/skills/node/check-coverage.test.sh \
 	plugin/skills/node/check-owns-diff.test.sh \
