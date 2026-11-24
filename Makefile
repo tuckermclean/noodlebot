@@ -23,6 +23,7 @@ TESTS = \
 	scheduler/report-queue.test.sh \
 	scheduler/report-queue-answers.test.sh \
 	scheduler/report-u04.test.sh \
+	scheduler/report-u05.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
@@ -148,6 +149,7 @@ TESTS = \
 	scheduler/loop-g02-gone.test.sh \
 	scheduler/loop-g02-gone2.test.sh \
 	scheduler/feedback-g06.test.sh \
+	scheduler/feedback-u05.test.sh \
 	scheduler/loop-g06-limit.test.sh \
 	scheduler/loop-s06-review.test.sh \
 	scheduler/loop-s02.test.sh \
@@ -177,11 +179,13 @@ TESTS = \
 	plugin/skills/triage/nodes.test.sh \
 	plugin/skills/node/skill.test.sh \
 	plugin/skills/node/skill-g07.test.sh \
+	plugin/skills/node/skill-u05.test.sh \
 	plugin/skills/node/skill-a10.test.sh \
 	plugin/skills/node/skill-g08.test.sh \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
 	scheduler/site-u04.test.sh \
+	scheduler/site-u05.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
 	scheduler/pickup.test.sh \

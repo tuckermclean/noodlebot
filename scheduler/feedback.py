@@ -10,7 +10,8 @@ forge access is through forge.py (every page of each list; its token script, or 
 For each open bot PR on node/<ID>-... or spec/* it reads the conversation comments, the line comments and the
 reviews. Feedback is an item by the owner (login, association OWNER, not a bot): a conversation comment, a line
 comment, a CHANGES_REQUESTED review, a COMMENTED review with a body; not an approval, an empty review, a comment
-that is only a thumbs-up (👍, :+1:, +1), anyone else's item or an owner comment recorded as an answer (its URL in
+that is only a thumbs-up (👍, :+1:, +1), a conversation comment whose first line is
+"Frozen lines approved at <7-40 hex>" (U05), anyone else's item or an owner comment recorded as an answer (its URL in
 ANSWER.md or answered/*-ANSWER.md of the PR's unit: node/<ID>/ or pr/<N>/).
 The record DIR/feedback/N holds the newest conversation, line and review ID handed to a session. A PR with
 feedback newer than it prints "<N> <branch>" on stdout and gets DIR/feedback/N.md (the FEEDBACK.md: PR, branch and
@@ -110,6 +111,15 @@ def only_thumbs(body):
     return (body or "").strip().replace("️", "") in THUMBS
 
 
+APPROVAL = re.compile(r"Frozen lines approved at [0-9a-fA-F]{7,40}")
+
+
+def approval(body):
+    """True for a comment whose first line is the frozen-lines approval (U05): not feedback."""
+    lines = (body or "").strip().splitlines()
+    return bool(lines) and APPROVAL.fullmatch(lines[0].strip()) is not None
+
+
 def fetch_pr(pool, f, n):
     """Start the three reads of PR n on the pool: the futures of its conversation comments, line comments, reviews."""
     return [pool.submit(read, number=n) for read in (f.pr_comments, f.pr_line_comments, f.pr_reviews)]
@@ -146,6 +156,8 @@ def new_items(items, rec, owner, answers):
     for it in items:
         c = it["raw"]
         if c["id"] <= rec[it["kind"]] or not is_owner(c, owner) or only_thumbs(c["body"]):
+            continue
+        if it["kind"] == "conversation" and approval(c["body"]):
             continue
         if it["kind"] != "review" and c["url"] and c["url"] in answers:
             continue
