@@ -39,9 +39,10 @@ case $adj in '' | *[!0-9]*) ;; *)
 esac
 
 # TMPDIR of the session: <state-dir>/tmp, emptied; when it cannot be, the inherited one stays
-# (only below an absolute <state-dir> of its own: an empty or "/" one must never make this an rm -rf of /tmp)
+# (only below a <state-dir> that resolves to a real folder other than "/": "//", "/." or an empty one must never make this an rm -rf of /tmp)
 tmpd= tmpmade=
-case $dir in
+real=$(cd "$dir" 2>/dev/null && pwd -P)
+case $real in
 /?*) tmpd=$dir/tmp ;;
 esac
 if [ -n "$tmpd" ] && rm -rf "$tmpd" 2>/dev/null && mkdir -p "$tmpd" 2>/dev/null; then
@@ -50,16 +51,19 @@ else
 	echo "run-session.sh: cannot make a tmp folder in '$dir': keeping the inherited TMPDIR" >&2
 fi
 
+# the unit's settings are read once; neither stage (the agent CLI, the tests it runs) inherits them
+units=${SCHED_UNITS:-} mmax_in=${SCHED_MEMORY_MAX:-} smax_in=${SCHED_SWAP_MAX:-} mem=${SCHED_MEMINFO:-/proc/meminfo}
+unset SCHED_UNITS SCHED_MEMORY_MAX SCHED_SWAP_MAX SCHED_MEMINFO SCHED_OOM_ADJ
+
 # the unit: the first stage's scope when the units are on and systemd-run --user can make one
 unit= mmax= smax= nounit=
-if [ "${SCHED_UNITS:-}" != 1 ]; then
+if [ "$units" != 1 ]; then
 	nounit="the units are off"
 elif ! command -v systemd-run >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
 	nounit="systemd-run or systemctl is missing"
 else
-	mem=${SCHED_MEMINFO:-/proc/meminfo}
 	half() { awk -v k="$1" '$1 == k":" { printf "%.0f\n", $2 * 512; f = 1 } END { exit !f }' "$mem" 2>/dev/null; }
-	mmax=${SCHED_MEMORY_MAX:-$(half MemTotal)} smax=${SCHED_SWAP_MAX:-$(half SwapTotal)}
+	mmax=${mmax_in:-$(half MemTotal)} smax=${smax_in:-$(half SwapTotal)}
 	[ -n "$mmax" ] || mmax=infinity
 	[ -n "$smax" ] || smax=infinity
 	# a probe with the session's own properties: only a scope that ran its command proves `systemd-run --user` works with them
@@ -68,7 +72,7 @@ else
 		|| nounit="systemd-run --user failed: $(echo "$why" | tr '\n' ' ')"
 fi
 if [ -z "$nounit" ]; then
-	key=$(echo "$dir" | awk -F/ '{ print $(NF-2) "-" $(NF-1) "-" $NF }' | tr -c 'A-Za-z0-9:_.@\n-' '-')
+	key=$(echo "$dir" | awk -F/ '{ print $(NF-2) "-" $(NF-1) "-" $NF }' | tr -c 'A-Za-z0-9:_.\n-' '-')
 	unit="noodlebot-$key-$(date +%s).scope"
 else
 	echo "run-session.sh: no unit used for this session: $nounit" >&2
