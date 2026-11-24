@@ -168,6 +168,7 @@ TESTS = \
 	scheduler/loops-s08.test.sh \
 	scheduler/loops-api.test.sh \
 	scheduler/loops-pidns.test.sh \
+	scheduler/loops-m04.test.sh \
 	scheduler/api.test.sh \
 	scheduler/api-sessions.test.sh \
 	scheduler/api-events.test.sh \
