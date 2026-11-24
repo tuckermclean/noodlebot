@@ -198,5 +198,35 @@ done
 d_sen "D18-AC-2: AGENTS.md Tests: one test file at a time is said of the script that repeats the tests (the sweep's sentence)" "$tmp/agents.unit" \
 	'script|sweep|repeat' 'mutant' 'one test file at a time' '!more than one'
 
+# Review fix: d_notrap exempts any sentence with a negation word anywhere. This stricter check lets a negation count only
+# when it directly precedes the action it forbids ("never apply a mutant in the worktree and restore it by a trap").
+# d_notrap2 <label> <unit>: no sentence has a mutant applied or put in the worktree together with a trap, a restore or on exit.
+d_notrap2() {
+	if [ ! -s "$2" ]; then bad "$1 (the rule is not found)"; return; fi
+	if awk '
+		{ gsub(/[*`]/, ""); gsub(/’/, "\047"); t = t " " tolower($0) }
+		END {
+			t = t " "
+			n = split(t, S, /[.] /)
+			for (i = 1; i <= n; i++) {
+				s = S[i]
+				gsub(/never in the node.s own worktree/, "", s)
+				gsub(/outside the node.s (own )?worktree/, "", s)
+				gsub(/(never|not|no|nor|cannot|don.t|do not) (to )?(be )?(appl|put|writ|restor)[a-z]*/, "", s)
+				if (s ~ /(appl|put|writ)[a-z]* [a-z ]*mutant[a-z ]* in the (node.s )?(own )?worktree|mutant[a-z ]* (appl|put|writ)[a-z]* in the (node.s )?(own )?worktree/ && s ~ /trap|restor|on exit/) exit 1
+			}
+			exit 0 }' "$2"; then ok "$1"; else bad "$1"; fi
+}
+for p in "SKILL.md|plugin/skills/node/SKILL.md|D18-AC-1" "plugin tester agent|plugin/agents/tester.md|D18-AC-1" \
+	"plugin implementer agent|plugin/agents/implementer.md|D18-AC-1" "plugin reviewer agent|plugin/agents/reviewer.md|D18-AC-1" \
+	"noodlebot-tester agent|.claude/agents/noodlebot-tester.md|D18-AC-2" "noodlebot-implementer agent|.claude/agents/noodlebot-implementer.md|D18-AC-2" \
+	"noodlebot-reviewer agent|.claude/agents/noodlebot-reviewer.md|D18-AC-2"; do
+	who=${p%%|*}; r=${p#*|}; f=$root/${r%%|*}; ac=${r#*|}; k=$(echo "$who" | tr -c 'A-Za-z0-9\n' '_')
+	[ -f "$f" ] || continue
+	d_unit "$f" "$tmp/$k.unit2"
+	d_notrap2 "$ac: $who: no sentence applies a mutant in the worktree and restores it by a trap or on exit" "$tmp/$k.unit2"
+done
+d_notrap2 "D18-AC-2: AGENTS.md Tests: no sentence applies a mutant in the worktree and restores it by a trap or on exit" "$tmp/agents.unit"
+
 echo "$fails failed"
 [ "$fails" = 0 ]
