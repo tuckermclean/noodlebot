@@ -29,8 +29,11 @@ The machine budget SCHED_MACHINE_MAX (a positive number; unset, empty, 0 or anyt
 under the same lock as the start record, count the sessions running on the machine. A session is a
 DATA/state/*/{node,issue,pr,adopt}/*/session.pid whose pid is a live process with run-session.sh in its command line
 (any repository); the last start in starts.json counts as one more while it is within the gap and its unit has no
-session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the gap. With the count at or over the budget, ask prints nothing and records
-nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the machine" on stderr and exits 3.
+session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the
+gap. The prev chain kept in starts.json, pruned to the gap, is written whatever SCHED_MACHINE_MAX is, so that a
+giveback restores the previous record with its chain. With the count at or over the budget, ask prints nothing
+and records nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the machine" on
+stderr and exits 3.
 
   place     read-only: how far KEY is from a turn. KEY is looked up in this loop's list (--repo may be
             OWNER/NAME; the part after the last "/" is the folder). Prints
@@ -257,7 +260,8 @@ def fmt_n(x):
 
 
 def running(state, now, gap):
-    """The number of sessions running on the machine, with the last granted start not yet running."""
+    """The number of sessions running on the machine, plus every start of the starts.json prev chain
+    within the gap whose unit has no session.pid yet (see keep_chain)."""
     n = 0
     for kind in ("node", "issue", "pr", "adopt"):
         for path in glob.glob(os.path.join(glob.escape(state), "*", kind, "*", "session.pid")):
