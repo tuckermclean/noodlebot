@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | M01 | P02, P03, P04 | L |
+| now | M01 | M04, P02, P03, P04 | L |
 
 **Owns:** `scheduler/api.py`, `scheduler/api.test.sh`, its line in the `Makefile`'s `test` target, the schemas `scheduler/api-schema/v1/`, the fixtures `scheduler/testdata/api/`, the cache of labelled issues in `scheduler/issues.py` (`issues.json`) and its case in `scheduler/issues.test.sh`, the API server's start, stop and status line in `scheduler/loops.sh` and their cases in `scheduler/loops.test.sh`, the API section of the README.
 **Resolves:** #46
