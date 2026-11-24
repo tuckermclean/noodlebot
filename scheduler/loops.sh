@@ -24,6 +24,16 @@
 # is still running at the LOOPS_STOP_WAIT deadline.
 # start refuses (exit 1, nothing started) while ~/STOP exists, and while a loop from before the D02
 # move still holds <checkout>/state/<name>/loop.lock: run scheduler/move-runtime.sh first.
+# M04: with ~/.config/noodlebot/units present (its contents do not matter), start runs the first `tmux new` of a
+# run, when no tmux server runs, as `systemd-run --user --scope --collect --unit noodlebot-loops tmux new ...`
+# (the later ones directly), so the server outlives the login session; a server already running in a
+# session-<n>.scope gets one line saying the loops end with that login and how to move them (read from
+# /proc/<pid>/cgroup, or <NOODLEBOT_PROC_ROOT>/<pid>/cgroup in tests). start and status read
+# `loginctl show-user <user> -p Linger` and print one line on Linger=no; nothing is ever changed (no
+# enable-linger, nothing written under ~/.config/systemd). If systemd-run is missing or fails, that tmux new
+# runs directly, one line says the loops run in the calling shell's session, and systemd-run is not tried
+# again in that run. Without the units file neither loginctl nor systemd-run is called, status prints
+# nothing new, and start prints that one calling-shell line.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
@@ -125,6 +135,66 @@ held() {
 	done < <(grep -s -l -E "^ino:[[:space:]]+$ino\$" /proc/[0-9]*/fdinfo/* 2>/dev/null)
 	return 1
 }
+# M04 helpers. units: ~/.config/noodlebot/units is present.
+units=0
+[ -e "$HOME/.config/noodlebot/units" ] && units=1
+use_sd=0 said_where=0
+say_where() {
+	[ $said_where = 1 ] && return 0
+	said_where=1
+	echo "loops.sh: the loops and the server run in the calling shell's session and end with it; see the README on ~/.config/noodlebot/units."
+}
+# linger_line: one line when loginctl reports Linger=no for the user (units file only; read only).
+linger_line() {
+	[ $units = 1 ] || return 0
+	local u l
+	u=$(id -un 2>/dev/null) || return 0
+	l=$(loginctl show-user "$u" -p Linger 2>/dev/null) || return 0
+	case $l in
+	Linger=no) echo "loops.sh: lingering is off for $u: a logout stops the loops and the API; run 'loginctl enable-linger $u' to keep them." ;;
+	esac
+	return 0
+}
+# server_pid: the pid of the running tmux server (empty when none).
+server_pid() {
+	local p
+	p=$(tmux display -p '#{pid}' 2>/dev/null) || return 0
+	case $p in '' | *[!0-9]*) return 0 ;; esac
+	echo "$p"
+}
+# check_server: with the units file, decide how the first tmux new runs, and say when a running server is in a login session.
+check_server() {
+	[ $units = 1 ] || return 0
+	local p cg
+	p=$(server_pid)
+	if [ -z "$p" ]; then
+		use_sd=1
+		return 0
+	fi
+	cg=$(cat "${NOODLEBOT_PROC_ROOT:-/proc}/$p/cgroup" 2>/dev/null) || return 0
+	case $cg in
+	*user@*.service*) ;;
+	*/session-*.scope*) echo "loops.sh: the tmux server runs in a login session's scope, so the loops and the API end with that login session; to move them: stop the loops (loops.sh stop), end the tmux server, then start again." ;;
+	esac
+	return 0
+}
+# tnew <tmux new arguments>: tmux new, the first one through systemd-run when check_server chose so.
+tnew() {
+	local r
+	if [ $use_sd = 1 ]; then
+		use_sd=0
+		if command -v systemd-run >/dev/null 2>&1; then
+			systemd-run --user --scope --collect --unit noodlebot-loops tmux new "$@" && return 0
+			r=$?
+			# with --scope the status is the command's: a server running now means tmux itself failed
+			[ -z "$(server_pid)" ] || return $r
+		fi
+		say_where
+	elif [ $units = 0 ]; then
+		say_where
+	fi
+	tmux new "$@"
+}
 # running <name>: the loop's lock is held.
 running() { held "$root/state/$1/loop.lock"; }
 # resolved <dir>: the directory with symbolic links resolved, or as given when it does not exist.
@@ -148,6 +218,8 @@ start)
 		done
 		[ $old = 0 ] || { echo "Nothing started." >&2; exit 1; }
 	fi
+	linger_line
+	check_server
 	pass=()
 	for v in $(compgen -v | grep -E '^((USAGE|SCHED)_[A-Za-z0-9_]*|PICKUP(_[A-Za-z0-9_]*)?)$'); do pass+=("$v=${!v}"); done
 	launched=()
@@ -161,7 +233,7 @@ start)
 				rm -f "$HOME/STOP-$name"
 				echo "$repo: removed stale $HOME/STOP-$name"
 			fi
-			if tmux new -d -s "sched-$name" env NOODLEBOT_DATA="$root" ${pass[@]+"${pass[@]}"} "$nb/scheduler/loop.sh" "$repo"; then
+			if tnew -d -s "sched-$name" env NOODLEBOT_DATA="$root" ${pass[@]+"${pass[@]}"} "$nb/scheduler/loop.sh" "$repo"; then
 				echo "$repo: started in tmux session sched-$name"
 				launched+=("$repo")
 			else
@@ -174,7 +246,7 @@ start)
 	if [ -e "$nb/scheduler/api.py" ]; then
 		if held "$root/api.lock"; then
 			echo "api: server already running"
-		elif tmux new -d -s sched-api env NOODLEBOT_DATA="$root" python3 "$nb/scheduler/api.py"; then
+		elif tnew -d -s sched-api env NOODLEBOT_DATA="$root" python3 "$nb/scheduler/api.py"; then
 			echo "api: started in tmux session sched-api"
 			api_launched=1
 		else
@@ -281,6 +353,7 @@ status)
 	if [ -e "$nb/scheduler/api.py" ]; then
 		if held "$root/api.lock"; then echo "api: server running; socket $root/api.sock"
 		else echo "api: server not running; socket $root/api.sock"; fi
-	fi ;;
+	fi
+	linger_line ;;
 esac
 exit $rc
