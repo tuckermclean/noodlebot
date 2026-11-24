@@ -243,5 +243,31 @@ cnt a
 if [ $rc = 0 ] && [ "$out" = "0 of 1000000 sessions running on the machine" ]; then pass "S13-AC-1 count with SCHED_MACHINE_MAX=1000000 prints the integer, not 1e+06"; else fail "count with MAX=1000000: rc=$rc out='$out'"; fi
 unset SCHED_MACHINE_MAX
 
+# --- (review round) pending grants three deep: the prev chain is kept through each record, not only one level
+reset; max 3; hb a "$base"; hb b "$base"
+echo "X1 triage - $(w 100)" | list a 10
+ask a "$base" $G
+kx=$key
+took b $((base + 1)) A9 --gap 10
+r1=$rc
+took b $((base + 2)) B9 --gap 10
+r2=$rc
+before=$(snap)
+took b $((base + 3)) C9 --gap 10
+if [ "$kx" = X1 ] && [ $r1 = 0 ] && [ $r2 = 0 ] && [ $rc = 3 ] && printf '%s' "$out" | grep -qF '3 of 3 sessions running on the machine' && [ "$(snap)" = "$before" ]; then pass "S13-AC-1 three pending grants (an ask and two tooks) within the gap count three: the next took with MAX=3 is refused, nothing recorded"; else fail "three deep: ask='$kx' took rc=$r1/$r2/$rc out='$out'"; fi
+
+# --- (review round) a fractional budget compares as a number: 1 < 1.5 grants, 2 < 1.5 does not
+reset; max 1.5; hb a "$base"; echo "A2 fresh S $(w 100)" | list a 10
+pidfile b node B1 "$s1"
+cnt a
+c1=$out rc1=$rc
+ask a "$base" $G
+if [ $rc1 = 0 ] && [ "$c1" = "1 of 1.5 sessions running on the machine" ] && [ $rc = 0 ] && [ "$key" = A2 ]; then pass "S13-AC-1 SCHED_MACHINE_MAX=1.5 with one live session: count prints '1 of 1.5' and ask grants a turn"; else fail "MAX=1.5, one session: count rc=$rc1 out='$c1'; ask rc=$rc key='$key' out='$out'"; fi
+reset; max 1.5; hb a "$base"; echo "A2 fresh S $(w 100)" | list a 10
+pidfile b node B1 "$s1"; pidfile c issue 7 "$s2"
+ask a "$base" $G
+if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 SCHED_MACHINE_MAX=1.5 with two live sessions: ask grants no turn"; else fail "MAX=1.5, two sessions: rc=$rc out='$out'"; fi
+unset SCHED_MACHINE_MAX
+
 [ "$fails" = 0 ] || { echo "$fails failure(s)"; exit 1; }
 echo "all passed"
