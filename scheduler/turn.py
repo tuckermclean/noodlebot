@@ -30,8 +30,8 @@ under the same lock as the start record, count the sessions running on the machi
 DATA/state/*/{node,issue,pr,adopt}/*/session.pid whose pid is a live process with run-session.sh in its command line
 (any repository); the last start in starts.json counts as one more while it is within the gap and its unit has no
 session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the
-gap. The prev chain kept in starts.json, pruned to the gap, is written whatever SCHED_MACHINE_MAX is, so that a
-giveback restores the previous record with its chain. With the count at or over the budget, ask prints nothing
+gap. With a budget set, the prev chain kept in starts.json is pruned to the gap, so that a
+giveback restores the previous record with its chain; with none, starts.json keeps one previous start, as before. With the count at or over the budget, ask prints nothing
 and records nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the machine" on
 stderr and exits 3.
 
@@ -201,7 +201,7 @@ def ask(state, repo, now, args):
         text += ", first by the starvation limit"
     if ahead:
         text += ", ahead of " + ", ".join(ahead[:3]) + (", +%d more" % (len(ahead) - 3) if len(ahead) > 3 else "")
-    prev = keep_chain(last, now, gap)
+    prev = prev_record(last, now, gap)
     write_json(spath, {"time": now, "repo": repo, "unit": u["key"], "prev": prev})
     return "%s\t%s" % (u["key"], text)
 
@@ -242,6 +242,13 @@ def machine_max():
     """SCHED_MACHINE_MAX as a positive finite number, else None (no budget)."""
     v = env_num("SCHED_MACHINE_MAX", None)
     return v if v is not None and math.isfinite(v) and v > 0 else None
+
+
+def prev_record(last, now, gap):
+    """LAST as the prev of a new start: with a machine budget its pruned chain, without one only LAST itself."""
+    if machine_max() is None:
+        return {k: v for k, v in last.items() if k != "prev"} if valid_start(last) else None
+    return keep_chain(last, now, gap)
 
 
 def keep_chain(last, now, gap):
@@ -312,7 +319,7 @@ def took(state, repo, now, key, args):
         msg = full(state, now, gap)
         if msg:
             return msg
-    prev = keep_chain(last, now, gap) if valid_start(last) else None
+    prev = prev_record(last, now, gap)
     write_json(spath, {"time": now, "repo": repo, "unit": key, "prev": prev})
     # a later giveback of KEY must restore this record, not be taken for an undone grant
     wpath = os.path.join(state, repo, "waiting.json")
