@@ -4,7 +4,7 @@
 |---|---|---|---|
 | now | S07 | none | S |
 
-**Owns:** in `scheduler/turn.py`: the machine budget (`SCHED_MACHINE_MAX`) of `ask` and `took`, the count of running sessions under the runtime root, and its lines in the docstring; in `scheduler/loop.sh`: the status-log line for a start the machine budget holds (a turn and a released node), and its line in the header comment; `scheduler/turn-budget.test.sh` (new), `scheduler/loop-s13.test.sh` (new), their lines in the `Makefile`'s `TESTS`.
+**Owns:** in `scheduler/turn.py`: the machine budget (`SCHED_MACHINE_MAX`) of `ask` and `took`, the count of running sessions under the runtime root, and its lines in the docstring; in `scheduler/loop.sh`: the status-log line for a start the machine budget holds (a turn and a released node), and its line in the header comment; `scheduler/turn-budget.test.sh` (new), `scheduler/loop-s13.test.sh` (new), `scheduler/loop-s13-again.test.sh` (new), their lines in the `Makefile`'s `TESTS`.
 **Resolves:** #218
 
 ## Purpose
@@ -28,7 +28,7 @@ After this node the owner can cap the sessions running at once on the whole mach
 
 ## Gate
 - **S13-AC-1** — With `SCHED_MACHINE_MAX=N` (N > 0), `turn.py ask` grants no turn while N sessions run under the runtime root (live `session.pid` processes of `run-session.sh` across every repository, and turns granted whose session has not started yet), and grants the first unit of the order its turn once one ends; concurrent asks never take the count above N; dead pid files and non-session processes are not counted; unset or 0 changes nothing. *Verify:* `scheduler/turn-budget.test.sh`.
-- **S13-AC-2** — Two loops under one runtime root with `SCHED_MACHINE_MAX=1` never run two sessions at once; the held unit starts once the running session ends, whichever loop it belongs to; a released node waits the same way; each hold is one status-log line naming the machine budget. *Verify:* `scheduler/loop-s13.test.sh`.
+- **S13-AC-2** — Two loops under one runtime root with `SCHED_MACHINE_MAX=1` never run two sessions at once; the held unit starts once the running session ends, whichever loop it belongs to; a released node waits the same way; each hold is one status-log line naming the machine budget. *Verify:* `scheduler/loop-s13.test.sh` and `scheduler/loop-s13-again.test.sh`.
 - **S13-AC-3** — Every existing `scheduler/turn*.test.sh` and `scheduler/loop-s07*.test.sh` passes unchanged. *Verify:* those tests in `make test`.
 
 ## Risks
