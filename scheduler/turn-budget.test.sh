@@ -11,6 +11,8 @@
 #                       adopt-K -> adopt/K, under state/<repo of the start>/). A pid file of a dead process, or of a live
 #                       process whose command line lacks run-session.sh, is not counted; nor is any other folder (pickup).
 #                       A granted unit whose session.pid exists is counted once (as a session), not twice.
+#                       (fix round) Every start recorded within the gap counts as pending, the last and its prev chain, each
+#                       by the same rule; N prints as an integer when it is integral (1000000, not 1e+06).
 #   ask      with the budget full (count >= MAX): prints nothing (stdout and stderr both empty), records nothing
 #            (starts.json unchanged), exit 0; the order and the waits are unchanged.
 #   took KEY with the budget full: exit code 3, one line on stderr naming the machine budget, "<n> of <N> sessions
@@ -207,6 +209,38 @@ for v in unset empty 0 -1 abc; do
 	took b $((base + 1)) B9 --gap 10
 	if [ $rc = 0 ] && [ "$(rec)" = "b/B9@$((base + 1))" ]; then pass "S13-AC-1 SCHED_MACHINE_MAX $v: took records despite live sessions"; else fail "took with MAX $v: rc=$rc out='$out'"; fi
 done
+unset SCHED_MACHINE_MAX
+
+# --- (fix round) a granted start whose session has started is counted once: the key -> state folder of each kind
+# (ID -> node/ID, #N -> issue/N, PR#N -> pr/N, adopt-K -> adopt/K); a wrong folder would count it twice (MAX=2)
+for kv in '#7 triage issue 7' 'PR#5 update pr 5' 'adopt-k triage adopt k'; do
+	set -- $kv; gk=$1 gkind=$2 gdir=$3 gname=$4
+	reset; max 2; hb a "$base"; hb b "$base"
+	echo "$gk $gkind - $(w 100)" | list a 10
+	ask a "$base" $G
+	pidfile a "$gdir" "$gname" "$s1"
+	took b $((base + 2)) B9 --gap 10
+	if [ "$key" = "$gk" ] && [ $rc = 0 ] && [ "$(rec)" = "b/B9@$((base + 2))" ]; then pass "S13-AC-1 a granted $gk with a live $gdir/$gname/session.pid counts once: took with MAX=2 goes through"; else fail "double count of $gk: key='$key' rc=$rc out='$out'"; fi
+done
+
+# --- (fix round) pending grants are not only the last start: the count includes every start recorded within the gap, the last and its prev
+reset; max 2; hb a "$base"; hb b "$base"
+echo "X1 triage - $(w 100)" | list a 10
+ask a "$base" $G
+kx=$key
+took b $((base + 1)) A9 --gap 10
+r1=$rc
+before=$(snap)
+took b $((base + 2)) B9 --gap 10
+if [ "$kx" = X1 ] && [ $r1 = 0 ] && [ $rc = 3 ] && printf '%s' "$out" | grep -qF '2 of 2 sessions running on the machine' && [ "$(snap)" = "$before" ]; then pass "S13-AC-1 a granted ask and a took within the gap, none with a session.pid, are two: the next took with MAX=2 is refused"; else fail "pending grants: ask='$kx' took1 rc=$r1, took2 rc=$rc out='$out'"; fi
+max 3
+took b $((base + 2)) B9 --gap 10
+if [ $rc = 0 ] && [ "$(rec)" = "b/B9@$((base + 2))" ]; then pass "S13-AC-1 the same took with MAX=3 goes through (two pending grants)"; else fail "took with MAX=3 after two grants: rc=$rc out='$out'"; fi
+
+# --- (fix round) an integral budget prints as an integer
+reset; max 1000000; hb a "$base"
+cnt a
+if [ $rc = 0 ] && [ "$out" = "0 of 1000000 sessions running on the machine" ]; then pass "S13-AC-1 count with SCHED_MACHINE_MAX=1000000 prints the integer, not 1e+06"; else fail "count with MAX=1000000: rc=$rc out='$out'"; fi
 unset SCHED_MACHINE_MAX
 
 [ "$fails" = 0 ] || { echo "$fails failure(s)"; exit 1; }
