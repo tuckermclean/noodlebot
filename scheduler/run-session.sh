@@ -33,35 +33,41 @@ export NOODLEBOT_FORGE="$here/forge-cli.sh"
 adj=${SCHED_OOM_ADJ:-500}
 case $adj in '' | *[!0-9]*) ;; *)
 	cur=$(cat /proc/self/oom_score_adj 2>/dev/null) || cur=
-	case $cur in '' | -* | *[!0-9]*) ;; *)
+	case ${cur#-} in '' | *[!0-9]*) ;; *)
 		[ "$adj" -le "$cur" ] || { echo "$adj" >/proc/self/oom_score_adj; } 2>/dev/null || :
 	esac
 esac
 
 # TMPDIR of the session: <state-dir>/tmp, emptied; when it cannot be, the inherited one stays
-tmpd=$dir/tmp tmpmade=
-if rm -rf "$tmpd" 2>/dev/null && mkdir -p "$tmpd" 2>/dev/null; then
+# (only below an absolute <state-dir> of its own: an empty or "/" one must never make this an rm -rf of /tmp)
+tmpd= tmpmade=
+case $dir in
+/?*) tmpd=$dir/tmp ;;
+esac
+if [ -n "$tmpd" ] && rm -rf "$tmpd" 2>/dev/null && mkdir -p "$tmpd" 2>/dev/null; then
 	tmpmade=1; export TMPDIR=$tmpd
 else
-	echo "run-session.sh: cannot make $tmpd: keeping the inherited TMPDIR" >&2
+	echo "run-session.sh: cannot make a tmp folder in '$dir': keeping the inherited TMPDIR" >&2
 fi
 
 # the unit: the first stage's scope when the units are on and systemd-run --user can make one
-unit= mmax= nounit=
+unit= mmax= smax= nounit=
 if [ "${SCHED_UNITS:-}" != 1 ]; then
 	nounit="the units are off"
 elif ! command -v systemd-run >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
 	nounit="systemd-run or systemctl is missing"
 else
-	# a probe: only a scope that ran its command proves `systemd-run --user` works (its failure comes before the command)
-	why=$(systemd-run --user --scope --quiet true 2>&1 >/dev/null) || nounit="systemd-run --user failed: $(echo "$why" | tr '\n' ' ')"
-fi
-if [ -z "$nounit" ]; then
 	mem=${SCHED_MEMINFO:-/proc/meminfo}
 	half() { awk -v k="$1" '$1 == k":" { printf "%.0f\n", $2 * 512; f = 1 } END { exit !f }' "$mem" 2>/dev/null; }
 	mmax=${SCHED_MEMORY_MAX:-$(half MemTotal)} smax=${SCHED_SWAP_MAX:-$(half SwapTotal)}
 	[ -n "$mmax" ] || mmax=infinity
 	[ -n "$smax" ] || smax=infinity
+	# a probe with the session's own properties: only a scope that ran its command proves `systemd-run --user` works with them
+	# (its failure, e.g. an invalid setting, comes before the command)
+	why=$(systemd-run --user --scope --quiet -p "MemoryMax=$mmax" -p "MemorySwapMax=$smax" -p TimeoutStopSec=5 true 2>&1 >/dev/null) \
+		|| nounit="systemd-run --user failed: $(echo "$why" | tr '\n' ' ')"
+fi
+if [ -z "$nounit" ]; then
 	key=$(echo "$dir" | awk -F/ '{ print $(NF-2) "-" $(NF-1) "-" $NF }' | tr -c 'A-Za-z0-9:_.@\n-' '-')
 	unit="noodlebot-$key-$(date +%s).scope"
 else
@@ -73,7 +79,7 @@ fi
 # stream open would delay)
 pf="$dir/agent.pid"; rm -f "$pf"
 fifo="$dir/stream.fifo"; rm -f "$fifo"
-mkfifo "$fifo" || { echo 2 >"$dir/session.rc"; exit 2; }
+mkfifo "$fifo" || { [ -z "$tmpmade" ] || rm -rf "$tmpd"; echo 2 >"$dir/session.rc"; exit 2; }
 if [ -n "$sid" ]; then
 	first=(python3 -I "$here/harness.py" exec-resume "$pf" "$wt" "$dir" "$sid" "$(cat "$dir/resume-prompt.md")")
 	rec=(python3 -I "$here/harness.py" record "$dir" append "$pf")
@@ -92,11 +98,11 @@ rc=$?
 
 # what the first stage left: every process of the session except this script and the record stage
 pgid= st=
-read -r st </proc/$$/stat 2>/dev/null && { set -- ${st##*) }; pgid=${3:-}; }
+{ read -r st </proc/$$/stat; } 2>/dev/null && { set -- ${st##*) }; pgid=${3:-}; }
 left() {   # the pids of the group other than us (and our $(...) subshell) and the record stage, zombies apart
 	local s st p
 	for s in /proc/[0-9]*/stat; do
-		read -r st <"$s" 2>/dev/null || continue
+		{ read -r st <"$s"; } 2>/dev/null || continue
 		set -- ${st##*) }
 		p=${s#/proc/}; p=${p%%/*}
 		[ "${3:-}" = "$pgid" ] && [ "$1" != Z ] && [ "$p" != "$$" ] && [ "$p" != "$BASHPID" ] && [ "$p" != "$recpid" ] && echo "$p"
@@ -125,6 +131,6 @@ fi
 [ -n "$stopped" ] || group_kill
 wait "$recpid"
 rm -f "$pf" "$fifo"
-[ -z "$tmpmade" ] || rm -rf "$tmpd"
+[ -z "$tmpmade" ] || [ "$tmpd" != "$dir/tmp" ] || rm -rf "$tmpd"
 echo "$rc" >"$dir/session.rc.tmp" && mv "$dir/session.rc.tmp" "$dir/session.rc"
 exit "$rc"
