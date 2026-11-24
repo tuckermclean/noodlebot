@@ -228,5 +228,43 @@ for p in "SKILL.md|plugin/skills/node/SKILL.md|D18-AC-1" "plugin tester agent|pl
 done
 d_notrap2 "D18-AC-2: AGENTS.md Tests: no sentence applies a mutant in the worktree and restores it by a trap or on exit" "$tmp/agents.unit"
 
+# Fresh-review fix: reversals that the earlier checks let through. Each check below names a clause and fails when it is
+# reversed (a negation put before it, or the bound loosened).
+# The adopt line: the flags are the adopted repository's own fact, so no sentence about them says "not ... the repository's own"
+# or "not ... from the repository", and none takes them from the plugin or its defaults.
+d_nosen "D18-AC-3: adopt SKILL.md: no negation before the repository's own fact or before taken from the repository" "$tmp/adopt.unit" \
+	'bounded[- ]worker' '(^|[^a-z])(not|never|rather than|instead of)([^a-z][a-z, ]*)? (the )?(adopted )?repository.s own|(^|[^a-z])(not|never|rather than|instead of)([^a-z][a-z, ]*)? from the (adopted )?repository'
+d_nosen "D18-AC-3: adopt SKILL.md: the flags are not taken from the plugin or its defaults" "$tmp/adopt.unit" \
+	'bounded[- ]worker' 'from the plugin|plugin.s default|its default|the plugin.s own|from (the )?defaults?'
+# git status: the worktree is checked clean after the sweep, no hedge ("need not", "may skip", "optional", "no longer", "not")
+# on either side of git status inside its clause.
+for p in "SKILL.md|plugin/skills/node/SKILL.md|D18-AC-1" "plugin tester agent|plugin/agents/tester.md|D18-AC-1" \
+	"plugin implementer agent|plugin/agents/implementer.md|D18-AC-1" "plugin reviewer agent|plugin/agents/reviewer.md|D18-AC-1" \
+	"noodlebot-tester agent|.claude/agents/noodlebot-tester.md|D18-AC-2" "noodlebot-implementer agent|.claude/agents/noodlebot-implementer.md|D18-AC-2" \
+	"noodlebot-reviewer agent|.claude/agents/noodlebot-reviewer.md|D18-AC-2"; do
+	who=${p%%|*}; r=${p#*|}; f=$root/${r%%|*}; ac=${r#*|}; k=$(echo "$who" | tr -c 'A-Za-z0-9\n' '_')
+	[ -f "$f" ] || continue
+	d_nosen "$ac: $who: no hedge after git status (need not, not, never, no longer, may skip, optional, may show, dirty)" "$tmp/$k.unit" \
+		'git status' 'git status[a-z ]* (need not|needn.t|not|never|no longer|may skip|may show|optional|dirty|unclean)( |$)'
+	d_nosen "$ac: $who: no hedge before git status (not, never, no longer, without, skip, optional, need not)" "$tmp/$k.unit" \
+		'git status' '(^|[^a-z])(need not|needn.t|not|never|no longer|without|skip|may skip|optional)[a-z ]* git status'
+done
+# The bound: not loosened to "or more", "at least", "more than" or an open range.
+for p in "plugin tester agent" "plugin implementer agent" "plugin reviewer agent" "SKILL.md"; do
+	k=$(echo "$p" | tr -c 'A-Za-z0-9\n' '_')
+	d_nosen "D18-AC-1: $p: the bound is at most two, not at least two or two or more" "$tmp/$k.unit" \
+		'bounded workers' 'at least (two|2)|(two|2) or (more|higher|above|greater)|(two|2) at least|(two|2)[+]'
+	d_nosen "D18-AC-1: $p: the scratch copy is not put inside the node's worktree" "$tmp/$k.unit" \
+		'scratch copy' '(not|never|rather than|instead of) outside|inside the node.s'
+done
+for p in "noodlebot-tester agent" "noodlebot-implementer agent" "noodlebot-reviewer agent" "AGENTS.md Tests:"; do
+	k=$(echo "$p" | tr -c 'A-Za-z0-9\n' '_')
+	[ "$p" = "AGENTS.md Tests:" ] && u=$tmp/agents.unit || u=$tmp/$k.unit
+	d_nosen "D18-AC-2: $p: TEST_JOBS=2 is the bound, not a floor (or more, at least, >=)" "$u" \
+		'test_jobs=2' 'test_jobs=2[^0-9]*(or more|or higher|at least|or above|or greater|and more|[+])|at least test_jobs|test_jobs *(>=|≥|>)|(more than|over|above|at least) test_jobs'
+	d_nosen "D18-AC-2: $p: TEST_JOBS=2 is not negated or left optional" "$u" \
+		'test_jobs=2' '(^|[^a-z])(not|never|no longer|without|optional|may omit|need not)([^a-z][a-z ]*)? (use |with |through |run )?(the )?(test_jobs=2)'
+done
+
 echo "$fails failed"
 [ "$fails" = 0 ]
