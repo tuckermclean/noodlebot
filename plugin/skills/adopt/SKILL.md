@@ -139,6 +139,7 @@ Only after `ANSWER.md`. Order: the baseline, then the graph, then the other draf
   "none"; what CI evidence to record; and a **Spec files:** line, one physical line naming the
   repository's spec files as paths in backticks (folders with a trailing `/`), normally `SPEC.md`,
   `docs/graph.yaml`, `nodes/`: a spec PR changes only these.
+  The AGENTS.md draft has a line for the test runner's bounded-worker flags (for example a worker limit), taken from the repository: they are the adopted repository's own fact.
   The AGENTS.md draft records what CI's lines may add to the gate's output, for example colour escape codes and a
   fetched job log's timestamp prefix, and says that `fail_pattern` matches once they are stripped.
 - **The quick gate's output.** The checks of a node's gate run judge failures with `fail_pattern`, which is
