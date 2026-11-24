@@ -269,5 +269,24 @@ ask a "$base" $G
 if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 SCHED_MACHINE_MAX=1.5 with two live sessions: ask grants no turn"; else fail "MAX=1.5, two sessions: rc=$rc out='$out'"; fi
 unset SCHED_MACHINE_MAX
 
+# --- (whole-node review) with no machine budget a giveback restores only the one previous start, as before: took X, A, B within the gap, give B back, then A: starts.json is gone and the next ask is granted
+for m in "" 0; do
+	reset; max "$m"; hb a "$base"; echo "X1 triage - $(w 100)" | list a 10
+	took a "$base" X1 --gap 100
+	rx=$rc
+	took a $((base + 1)) A9 --gap 100
+	ra=$rc
+	took a $((base + 2)) B9 --gap 100
+	rb=$rc
+	T giveback --root "$d" --repo a --now $((base + 3)) B9 >/dev/null 2>&1
+	T giveback --root "$d" --repo a --now $((base + 3)) A9 >/dev/null 2>&1
+	gone=no; [ ! -e "$d/state/starts.json" ] && gone=yes
+	hb a $((base + 200))
+	echo "X1 triage - $(w 100)" | list a 10
+	ask a $((base + 200)) --gap 100 --starve 100000
+	if [ $rx = 0 ] && [ $ra = 0 ] && [ $rb = 0 ] && [ "$gone" = yes ] && [ $rc = 0 ] && [ "$key" = X1 ]; then pass "S13-AC-1 SCHED_MACHINE_MAX='${m:-unset}': took X, A, B then giveback B and A leaves no starts.json and the next ask is granted"; else fail "MAX='${m:-unset}' took rc=$rx/$ra/$rb, starts.json gone=$gone ($(cat "$d/state/starts.json" 2>/dev/null)); ask rc=$rc key='$key'"; fi
+done
+unset SCHED_MACHINE_MAX
+
 [ "$fails" = 0 ] || { echo "$fails failure(s)"; exit 1; }
 echo "all passed"
