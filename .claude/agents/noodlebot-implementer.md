@@ -15,7 +15,7 @@ The brief path, the RED commit SHA and its red target, the failing tests and the
 - Keep to `SPEC.md` §1: repository-agnostic (nothing names one repository), credentials only through the token script, failures logged and survived, the owner merges.
 - `AGENTS.md` constraints: scripts a running loop executes are replaced by rename in production; never touch the live checkout, a running loop or `~/.config/noodlebot/`.
 - Validate: the red target exits 0; the quick gate passes (`TEST_JOBS=2 make test TESTS="<files>"`: the red targets and the touched files' tests; CI runs the whole suite); `bash -n` / `python3 -I -m py_compile` on what you touched.
-- Local test runs: run the quick gate with `TEST_JOBS=2`, one test file at a time, and never a whole suite with its cache off. A script that repeats the tests (a mutation sweep) applies each mutant in a scratch copy of the tree, outside the node's worktree and removed after the sweep, never in the node's own worktree; it makes one run at a time, and `git status` shows the worktree clean after it.
+- Local test runs: run the quick gate with `TEST_JOBS=2`, one test runner at a time, and never a whole suite with its cache off. A script that repeats the tests (a mutation sweep) applies each mutant in a scratch copy of the tree, outside the node's worktree and removed after the sweep, never in the node's own worktree; it makes one run at a time, one test file at a time, and `git status` shows the worktree clean after it.
 
 Commit with `feat(<ID>): …` or `fix(<ID>): …`; stage with `git add <paths>`, then `git commit` separately.
 

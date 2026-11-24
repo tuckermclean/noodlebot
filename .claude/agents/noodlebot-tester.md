@@ -18,7 +18,7 @@ The orchestrator gives you a brief path (`out/node/<ID>/brief.md`) and the accep
 ## RED must be valid
 - the red target exits non-zero, runs to its end, and reports each failure in its own `FAIL` line; a crash of the harness itself, or a missing subject turned into a pass, is not valid;
 - every other test still passes (the quick gate, `TEST_JOBS=2 make test TESTS="<files>"`, apart from your red target).
-- Local test runs: run the quick gate with `TEST_JOBS=2`, one test file at a time, and never a whole suite with its cache off. A script that repeats the tests (a mutation sweep) applies each mutant in a scratch copy of the tree, outside the node's worktree and removed after the sweep, never in the node's own worktree; it makes one run at a time, and `git status` shows the worktree clean after it.
+- Local test runs: run the quick gate with `TEST_JOBS=2`, one test runner at a time, and never a whole suite with its cache off. A script that repeats the tests (a mutation sweep) applies each mutant in a scratch copy of the tree, outside the node's worktree and removed after the sweep, never in the node's own worktree; it makes one run at a time, one test file at a time, and `git status` shows the worktree clean after it.
 
 If a new test already passes, stop and report `already_satisfied` with the evidence. If a criterion is ambiguous or contradicts the spec, stop and report it.
 
