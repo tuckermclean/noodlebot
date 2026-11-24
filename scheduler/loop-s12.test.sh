@@ -39,6 +39,23 @@ touch "$S12/hold.node.X03.1" "$S12/hold.node.X03.2"
 echo '[{"number": 46}]' >"$GD/issues.json"
 mkspec X03 oom '#47'
 git -C "$uclone" add nodes && git -C "$uclone" -c user.name=t -c user.email=t@t commit -q -m x03 && git -C "$uclone" update-ref refs/remotes/origin/main HEAD
+# node X05: ready from the moment X03's first session ends, not before: it is held by a FAILED file that the fake systemctl of
+# the units removes when it reports on X03's first unit (the end of the session, before the loop sees it); it then holds
+printf "${g01base}  - {id: X03, name: oom, deps: []}\n  - {id: X04, name: other, deps: []}\n  - {id: X05, name: third, deps: []}\n" >"$tmp/work6/docs/graph.yaml"
+g6 add -A && g6 commit -q -m 'add X05' && g6 push -q "$tmp/remote6.git" main
+mkdir -p "$state/node/X05" && echo held >"$state/node/X05/FAILED"
+touch "$GD/hold.other.X05"
+mv "$tmp/bin12/systemctl" "$tmp/fk12/systemctl.orig"
+cat >"$tmp/bin12/systemctl" <<EOF
+#!/bin/sh
+case " \$* " in
+*" show "*)
+	for a in "\$@"; do u=\$a; done
+	case \$u in *X03*) [ ! -e "$state/node/X05/FAILED" ] || { date +%s%N >"$S12/x05.ready"; rm -f "$state/node/X05/FAILED"; } ;; esac ;;
+esac
+exec sh "$tmp/fk12/systemctl.orig" "\$@"
+EOF
+chmod +x "$tmp/bin12/systemctl"
 urun12() { env PATH="$ubin:$PATH" python3 -I "$src/report.py" --repo owner/repo --state "$state" --worktrees "$tmp/worktrees/repo" --clone "$uclone" --owner owner 2>"$tmp/uerr"; }
 
 # a second loop, in its own data folder with a HOME that has no units file: a node session of it gets no unit
@@ -98,6 +115,12 @@ rm -f "$state/node/X04/FAILED"
 wait_ticks 2
 ok "S12-AC-4: another ready unit of the loop (X04) starts in the same or the next tick" test "$(count12 'started X04 ')" = 1
 ok "S12-AC-4: the loop is still running after it" loop_alive
+# X05 became ready at the end of X03's out-of-memory session (x05.ready, when run-session.sh read the unit's result): it starts
+# in the same or the next tick, counted from the end line of X03's first session (log lines are to the second)
+ok "S12-AC-4: a unit that became ready when the out-of-memory session ended (X05) starts" wait_until 10 sh -c "grep -q 'started X05 ' '$state/status.log'"
+ok "S12-AC-4: X05 became ready at that end (the fake systemctl saw X03's unit)" test -s "$S12/x05.ready"
+e12=$(line12 'session X03 ended' | head -n1); x12=$(line12 'started X05 ' | head -n1)
+ok "S12-AC-4: X05's started line is within 2 ticks (SCHED_TICK=1) of X03's out-of-memory end line (${e12%% *} .. ${x12%% *})" sh -c "[ -n '$e12' ] && [ -n '$x12' ] && [ \$((\$(date -u -d '${x12%% *}' +%s) - \$(date -u -d '${e12%% *}' +%s))) -le 2 ]"
 ok "S12-AC-4: the triage session killed the same way: its end line names out of memory and the ceiling" wait_until 8 oomfirst12 'triage of #46 ended'
 ok "S12-AC-4: the feedback session killed the same way: its end line names out of memory and the ceiling" wait_until 8 oomfirst12 'feedback session of X01 ended'
 # S12-AC-5: report.py (fake forge); X03's second run still holds, so the only end since the first report is the first one

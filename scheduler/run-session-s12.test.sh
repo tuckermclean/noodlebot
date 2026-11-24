@@ -98,6 +98,33 @@ path=$path_nosd go sd_missing node/B03 SCHED_UNITS=1 SCHED_MEMORY_MAX=1G S12_RC=
 go bad_abc node/B03 S12_RC=4 SCHED_OOM_ADJ=abc &
 go bad_big node/B03 SCHED_UNITS=1 SCHED_MEMORY_MAX=1G S12_RC=5 SCHED_OOM_ADJ=5000 &
 sid=s12-sid go resumed issue/46 SCHED_UNITS=1 SCHED_MEMORY_MAX=2G SCHED_SWAP_MAX=0 S12_RC=0 &
+# an empty, "//" or "/." <state-dir>: rm and mkfifo are fakes that only log (rm removes nothing, whatever run-session.sh does;
+# mkfifo fails and logs the TMPDIR the session has by then); a user that is not root cannot write to / either
+mkdir -p "$tmp/fakerm"
+cat >"$tmp/fakerm/rm" <<'EOF'
+#!/bin/sh
+{ echo "CALL"; for _a in "$@"; do printf '%s\n' "$_a"; done; } >>"$S12_LOG/rm.log"
+exit 0
+EOF
+cat >"$tmp/fakerm/mkfifo" <<'EOF'
+#!/bin/sh
+printf '%s\n' "${TMPDIR-UNSET}" >>"$S12_LOG/mkfifo.tmpdir"
+exit 1
+EOF
+chmod +x "$tmp/fakerm/rm" "$tmp/fakerm/mkfifo"
+# weird <name> <state-dir argument as given>
+weird() {
+	n=$1 b=$tmp/$1
+	mkdir -p "$b/log" "$b/inh" "$b/wt"
+	env HOME="$home" PATH="$tmp/fakerm:$path_units" TMPDIR="$b/inh" S12_LOG="$b/log" \
+		timeout -k 2 40 setsid -w bash "$src/run-session.sh" "$b/wt" "$2" "/node B03" >"$b/out" 2>"$b/err" </dev/null
+	echo "$?" >"$b/rs.rc"
+}
+if [ "$(id -u)" != 0 ]; then
+	weird w_empty "" &
+	weird w_slash2 "//" &
+	weird w_dot "/." &
+fi
 wait
 sid=
 
@@ -239,6 +266,26 @@ if [ -d "$tmp/lock" ]; then
 	ck "S12-AC-7: tmp folder that cannot be emptied: one stderr line says so (names TMPDIR)" t_eq "$(grep -c TMPDIR "$tmp/lock/err")" 1
 else
 	echo "SKIP: S12-AC-7: a folder that cannot be emptied needs a user that is not root"
+fi
+
+echo "== S12-AC-7: an empty or root <state-dir> never makes run-session.sh remove or empty /tmp (or any folder outside the state dir)"
+# no argument of a logged rm call (run in the worktree, as run-session.sh was) resolves to / or to /tmp or below
+rm_outside() {
+	[ -s "$tmp/$1/log/rm.log" ] || return 0
+	(cd "$tmp/$1/wt" && while IFS= read -r _a; do
+		case $_a in CALL | -* | '') continue ;; esac
+		case $(realpath -m -- "$_a") in / | /tmp | /tmp/*) exit 1 ;; esac
+	done <"$tmp/$1/log/rm.log")
+}
+if [ "$(id -u)" != 0 ]; then
+	for r in w_empty w_slash2 w_dot; do
+		case $r in w_empty) l="an empty" ;; w_slash2) l="a //" ;; *) l="a /." ;; esac
+		ck "S12-AC-7: $l <state-dir>: no rm argument is / or /tmp or below it (rm calls: $(grep -c CALL "$tmp/$r/log/rm.log" 2>/dev/null))" rm_outside $r
+		ck "S12-AC-7: $l <state-dir>: the session's TMPDIR stays the inherited one" t_eq "$(rd $r/log/mkfifo.tmpdir)" "$tmp/$r/inh"
+		ck "S12-AC-7: $l <state-dir>: one stderr line says the tmp folder cannot be made (names TMPDIR)" t_eq "$(grep -c TMPDIR "$tmp/$r/err")" 1
+	done
+else
+	echo "SKIP: S12-AC-7: an empty or root <state-dir> needs a user that is not root"
 fi
 
 [ "$fails" = 0 ]
