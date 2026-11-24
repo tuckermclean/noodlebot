@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | A05 | A09, V02 | M |
+| now | A05 | A09, D21, V02 | M |
 
 **Owns:** in `plugin/skills/node/SKILL.md`, the pin step, the checks of a pin commit, their evidence rows, and the dep
 amendments in step 7's small-amendment rule; the pin instructions in `plugin/agents/tester.md` and the pin checks in

@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D09, R02, A06 | none | S |
+| now | D09, R02, A06 | D21 | S |
 
 **Owns:** the bounded-run rule (one paragraph or bullet each) in `plugin/skills/node/SKILL.md` (where it names the quick test gate), in `plugin/agents/tester.md`, `plugin/agents/implementer.md` and `plugin/agents/reviewer.md`, and in this repository's `.claude/agents/noodlebot-tester.md`, `.claude/agents/noodlebot-implementer.md` and `.claude/agents/noodlebot-reviewer.md`; the bounded-run sentence of `AGENTS.md`'s **Tests:** line; the bounded-run line of the AGENTS.md draft in `plugin/skills/adopt/SKILL.md`; `plugin/skills/node/bounded-tests.test.sh` (new) and its line in the `Makefile`'s `TESTS`.
 **Resolves:** #218
