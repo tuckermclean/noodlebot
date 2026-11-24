@@ -304,3 +304,24 @@ def _r02_repo_url(self, kind="repo", ref=None):
 
 Backend.pr_view, Backend.ci_runs, Backend.issue_list, Backend.repo_url = (
     _r02_pr_view, _r02_ci_runs, _r02_issue_list, _r02_repo_url)
+
+
+# --- G08: ci logs (added) ---
+def _g08_ci_logs(self, run, job=None):
+    w = self._w("ci_logs")
+    jobs = _world.ci_jobs(w, run)
+    if jobs is None:
+        raise forge.ForgeError("fake forge: run %s not found" % run)
+    out = []
+    for j in jobs:
+        if job is not None and j["name"] != job:
+            continue
+        if _world.log_flag(w, "refuse_logs", j["id"]):
+            raise forge.CapabilityOff("fake", "ci_logs")
+        if _world.log_flag(w, "logs_gone", j["id"]):
+            raise forge.ForgeError("fake forge: the log of job %s has expired" % j["id"])
+        out.append({"id": j["id"], "name": j["name"], "conclusion": j["conclusion"], "log": j["log"]})
+    return out
+
+
+Backend.ci_logs = _g08_ci_logs
