@@ -40,7 +40,13 @@
 # API whose lock is not held, as start does and with the settings of loops.env (never evaluated), unless ~/STOP,
 # ~/STOP-<name> (that repository) or loops.stopped exists. It waits like start for what it started to take its
 # locks, leaves them running when it exits, and appends one line per restart to $root/state/<name>/status.log:
-# "<UTC stamp> loops.sh watch: restarted the loop (heartbeat <n> s old)" or "(no heartbeat)".
+# "<UTC stamp> loops.sh watch: restarted the loop (heartbeat <n> s old)" or "(no heartbeat)". watch exits 1, starting
+# nothing, when it cannot open watch.lock. A loop whose lock is held and whose heartbeat is older than LOOPS_STALE
+# (default 1800) s is never signalled: watch appends "<UTC stamp> loops.sh watch: <owner/name>: loop is stale (heartbeat <n> s old)"
+# to $root/state/watch.log and has `report.py --stale <n>` comment on the open log issue, once per stale episode (the marker
+# state/<name>/stale.posted stays until a watch sees the heartbeat fresh; a failed post says so on stderr and is retried).
+#   scheduler/loops.sh watch-unit   print the system service and timer for a watch every LOOPS_WATCH_EVERY (default 5min)
+# and the commands that install them (the owner runs them once); it calls no systemctl, systemd-run or sudo and writes nothing.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
@@ -50,10 +56,49 @@ case $root in /*) ;; *) root=$PWD/$root ;; esac
 wait_s=${LOOPS_STOP_WAIT:-300}
 start_wait=${LOOPS_START_WAIT:-10}
 
-usage() { echo "usage: loops.sh start|stop|status|watch" >&2; exit 2; }
+usage() { echo "usage: loops.sh start|stop|status|watch|watch-unit" >&2; exit 2; }
 [ $# -eq 1 ] || usage
 cmd=$1
-case $cmd in start | stop | status | watch) ;; *) usage ;; esac
+case $cmd in start | stop | status | watch | watch-unit) ;; *) usage ;; esac
+if [ "$cmd" = watch-unit ]; then
+	every=${LOOPS_WATCH_EVERY:-5min}
+	u=$(id -un); uid=$(id -u)
+	wroot=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
+	case $wroot in /*) ;; *) wroot=$PWD/$wroot ;; esac
+	wroot=$(cd "$wroot" 2>/dev/null && pwd -P || echo "$wroot")
+	cat <<EOT
+# /etc/systemd/system/noodlebot-watch.service
+[Unit]
+Description=noodlebot watch: start the loops and the API that are not running
+
+[Service]
+Type=oneshot
+User=$u
+ExecStart=$nb/scheduler/loops.sh watch
+Environment=HOME=$HOME
+Environment=NOODLEBOT_DATA=$wroot
+Environment=PATH=$PATH
+Environment=XDG_RUNTIME_DIR=/run/user/$uid
+KillMode=process
+
+# /etc/systemd/system/noodlebot-watch.timer
+[Unit]
+Description=noodlebot watch every $every
+
+[Timer]
+OnBootSec=$every
+OnUnitActiveSec=$every
+
+[Install]
+WantedBy=timers.target
+
+# install (copy the two files above, then):
+sudo tee /etc/systemd/system/noodlebot-watch.service /etc/systemd/system/noodlebot-watch.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now noodlebot-watch.timer
+EOT
+	exit 0
+fi
 
 # rtname <spec>: the runtime name: the last component of the path of [<forge>:]<path>.
 rtname() { local p=${1#*:}; [ "$p" != "$1" ] || p=$1; p=${p%/}; echo "${p##*/}"; }
@@ -207,6 +252,22 @@ running() { held "$root/state/$1/loop.lock"; }
 # resolved <dir>: the directory with symbolic links resolved, or as given when it does not exist.
 resolved() { (cd "$1" 2>/dev/null && pwd -P) || echo "$1"; }
 
+# stale_check <repo> <name>: a held loop whose heartbeat is older than LOOPS_STALE is noted in watch.log and reported once per episode
+stale_check() {
+	local hb age mark=$root/state/$2/stale.posted
+	hb=$(cat "$root/state/$2/heartbeat" 2>/dev/null)
+	case $hb in '' | *[!0-9]*) rm -f "$mark"; return 0 ;; esac
+	age=$(( $(date +%s) - hb ))
+	if [ "$age" -le "${LOOPS_STALE:-1800}" ]; then rm -f "$mark"; return 0; fi
+	[ -e "$mark" ] && return 0
+	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) loops.sh watch: $1: loop is stale (heartbeat $age s old)" >>"$root/state/watch.log"
+	if NOODLEBOT_FORGE_REPO=$1 NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 120 python3 -I "$nb/scheduler/report.py" --repo "$1" --state "$root/state/$2" --stale "$age" 8>&- >/dev/null; then
+		: >"$mark"
+	else
+		echo "loops.sh watch: $1: the stale-loop comment was not posted; the next watch tries again" >&2
+	fi
+}
+
 rc=0
 case $cmd in
 start)
@@ -285,7 +346,8 @@ start)
 watch)
 	if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then exit 0; fi
 	mkdir -p "$root/state" || exit 1
-	exec 8>"$root/state/watch.lock" && { flock -w 120 8 || { echo "loops.sh watch: another watch holds $root/state/watch.lock" >&2; exit 1; }; }
+	{ exec 8>"$root/state/watch.lock"; } 2>/dev/null || { echo "loops.sh watch: cannot open $root/state/watch.lock" >&2; exit 1; }
+	{ flock -w 120 8 || { echo "loops.sh watch: another watch holds $root/state/watch.lock" >&2; exit 1; }; }
 	said_where=1 # from a timer there is no calling shell
 	# stop may have run while this watch waited for the lock
 	if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then exit 0; fi
@@ -299,7 +361,7 @@ watch)
 	launched=()
 	for repo in "${repos[@]}"; do
 		name=$(rtname "$repo")
-		running "$name" && continue
+		if running "$name"; then stale_check "$repo" "$name"; continue; fi
 		[ -e "$HOME/STOP-$name" ] && continue
 		if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then break; fi
 		hb=$(cat "$root/state/$name/heartbeat" 2>/dev/null)
@@ -336,7 +398,7 @@ stop)
 	mkdir -p "$root/state" 2>/dev/null && : >"$root/state/loops.stopped"
 	# a watch already past its checks is starting loops: let it finish, then stop what it started
 	if [ -d "$root/state" ]; then
-		( flock -w $((start_wait + 30)) 9 || echo "loops.sh stop: a watch still holds $root/state/watch.lock" >&2 ) 9>>"$root/state/watch.lock"
+		( { exec 9>>"$root/state/watch.lock"; } 2>/dev/null && { flock -w $((start_wait + 30)) 9 || echo "loops.sh stop: a watch still holds $root/state/watch.lock" >&2; } )
 	fi
 	waiting=()
 	for repo in "${repos[@]}"; do

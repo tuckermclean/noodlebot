@@ -2,6 +2,8 @@
 """Mirror one repository's scheduler state to a GitHub status issue, and take the owner's answers from it.
 
   report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN] [--site URL] [--pickup]
+  report.py --repo OWNER/NAME --state DIR --stale SECONDS    (loops.sh watch: one comment on the open log issue that the
+                                                             loop's heartbeat is that old; nothing else, report.json untouched)
 
 Run by loop.sh after each tick; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all forge access through forge.py (the token script, or a GH_TOKEN in the environment).
 Each run:
@@ -2097,6 +2099,7 @@ def main():
     p.add_argument("--signature", default="")
     p.add_argument("--site", default="")
     p.add_argument("--pickup", action="store_true", help="leave the owner comments it cannot place to pickup.py (S09)")
+    p.add_argument("--stale", type=int, metavar="SECONDS", help="comment on the open log issue that this repository's loop's heartbeat is that old (loops.sh watch) and exit")
     p.add_argument("--clause", metavar="KEY", help="print the clause for the answered unit KEY (read-only; status.sh) and exit")
     a = p.parse_args()
     if a.clause:
@@ -2139,6 +2142,12 @@ def main():
     global forge
     import forge
     a.forge = forge.open(a.repo)
+    if a.stale is not None:
+        logs = log_issues(a, "open")
+        if not logs:
+            raise RuntimeError("no open log issue for the stale loop")
+        comment(a, logs[0][1], "The loop of `%s` looks hung (heartbeat %d s old). The watch has not signalled it." % (os.path.basename(os.path.normpath(a.state)), a.stale))
+        return
     try:
         a.pulls = a.forge.pr_list(state="open")
     except Exception as e:  # raised after the work below, as before
