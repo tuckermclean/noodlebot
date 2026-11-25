@@ -35,8 +35,9 @@ is recorded on the same first working tick; this node's test shows it alongside 
     no call on the labels. On `main` before this node no label call is made after the start (the RED).
   - lists work, the label step does not: a loop with `SCHED_LABEL_RETRY=4` whose token script fails only when its
     caller is `labels.py`. Over at least 12 s of ticks, `labels.py`'s token fetches after the start number at least
-    two, each at least 4 s after the one before; the status log has one no-token label line and the loop kept
-    ticking. On `main` before this node `labels.py` fetches a token once (the RED).
+    two: the first on the first tick after the start (the start's run does not start the spacing), and each later one
+    at least 4 s after the fetch before it; the status log has one no-token label line and the loop kept ticking. On
+    `main` before this node `labels.py` fetches a token once (the RED).
 
 ## Changes
 1. **A label step that got no token says so.** `ensure_labels` ends in one of three ways: done (`labels.py` exited 0),
@@ -57,7 +58,7 @@ is recorded on the same first working tick; this node's test shows it alongside 
 - **L02-AC-1** — A loop that starts with a failing token script logs `label step: no GitHub App token; labels not checked` once, and over at least three later ticks while the token script still fails it logs no other label-step line, makes no call on the repository's labels and keeps ticking. *Verify:* `sh scheduler/loop-l02.test.sh` (the `L02-AC-1:*` cases).
 - **L02-AC-2** — When that token script starts working, with no restart, the tick whose PR lists first come back creates the missing labels (POSTs for the missing ones only), logs one `label step: created labels:` line, and leaves `state/<name>/visibility` holding `public` for a public repository, all before the next tick's PR lists; on `main` before this node no label call is made after the start. *Verify:* `sh scheduler/loop-l02.test.sh` (the `L02-AC-2:*` cases), and the RED run recorded in the PR.
 - **L02-AC-3** — After the retried step succeeded, at least three later ticks make no further call on the repository's labels; and the L01 cases (`scheduler/loop-l01.test.sh`: a step that succeeded at the start, or failed with a token, is not run on a tick) pass unchanged. *Verify:* `sh scheduler/loop-l02.test.sh` (the `L02-AC-3:*` cases) and `bash scheduler/loop-l01.test.sh`.
-- **L02-AC-4** — When the PR lists come back but the label step again gets no token (the token script fails only for `labels.py`), the step is tried again at most once per `SCHED_LABEL_RETRY` seconds and keeps being tried: with `SCHED_LABEL_RETRY=4` and 1 s ticks over at least 12 s, `labels.py`'s token fetches after the start number at least two, each at least 4 s after the one before, and the status log has one no-token label line; the header comment of `scheduler/loop.sh` names `SCHED_LABEL_RETRY` with its default of 600. *Verify:* `sh scheduler/loop-l02.test.sh` (the `L02-AC-4:*` cases).
+- **L02-AC-4** — When the PR lists come back but the label step again gets no token (the token script fails only for `labels.py`), the step is tried again at most once per `SCHED_LABEL_RETRY` seconds and keeps being tried: with `SCHED_LABEL_RETRY=4` and 1 s ticks over at least 12 s, `labels.py`'s token fetches after the start number at least two: the first on the first tick after the start (the start's run does not start the spacing), and each later one at least 4 s after the fetch before it; the status log has one no-token label line; the header comment of `scheduler/loop.sh` names `SCHED_LABEL_RETRY` with its default of 600. *Verify:* `sh scheduler/loop-l02.test.sh` (the `L02-AC-4:*` cases).
 - **L02-AC-5** — The node changes no existing line of the frozen paths (`*.test.sh`, `scheduler/testdata/`): `scheduler/loop-l02.test.sh` is new and in the `Makefile`'s `TESTS`, and its `TIME` line in the PR's CI run is under `TEST_FILE_BUDGET`. *Verify:* the `git diff origin/main -- '*.test.sh' scheduler/testdata/` recorded in the PR and the PR's CI run.
 
 ## Risks
