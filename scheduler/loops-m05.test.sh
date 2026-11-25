@@ -644,5 +644,125 @@ eq "M05-AC-1:lock-cannot-be-opened:no-tmux-new" "$(cnt "$TMUXLOG" '^new ')" 0
 ok "M05-AC-1:lock-cannot-be-opened:no-loop-runs" test ! -e "$root/state/alpha/loop.pid"
 endcase
 
+# ---- follow-up cases of the S2 review (M05-AC-5, M05-AC-2) ----
+# Interface the tests give the implementation for the install commands (M05-AC-5): `watch-unit` prints each unit's text
+# after a comment line `# /etc/systemd/system/<file>`; the text runs to the next line beginning `#` or `sudo `, without
+# the empty lines at its end;
+# the install commands are every line from the first one beginning `sudo ` to the end of the output, and form a
+# self-contained sh script: one `sudo tee /etc/systemd/system/<file> >/dev/null <<'EOF'` ... `EOF` here-document per unit
+# holding exactly that unit's text, then `sudo systemctl daemon-reload` and `sudo systemctl enable --now
+# noodlebot-watch.timer`. The case runs them under sh with a fake sudo first on PATH that logs its arguments and writes
+# the stdin of `tee <file>` to a scratch copy of the file; nothing real is reached.
+# Values for systemd (M05-AC-5): in the service, a value that needs it is quoted as systemd does: `Environment="K=V"`
+# with `\` as `\\`, `"` as `\"` and `%` as `%%`; `ExecStart="<path>" watch` the same and `$` as `$$`. An ordinary path is
+# not pinned either way (the frozen check takes it unquoted).
+echo "# M05-AC-5: the printed install commands, run under sh with a fake sudo, install exactly the printed units and enable the timer"
+# unit_text <printed output> <file>: the text printed for /etc/systemd/system/<file> (see above)
+unit_text() { awk -v h="# /etc/systemd/system/$2" '$0 == h { f = 1; next } f && (/^#/ || /^sudo /) { exit } f { l[++n] = $0 }
+	END { while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' "$1"; }
+newcase ac5-install alpha
+mkdir -p "$c/sbin" "$c/etc" "$c/work"
+cat >"$c/sbin/sudo" <<'EOT'
+#!/bin/sh
+# logs its arguments; `tee <file>...` writes its stdin to the files under $FAKE_ETC; runs nothing
+echo "$*" >>"$SUDOLOG"
+case $1 in
+tee)
+	shift
+	cat >"$FAKE_ETC/.in"
+	for f; do
+		case $f in
+		-*) ;;
+		/etc/systemd/system/*) cp "$FAKE_ETC/.in" "$FAKE_ETC/${f#/etc/systemd/system/}" ;;
+		*) echo "fake sudo: tee outside /etc/systemd/system: $f" >&2; exit 1 ;;
+		esac
+	done ;;
+esac
+exit 0
+EOT
+chmod +x "$c/sbin/sudo"
+run watch-unit
+awk '/^sudo / { f = 1 } f' "$c/out.watch-unit" >"$c/work/install.sh"
+ok "M05-AC-5:install:the-output-holds-install-commands-from-a-sudo-line" test -s "$c/work/install.sh"
+(cd "$c/work" && env -i PATH="$c/sbin:$tools" SUDOLOG="$c/sudo.log" FAKE_ETC="$c/etc" sh "$c/work/install.sh" >"$c/work/install.out" 2>&1 </dev/null)
+eq "M05-AC-5:install:the-block-runs-under-sh-exit-0" "$?" 0
+for uf in service timer; do
+	eq "M05-AC-5:install:noodlebot-watch.$uf-written-equals-the-printed-unit-text" "$(cat "$c/etc/noodlebot-watch.$uf" 2>/dev/null | tr '\n' '~'; echo x)" "$(unit_text "$c/out.watch-unit" "noodlebot-watch.$uf" | tr '\n' '~'; echo x)"
+	ok "M05-AC-5:install:the-printed-noodlebot-watch.$uf-text-is-not-empty" test -n "$(unit_text "$c/out.watch-unit" "noodlebot-watch.$uf")"
+done
+n1=$(grep -n '^systemctl daemon-reload$' "$c/sudo.log" 2>/dev/null | cut -d: -f1 | head -1)
+n2=$(grep -n '^systemctl enable --now noodlebot-watch\.timer$' "$c/sudo.log" 2>/dev/null | cut -d: -f1 | head -1)
+ok "M05-AC-5:install:daemon-reload-then-enable-now-the-timer-through-sudo-in-that-order" test "${n1:-0}" -gt 0 -a "${n2:-0}" -gt "${n1:-0}"
+endcase
+
+echo "# M05-AC-5: a HOME, runtime root, checkout and PATH entry with a space and a % are quoted and escaped for systemd"
+# sdenv <file> <K=V>: a quoted Environment="..." line of [Service] decodes (\\ \" %%) to K=V
+sdenv() { awk 'function dec(s,   o, i, ch, nx) { o = ""; i = 1
+		while (i <= length(s)) { ch = substr(s, i, 1); nx = substr(s, i + 1, 1)
+			if (ch == "\\" && (nx == "\\" || nx == "\"")) { o = o nx; i += 2 } else if (ch == "%" && nx == "%") { o = o "%"; i += 2 } else { o = o ch; i++ } }
+		return o }
+	/^\[/ { cur = $0 } cur == "[Service]" && index($0, "Environment=\"") == 1 && substr($0, length($0), 1) == "\"" { print dec(substr($0, 14, length($0) - 14)) }' "$1" | grep -qxF -- "$2"; }
+# sdexec <file>: the decoded quoted word of ExecStart="..." (\\ \" %% $$), then the rest of the line
+sdexec() { awk 'function dec(s,   o, i, ch, nx) { o = ""; i = 1
+		while (i <= length(s)) { ch = substr(s, i, 1); nx = substr(s, i + 1, 1)
+			if (ch == "\\" && (nx == "\\" || nx == "\"")) { o = o nx; i += 2 } else if (ch == "%" && nx == "%") { o = o "%"; i += 2 } else if (ch == "$" && nx == "$") { o = o "$"; i += 2 } else { o = o ch; i++ } }
+		return o }
+	/^\[/ { cur = $0 }
+	cur == "[Service]" && index($0, "ExecStart=\"") == 1 { raw = ""; i = 12
+		while (i <= length($0)) { ch = substr($0, i, 1); if (ch == "\\") { raw = raw substr($0, i, 2); i += 2; continue } if (ch == "\"") break; raw = raw ch; i++ }
+		print dec(raw); print substr($0, i + 1) }' "$1"; }
+newcase ac5-quote alpha
+qh="$c/h o%Zme"; qr="$c/r oot%Zd"; qn="$c/n b%Z1"; qp="$c/p ath%Zd"
+mkdir -p "$qh" "$qr" "$qn/scheduler" "$qp"
+cp "$src/loops.sh" "$qn/scheduler/"; chmod +x "$qn/scheduler/loops.sh"
+nb=$qn
+run watch-unit HOME="$qh" NOODLEBOT_DATA="$qr" PATH="$qp:$bin:$tools"
+unit_text "$c/out.watch-unit" noodlebot-watch.service >"$c/svc.txt"
+o=$c/svc.txt
+eq "M05-AC-5:quote:exits-0" "$(cat "$c/rc.watch-unit")" 0
+q_root=$(cd "$qr" && pwd -P); q_exec=$(cd "$qn/scheduler" && pwd -P)/loops.sh
+ok "M05-AC-5:quote:Environment-HOME-quoted-and-decodes-exact" sdenv "$o" "HOME=$qh"
+ok "M05-AC-5:quote:Environment-NOODLEBOT_DATA-quoted-and-decodes-exact" sdenv "$o" "NOODLEBOT_DATA=$q_root"
+ok "M05-AC-5:quote:Environment-PATH-quoted-and-decodes-exact" sdenv "$o" "PATH=$qp:$bin:$tools"
+eq "M05-AC-5:quote:ExecStart-decodes-to-the-checkouts-loops.sh-then-watch" "$(sdexec "$o" | tr '\n' '|')" "$q_exec| watch|"
+eq "M05-AC-5:quote:one-ExecStart-line" "$(cnt "$o" '^ExecStart=')" 1
+mkdir -p "$c/verify-ok"
+printf '[Service]\nType=oneshot\nExecStart=/bin/true\n' >"$c/verify-ok/ok.service"
+if ! command -v systemd-analyze >/dev/null 2>&1; then
+	echo "SKIP: M05-AC-5:quote:systemd-analyze-verify-accepts-the-units (systemd-analyze is not installed)"
+elif ! (cd "$c/verify-ok" && timeout 30 systemd-analyze verify "$c/verify-ok/ok.service" >/dev/null 2>&1 </dev/null); then
+	echo "SKIP: M05-AC-5:quote:systemd-analyze-verify-accepts-the-units (systemd-analyze verify does not run here, not even on a trivial unit)"
+else
+	mkdir -p "$c/verify"
+	cp "$o" "$c/verify/noodlebot-watch.service"
+	unit_text "$c/out.watch-unit" noodlebot-watch.timer >"$c/verify/noodlebot-watch.timer"
+	if (cd "$c/verify" && timeout 30 systemd-analyze verify "$c/verify/noodlebot-watch.service" "$c/verify/noodlebot-watch.timer" >"$c/verify.out" 2>&1 </dev/null); then
+		pass "M05-AC-5:quote:systemd-analyze-verify-accepts-the-units"
+	else
+		fail "M05-AC-5:quote:systemd-analyze-verify-accepts-the-units ($(head -c 300 "$c/verify.out" | tr '\n' ' '))"
+	fi
+fi
+endcase
+
+echo "# M05-AC-2: a stale loop is not touched through tmux either, and its comment carries the bot's signature"
+newcase ac2-tmux alpha
+stalecase
+cp "$src/version.sh" "$nb/scheduler/"
+run start
+waitheld "$root/state/alpha/loop.lock"
+: >"$root/state/alpha/status.log"
+urun "$root/state/alpha"
+lognum=$(uq "[i['number'] for i in db['issues'].values() if i['title'].startswith('noodlebot log')][0]")
+re_a="(?s)(?=.*alpha)(?=.*$hbre)"
+base_c=$(sc "$re_a")
+sethb alpha 2000
+watch 1
+eq "M05-AC-2:tmux:the-stale-comment-was-posted" "$(( $(sc "$re_a") - base_c ))" 1
+eq "M05-AC-2:tmux:no-kill-send-keys-or-respawn-call-to-tmux" "$(cnt "$TMUXLOG" -E '^(kill|send|respawn)')" 0
+eq "M05-AC-2:tmux:no-second-tmux-new" "$(newn alpha)" 1
+sig_last() { ulast "$lognum" | awk 'NF { l = $0 } END { print l }'; }
+ok "M05-AC-2:signature:the-stale-comment-ends-with-a-line-starting-n00dl3b0t-signature" sh -c 'case $1 in "— n00dl3b0t"*) exit 0 ;; *) exit 1 ;; esac' sh "$(sig_last)"
+endcase
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
