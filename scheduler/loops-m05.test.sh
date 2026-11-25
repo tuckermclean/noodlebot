@@ -21,6 +21,7 @@
 #   It must not look like a unit's start (report.py's START pattern `started <ID> (`): report.py posts it as an event
 #   on the log issue and makes no milestone or unit issue from it.
 # The watch runs with an empty environment: HOME, PATH, NOODLEBOT_DATA and the fakes' variables only.
+#   Follow-up cases name state/watch.lock (the lock the watch takes, under the runtime root), which the test holds itself.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
 top=$(mktemp -d) && [ -d "$top" ] || exit 1
@@ -278,6 +279,121 @@ ok "M05-AC-6:loop-still-runs-after-the-group-kill" alive "$root/state/alpha/loop
 ok "M05-AC-6:loop-still-holds-its-lock" held "$root/state/alpha/loop.lock"
 ok "M05-AC-6:api-still-runs-after-the-group-kill" alive "$root/api.pid"
 ok "M05-AC-6:api-still-holds-its-lock" held "$root/api.lock"
+endcase
+
+# ---- follow-up cases of the slice review (M05-AC-1, M05-AC-3) ----
+# waitwaiter <lockfile>: up to 10 s for a process to wait for the lock (a "->" line for its inode in /proc/locks); when
+# /proc/locks does not list the lock at all (a pid namespace), a second's wait instead
+waitwaiter() {
+	wi=$(stat -L -c %i "$1" 2>/dev/null); wn=0
+	while [ "$wn" -lt 100 ]; do
+		grep -qE -- "->.*:$wi( |\$)" /proc/locks 2>/dev/null && return 0
+		grep -qE -- ":$wi( |\$)" /proc/locks 2>/dev/null || { [ "$wn" -ge 10 ] && return 0; }
+		sleep 0.1; wn=$((wn + 1))
+	done
+	return 1
+}
+# waitfile <file>: up to 10 s for the file to exist
+waitfile() { wn=0; while [ ! -e "$1" ] && [ "$wn" -lt 100 ]; do sleep 0.1; wn=$((wn + 1)); done; [ -e "$1" ]; }
+
+# racecase <case> <stopped|STOP>: a watch blocked on state/watch.lock, then ~/STOP or state/loops.stopped appears, then the
+# lock is released: the watch must start nothing
+racecase() {
+	rn=$1; rhow=$2
+	echo "# M05-AC-3: $rhow written while a watch waits for state/watch.lock: nothing is started when it gets the lock"
+	newcase "$rn" alpha beta
+	mkdir -p "$root/state"
+	fixture_start flock "$root/state/watch.lock" sh -c 'until [ -e "$1" ]; do sleep 0.1; done' sh "$c/release" </dev/null >/dev/null 2>&1 &
+	waitheld "$root/state/watch.lock"
+	watch r &
+	rpw=$!
+	if waitwaiter "$root/state/watch.lock"; then pass "M05-AC-3:$rhow-race:watch-waits-for-the-lock"; else fail "M05-AC-3:$rhow-race:watch-waits-for-the-lock"; fi
+	case $rhow in
+	stopped) : >"$root/state/loops.stopped" ;;
+	STOP) touch "$HOME/STOP" ;;
+	esac
+	touch "$c/release"
+	wait $rpw
+	eq "M05-AC-3:$rhow-race:watch-exits-0" "$(wrc r)" 0
+	eq "M05-AC-3:$rhow-race:no-tmux-new-at-all" "$(cnt "$TMUXLOG" '^new ')" 0
+	ok "M05-AC-3:$rhow-race:no-loop-runs" sh -c "[ ! -e '$root/state/alpha/loop.pid' ] && [ ! -e '$root/state/beta/loop.pid' ] && [ ! -e '$root/api.pid' ]"
+	eq "M05-AC-3:$rhow-race:no-restart-line" "$(cnt "$root/state/alpha/status.log" -i 'watch')" 0
+	endcase
+}
+racecase ac3-race-stopped stopped
+racecase ac3-race-STOP STOP
+
+echo "# M05-AC-1: two watches at once both exit 0 at once, release state/watch.lock, and leave the loops and the API running"
+newcase ac1-two-rc alpha beta
+echo 1 >"$root/loop.delay"
+( t0=$(date +%s); watch a; echo $(( $(date +%s) - t0 )) >"$c/secs.a" ) &
+pa=$!
+( t0=$(date +%s); watch b; echo $(( $(date +%s) - t0 )) >"$c/secs.b" ) &
+pb=$!
+wait $pa $pb
+eq "M05-AC-1:two-rc:first-watch-exits-0" "$(wrc a)" 0
+eq "M05-AC-1:two-rc:second-watch-exits-0" "$(wrc b)" 0
+ok "M05-AC-1:two-rc:each-watch-returns-within-30-s" sh -c "[ \"\$(cat '$c/secs.a')\" -le 30 ] && [ \"\$(cat '$c/secs.b')\" -le 30 ]"
+ok "M05-AC-1:two-rc:loops-and-api-run-when-the-watches-have-exited" sh -c "[ -s '$root/state/alpha/loop.pid' ] && [ -s '$root/state/beta/loop.pid' ] && [ -s '$root/api.pid' ]"
+ok "M05-AC-1:two-rc:alpha-holds-its-lock" held "$root/state/alpha/loop.lock"
+ok "M05-AC-1:two-rc:beta-holds-its-lock" held "$root/state/beta/loop.lock"
+ok "M05-AC-1:two-rc:api-holds-its-lock" held "$root/api.lock"
+if held "$root/state/watch.lock"; then fail "M05-AC-1:two-rc:watch.lock-is-free-after-the-watches-exited"; else pass "M05-AC-1:two-rc:watch.lock-is-free-after-the-watches-exited"; fi
+endcase
+
+echo "# M05-AC-1: watch returns only when what it started holds its lock (a loop that takes 2 s to take it)"
+newcase ac1-waits alpha beta
+echo 2 >"$root/loop.delay"
+watch 1
+eq "M05-AC-1:waits:watch-exits-0" "$(wrc 1)" 0
+eq "M05-AC-1:waits:alpha-started" "$(newn alpha)" 1
+ok "M05-AC-1:waits:alpha-holds-its-lock-when-watch-returns" held "$root/state/alpha/loop.lock"
+ok "M05-AC-1:waits:beta-holds-its-lock-when-watch-returns" held "$root/state/beta/loop.lock"
+ok "M05-AC-1:waits:api-holds-its-lock-when-watch-returns" held "$root/api.lock"
+endcase
+
+echo "# M05-AC-1: the API restarted by watch gets none of the loop settings"
+newcase ac1-apienv alpha
+cat >"$nb/scheduler/api.py" <<'EOT'
+import fcntl, os, time
+root = os.environ["NOODLEBOT_DATA"]
+f = open(os.path.join(root, "api.lock"), "w")
+fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+open(os.path.join(root, "api.env.tmp"), "w").write("".join(k + "=" + v + "\n" for k, v in sorted(os.environ.items())))
+os.rename(os.path.join(root, "api.env.tmp"), os.path.join(root, "api.env"))
+while not os.path.exists(os.path.join(root, "api.die")) and not os.path.exists(os.path.join(root, "die.all")):
+    time.sleep(0.2)
+EOT
+run start SCHED_MAX=2 USAGE_7D_PACE=1
+eq "M05-AC-1:apienv:start-exits-0" "$(cat "$c/rc.start")" 0
+waitfile "$root/api.env"
+ok "M05-AC-1:apienv:the-fake-api-saw-its-data-root" grep -qx "NOODLEBOT_DATA=$root" "$root/api.env"
+diea
+rm -f "$root/api.env"
+watch 1
+waitheld "$root/api.lock"
+waitfile "$root/api.env"
+eq "M05-AC-1:apienv:watch-restarted-the-api" "$(newn api)" 2
+ok "M05-AC-1:apienv:the-restarted-api-has-its-data-root" grep -qx "NOODLEBOT_DATA=$root" "$root/api.env"
+eq "M05-AC-1:apienv:no-SCHED_MAX-in-the-apis-environment" "$(cnt "$root/api.env" '^SCHED_MAX=')" 0
+eq "M05-AC-1:apienv:no-loop-setting-at-all-in-the-apis-environment" "$(cnt "$root/api.env" -E '^(SCHED_|USAGE_|PICKUP)')" 0
+endcase
+
+echo "# M05-AC-1: a restarted loop has exactly the recorded settings (its own env.out); watch says nothing about the calling shell"
+newcase ac1-envout alpha
+run start SCHED_MAX=2 USAGE_7D_PACE=1
+eq "M05-AC-1:envout:start-exits-0" "$(cat "$c/rc.start")" 0
+die alpha
+rm -f "$root/state/alpha/env.out"
+watch 1
+waitheld "$root/state/alpha/loop.lock"
+waitfile "$root/state/alpha/env.out"
+eq "M05-AC-1:envout:watch-restarted-alpha" "$(newn alpha)" 2
+ok "M05-AC-1:envout:the-restarted-loop-wrote-env.out" test -s "$root/state/alpha/env.out"
+ok "M05-AC-1:envout:the-restarted-loop-has-SCHED_MAX=2" grep -qx 'SCHED_MAX=2' "$root/state/alpha/env.out"
+ok "M05-AC-1:envout:the-restarted-loop-has-USAGE_7D_PACE=1" grep -qx 'USAGE_7D_PACE=1' "$root/state/alpha/env.out"
+eq "M05-AC-1:envout:the-restarted-loop-has-no-other-setting" "$(cnt "$root/state/alpha/env.out" -E '^(SCHED_|USAGE_|PICKUP)')" 2
+eq "M05-AC-1:envout:watch-output-does-not-mention-the-calling-shell" "$(cnt "$c/out.watch1" -i 'calling shell')" 0
 endcase
 
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
