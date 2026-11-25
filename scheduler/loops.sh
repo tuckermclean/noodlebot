@@ -36,7 +36,7 @@
 # nothing new, and start prints that one calling-shell line.
 # M05: start writes the settings it passes to $root/state/loops.env (mode 0600, one VAR=value per line, written
 # by temp file and rename) and removes $root/state/loops.stopped; stop writes loops.stopped. `loops.sh watch`
-# (for a timer or cron; prints only failures) starts, under its own lock $root/state/watch.lock, every listed loop and the
+# (for a timer or cron; prints only failures, besides the shared "no repositories listed" and login-scope lines) starts, under its own lock $root/state/watch.lock, every listed loop and the
 # API whose lock is not held, as start does and with the settings of loops.env (never evaluated), unless ~/STOP,
 # ~/STOP-<name> (that repository) or loops.stopped exists. It waits like start for what it started to take its
 # locks, leaves them running when it exits, and appends one line per restart to $root/state/<name>/status.log:
@@ -285,7 +285,7 @@ start)
 watch)
 	if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then exit 0; fi
 	mkdir -p "$root/state" || exit 1
-	exec 8>"$root/state/watch.lock" && flock -w 120 8 || exit 1
+	exec 8>"$root/state/watch.lock" && { flock -w 120 8 || { echo "loops.sh watch: another watch holds $root/state/watch.lock" >&2; exit 1; }; }
 	said_where=1 # from a timer there is no calling shell
 	# stop may have run while this watch waited for the lock
 	if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then exit 0; fi
@@ -334,6 +334,10 @@ watch)
 	done ;;
 stop)
 	mkdir -p "$root/state" 2>/dev/null && : >"$root/state/loops.stopped"
+	# a watch already past its checks is starting loops: let it finish, then stop what it started
+	if [ -d "$root/state" ]; then
+		( flock -w $((start_wait + 30)) 9 || echo "loops.sh stop: a watch still holds $root/state/watch.lock" >&2 ) 9>>"$root/state/watch.lock"
+	fi
 	waiting=()
 	for repo in "${repos[@]}"; do
 		name=$(rtname "$repo")
