@@ -66,23 +66,23 @@ if [ "$cmd" = watch-unit ]; then
 	wroot=${NOODLEBOT_DATA:-$HOME/.local/share/noodlebot}
 	case $wroot in /*) ;; *) wroot=$PWD/$wroot ;; esac
 	wroot=$(cd "$wroot" 2>/dev/null && pwd -P || echo "$wroot")
-	cat <<EOT
-# /etc/systemd/system/noodlebot-watch.service
-[Unit]
+	# systemd quoting: Environment="K=V" escapes \ and " and doubles %; ExecStart doubles % and $ and quotes the path when needed
+	q() { local v=${1//\\/\\\\}; v=${v//\"/\\\"}; echo "${v//%/%%}"; }
+	ex=${nb//%/%%}; ex=${ex//\$/\$\$}
+	case $ex in *[[:space:]\"\'\\]*) ex=${ex//\\/\\\\}; ex=\"${ex//\"/\\\"}/scheduler/loops.sh\" ;; *) ex=$ex/scheduler/loops.sh ;; esac
+	svc="[Unit]
 Description=noodlebot watch: start the loops and the API that are not running
 
 [Service]
 Type=oneshot
 User=$u
-ExecStart=$nb/scheduler/loops.sh watch
-Environment=HOME=$HOME
-Environment=NOODLEBOT_DATA=$wroot
-Environment=PATH=$PATH
+ExecStart=$ex watch
+Environment=\"HOME=$(q "$HOME")\"
+Environment=\"NOODLEBOT_DATA=$(q "$wroot")\"
+Environment=\"PATH=$(q "$PATH")\"
 Environment=XDG_RUNTIME_DIR=/run/user/$uid
-KillMode=process
-
-# /etc/systemd/system/noodlebot-watch.timer
-[Unit]
+KillMode=process"
+	tmr="[Unit]
 Description=noodlebot watch every $every
 
 [Timer]
@@ -90,13 +90,14 @@ OnBootSec=$every
 OnUnitActiveSec=$every
 
 [Install]
-WantedBy=timers.target
-
-# install (copy the two files above, then):
-sudo tee /etc/systemd/system/noodlebot-watch.service /etc/systemd/system/noodlebot-watch.timer
-sudo systemctl daemon-reload
-sudo systemctl enable --now noodlebot-watch.timer
-EOT
+WantedBy=timers.target"
+	# a here-document delimiter that no line of the units equals
+	d=EOF; while printf '%s\n%s\n' "$svc" "$tmr" | grep -qx "$d"; do d=${d}_; done
+	printf '# /etc/systemd/system/noodlebot-watch.service\n%s\n\n# /etc/systemd/system/noodlebot-watch.timer\n%s\n\n# install (run these lines):\n' "$svc" "$tmr"
+	printf "sudo tee /etc/systemd/system/noodlebot-watch.service >/dev/null <<'%s'\n%s\n%s\n" "$d" "$svc" "$d"
+	printf "sudo tee /etc/systemd/system/noodlebot-watch.timer >/dev/null <<'%s'\n%s\n%s\n" "$d" "$tmr" "$d"
+	echo "sudo systemctl daemon-reload"
+	echo "sudo systemctl enable --now noodlebot-watch.timer"
 	exit 0
 fi
 
@@ -260,8 +261,10 @@ stale_check() {
 	age=$(( $(date +%s) - hb ))
 	if [ "$age" -le "${LOOPS_STALE:-1800}" ]; then rm -f "$mark"; return 0; fi
 	[ -e "$mark" ] && return 0
+	sig=$(sh "$nb/scheduler/version.sh" --signature "$nb" 2>/dev/null) || sig=
+	[ -n "$sig" ] || sig="— n00dl3b0t unknown"
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) loops.sh watch: $1: loop is stale (heartbeat $age s old)" >>"$root/state/watch.log"
-	if NOODLEBOT_FORGE_REPO=$1 NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 120 python3 -I "$nb/scheduler/report.py" --repo "$1" --state "$root/state/$2" --stale "$age" 8>&- >/dev/null; then
+	if NOODLEBOT_FORGE_REPO=$1 NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 120 python3 -I "$nb/scheduler/report.py" --repo "$1" --state "$root/state/$2" --stale "$age" --signature "$sig" 8>&- >/dev/null; then
 		: >"$mark"
 	else
 		echo "loops.sh watch: $1: the stale-loop comment was not posted; the next watch tries again" >&2
