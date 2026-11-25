@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | S04, S08, U01 | none | L |
+| now | S04, S08, U01 | S17 | L |
 
 **Owns:** in `scheduler/run-session.sh`: the start of the harness's first stage in a unit of its own (the `systemd-run --user --scope` call, its memory and stop properties and its fallback), the `oom_score_adj` raise, the end of the first stage (stopping the scope, or killing what is left of the session's process group), the session's scratch folder (`TMPDIR`, `<state-dir>/tmp`), and the record of the unit's result (`session.unit`); in `scheduler/loop.sh`: reading `~/.config/noodlebot/units` and the memory settings (`SCHED_MEMORY_MAX`, `SCHED_SWAP_MAX`, `SCHED_OOM_ADJ`) and handing them to `run-session.sh`, the out-of-memory reason of `record_stop` and the out-of-memory wording of the end lines (`ended`, `feedback_ended`, `triage_ended`, `update_ended`, `adopt_ended`), their lines in the header comment; in `scheduler/report.py`: the out-of-memory milestone on a unit's home issue; `scheduler/loop-s12.test.sh` (new) and `scheduler/run-session-s12.test.sh` (new), their lines in the `Makefile`'s `TESTS`, and any fixtures they add under `scheduler/testdata/s12/`.
 **Resolves:** #218

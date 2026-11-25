@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G07, U02, W06 | D19, U05, U06 | M |
+| now | G07, U02, W06 | D19, U05, U06, U08 | M |
 
 **Owns:** in `scheduler/report.py`: the merge record of each open node PR in `report.json` (its head, the head and verdict of its last `Fresh review`, the CI result on its head) and the "Waiting on you" item of a node's open PR (ready to merge, or still being worked on and why); in `scheduler/site.py`, a node's `merge_ready` and `merge_why` fields; their keys in `scheduler/site-schema.json`; in `site/views.js`, the text a node with an open PR shows for them; the new tests `scheduler/report-u04.test.sh`, `scheduler/site-u04.test.sh` and `site/test/views-u04.test.mjs`, the two shell tests' lines in the `Makefile`'s `TESTS`, and any fixtures they add under `scheduler/testdata/u04/`.
 **Resolves:** #105

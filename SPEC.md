@@ -10,8 +10,13 @@ way.
 
 ## 1. Principles
 
-1. **The owner merges.** Bots never merge, approve, push to `main`, or change branch protection or
-   repository settings. Every result reaches the owner as a PR, a comment or a question.
+1. **The owner sets the rules and merges the plan.** Bots never push to `main`, change branch protection
+   or repository settings, or merge a spec or adoption PR. Only the reviewer App may approve or request
+   changes on a PR, and only for the exact head it reviewed. A node PR is merged by the forge's own
+   auto-merge, under the branch protection the owner sets, once the auto-gate holds at its head (the
+   reviewer App's approval at that head is one of its points); the loop only turns auto-merge on. Spec
+   and adoption PRs, and approvals of frozen-test changes, stay the owner's alone. Every result reaches
+   the owner as a PR, a comment or a question.
 2. **Not precious.** Every piece can be thrown away and rebuilt from Git and GitHub: a closed status
    issue is replaced, a lost worktree recreated, a restarted loop takes over running sessions. A failing
    part logs its failure and the rest carries on.
@@ -62,6 +67,12 @@ way.
   deps' files; behaviour of imported code it keeps is pinned by a test before the code is changed, and behaviour it
   changes is superseded by its own criteria. A graph with none of
   these fields means what it always has.
+- **The reviewer** (nodes G12, S16, S17, G13, U08). A second GitHub App, separate from `n00dl3b0t` and with its own
+  token script, reviews every open PR at each new head once the head has settled and its CI has finished. A read-only
+  session with no forge credential writes a JSON review that `scheduler/reviewer.py draft` checks (the verdict
+  follows the findings), and the loop posts it as one review at that head through a forge profile that allows only
+  reviews and the reviewer's own threads. Its `request_changes` at a PR's current head is feedback like the owner's.
+  It never approves a frozen-test change the owner has not approved, nor a change that needs the owner's decision.
 - **Backends.** The forge interface (`scheduler/forge.py`, node G04) and the harness interface
   (`scheduler/harness.py`, node S08) are core's only way to the code forge and the agent harness; what
   only makes sense for one backend (the GitHub App token script, gist publishing and the Pages
