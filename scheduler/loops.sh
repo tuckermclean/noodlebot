@@ -34,6 +34,13 @@
 # runs directly, one line says the loops run in the calling shell's session, and systemd-run is not tried
 # again in that run. Without the units file neither loginctl nor systemd-run is called, status prints
 # nothing new, and start prints that one calling-shell line.
+# M05: start writes the settings it passes to $root/state/loops.env (mode 0600, one VAR=value per line, written
+# by temp file and rename) and removes $root/state/loops.stopped; stop writes loops.stopped. `loops.sh watch`
+# (for a timer or cron; prints nothing) starts, under its own lock $root/state/watch.lock, every listed loop and the
+# API whose lock is not held, as start does and with the settings of loops.env (never evaluated), unless ~/STOP,
+# ~/STOP-<name> (that repository) or loops.stopped exists. It waits like start for what it started to take its
+# locks, leaves them running when it exits, and appends one line per restart to $root/state/<name>/status.log:
+# "<UTC stamp> loops.sh watch: restarted the loop (heartbeat <n> s old)" or "(no heartbeat)".
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
@@ -43,10 +50,10 @@ case $root in /*) ;; *) root=$PWD/$root ;; esac
 wait_s=${LOOPS_STOP_WAIT:-300}
 start_wait=${LOOPS_START_WAIT:-10}
 
-usage() { echo "usage: loops.sh start|stop|status" >&2; exit 2; }
+usage() { echo "usage: loops.sh start|stop|status|watch" >&2; exit 2; }
 [ $# -eq 1 ] || usage
 cmd=$1
-case $cmd in start | stop | status) ;; *) usage ;; esac
+case $cmd in start | stop | status | watch) ;; *) usage ;; esac
 
 # rtname <spec>: the runtime name: the last component of the path of [<forge>:]<path>.
 rtname() { local p=${1#*:}; [ "$p" != "$1" ] || p=$1; p=${p%/}; echo "${p##*/}"; }
@@ -222,6 +229,11 @@ start)
 	check_server
 	pass=()
 	for v in $(compgen -v | grep -E '^((USAGE|SCHED)_[A-Za-z0-9_]*|PICKUP(_[A-Za-z0-9_]*)?)$'); do pass+=("$v=${!v}"); done
+	# M05: the settings passed are recorded for `watch`; start is wanted again
+	if mkdir -p "$root/state" 2>/dev/null; then
+		( umask 077; { for ((i = 0; i < ${#pass[@]}; i++)); do printf '%s\n' "${pass[i]}"; done; } >"$root/state/.loops.env.$$" && mv -f "$root/state/.loops.env.$$" "$root/state/loops.env" ) 2>/dev/null
+		rm -f "$root/state/loops.stopped"
+	fi
 	launched=()
 	for repo in "${repos[@]}"; do
 		name=$(rtname "$repo")
@@ -270,7 +282,54 @@ start)
 			rc=1
 		fi
 	done ;;
+watch)
+	if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then exit 0; fi
+	mkdir -p "$root/state" || exit 1
+	exec 8>"$root/state/watch.lock" && flock -w 120 8 || exit 1
+	wpass=()
+	if [ -r "$root/state/loops.env" ]; then
+		while IFS= read -r line || [ -n "$line" ]; do
+			case $line in [A-Za-z_]*=*) wpass+=("$line") ;; esac
+		done <"$root/state/loops.env"
+	fi
+	check_server
+	launched=()
+	for repo in "${repos[@]}"; do
+		name=$(rtname "$repo")
+		running "$name" && continue
+		[ -e "$HOME/STOP-$name" ] && continue
+		hb=$(cat "$root/state/$name/heartbeat" 2>/dev/null)
+		case $hb in '' | *[!0-9]*) how="no heartbeat" ;; *) how="heartbeat $(( $(date +%s) - hb )) s old" ;; esac
+		if tnew -d -s "sched-$name" env NOODLEBOT_DATA="$root" ${wpass[@]+"${wpass[@]}"} "$nb/scheduler/loop.sh" "$repo" 8>&-; then
+			mkdir -p "$root/state/$name"
+			echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) loops.sh watch: restarted the loop ($how)" >>"$root/state/$name/status.log"
+			launched+=("$repo")
+		else
+			echo "$repo: could not start tmux session sched-$name" >&2
+			rc=1
+		fi
+	done
+	api_launched=0
+	if [ -e "$nb/scheduler/api.py" ] && ! held "$root/api.lock"; then
+		if tnew -d -s sched-api env NOODLEBOT_DATA="$root" ${wpass[@]+"${wpass[@]}"} python3 "$nb/scheduler/api.py" 8>&-; then
+			api_launched=1
+		else
+			echo "api: could not start tmux session sched-api" >&2
+			rc=1
+		fi
+	fi
+	deadline=$((SECONDS + start_wait))
+	if [ $api_launched = 1 ]; then
+		while ! held "$root/api.lock" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
+		held "$root/api.lock" || { echo "api: server did not take its lock within ${start_wait}s" >&2; rc=1; }
+	fi
+	for repo in ${launched[@]+"${launched[@]}"}; do
+		name=$(rtname "$repo")
+		while ! running "$name" && [ $SECONDS -lt $deadline ]; do sleep 0.2; done
+		running "$name" || { echo "$repo: loop did not take its lock within ${start_wait}s; see $root/state/$name/status.log" >&2; rc=1; }
+	done ;;
 stop)
+	mkdir -p "$root/state" 2>/dev/null && : >"$root/state/loops.stopped"
 	waiting=()
 	for repo in "${repos[@]}"; do
 		name=$(rtname "$repo")
