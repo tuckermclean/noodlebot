@@ -150,3 +150,22 @@ g02_stop() {
 	timeout 5 sh -c "while kill -0 $g02_lp 2>/dev/null; do sleep 0.1; done"
 	for f in "$state"/pr/*/session.pid; do [ -e "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
 }
+# g02_tickwait <n> <cmd...> (D20): a wait counted in the loop's ticks, not seconds. Succeeds as soon as the command holds; fails
+# when the loop's heartbeat ($state/heartbeat, written at each tick's start) has changed n times since the call and the command,
+# checked once more then, still fails. Also fails when the heartbeat does not change for $g02_tick_limit s (default 30 s: a loaded
+# tick took 4-8 s here and up to 11.4 s in D05, wait_ticks gives a tick 10 s; 30 s is far past both and still ends a stopped loop).
+# What a case waits for (a start after `main` moves, an end after a fake exits) comes in the first tick that starts after the
+# event, up to a tick's work later (the event often lands just after that tick's fetch), so n = 4 is two ticks of margin.
+g02_tickwait() {
+	local n=$1 last now since
+	shift
+	last=$(cat "$state/heartbeat" 2>/dev/null); since=$(date +%s)
+	while :; do
+		now=$(cat "$state/heartbeat" 2>/dev/null)
+		if [ "$now" != "$last" ]; then last=$now; n=$((n - 1)); since=$(date +%s); fi
+		"$@" && return 0
+		[ "$n" -gt 0 ] || return 1
+		[ $(($(date +%s) - since)) -lt "${g02_tick_limit:-30}" ] || return 1
+		sleep 0.1
+	done
+}
