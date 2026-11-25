@@ -452,5 +452,197 @@ if held "$root/state/alpha/loop.lock"; then fail "M05-AC-3:inflight:no-loop-lock
 if held "$root/api.lock"; then fail "M05-AC-3:inflight:no-api-lock-taken-within-the-delay-after-the-watch-returned"; else pass "M05-AC-3:inflight:no-api-lock-taken-within-the-delay-after-the-watch-returned"; fi
 endcase
 
+
+# ---- slice S2: the stale loop (M05-AC-2), watch-unit (M05-AC-5), and two follow-ups of the S1 review (M05-AC-1) ----
+# Interface the tests give the implementation for a stale loop (M05-AC-2): a loop whose lock is held and whose heartbeat
+# (state/<name>/heartbeat, epoch seconds) is older than LOOPS_STALE seconds (default 1800; older means a greater age) is
+# never signalled. The watch writes one line to $root/state/watch.log, `<UTC stamp> loops.sh watch: <owner/name>: loop is
+# stale (heartbeat <n> s old)`, and gets one comment posted on the repository's open log issue by report.py, which the
+# watch calls itself (a hung loop runs no report.py): `python3 -I $nb/scheduler/report.py --repo <owner/name> --state
+# $root/state/<name> --stale <n>` (<n> whole seconds), the forge reached as the loop's report does (NOODLEBOT_FORGE_REPO and
+# NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token exported). The comment names the loop (<name>) and holds
+# `heartbeat <n> s old`. Once per stale episode: the watch keeps what it needs (not pinned) to post again only after a watch
+# has seen the heartbeat fresh; a failed post leaves the watch.log line and puts one line on stderr, and the next watch posts.
+# How many watch.log lines a repeated watch in one episode writes is not pinned.
+unset LOOPS_STALE LOOPS_WATCH_EVERY
+ln -s "$(command -v mkfifo)" "$tools/mkfifo" 2>/dev/null
+# stalecase: the report tooling beside loops.sh, the fake gh on the case's PATH, a token script, no API, and a fake loop that
+# traps every signal it can and records it in $root/signals
+stalecase() {
+	cp "$src"/*.py "$nb/scheduler/"; cp -R "$src/forges" "$nb/scheduler/forges"
+	rm -f "$nb/scheduler/api.py"
+	cp "$ubin/gh" "$bin/gh"
+	cat >"$HOME/.config/noodlebot/token" <<EOT
+#!/bin/sh
+echo "\$*" >>"$c/token.calls"
+echo tok
+EOT
+	chmod +x "$HOME/.config/noodlebot/token"
+	cat >"$nb/scheduler/loop.sh" <<'EOT'
+#!/bin/sh
+name=${1#*/}
+d=$NOODLEBOT_DATA/state/$name
+mkdir -p "$d"
+exec 9>"$d/loop.lock"
+flock -n 9 || exit 1
+sig=$NOODLEBOT_DATA/signals
+trap 'echo TERM >>"$sig"' TERM
+trap 'echo INT >>"$sig"' INT
+trap 'echo HUP >>"$sig"' HUP
+trap 'echo USR1 >>"$sig"' USR1
+trap 'echo USR2 >>"$sig"' USR2
+trap 'echo QUIT >>"$sig"' QUIT
+echo $$ >"$d/loop.pid"
+date +%s >"$d/heartbeat"
+echo $$ >>"$d/starts"
+while [ ! -e "$HOME/STOP-$name" ] && [ ! -e "$d/die" ] && [ ! -e "$NOODLEBOT_DATA/die.all" ]; do sleep 0.2; done
+EOT
+	chmod +x "$nb/scheduler/loop.sh"
+}
+# sethb <name> <age>: the loop's heartbeat is <age> seconds old
+sethb() { hb=$(( $(date +%s) - $2 )); echo "$hb" >"$root/state/$1/heartbeat"; touch -d "@$hb" "$root/state/$1/heartbeat"; }
+# loglines: the log issue's comments matching the regex (the shared fake forge's)
+sc() { ucount "$lognum" "$1"; }
+hbre='heartbeat [0-9]+ s old'
+rm -f "$tmp/ufail"
+
+echo "# M05-AC-2: a stale loop is never signalled; one watch.log line and one comment on the log issue per stale episode"
+newcase ac2 alpha
+stalecase
+run start
+eq "M05-AC-2:start-exits-0" "$(cat "$c/rc.start")" 0
+waitheld "$root/state/alpha/loop.lock"
+lpid=$(cat "$root/state/alpha/loop.pid" 2>/dev/null)
+: >"$root/state/alpha/status.log"
+urun "$root/state/alpha"
+lognum=$(uq "[i['number'] for i in db['issues'].values() if i['title'].startswith('noodlebot log')][0]")
+wl=$root/state/watch.log
+re_a="(?s)(?=.*alpha)(?=.*$hbre)"
+base_c=$(sc "$re_a")
+sethb alpha 2000
+watch 1
+eq "M05-AC-2:stale:watch-exits-0" "$(wrc 1)" 0
+eq "M05-AC-2:stale:the-loop-is-not-signalled" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+eq "M05-AC-2:stale:the-loop-keeps-its-pid" "$(cat "$root/state/alpha/loop.pid" 2>/dev/null)" "$lpid"
+ok "M05-AC-2:stale:the-loop-still-runs-and-holds-its-lock" held "$root/state/alpha/loop.lock"
+eq "M05-AC-2:stale:the-loop-is-not-restarted-no-second-tmux-new" "$(newn alpha)" 1
+eq "M05-AC-2:stale:one-watch.log-line" "$(wc -l <"$wl" 2>/dev/null | tr -d ' ')" 1
+ok "M05-AC-2:stale:watch.log-line-begins-with-a-UTC-stamp-and-names-the-loop" grep -qE '^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z .*alpha' "$wl"
+age=$(sed -n 's/.*heartbeat \([0-9][0-9]*\) s old.*/\1/p' "$wl" 2>/dev/null | head -1)
+ok "M05-AC-2:stale:watch.log-line-gives-the-heartbeat-age-in-seconds-2000-to-2200" test "${age:-0}" -ge 2000 -a "${age:-0}" -le 2200
+eq "M05-AC-2:stale:one-comment-on-the-log-issue-naming-the-loop-and-the-age" "$(( $(sc "$re_a") - base_c ))" 1
+cage=$(ulast "$lognum" | sed -n 's/.*heartbeat \([0-9][0-9]*\) s old.*/\1/p' | head -1)
+ok "M05-AC-2:stale:the-comment-gives-the-heartbeat-age-in-seconds-2000-to-2200" test "${cage:-0}" -ge 2000 -a "${cage:-0}" -le 2200
+ok "M05-AC-2:stale:the-token-script-ran-for-the-repository-as-in-a-loop" grep -q 'o/alpha' "$c/token.calls"
+watch 2
+eq "M05-AC-2:episode:a-second-watch-while-still-stale-posts-no-second-comment" "$(( $(sc "$re_a") - base_c ))" 1
+eq "M05-AC-2:episode:still-no-signal" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+sethb alpha 5
+watch 3
+eq "M05-AC-2:episode:a-watch-that-sees-the-heartbeat-fresh-posts-nothing" "$(( $(sc "$re_a") - base_c ))" 1
+sethb alpha 2000
+watch 4
+eq "M05-AC-2:episode:stale-again-after-fresh-posts-one-more-comment-2-in-all" "$(( $(sc "$re_a") - base_c ))" 2
+watch 5
+eq "M05-AC-2:episode:and-only-one-for-that-episode" "$(( $(sc "$re_a") - base_c ))" 2
+eq "M05-AC-2:episode:the-loop-was-never-signalled" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+eq "M05-AC-2:episode:the-loop-keeps-its-pid" "$(cat "$root/state/alpha/loop.pid" 2>/dev/null)" "$lpid"
+eq "M05-AC-2:episode:the-loop-was-never-restarted" "$(newn alpha)" 1
+echo "# M05-AC-2: a failed post stays in watch.log and on stderr, and the next watch posts it"
+sethb alpha 5
+watch 6
+sethb alpha 2000
+l0=$(wc -l <"$wl" 2>/dev/null | tr -d ' ')
+echo 'POST .*/comments' >"$tmp/ufail"
+watch 7
+rm -f "$tmp/ufail"
+l1=$(wc -l <"$wl" 2>/dev/null | tr -d ' ')
+ok "M05-AC-2:failed-post:the-line-is-in-watch.log" test "${l1:-0}" -gt "${l0:-0}"
+eq "M05-AC-2:failed-post:no-comment-was-posted" "$(( $(sc "$re_a") - base_c ))" 2
+ok "M05-AC-2:failed-post:one-line-on-stderr-naming-the-loop" grep -q 'alpha' "$c/out.watch7"
+watch 8
+eq "M05-AC-2:failed-post:the-next-watch-posts-it" "$(( $(sc "$re_a") - base_c ))" 3
+eq "M05-AC-2:failed-post:the-loop-was-never-signalled" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+endcase
+
+echo "# M05-AC-2: LOOPS_STALE defaults to 1800 s: a heartbeat 1700 s old is not stale, 1900 s old is"
+newcase ac2-def alpha beta
+stalecase
+run start
+waitheld "$root/state/alpha/loop.lock"; waitheld "$root/state/beta/loop.lock"
+wl=$root/state/watch.log
+re_a="(?s)(?=.*alpha)(?=.*$hbre)"
+re_b="(?s)(?=.*beta)(?=.*$hbre)"
+base_a=$(sc "$re_a"); base_b=$(sc "$re_b")
+sethb alpha 1700; sethb beta 1900
+watch 1
+eq "M05-AC-2:default:watch-exits-0" "$(wrc 1)" 0
+eq "M05-AC-2:default:one-watch.log-line-in-all" "$(wc -l <"$wl" 2>/dev/null | tr -d ' ')" 1
+ok "M05-AC-2:default:the-line-names-the-loop-1900-s-old" grep -q 'beta' "$root/state/watch.log"
+eq "M05-AC-2:default:no-line-for-the-loop-1700-s-old" "$(cnt "$root/state/watch.log" alpha)" 0
+eq "M05-AC-2:default:no-comment-for-the-loop-1700-s-old" "$(( $(sc "$re_a") - base_a ))" 0
+eq "M05-AC-2:default:one-comment-for-the-loop-1900-s-old" "$(( $(sc "$re_b") - base_b ))" 1
+eq "M05-AC-2:default:no-loop-is-signalled" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+wenv LOOPS_STALE=1000 timeout 60 sh "$nb/scheduler/loops.sh" watch >"$c/out.watchL" 2>&1 </dev/null
+eq "M05-AC-2:LOOPS_STALE=1000:the-loop-1700-s-old-is-stale-one-comment" "$(( $(sc "$re_a") - base_a ))" 1
+eq "M05-AC-2:LOOPS_STALE=1000:the-loop-already-reported-this-episode-gets-no-second" "$(( $(sc "$re_b") - base_b ))" 1
+eq "M05-AC-2:LOOPS_STALE=1000:no-loop-is-signalled" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+endcase
+
+echo "# M05-AC-5: watch-unit prints the system service and timer and the commands that install them; calls nothing, writes nothing"
+# uhas <file> <section> <line>: the section holds the line exactly
+uhas() { W=$3 S="[$2]" awk 'BEGIN { w = ENVIRON["W"]; s = ENVIRON["S"] } /^\[/ { cur = $0 } cur == s && $0 == w { f = 1 } END { exit !f }' "$1"; }
+# uenv <file> <VAR=value>: Environment=VAR=value or Environment="VAR=value" in [Service]
+uenv() { uhas "$1" Service "Environment=$2" || uhas "$1" Service "Environment=\"$2\""; }
+lst() { find "$HOME" "$root" -printf '%p %s %T@\n' | sort; }
+newcase ac5 alpha
+for t in systemctl systemd-run sudo; do
+	printf '#!/bin/sh\necho "%s $*" >>"%s"\nexit 0\n' "$t" "$c/calls" >"$bin/$t"
+	chmod +x "$bin/$t"
+done
+: >"$c/calls"
+wu_user=$(id -un); wu_uid=$(id -u)
+wu_exec=$(cd "$nb/scheduler" && pwd -P)/loops.sh
+wu_root=$(cd "$root" && pwd -P)
+wu_check() { # <tag> <every> <extra VAR=value...>
+	wt=$1 we=$2; shift 2
+	before=$(lst)
+	run watch-unit "$@"
+	cp "$c/out.watch-unit" "$c/out.wu.$wt"
+	o=$c/out.wu.$wt
+	after=$(lst)
+	eq "M05-AC-5:$wt:exits-0" "$(cat "$c/rc.watch-unit")" 0
+	ok "M05-AC-5:$wt:names-noodlebot-watch.service" grep -q 'noodlebot-watch\.service' "$o"
+	ok "M05-AC-5:$wt:service-Type=oneshot" uhas "$o" Service "Type=oneshot"
+	ok "M05-AC-5:$wt:service-User=the-calling-user" uhas "$o" Service "User=$wu_user"
+	ok "M05-AC-5:$wt:service-ExecStart=this-checkouts-loops.sh-watch" uhas "$o" Service "ExecStart=$wu_exec watch"
+	ok "M05-AC-5:$wt:service-Environment-HOME" uenv "$o" "HOME=$HOME"
+	ok "M05-AC-5:$wt:service-Environment-NOODLEBOT_DATA-the-resolved-root" uenv "$o" "NOODLEBOT_DATA=$wu_root"
+	ok "M05-AC-5:$wt:service-Environment-PATH-the-calling-PATH" uenv "$o" "PATH=$bin:$tools"
+	ok "M05-AC-5:$wt:service-Environment-XDG_RUNTIME_DIR" uenv "$o" "XDG_RUNTIME_DIR=/run/user/$wu_uid"
+	ok "M05-AC-5:$wt:service-KillMode=process" uhas "$o" Service "KillMode=process"
+	ok "M05-AC-5:$wt:names-noodlebot-watch.timer" grep -q 'noodlebot-watch\.timer' "$o"
+	ok "M05-AC-5:$wt:timer-OnBootSec=$we" uhas "$o" Timer "OnBootSec=$we"
+	ok "M05-AC-5:$wt:timer-OnUnitActiveSec=$we" uhas "$o" Timer "OnUnitActiveSec=$we"
+	ok "M05-AC-5:$wt:timer-WantedBy=timers.target" uhas "$o" Install "WantedBy=timers.target"
+	ok "M05-AC-5:$wt:install-commands-name-sudo-and-etc-systemd-system" grep -qE 'sudo.*/etc/systemd/system|/etc/systemd/system.*sudo' "$o"
+	ok "M05-AC-5:$wt:install-commands-enable-the-timer-with-systemctl" grep -qE 'systemctl.*enable.*noodlebot-watch\.timer' "$o"
+	if [ -s "$c/calls" ]; then fail "M05-AC-5:$wt:calls-no-systemctl-systemd-run-or-sudo"; else pass "M05-AC-5:$wt:calls-no-systemctl-systemd-run-or-sudo"; fi
+	if [ "$before" = "$after" ]; then pass "M05-AC-5:$wt:writes-no-file-HOME-and-runtime-root-unchanged"; else fail "M05-AC-5:$wt:writes-no-file-HOME-and-runtime-root-unchanged"; fi
+}
+wu_check default 5min
+wu_check every-2min 2min LOOPS_WATCH_EVERY=2min
+endcase
+
+echo "# M05-AC-1: watch does not run unlocked when it cannot open state/watch.lock"
+newcase ac1-lockdir alpha
+mkdir -p "$root/state/watch.lock"
+: >"$root/state/loops.env"
+watch 1
+ok "M05-AC-1:lock-cannot-be-opened:watch-exits-non-zero" test "$(wrc 1)" != 0 -a "$(wrc 1)" != none
+eq "M05-AC-1:lock-cannot-be-opened:no-tmux-new" "$(cnt "$TMUXLOG" '^new ')" 0
+ok "M05-AC-1:lock-cannot-be-opened:no-loop-runs" test ! -e "$root/state/alpha/loop.pid"
+endcase
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
