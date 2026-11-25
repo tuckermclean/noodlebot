@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G02, G03 | D13, G07 | M |
+| now | G02, G03 | D13, D24, G07 | M |
 
 **Owns:** in `scheduler/loop.sh`: the start of a node's feedback session taking the PR's branch back from a leftover node-PR update worktree (`worktrees/<name>/pr-<N>`) and putting a worktree the update detached back on the branch; the hold of a node's feedback while a node-PR update question of its PR is unanswered; the rule for an open-PR list as long as its limit in the cleanup of pending `FEEDBACK.md` files; in `scheduler/feedback.py`, the same rule for removing the record and file of a PR no longer open; the resolution review in the feedback procedure (`--feedback <PR>`) of `plugin/skills/node/SKILL.md`; their cases in `scheduler/loop-g06*.test.sh`, `scheduler/feedback-g06.test.sh` and `plugin/skills/node/skill.test.sh`, and the new files' lines in the `Makefile`'s `TESTS`.
 **Resolves:** #101
