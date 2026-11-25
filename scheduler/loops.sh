@@ -36,7 +36,7 @@
 # nothing new, and start prints that one calling-shell line.
 # M05: start writes the settings it passes to $root/state/loops.env (mode 0600, one VAR=value per line, written
 # by temp file and rename) and removes $root/state/loops.stopped; stop writes loops.stopped. `loops.sh watch`
-# (for a timer or cron; prints nothing) starts, under its own lock $root/state/watch.lock, every listed loop and the
+# (for a timer or cron; prints only failures) starts, under its own lock $root/state/watch.lock, every listed loop and the
 # API whose lock is not held, as start does and with the settings of loops.env (never evaluated), unless ~/STOP,
 # ~/STOP-<name> (that repository) or loops.stopped exists. It waits like start for what it started to take its
 # locks, leaves them running when it exits, and appends one line per restart to $root/state/<name>/status.log:
@@ -286,6 +286,9 @@ watch)
 	if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then exit 0; fi
 	mkdir -p "$root/state" || exit 1
 	exec 8>"$root/state/watch.lock" && flock -w 120 8 || exit 1
+	said_where=1 # from a timer there is no calling shell
+	# stop may have run while this watch waited for the lock
+	if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then exit 0; fi
 	wpass=()
 	if [ -r "$root/state/loops.env" ]; then
 		while IFS= read -r line || [ -n "$line" ]; do
@@ -298,6 +301,7 @@ watch)
 		name=$(rtname "$repo")
 		running "$name" && continue
 		[ -e "$HOME/STOP-$name" ] && continue
+		if [ -e "$HOME/STOP" ] || [ -e "$root/state/loops.stopped" ]; then break; fi
 		hb=$(cat "$root/state/$name/heartbeat" 2>/dev/null)
 		case $hb in '' | *[!0-9]*) how="no heartbeat" ;; *) how="heartbeat $(( $(date +%s) - hb )) s old" ;; esac
 		if tnew -d -s "sched-$name" env NOODLEBOT_DATA="$root" ${wpass[@]+"${wpass[@]}"} "$nb/scheduler/loop.sh" "$repo" 8>&-; then
@@ -310,8 +314,8 @@ watch)
 		fi
 	done
 	api_launched=0
-	if [ -e "$nb/scheduler/api.py" ] && ! held "$root/api.lock"; then
-		if tnew -d -s sched-api env NOODLEBOT_DATA="$root" ${wpass[@]+"${wpass[@]}"} python3 "$nb/scheduler/api.py" 8>&-; then
+	if [ -e "$nb/scheduler/api.py" ] && ! held "$root/api.lock" && [ ! -e "$HOME/STOP" ] && [ ! -e "$root/state/loops.stopped" ]; then
+		if tnew -d -s sched-api env NOODLEBOT_DATA="$root" python3 "$nb/scheduler/api.py" 8>&-; then
 			api_launched=1
 		else
 			echo "api: could not start tmux session sched-api" >&2
