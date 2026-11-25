@@ -396,5 +396,61 @@ eq "M05-AC-1:envout:the-restarted-loop-has-no-other-setting" "$(cnt "$root/state
 eq "M05-AC-1:envout:watch-output-does-not-mention-the-calling-shell" "$(cnt "$c/out.watch1" -i 'calling shell')" 0
 endcase
 
+echo "# M05-AC-1: a restarted loop has exactly the recorded settings, whatever characters a value holds"
+newcase ac1-chars alpha
+# a tmux that runs its command as an argument vector, as tmux 3 does for several arguments (no shell sees the values)
+cat >"$bin/tmux" <<'EOT'
+#!/bin/sh
+echo "$*" >>"$TMUXLOG"
+case $1 in
+new | new-session)
+	shift
+	while [ $# -gt 0 ]; do case $1 in -d) shift ;; -s) shift 2 ;; *) break ;; esac; done
+	. "$NB_FIXTURE_SH"
+	fixture_start "$@" >/dev/null 2>&1 </dev/null &
+	exit 0 ;;
+esac
+echo "no server running" >&2
+exit 1
+EOT
+chmod +x "$bin/tmux"
+sx='a b $HOME "q" '"'"'s'"'"' *'
+run start "SCHED_X=$sx" USAGE_7D_PACE=1
+eq "M05-AC-1:chars:start-exits-0" "$(cat "$c/rc.start")" 0
+lenv=$root/state/loops.env
+eq "M05-AC-1:chars:loops.env-has-two-lines" "$(wc -l <"$lenv" 2>/dev/null | tr -d ' ')" 2
+ok "M05-AC-1:chars:loops.env-holds-the-SCHED_X-line-byte-for-byte" grep -Fx -- "SCHED_X=$sx" "$lenv"
+ok "M05-AC-1:chars:loops.env-holds-USAGE_7D_PACE=1" grep -Fx -- "USAGE_7D_PACE=1" "$lenv"
+ok "M05-AC-1:chars:the-first-loop-has-the-SCHED_X-line-unchanged" grep -Fx -- "SCHED_X=$sx" "$root/state/alpha/env.out"
+die alpha
+rm -f "$root/state/alpha/env.out"
+watch 1
+waitheld "$root/state/alpha/loop.lock"
+waitfile "$root/state/alpha/env.out"
+eq "M05-AC-1:chars:watch-restarted-alpha" "$(newn alpha)" 2
+ok "M05-AC-1:chars:the-restarted-loop-has-the-SCHED_X-line-unchanged" grep -Fx -- "SCHED_X=$sx" "$root/state/alpha/env.out"
+ok "M05-AC-1:chars:the-restarted-loop-has-USAGE_7D_PACE=1" grep -Fx -- "USAGE_7D_PACE=1" "$root/state/alpha/env.out"
+eq "M05-AC-1:chars:the-restarted-loop-has-no-other-setting" "$(cnt "$root/state/alpha/env.out" -E '^(SCHED_|USAGE_|PICKUP)')" 2
+endcase
+
+echo "# M05-AC-3: stop run while a watch is past its checks (loop and API take 2 s to take their locks): nothing is left running"
+newcase ac3-inflight alpha
+echo 2 >"$root/loop.delay"
+watch 1 &
+rpw=$!
+wi=0
+while [ "$wi" -lt 100 ] && { [ "$(newn alpha)" = 0 ] || [ "$(newn api)" = 0 ]; }; do sleep 0.1; wi=$((wi + 1)); done
+eq "M05-AC-3:inflight:the-watch-started-the-loop-and-the-api" "$(newn alpha)$(newn api)" 11
+run stop
+wait $rpw
+eq "M05-AC-3:inflight:stop-exits-0" "$(cat "$c/rc.stop" 2>/dev/null)" 0
+ok "M05-AC-3:inflight:stop-writes-state-loops.stopped" test -e "$root/state/loops.stopped"
+if held "$root/state/alpha/loop.lock"; then fail "M05-AC-3:inflight:no-loop-lock-held-once-stop-and-the-watch-have-returned"; else pass "M05-AC-3:inflight:no-loop-lock-held-once-stop-and-the-watch-have-returned"; fi
+if held "$root/api.lock"; then fail "M05-AC-3:inflight:no-api-lock-held-once-stop-and-the-watch-have-returned"; else pass "M05-AC-3:inflight:no-api-lock-held-once-stop-and-the-watch-have-returned"; fi
+sleep 2.5
+if held "$root/state/alpha/loop.lock"; then fail "M05-AC-3:inflight:no-loop-lock-taken-within-the-delay-after-the-watch-returned"; else pass "M05-AC-3:inflight:no-loop-lock-taken-within-the-delay-after-the-watch-returned"; fi
+if held "$root/api.lock"; then fail "M05-AC-3:inflight:no-api-lock-taken-within-the-delay-after-the-watch-returned"; else pass "M05-AC-3:inflight:no-api-lock-taken-within-the-delay-after-the-watch-returned"; fi
+endcase
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
