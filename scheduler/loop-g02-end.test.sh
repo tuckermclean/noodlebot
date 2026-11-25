@@ -22,7 +22,7 @@ if [ "$(g02_runs 201)" = 1 ]; then
 	# seconds are right here: the fake's own two writes (the run count, then the log line) with no loop tick between them
 	waitf 5 grep -qF "| $g02_wt/pr-205 | node/N05-epsilon" "$G02_GD/claude.log" || fail "D20 setup: the fake's claude.log line of PR 205's run (written just after the run is counted)"
 	ok "G02-AC-1: it runs in worktrees/<name>/pr-205 on node/N05-epsilon" grep -qF "| $g02_wt/pr-205 | node/N05-epsilon" "$G02_GD/claude.log"
-	# seconds are right here: the loop logs the start right after launch, before the fake can count its run (waited for above)
+	# seconds are right here: the loop logs the start right after launch in the same tick, with no loop tick between it and the run count waited for above
 	ok "G02-AC-1: and it is start 1 of 2, one event" waitf 3 g02_evis 205 'start 1 of 2' 1
 	wait_ticks 2 || fail "D20 setup: the loop's heartbeat did not change twice (2 ticks) before the check that N05's session does not start"
 	ok "G02-AC-1: the node's session (N05) does not start while its update runs" sh -c "! grep -qE '^node N05 ' '$G02_GD/claude.log'"

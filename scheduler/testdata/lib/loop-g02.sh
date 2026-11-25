@@ -155,7 +155,8 @@ g02_stop() {
 # checked once more then, still fails. Also fails when the heartbeat does not change for $g02_tick_limit s (default 30 s: a loaded
 # tick took 4-8 s here and up to 11.4 s in D05, wait_ticks gives a tick 10 s; 30 s is far past both and still ends a stopped loop).
 # What a case waits for (a start after `main` moves, an end after a fake exits) comes in the first tick that starts after the
-# event, up to a tick's work later (the event often lands just after that tick's fetch), so n = 4 is two ticks of margin.
+# event, up to a tick's work later (the tick running at the event has often fetched, listed or scanned past it already: fetch for
+# main's move, the PR list for the head's move, the session scan for an end), so n = 4 is two ticks of margin.
 g02_tickwait() {
 	local n=$1 last now since
 	shift
