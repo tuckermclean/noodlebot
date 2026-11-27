@@ -764,5 +764,221 @@ sig_last() { ulast "$lognum" | awk 'NF { l = $0 } END { print l }'; }
 ok "M05-AC-2:signature:the-stale-comment-ends-with-a-line-starting-n00dl3b0t-signature" sh -c 'case $1 in "— n00dl3b0t"*) exit 0 ;; *) exit 1 ;; esac' sh "$(sig_last)"
 endcase
 
+# ---- slice S3 (M05-AC-4: the user timer and the watch line of status; follow-ups of the S2 review) ----
+# Correction of the comment on the quoting rules above: in ExecStart the path is not an argument, so systemd does not
+# substitute `$` in it and the path's `$` stays a single `$` (only `%` is doubled, and the path quoted when it needs it);
+# `$$` belongs to arguments only. A checkout path holding `"`, `'`, `\` or a control character is refused instead of quoted.
+# Interfaces the tests give the implementation (M05-AC-4), with the units file present:
+#   start calls, for the timer, `systemd-run --user --unit noodlebot-watch --on-active=<E> --on-unit-active=<E>
+#   --property=KillMode=process <checkout>/scheduler/loops.sh watch` (<E> = LOOPS_WATCH_EVERY, default 5min), once, when
+#   `systemctl --user is-active noodlebot-watch.timer` prints a state other than `active`; stop calls
+#   `systemctl --user stop noodlebot-watch.timer`; status prints one more line, which names `watch` and, as whole words,
+#   `system` and/or `user` for the active watch timers (read with `systemctl [--user] is-active noodlebot-watch.timer`,
+#   which the fake answers from $c/sys.state and $c/user.state) or `none` for neither, never `api`.
+# The fake systemd-run logs "$*" to $SDRLOG and runs nothing for the timer (a call naming noodlebot-watch), and
+# execs the command after its options otherwise (the tmux of M04's scope call); the fake systemctl logs "$*" to $SCTLLOG.
+ac4_fakes() { # <yes|no>: the fake systemd-run, and the fake systemctl when $1 is yes; the units file is made
+	: >"$HOME/.config/noodlebot/units"
+	SDRLOG=$c/sdr.log SCTLLOG=$c/sctl.log SCTLDIR=$c
+	export SDRLOG SCTLLOG SCTLDIR
+	: >"$SDRLOG"; : >"$SCTLLOG"
+	cat >"$bin/systemd-run" <<'EOT'
+#!/bin/sh
+echo "$*" >>"$SDRLOG"
+case " $* " in *noodlebot-watch*) exit 0 ;; esac
+while [ $# -gt 0 ]; do
+	case $1 in
+	--unit | -u | --description | --slice | -p | --property) shift 2 ;;
+	-*) shift ;;
+	*) break ;;
+	esac
+done
+exec "$@"
+EOT
+	chmod +x "$bin/systemd-run"
+	[ "$1" = yes ] || return 0
+	cat >"$bin/systemctl" <<'EOT'
+#!/bin/sh
+echo "$*" >>"$SCTLLOG"
+u=0 ia=0 q=0
+for a in "$@"; do
+	case $a in --user) u=1 ;; is-active) ia=1 ;; -q | --quiet) q=1 ;; esac
+done
+if [ $ia = 1 ]; then
+	if [ $u = 1 ]; then f=$SCTLDIR/user.state; else f=$SCTLDIR/sys.state; fi
+	s=$(cat "$f" 2>/dev/null)
+	if [ -z "$s" ]; then echo "Failed to connect to bus" >&2; exit 1; fi
+	[ $q = 1 ] || echo "$s"
+	[ "$s" = active ]
+	exit $?
+fi
+exit 0
+EOT
+	chmod +x "$bin/systemctl"
+}
+# st_check <tag> <system state> <user state> <system|user|none>: status with those watch timers active
+st_check() {
+	echo "$2" >"$c/sys.state"; echo "$3" >"$c/user.state"; : >"$SDRLOG"; : >"$SCTLLOG"
+	run status
+	o=$c/out.status
+	extra=$(grep -vxFf "$c/exp.status" "$o")
+	eq "M05-AC-4:$1:status-prints-the-three-lines-of-today-and-one-more" "$(wc -l <"$o" | tr -d ' ')" 3
+	eq "M05-AC-4:$1:status-keeps-the-lines-of-today-and-adds-one" "$(grep -cxFf "$c/exp.status" "$o")" 2
+	ok "M05-AC-4:$1:the-watch-line-names-the-watch" sh -c "printf '%s\n' \"\$1\" | grep -qi watch" sh "$extra"
+	ok "M05-AC-4:$1:the-watch-line-never-contains-api" sh -c "! printf '%s\n' \"\$1\" | grep -qi api" sh "$extra"
+	case $4 in
+	system) ok "M05-AC-4:$1:the-watch-line-names-the-system-timer-only" sh -c "printf '%s\n' \"\$1\" | grep -qiw system && ! printf '%s\n' \"\$1\" | grep -qiw -e user -e none" sh "$extra" ;;
+	user) ok "M05-AC-4:$1:the-watch-line-names-the-user-timer-only" sh -c "printf '%s\n' \"\$1\" | grep -qiw user && ! printf '%s\n' \"\$1\" | grep -qiw -e system -e none" sh "$extra" ;;
+	none) ok "M05-AC-4:$1:the-watch-line-says-none" sh -c "printf '%s\n' \"\$1\" | grep -qiw none && ! printf '%s\n' \"\$1\" | grep -qiw -e system -e user" sh "$extra" ;;
+	esac
+	eq "M05-AC-4:$1:status-calls-no-systemd-run" "$(cnt "$SDRLOG" '')" 0
+	eq "M05-AC-4:$1:status-calls-systemctl-only-to-read-is-active" "$(cnt "$SCTLLOG" -vE '^(--user )?is-active ')" 0
+}
+
+echo "# M05-AC-4: units on, systemctl --user answering: start sets up the user timer unless active, stop stops it, status names the watch timers"
+newcase ac4 alpha
+ac4_fakes yes
+echo inactive >"$c/user.state"; echo inactive >"$c/sys.state"
+nbp=$(cd "$nb" && pwd -P)
+printf '%s\n%s\n' "o/alpha: loop running; sessions: none; waiting on you: nothing" "api: server running; socket $root/api.sock" >"$c/exp.status"
+run start
+eq "M05-AC-4:start-exits-0" "$(cat "$c/rc.start")" 0
+eq "M05-AC-4:inactive:start-makes-one-systemd-run-call-for-the-timer" "$(cnt "$SDRLOG" noodlebot-watch)" 1
+tl=$(grep noodlebot-watch "$SDRLOG" | head -1)
+eq "M05-AC-4:inactive:the-timer-call-is-the-exact-one-with-the-default-5min" "$tl" "--user --unit noodlebot-watch --on-active=5min --on-unit-active=5min --property=KillMode=process $nbp/scheduler/loops.sh watch"
+: >"$SDRLOG"
+run start LOOPS_WATCH_EVERY=2min
+eq "M05-AC-4:every:start-makes-one-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 1
+tl=$(grep noodlebot-watch "$SDRLOG" | head -1)
+eq "M05-AC-4:every:the-timer-call-has-LOOPS_WATCH_EVERY-twice" "$tl" "--user --unit noodlebot-watch --on-active=2min --on-unit-active=2min --property=KillMode=process $nbp/scheduler/loops.sh watch"
+echo active >"$c/user.state"; : >"$SDRLOG"
+run start
+eq "M05-AC-4:active:start-makes-no-timer-call-when-the-timer-is-active" "$(cnt "$SDRLOG" noodlebot-watch)" 0
+waitheld "$root/state/alpha/loop.lock"; waitheld "$root/api.lock"
+st_check status-system active inactive system
+st_check status-user inactive active user
+st_check status-none inactive inactive none
+echo "# M05-AC-4: units off: no timer call, status exactly as today, stop calls no systemctl"
+rm -f "$HOME/.config/noodlebot/units"
+echo inactive >"$c/user.state"; : >"$SDRLOG"; : >"$SCTLLOG"
+run start
+eq "M05-AC-4:off:start-makes-no-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 0
+eq "M05-AC-4:off:start-makes-no-systemd-run-call-at-all" "$(cnt "$SDRLOG" '')" 0
+run status
+eq "M05-AC-4:off:status-prints-exactly-what-it-prints-today" "$(cat "$c/out.status")" "$(cat "$c/exp.status")"
+eq "M05-AC-4:off:status-has-no-watch-line" "$(cnt "$c/out.status" -i watch)" 0
+: >"$SCTLLOG"
+run stop
+eq "M05-AC-4:off:stop-makes-no-systemctl-call-for-the-timer" "$(cnt "$SCTLLOG" -i noodlebot-watch)" 0
+echo "# M05-AC-4: units on again: stop stops the user timer"
+: >"$HOME/.config/noodlebot/units"
+echo active >"$c/user.state"; : >"$SCTLLOG"
+run stop
+eq "M05-AC-4:stop:exits-0" "$(cat "$c/rc.stop")" 0
+eq "M05-AC-4:stop:calls-systemctl-user-stop-noodlebot-watch.timer-once" "$(cnt "$SCTLLOG" -Fx -- '--user stop noodlebot-watch.timer')" 1
+endcase
+
+echo "# M05-AC-4: units on, no systemctl on PATH: no timer call, nothing new printed, status says none"
+newcase ac4-noctl alpha
+ac4_fakes no
+run start
+eq "M05-AC-4:no-systemctl:start-exits-0" "$(cat "$c/rc.start")" 0
+eq "M05-AC-4:no-systemctl:start-makes-no-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 0
+eq "M05-AC-4:no-systemctl:start-prints-nothing-about-a-timer" "$(cnt "$c/out.start" -iE 'watch|timer')" 0
+sort "$c/out.start" >"$base/ac4-noctl.start"
+waitheld "$root/state/alpha/loop.lock"; waitheld "$root/api.lock"
+printf '%s\n%s\n' "o/alpha: loop running; sessions: none; waiting on you: nothing" "api: server running; socket $root/api.sock" >"$c/exp.status"
+run status
+extra=$(grep -vxFf "$c/exp.status" "$c/out.status")
+eq "M05-AC-4:no-systemctl:status-has-one-more-line-than-today" "$(wc -l <"$c/out.status" | tr -d ' ')" 3
+ok "M05-AC-4:no-systemctl:the-watch-line-says-none" sh -c "printf '%s\n' \"\$1\" | grep -qi watch && printf '%s\n' \"\$1\" | grep -qiw none && ! printf '%s\n' \"\$1\" | grep -qi api" sh "$extra"
+run stop
+eq "M05-AC-4:no-systemctl:stop-exits-0" "$(cat "$c/rc.stop")" 0
+eq "M05-AC-4:no-systemctl:stop-prints-nothing-about-a-timer" "$(cnt "$c/out.stop" -iE 'watch|timer')" 0
+endcase
+
+echo "# M05-AC-4: units on, systemctl --user prints no state: no timer call, nothing new printed, stop calls no systemctl"
+newcase ac4-silent alpha
+ac4_fakes yes
+run start
+eq "M05-AC-4:no-state:start-exits-0" "$(cat "$c/rc.start")" 0
+eq "M05-AC-4:no-state:start-makes-no-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 0
+eq "M05-AC-4:no-state:start-prints-what-it-prints-without-systemctl" "$(sort "$c/out.start")" "$(cat "$base/ac4-noctl.start")"
+: >"$SCTLLOG"
+run stop
+eq "M05-AC-4:no-state:stop-exits-0" "$(cat "$c/rc.stop")" 0
+eq "M05-AC-4:no-state:stop-makes-no-systemctl-call-for-the-timer" "$(cnt "$SCTLLOG" -i stop)" 0
+eq "M05-AC-4:no-state:stop-prints-nothing-about-a-timer" "$(cnt "$c/out.stop" -iE 'watch|timer')" 0
+endcase
+
+echo "# M05-AC-5: watch-unit refuses a checkout path with a quote, backslash or control character: one stderr line, exit 1, no unit"
+wu_refuse() { # <tag> <directory name>
+	d=$c/$2
+	mkdir -p "$d/scheduler" && cp "$src/loops.sh" "$d/scheduler/"
+	env -u TMUX PATH="$bin:$tools" sh "$d/scheduler/loops.sh" watch-unit >"$c/rf.out" 2>"$c/rf.err" </dev/null
+	eq "M05-AC-5:refuse-$1:exits-1" "$?" 1
+	eq "M05-AC-5:refuse-$1:prints-no-unit" "$(wc -c <"$c/rf.out" | tr -d ' ')" 0
+	eq "M05-AC-5:refuse-$1:one-stderr-line" "$(wc -l <"$c/rf.err" | tr -d ' ')" 1
+}
+newcase ac5-refuse alpha
+wu_refuse dquote 'q"q'
+wu_refuse squote "q'q"
+wu_refuse backslash 'q\q'
+wu_refuse tab "$(printf 'q\tq')"
+wu_refuse control "$(printf 'q\001q')"
+endcase
+
+echo "# M05-AC-5: a \$ in the checkout path stays one \$ in ExecStart (systemd substitutes it in arguments only); % is doubled"
+newcase ac5-dollar alpha
+for v in plain quoted; do
+	case $v in plain) dn='d$Z%Zb' ;; quoted) dn='d $Z%Zb' ;; esac
+	d=$c/$dn
+	mkdir -p "$d/scheduler" && cp "$src/loops.sh" "$d/scheduler/"
+	env -u TMUX PATH="$bin:$tools" sh "$d/scheduler/loops.sh" watch-unit >"$c/dl.out" 2>/dev/null </dev/null
+	dp=$(cd "$d/scheduler" && pwd -P)/loops.sh
+	dp=$(printf '%s' "$dp" | sed 's/%/%%/g')
+	case $v in plain) want="ExecStart=$dp watch" ;; quoted) want="ExecStart=\"$dp\" watch" ;; esac
+	eq "M05-AC-5:dollar-$v:ExecStart-has-a-single-dollar-and-doubled-percent" "$(grep '^ExecStart=' "$c/dl.out" | sort -u)" "$want"
+done
+endcase
+
+echo "# M05-AC-5: a % in an Environment= value is written %% (systemd would read a specifier)"
+newcase ac5-percent alpha
+ph=$c/h%Zx
+mkdir -p "$ph"
+run watch-unit HOME="$ph"
+eq "M05-AC-5:percent:exits-0" "$(cat "$c/rc.watch-unit")" 0
+penv=$(grep '^Environment=' "$c/out.watch-unit" | sed 's/%%//g')
+eq "M05-AC-5:percent:no-single-percent-in-the-Environment-lines" "$(printf '%s\n' "$penv" | grep -c '%')" 0
+ok "M05-AC-5:percent:HOME-is-written-with-a-doubled-percent" grep -qF "$(printf '%s' "$ph" | sed 's/%/%%/g')" "$c/out.watch-unit"
+endcase
+
+echo "# M05-AC-2: a stale loop and no open log issue: one stderr line, no traceback, the watch.log line, and the next watch posts once an issue is open"
+newcase ac2-nolog alpha
+stalecase
+run start
+waitheld "$root/state/alpha/loop.lock"
+pyc "
+import json
+db = json.load(open('$udb'))
+for i in db['issues'].values():
+    if i['title'].startswith('noodlebot log'): i['state'] = 'closed'
+json.dump(db, open('$udb', 'w'))"
+sethb alpha 2000
+watch 1
+eq "M05-AC-2:no-log-issue:no-traceback-in-the-output" "$(cnt "$c/out.watch1" -E 'Traceback|^  File ')" 0
+eq "M05-AC-2:no-log-issue:the-output-is-one-line" "$(wc -l <"$c/out.watch1" | tr -d ' ')" 1
+ok "M05-AC-2:no-log-issue:the-line-names-the-loop" grep -q alpha "$c/out.watch1"
+eq "M05-AC-2:no-log-issue:the-watch.log-line-is-there" "$(cnt "$root/state/watch.log" alpha)" 1
+eq "M05-AC-2:no-log-issue:the-loop-is-not-signalled" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+: >"$root/state/alpha/status.log"
+urun "$root/state/alpha"
+lognum=$(uq "[i['number'] for i in db['issues'].values() if i['title'].startswith('noodlebot log') and i['state'] == 'open'][0]")
+re_a="(?s)(?=.*alpha)(?=.*$hbre)"
+base_c=$(sc "$re_a")
+watch 2
+eq "M05-AC-2:no-log-issue:the-next-watch-posts-the-comment-once-an-issue-is-open" "$(( $(sc "$re_a") - base_c ))" 1
+endcase
+
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
 echo "all passed"
