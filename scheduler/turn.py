@@ -30,7 +30,8 @@ under the same lock as the start record, count the sessions running on the machi
 DATA/state/*/{node,issue,pr,adopt}/*/session.pid whose pid is a live process with run-session.sh in its command line
 (any repository); the last start in starts.json counts as one more while it is within the gap and its unit has no
 session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the
-gap. With a budget set, the prev chain kept in starts.json is pruned to the gap, so that a
+gap (so a granted start counts as pending only with SCHED_START_GAP above 0; with a gap of 0 it never does).
+A resumed unit first in the order whose own folder holds a live session does not count that session. With a budget set, the prev chain kept in starts.json is pruned to the gap, so that a
 giveback restores the previous record with its chain; with none, starts.json keeps one previous start, as before. With the count at or over the budget, ask prints nothing
 and records nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the machine" on
 stderr and exits 3.
@@ -190,9 +191,14 @@ def ask(state, repo, now, args):
     queue = [r for r in everyone if not r[3]]  # given-back units wait but get no turn
     if not queue or queue[0][1] != repo:
         return None
-    if full(state, now, gap):
-        return None
     u, _, starved, _ = queue[0]
+    own = None
+    if u.get("kind") == "resumed":  # its own live session is the one this turn replaces: not held at the budget
+        sub = unit_dir(u["key"])
+        own = os.path.join(state, repo.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")
+        own = own if live_session(own) else None
+    if full(state, now, gap, own):
+        return None
     wait = now - u["since"]
     ahead = ["%s" % x["key"] if r == repo else "%s/%s" % (r, x["key"])
              for x, r, _, _ in everyone if x is not u and now - x["since"] > wait]
@@ -266,45 +272,54 @@ def fmt_n(x):
     return "%d" % x if x == int(x) else "%g" % x
 
 
-def running(state, now, gap):
+def unit_dir(key):
+    """KEY -> (kind folder, name): ID node/ID, #N issue/N, PR#N pr/N, adopt-K adopt/K."""
+    if key.startswith("PR#"):
+        return ("pr", key[3:])
+    if key.startswith("#"):
+        return ("issue", key[1:])
+    if key.startswith("adopt-"):
+        return ("adopt", key[6:])
+    return ("node", key)
+
+
+def live_session(path):
+    """True when the session.pid at PATH names a live process with run-session.sh in its command line."""
+    try:
+        with open(path) as f:
+            pid = int(f.read().strip())
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return pid > 0 and b"run-session.sh" in f.read()
+    except (OSError, ValueError, OverflowError):
+        return False  # junk, a dead process, an unreadable entry: not a session
+
+
+def running(state, now, gap, own=None):
     """The number of sessions running on the machine, plus every start of the starts.json prev chain
-    within the gap whose unit has no session.pid yet (see keep_chain)."""
+    within the gap whose unit has no session.pid yet (see keep_chain). OWN, a session.pid path, is not counted."""
     n = 0
     for kind in ("node", "issue", "pr", "adopt"):
         for path in glob.glob(os.path.join(glob.escape(state), "*", kind, "*", "session.pid")):
-            try:
-                with open(path) as f:
-                    pid = int(f.read().strip())
-                with open("/proc/%d/cmdline" % pid, "rb") as f:
-                    if pid > 0 and b"run-session.sh" in f.read():
-                        n += 1
-            except (OSError, ValueError, OverflowError):
-                pass  # junk, a dead process, an unreadable entry: not a session
+            if live_session(path) and path != own:
+                n += 1
     rec = read_json(os.path.join(state, "starts.json"))
     while valid_start(rec):  # every start recorded within the gap, the last and its prev chain, each by the same rule
         if rec["time"] <= now + gap and now - rec["time"] < gap:
             u, r = rec.get("unit"), rec.get("repo")
             if isinstance(u, str) and isinstance(r, str) and u:
-                if u.startswith("PR#"):
-                    sub = ("pr", u[3:])
-                elif u.startswith("#"):
-                    sub = ("issue", u[1:])
-                elif u.startswith("adopt-"):
-                    sub = ("adopt", u[6:])
-                else:
-                    sub = ("node", u)
+                sub = unit_dir(u)
                 if sub[1] and not os.path.exists(os.path.join(state, r.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")):
                     n += 1
         rec = rec.get("prev")
     return n
 
 
-def full(state, now, gap):
+def full(state, now, gap, own=None):
     """"<n> of <N> sessions running on the machine" when the machine budget is full, else None."""
     budget = machine_max()
     if budget is None:
         return None
-    n = running(state, now, gap)
+    n = running(state, now, gap, own)
     return "%d of %s sessions running on the machine" % (n, fmt_n(budget)) if n >= budget else None
 
 
