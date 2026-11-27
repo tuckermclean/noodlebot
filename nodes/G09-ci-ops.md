@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G08 | none | M |
+| now | G08, G11 | none | M |
 
 **Owns:** in `scheduler/forge.py`, the `ci dispatch` and `ci artifact` operations, the `attempt` option of `ci logs`,
 and the `ci_dispatch` and `ci_artifact` capabilities (their entries in the operation table and in `CAPABILITIES`); in
@@ -34,7 +34,8 @@ never an empty folder or a guessed run id.
     run was not found, and prints no id; two new runs of the workflow on the ref exit 1 naming both, and print no id.
   - A `--workflow` that is neither a file name (`[A-Za-z0-9._-]+` ending in `.yml` or `.yaml`) nor a numeric workflow
     id exits 2 with no call made, for example `../pulls/1/merge?x=`, `a/b.yml`, `ci.yml?x=`, `ci.yml#x`, `ci%2fx.yml`
-    and `ci`; `ci.yml`, `ci.yaml` and `12345` are accepted.
+    and `ci`; through the Python interface each raises `forge.BadValue` before the backend is called. `ci.yml`,
+    `ci.yaml` and `12345` are accepted.
   - The dispatch's `ref` and `inputs` reach the fake `gh` as one JSON body on stdin (`--input -`), never as `-f` or
     `-F` fields: the fake `gh` records the body and its argv, and for inputs whose values start with `@` (naming a
     file that exists), are `true`, are `123`, hold `=`, hold a newline, or are empty, each value in the recorded body
@@ -45,7 +46,9 @@ never an empty folder or a guessed run id.
     and leave no folder the call created; an existing non-empty `<path>` exits 1 before any download; an archive entry
     that is absolute, contains `..` or is a link exits 1 with nothing written. The fake's archive holds a file whose
     bytes are not valid UTF-8, and the file written under `<path>` has exactly those bytes; no temporary file of the
-    call is left behind, in `<path>` or elsewhere, after a success or a failure.
+    call is left behind, in `<path>` or elsewhere, after a success or a failure. A `--name` of `x&y=1` or `a/b` reaches
+    the fake `gh` only as a `-f` field of the listing's `GET` (or not at all, when the listing is filtered locally),
+    never in a request path or query string.
   - `ci logs --run <id> --attempt <n>` returns the jobs of that attempt (the fixture's run has two attempts whose jobs
     and logs differ), in G08's shape; without `--attempt` the latest attempt's jobs, as G08's cases already check;
     every job of both forms has an `html_url`; an attempt the run does not have exits 1, never an empty list; an
@@ -58,17 +61,23 @@ never an empty folder or a guessed run id.
     (G04-AC-3's checks for the new operations).
   - The README's rows of `ci dispatch` and `ci artifact` have four filled cells (G04-AC-8's check); `forge.py ops`
     lists both operations; `forge.CAPABILITIES` has `ci_dispatch` and `ci_artifact`.
+- `scheduler/forge-g11.test.sh` (G11's, unchanged) passes with the new operations in the operation table: its sweep
+  covers the `str` and `list` arguments of `ci dispatch` and `ci artifact` and skips `ci artifact`'s `dir`, of kind
+  `path`.
 - The recorded runs of G09-AC-6.
 
 ## Changes
 1. **The operations.** `forge.py` gets `("ci dispatch", "ci_dispatch", {"workflow": "str!", "ref": "str!",
-   "input": "list"})`, `("ci artifact", "ci_artifact", {"run": "int!", "name": "str!", "dir": "str!"})`, an
-   `"attempt": "int"` option on `ci logs`, and `ci_dispatch` and `ci_artifact` in `CAPABILITIES`. Each `--input` is
+   "input": "list"})`, `("ci artifact", "ci_artifact", {"run": "int!", "name": "str!", "dir": "path!"})` (`dir` a
+   required argument of G11's kind `path`, a local folder, so G11's sweep skips it), an `"attempt": "int"` option on
+   `ci logs`, and `ci_dispatch` and `ci_artifact` in `CAPABILITIES`. Each `--input` is
    one `key=value` (split at the first `=`, the value a string, which may be empty or hold `=`); a malformed or
-   repeated key is a usage error (exit 2) before any call. `--workflow` goes into a request path, so it is checked
-   before any call: only a workflow file name (`[A-Za-z0-9._-]+` ending in `.yml` or `.yaml`) or a numeric workflow
-   id (digits only) is accepted, and anything else (a `/`, `..`, `?`, `#`, `%`, or no `.yml`/`.yaml` ending) is a
-   usage error (exit 2) with no call made. The check is in `forge.py`, so it holds for every backend.
+   repeated key is a usage error (exit 2) before any call. `--workflow` goes into a request path, so it uses G11's
+   workflow check (the one `ci runs --workflow` has, in `Forge`'s wrapper), not a copy of its own: only a workflow
+   file name (`[A-Za-z0-9._-]+` ending in `.yml` or `.yaml`) or a numeric workflow id (digits only) is accepted, and
+   anything else (a `/`, `..`, `?`, `#`, `%`, or no `.yml`/`.yaml` ending) raises `forge.BadValue` from the Python
+   interface before the backend is called, and the CLI exits 2 with no call made. Being in the interface, it holds
+   for every backend.
    *G09-AC-1, G09-AC-3.*
 2. **Dispatch.** The GitHub backend notes the ids of the workflow's `workflow_dispatch` runs on the ref, then posts
    the dispatch (`actions/workflows/<workflow>/dispatches`) with `ref` and `inputs` as one JSON body on stdin
@@ -82,7 +91,9 @@ never an empty folder or a guessed run id.
    failure is a failed call. The fake forge's world records each dispatch with its ref and inputs and adds a run for
    it. The fake `gh` serves the dispatch endpoint, records the body it was sent, and can answer with the run's id,
    with no body, with a run that never appears, with two runs, or with 403, 404 or 422. *G09-AC-1, G09-AC-2.*
-3. **Artifact.** The backend lists the run's artifacts by name. No artifact of that name, or one the forge marks
+3. **Artifact.** The backend lists the run's artifacts by name, the name passed as a `-f` field of the listing's
+   `GET` (as `ci runs` passes `head_sha`) or matched locally against the listing, never pasted into the request path
+   or query string. No artifact of that name, or one the forge marks
    expired, is a failed call (exit 1) whose message names the artifact and the run, and says "expired" for an expired
    one. It downloads the archive (following the redirect without the token, as G08's log read does) into a temporary
    file outside `--dir`, as bytes that are never decoded: not through `_run`, which decodes stdout as UTF-8, holds it
@@ -108,9 +119,9 @@ never an empty folder or a guessed run id.
    workflow here that has `workflow_dispatch` deploys something. *G09-AC-6.*
 
 ## Gate
-- **G09-AC-1** — `ci dispatch --workflow <file> --ref <ref>` with `--input key=value` options makes one dispatch with that ref and those inputs and prints the new run's id, from the GitHub backend over the fake `gh` (whether or not the answer names the run) and from the fake forge, through the Python interface and the CLI; a malformed or repeated input, and a `--workflow` that is neither a file name (`[A-Za-z0-9._-]+` ending in `.yml` or `.yaml`) nor a numeric id (e.g. `../pulls/1/merge?x=`, `a/b.yml`), exits 2 with no call made; `ref` and `inputs` reach the fake `gh` as a JSON body on stdin and each input as the exact string given (values starting with `@` and naming a real file, `true`, `123`, holding `=` or a newline, and empty); a rejected dispatch (404, 422), a run not found within 60 seconds (the message saying the dispatch was accepted and its run not found) and two new runs each exit 1 with nothing on stdout, never a guessed id; `forge.CAPABILITIES` and `forge.py ops` have the operation and the README its row with four filled cells. *Verify:* `sh scheduler/forge.test.sh` (or `sh scheduler/forge-g09.test.sh`).
+- **G09-AC-1** — `ci dispatch --workflow <file> --ref <ref>` with `--input key=value` options makes one dispatch with that ref and those inputs and prints the new run's id, from the GitHub backend over the fake `gh` (whether or not the answer names the run) and from the fake forge, through the Python interface and the CLI; a malformed or repeated input, and a `--workflow` that is neither a file name (`[A-Za-z0-9._-]+` ending in `.yml` or `.yaml`) nor a numeric id (e.g. `../pulls/1/merge?x=`, `a/b.yml`), exits 2 with no call made, and through the Python interface raises `forge.BadValue` (G11's check) before the backend is called; `ref` and `inputs` reach the fake `gh` as a JSON body on stdin and each input as the exact string given (values starting with `@` and naming a real file, `true`, `123`, holding `=` or a newline, and empty); a rejected dispatch (404, 422), a run not found within 60 seconds (the message saying the dispatch was accepted and its run not found) and two new runs each exit 1 with nothing on stdout, never a guessed id; `forge.CAPABILITIES` and `forge.py ops` have the operation and the README its row with four filled cells. *Verify:* `sh scheduler/forge.test.sh` (or `sh scheduler/forge-g09.test.sh`).
 - **G09-AC-2** — A dispatch the forge refuses (403 from the fake `gh`, a refusal in the fake forge) and a fake forge configured without `ci_dispatch` exit 3 naming `ci_dispatch`, with nothing on stdout and, for the unconfigured forge, no call made. *Verify:* `sh scheduler/forge.test.sh` (or `sh scheduler/forge-g09.test.sh`).
-- **G09-AC-3** — `ci artifact --run <id> --name <name> --dir <path>` writes the artifact's files under `<path>` and prints its id, name, folder and the files written, from both backends, a file of bytes that are not valid UTF-8 written byte for byte, with no temporary file left behind, through the Python interface and the CLI; a missing artifact and an expired one exit 1 naming the artifact and the run (the expired one saying so), with no file written and no folder the call created left behind; a non-empty existing folder and an archive entry that is absolute, holds `..` or is a link exit 1 with nothing written; the token is in no argv, output or download request of the call; the README has the operation's row with four filled cells. *Verify:* `sh scheduler/forge.test.sh` (or `sh scheduler/forge-g09.test.sh`).
+- **G09-AC-3** — `ci artifact --run <id> --name <name> --dir <path>` writes the artifact's files under `<path>` and prints its id, name, folder and the files written, from both backends, a file of bytes that are not valid UTF-8 written byte for byte, with no temporary file left behind, through the Python interface and the CLI; a missing artifact and an expired one exit 1 naming the artifact and the run (the expired one saying so), with no file written and no folder the call created left behind; a non-empty existing folder and an archive entry that is absolute, holds `..` or is a link exit 1 with nothing written; the token is in no argv, output or download request of the call; a `--name` such as `x&y=1` reaches the listing only as a `-f` field or not at all, never in a request path or query string; the README has the operation's row with four filled cells. *Verify:* `sh scheduler/forge.test.sh` (or `sh scheduler/forge-g09.test.sh`).
 - **G09-AC-4** — An artifact listing or download the forge refuses (403 from the fake `gh`, a refusal in the fake forge) and a fake forge configured without `ci_artifact` exit 3 naming `ci_artifact`, with nothing on stdout and no file written. *Verify:* `sh scheduler/forge.test.sh` (or `sh scheduler/forge-g09.test.sh`).
 - **G09-AC-5** — `ci logs --run <id> --attempt <n>` returns that attempt's jobs, each with id, name, conclusion, log text and `html_url`, from both backends, and differs from the latest attempt's on a run with two; `ci logs` without `--attempt` gives each job an `html_url` too; an attempt the run lacks exits 1 and never an empty list, an attempt below 1 exits 2, and a refused attempt listing exits 3 naming `ci_logs`; G08's cases pass unchanged. *Verify:* `sh scheduler/forge.test.sh` (or `sh scheduler/forge-g09.test.sh`).
 - **G09-AC-6** — Through the session's forge CLI (the App token) on this repository: `ci logs --run <id> --attempt 1` on a real run with two or more attempts returns that attempt's jobs with non-empty log text and an `html_url` each; and `ci artifact` on a real artifact of this repository writes its files, or, when every artifact the repository has is expired, the call on one exits 1 naming it as expired. A call that exits 3 is recorded with its output and the record names the exact permission to grant: the GitHub App's repository permission "Actions" at "Read-only" (for `ci logs` and `ci artifact`), and says that it applies to every repository the App is installed on (the node does not wait for it). *Verify:* the recorded commands, exit codes and first lines of output in the PR.
