@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G04, R02, A10 | G10 | M |
+| now | G04, R02, A10 | G10, G11 | M |
 
 **Owns:** in `scheduler/forge.py`, the `ci logs` operation and the `ci_logs` capability (its entry in the operation
 table and in `CAPABILITIES`); in the GitHub backend (`scheduler/forges/github_misc.py`, or a new part file that
