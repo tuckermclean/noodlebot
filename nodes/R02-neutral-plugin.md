@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G04, S08 | D09, G08, S11 | L |
+| now | G04, S08 | D09, D18, G08, S11 | L |
 
 **Owns:** the forge and harness wording of the skills `plugin/skills/*/SKILL.md` (and their fixtures, such as `plugin/skills/adopt/example/`), of the role agents `plugin/agents/*.md` and of the session templates `scheduler/unattended*.md` and `scheduler/limit-resume.md`; the role guard's split into a neutral rule check (`plugin/hooks/guard.py`) and the Claude Code adapter (`plugin/hooks/claude_code.py`, Claude Code's hook input and exit convention), with `plugin/hooks/hooks.json` and `plugin/.claude-plugin/` as the adapter's other files; the plugin rules of `scheduler/agnostic.test.sh`; the plugin's line in `AGENTS.md`'s "Where things are" and the README's plugin wording; the forge operations of change 6 that G04's interface lacks (`pr close`, `merge_commit` in `pr view`, `ci runs` by branch alone, `ci rerun` of failed jobs, `repo url --kind run`, `issue list` with an optional label and `state=all`, `repo permissions`), each in `scheduler/forge.py`, the GitHub backend `scheduler/forges/`, the fake forge `scheduler/testdata/forge/` and the operations table `scheduler/forges/README.md`, with their new cases in `scheduler/forge.test.sh`; the loop's prompt rendering in `scheduler/loop.sh` (the skill commands of change 2 and the forge wording the loop writes into a prompt); their cases in the existing `*.test.sh` files, and new `scheduler/loop-R02*.test.sh` files with their lines in the `Makefile`'s `TESTS`.
 **Resolves:** #84
