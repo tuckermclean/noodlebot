@@ -6,8 +6,8 @@ Python:  import forge; f = forge.open("owner/name")  (or "github:owner/name", "f
 CLI:     python3 -I forge.py [--repo SPEC] <family> <op> [--opt value ...]   prints the result as one JSON document.
          forge.py remote-commit-link URL SHA   a commit's web link from an origin remote's URL (exit 1: none).
          forge.py ops   the operations as JSON;   forge.py [--repo SPEC] caps   the forge's capabilities as JSON.
-Exit codes: 0 done; 1 a call failed (one line on stderr, nothing on stdout, never an empty result); 2 usage error or
-unknown forge; 3 the forge lacks a capability the operation needs (stderr: `forge <name> lacks <capability>`).
+Exit codes: 0 done; 1 a call failed (one line on stderr, nothing on stdout, never an empty result); 2 usage error,
+unknown forge or a value the operation rejects (forge.BadValue, checked before any call); 3 the forge lacks a capability the operation needs (stderr: `forge <name> lacks <capability>`).
 
 Backends are classes `Backend(path)` with methods named <family>_<op> (`-` -> `_`): `github` is scheduler/forges/github.py,
 `fake` is scheduler/testdata/forge/fake.py. The capability rule lives here: an operation whose capability the backend lacks
@@ -24,7 +24,8 @@ import types
 sys.dont_write_bytecode = True  # a deployed checkout gets no __pycache__ from the backends loaded here
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# (family op, capability it needs or None, arguments: name -> "str"|"int"|"list"|"bool", a trailing "!" = required)
+# (family op, capability it needs or None, arguments: name -> "str"|"int"|"list"|"bool"|"text"|"path", a trailing "!" = required;
+#  "path" is a local file or folder, a "str" to the CLI)
 _OPS = [
     ("repo visibility", "visibility", {}),
     ("repo default-branch", None, {}),
@@ -63,8 +64,8 @@ _OPS = [
     ("ci runs", None, {"workflow": "str", "sha": "str", "branch": "str", "event": "str"}),
     ("ci rerun", None, {"run": "int!"}),
     ("ci logs", "ci_logs", {"run": "int!", "job": "str"}),
-    ("site publish", "site", {"target": "str!", "input": "str!"}),
-    ("branch push", None, {"path": "str!", "branch": "str!"}),
+    ("site publish", "site", {"target": "str!", "input": "path!"}),
+    ("branch push", None, {"path": "path!", "branch": "str!"}),
 ]
 OPERATIONS = [o[0] for o in _OPS]
 _CAP = {o[0]: o[1] for o in _OPS}
@@ -81,6 +82,11 @@ class ForgeError(Exception):
     def __init__(self, message="", status=None):
         Exception.__init__(self, message)
         self.status = status
+
+
+class BadValue(ForgeError):
+    """A value an operation takes into a request path, a query, a web URL or a git argument is not in its accepted form
+    (the message names the option); raised before the backend is called, the CLI's exit 2."""
 
 
 class CapabilityOff(ForgeError):
@@ -133,6 +139,55 @@ def _exec_file(path, namespace):
     exec(code, namespace)
 
 
+def _num(v):
+    return (isinstance(v, int) and not isinstance(v, bool) and v >= 0) or (isinstance(v, str) and re.fullmatch(r"[0-9]+", v) is not None)
+
+
+def _sha(v):
+    return isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{4,64}", v) is not None
+
+
+def _branch(v):
+    """git check-ref-format --branch for the characters [A-Za-z0-9._/-], with no leading '-' (no git is run)."""
+    if not isinstance(v, str) or not re.fullmatch(r"[A-Za-z0-9._/-]+", v) or v.startswith("-") or v in ("@", "HEAD"):
+        return False
+    return all(c and not c.startswith(".") and not c.endswith(".lock") and ".." not in c for c in v.split("/")) and not v.endswith(".")
+
+
+def _str_ok(pattern):
+    return lambda v: isinstance(v, str) and re.fullmatch(pattern, v) is not None
+
+
+_CHECKS = {
+    ("ci runs", "workflow"): lambda v: isinstance(v, str) and (re.fullmatch(r"[A-Za-z0-9._-]+\.ya?ml|[0-9]+", v) is not None),
+    ("commit checks", "sha"): _sha,
+    ("issue comments", "since"): _str_ok(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z"),
+    ("site publish", "target"): _str_ok(r"[A-Za-z0-9]+"),
+    ("label remove", "name"): lambda v: isinstance(v, str) and v not in ("", ".", ".."),
+    ("branch push", "branch"): _branch,
+}
+
+
+def _bad(option, value):
+    return BadValue("bad value for --%s: %.60r" % (option.replace("_", "-"), value))
+
+
+def check_ref(kind, ref):
+    """repo url --ref: a number for issue, pr and run, 4 to 64 hex digits for commit (other kinds: the backend decides)."""
+    if (kind in ("issue", "pr", "run") and not _num(ref)) or (kind == "commit" and not _sha(ref)):
+        raise _bad("ref", ref)
+
+
+def _check(op, args, kwargs):
+    kw = dict(zip(_ARGS[op], args))
+    kw.update(kwargs)
+    for name, value in kw.items():
+        if value is not None and (op, name) in _CHECKS and not _CHECKS[(op, name)](value):
+            raise _bad(name, value)
+    if op == "repo url" and kw.get("kind") is not None and kw.get("ref") is not None:
+        check_ref(kw["kind"], kw["ref"])
+
+
 class Forge:
     """A backend with the capability rule in front of it."""
 
@@ -152,6 +207,7 @@ class Forge:
         def call(*args, **kwargs):
             if cap and cap not in self.capabilities:
                 raise CapabilityOff(self.name, cap)
+            _check(op, args, kwargs)
             try:
                 return fn(*args, **kwargs)
             except ForgeError:
@@ -170,6 +226,8 @@ def open(spec=None):  # noqa: A001 (the interface's name)
 def web_url(spec, kind, ref=None):
     """The web URL of the repository or of one issue, PR, commit or run; no call for GitHub."""
     name, path = parse(spec)
+    if kind != "repo" and ref is not None:
+        check_ref(kind, ref)
     if name == "github":
         return _load("github").web_url(path, kind, ref)
     return open(spec).repo_url(kind=kind, ref=ref)
@@ -188,6 +246,8 @@ def repo_of_remote(url):
 
 def commit_link(url, sha):
     """The web link of a commit from the origin remote's URL, or None when no backend knows the URL (no forge call)."""
+    if sha:
+        check_ref("commit", sha)
     return _load("github").commit_link(url, sha)
 
 
