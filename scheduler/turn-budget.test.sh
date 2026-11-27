@@ -19,6 +19,11 @@
 #            running on the machine" within it; starts.json and waiting.json unchanged.
 #   count    turn.py count --root DATA --repo NAME: read-only; prints "<n> of <N> sessions running on the machine"
 #            (N = SCHED_MACHINE_MAX, or 0 when it is unset), exit 0, writes nothing.
+#   (own resume)    a `resumed` unit first in the merged order whose own state folder (key -> folder as above, under
+#                       state/<asking repo>/) holds one of the live sessions does not count that session against its own
+#                       turn: with MAX=N and N live sessions `ask` grants it. Only that: any other unit, a `resumed` unit
+#                       whose own folder has no live session (a same-named folder of another repository is not its own),
+#                       is held as before, and the other sessions idle at the limit still hold a new unit.
 # The helpers are in testdata/lib/turn-common.sh; the live "sessions" are scratch processes of $tmp/S13/run-session.sh.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
@@ -285,6 +290,74 @@ for m in "" 0; do
 	echo "X1 triage - $(w 100)" | list a 10
 	ask a $((base + 200)) --gap 100 --starve 100000
 	if [ $rx = 0 ] && [ $ra = 0 ] && [ $rb = 0 ] && [ "$gone" = yes ] && [ $rc = 0 ] && [ "$key" = X1 ]; then pass "S13-AC-1 SCHED_MACHINE_MAX='${m:-unset}': took X, A, B then giveback B and A leaves no starts.json and the next ask is granted"; else fail "MAX='${m:-unset}' took rc=$rx/$ra/$rb, starts.json gone=$gone ($(cat "$d/state/starts.json" 2>/dev/null)); ask rc=$rc key='$key'"; fi
+done
+unset SCHED_MACHINE_MAX
+
+# --- (own resume) a `resumed` unit whose own state folder holds one of the N live sessions is not held: its turn replaces it
+for kv in 'R1 node R1' '#7 issue 7'; do
+	set -- $kv; rk=$1 rkind=$2 rname=$3
+	reset; max 2; hb a "$base"; hb b "$base"
+	echo "$rk resumed - $(w 600)" | list a 10
+	echo "B2 triage - $(w 100)" | list b 10
+	pidfile a "$rkind" "$rname" "$s1"; pidfile b node B1 "$s2"
+	ask a "$base" $G
+	if [ $rc = 0 ] && [ "$key" = "$rk" ] && [ "$(rec)" = "a/$rk@$base" ]; then pass "S13-AC-1 MAX=2, two live sessions, one in the own $rkind/$rname folder of the resumed $rk first in the order: ask grants it"; else fail "own resume $rk: rc=$rc out='$out' rec=$(rec)"; fi
+done
+# the count stays at N: after that grant (its session.pid is live, counted once) a different unit's ask is still held
+reset; max 2; hb a "$base"; hb b "$base"
+echo "R1 resumed - $(w 600)" | list a 10
+echo "B2 triage - $(w 100)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node B1 "$s2"
+ask a "$base" $G
+g1=$key
+: | list a 10
+ask b $((base + 10)) $G
+if [ "$g1" = R1 ] && [ $rc = 0 ] && [ -z "$out" ] && [ "$(rec)" = "a/R1@$base" ]; then pass "S13-AC-1 after the resumed unit's grant a different unit's ask is still held (the count stays at N=2)"; else fail "after own-resume grant: first='$g1', b rc=$rc out='$out' rec=$(rec)"; fi
+
+# --- N live sessions idle at the limit, each one's unit waiting as resumed, a different new unit first: it gets nothing
+reset; max 2; hb a "$base"; hb b "$base"
+{ echo "N1 triage - $(w 900)"; echo "R1 resumed - $(w 100)"; } | list a 10
+echo "R2 resumed - $(w 100)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
+before=$(snap)
+ask a "$base" $G; ra=$rc oa=$out
+ask b "$base" $G
+if [ $ra = 0 ] && [ -z "$oa" ] && [ $rc = 0 ] && [ -z "$out" ] && [ "$(snap)" = "$before" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 N=2 sessions idle at the limit (their units resumed), a new triage unit first: ask grants nothing, records nothing"; else fail "new unit vs idle sessions: a rc=$ra out='$oa' / b rc=$rc out='$out' rec=$(rec)"; fi
+reset; max 2; hb a "$base"; hb b "$base"
+{ echo "F1 fresh S $(w 900)"; echo "R1 resumed - $(w 50)"; } | list a 10
+echo "R2 resumed - $(w 60)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
+ask a "$base" --gap 10 --starve 100
+if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 N=2 idle sessions and a new fresh unit first (by the starvation limit): ask grants nothing"; else fail "new fresh unit vs idle sessions: rc=$rc out='$out' rec=$(rec)"; fi
+
+# --- only its own session is excused: a resumed unit with no live session of its own is held at N
+reset; max 2; hb a "$base"; hb b "$base"
+echo "R1 resumed - $(w 600)" | list a 10
+pidfile a node R1 "$dead"; pidfile b node B1 "$s1"; pidfile c issue 7 "$s2"
+ask a "$base" $G
+if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 a resumed unit whose own session.pid names a dead process is held at N=2"; else fail "resumed, own pid dead: rc=$rc out='$out'"; fi
+reset; max 2; hb a "$base"
+echo "R1 resumed - $(w 600)" | list a 10
+pidfile b node B1 "$s1"; pidfile c issue 7 "$s2"
+ask a "$base" $G
+if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 a resumed unit with no session folder of its own is held at N=2"; else fail "resumed, no own folder: rc=$rc out='$out'"; fi
+reset; max 2; hb a "$base"
+echo "R1 resumed - $(w 600)" | list a 10
+pidfile b node R1 "$s1"; pidfile c issue 7 "$s2"
+ask a "$base" $G
+if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 a live session in a same-named folder of another repository is not the resumed unit's own: held"; else fail "resumed, same name in another repo: rc=$rc out='$out'"; fi
+reset; max 2; hb a "$base"
+echo "R1 resumed - $(w 600)" | list a 10
+pidfile a node R1 "$o1"; pidfile b node B1 "$s1"; pidfile c issue 7 "$s2"
+ask a "$base" $G
+if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 a resumed unit whose own folder holds a live non-session process is held at N=2"; else fail "resumed, own pid not a session: rc=$rc out='$out'"; fi
+# only for its own resume: the same live own session of a unit that is not resumed (triage, fresh) is no excuse
+for kind in triage fresh; do
+	reset; max 2; hb a "$base"
+	echo "R1 $kind S $(w 600)" | list a 10
+	pidfile a node R1 "$s1"; pidfile b node B1 "$s2"
+	ask a "$base" $G
+	if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 a $kind unit with a live session in its own folder is held at N=2 (only a resumed unit is excused)"; else fail "$kind unit with own session: rc=$rc out='$out'"; fi
 done
 unset SCHED_MACHINE_MAX
 
