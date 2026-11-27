@@ -24,6 +24,7 @@ TESTS = \
 	scheduler/report-queue-answers.test.sh \
 	scheduler/report-u04.test.sh \
 	scheduler/report-u05.test.sh \
+	scheduler/report-u07.test.sh \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
@@ -188,6 +189,7 @@ TESTS = \
 	scheduler/site.test.sh \
 	scheduler/site-u04.test.sh \
 	scheduler/site-u05.test.sh \
+	scheduler/site-u07.test.sh \
 	scheduler/nbctl.test.sh \
 	scheduler/feedback.test.sh \
 	scheduler/pickup.test.sh \
