@@ -273,20 +273,23 @@ resolved() { (cd "$1" 2>/dev/null && pwd -P) || echo "$1"; }
 
 # stale_check <repo> <name>: a held loop whose heartbeat is older than LOOPS_STALE is noted in watch.log and reported once per episode
 stale_check() {
-	local hb age sig mark=$root/state/$2/stale.posted
+	local hb age sig why errf mark=$root/state/$2/stale.posted
 	hb=$(cat "$root/state/$2/heartbeat" 2>/dev/null)
 	case $hb in '' | *[!0-9]*) rm -f "$mark"; return 0 ;; esac
 	age=$(( $(date +%s) - hb ))
 	if [ "$age" -le "${LOOPS_STALE:-1800}" ]; then rm -f "$mark"; return 0; fi
 	[ -e "$mark" ] && return 0
+	errf=$(mktemp "${TMPDIR:-/tmp}/loops-stale.XXXXXX") || errf=/dev/null
 	sig=$(sh "$nb/scheduler/version.sh" --signature "$nb" 2>/dev/null) || sig=
 	[ -n "$sig" ] || sig="— n00dl3b0t unknown"
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) loops.sh watch: $1: loop is stale (heartbeat $age s old)" >>"$root/state/watch.log"
-	if NOODLEBOT_FORGE_REPO=$1 NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 120 python3 -I "$nb/scheduler/report.py" --repo "$1" --state "$root/state/$2" --stale "$age" --signature "$sig" 8>&- >/dev/null 2>&1; then
+	if NOODLEBOT_FORGE_REPO=$1 NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 120 python3 -I "$nb/scheduler/report.py" --repo "$1" --state "$root/state/$2" --stale "$age" --signature "$sig" 8>&- >/dev/null 2>"$errf"; then
 		: >"$mark"
 	else
-		echo "loops.sh watch: $1: the stale-loop comment was not posted; the next watch tries again" >&2
+		why=$(grep -v '^[[:space:]]*$' "$errf" 2>/dev/null | tail -n 1 | tr -d '\r' | cut -c1-300)
+		echo "loops.sh watch: $1: the stale-loop comment was not posted${why:+ ($why)}; the next watch tries again" >&2
 	fi
+	[ "$errf" = /dev/null ] || rm -f "$errf"
 }
 
 rc=0
@@ -348,8 +351,14 @@ start)
 			rc=1
 		fi
 	fi
-	if [ $units = 1 ] && [ -n "$(user_timer_state)" ] && [ "$(user_timer_state)" != active ]; then
-		systemd-run --user --unit noodlebot-watch "--on-active=${LOOPS_WATCH_EVERY:-5min}" "--on-unit-active=${LOOPS_WATCH_EVERY:-5min}" --property=KillMode=process "$nb/scheduler/loops.sh" watch >/dev/null 2>&1 </dev/null
+	tstate=
+	[ $units = 1 ] && tstate=$(user_timer_state)
+	if [ -n "$tstate" ] && [ "$tstate" != active ]; then
+		systemctl --user reset-failed noodlebot-watch.timer noodlebot-watch.service >/dev/null 2>&1 </dev/null
+		systemd-run --user --unit noodlebot-watch "--on-active=${LOOPS_WATCH_EVERY:-5min}" "--on-unit-active=${LOOPS_WATCH_EVERY:-5min}" --property=KillMode=process "$nb/scheduler/loops.sh" watch >/dev/null 2>&1 </dev/null || {
+			echo "the watch timer noodlebot-watch could not be set up" >&2
+			rc=1
+		}
 	fi
 	deadline=$((SECONDS + start_wait))
 	if [ $api_launched = 1 ]; then
