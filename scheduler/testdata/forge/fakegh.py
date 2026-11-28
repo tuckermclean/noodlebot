@@ -615,4 +615,75 @@ def route(w, method, path, qs, body):  # noqa: F811
     return res
 
 
+# --- G09 (slice 2): the artifacts of a run (added; the forms above are unchanged) ---
+# GET repos/R/actions/runs/ID/artifacts answers {"total_count", "artifacts": [{"id", "name", "size_in_bytes", "expired",
+# "archive_download_url", ...}]} from ci_artifacts.json (404 for a run that does not exist); a `name` given as a -f field (or
+# in the query) keeps only the artifacts of that name, without it all are listed (a backend may filter locally). Expired
+# artifacts are listed with "expired": true. The answer is one JSON object (also with --paginate), no jq form is served.
+# GET repos/R/actions/artifacts/ID/zip: GitHub answers 302 to a short-lived address that needs no token; `gh api` follows it
+# and sends no token to that other host, so the emulator prints the zip archive (world.py artifact_zip) as the body, as
+# bytes, and appends {"artifact", "via": "api", "address", "token": false} to $FAKE_GH_DIR/downloads.jsonl. A call whose
+# argument is a URL of another host than api.github.com (a backend that follows the redirect itself) for
+# https://objects.example.test/artifacts/ID.zip gets the archive too, and its record has "via": "address" and "token": true
+# when GH_TOKEN was set in that call (the address must get no token). 404 for an unknown artifact, 410 ("Artifact has
+# expired") for an expired one, 403 when forge.json has "refuse_artifacts" true or "download" (true or "list" for the listing).
+_route_before_g09b = route
+_out_before_g09b = out
+ADDR = "https://objects.example.test/artifacts/%d.zip?sig=short-lived"
+
+
+class Bin(bytes):
+    pass
+
+
+def _g09_serve(w, art_id, via):
+    a = W.artifact_by_id(w, art_id)
+    if a is None:
+        return None
+    if W.artifact_refusal(w) in ("download",) or w.forge.get("refuse_artifacts") is True:
+        raise Fail(403, "Resource not accessible by integration", {"message": "Resource not accessible by integration"})
+    if a.get("expired"):
+        raise Fail(410, "Artifact has expired", {"message": "Artifact has expired"})
+    with open(os.path.join(D, "downloads.jsonl"), "a") as f:
+        f.write(json.dumps({"artifact": a["id"], "via": via, "address": ADDR % a["id"],
+                            "token": bool(os.environ.get("GH_TOKEN")) if via == "address" else False}) + "\n")
+    return Bin(W.artifact_zip(a))
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s" % (w.forge["owner"], w.forge["name"])
+    rest = path[len(own):].strip("/") if path == own or path.startswith(own + "/") else None
+    m = re.fullmatch(r"actions/runs/(\d+)/artifacts", rest or "")
+    if m and method == "GET":
+        if W.artifact_refusal(w) == "list":
+            raise Fail(403, "Resource not accessible by integration", {"message": "Resource not accessible by integration"})
+        lst = W.artifacts(w, m[1])
+        if lst is None:
+            return None
+        lst = [a for a in lst if qs.get("name") is None or a["name"] == qs["name"]]
+        return {"total_count": len(lst), "artifacts": [
+            {"id": a["id"], "node_id": "MDg6QXJ0aWZhY3Q%d" % a["id"], "name": a["name"], "size_in_bytes": len(W.artifact_zip(a)),
+             "url": "https://api.github.com/%s/actions/artifacts/%d" % (own, a["id"]), "expired": bool(a.get("expired")),
+             "archive_download_url": "https://api.github.com/%s/actions/artifacts/%d/zip" % (own, a["id"]),
+             "created_at": "2026-05-03T09:00:00Z", "expires_at": "2026-08-01T09:00:00Z",
+             "workflow_run": {"id": int(m[1])}} for a in lst]}
+    m = re.fullmatch(r"actions/artifacts/(\d+)/zip", rest or "")
+    if m and method == "GET":
+        return _g09_serve(w, m[1], "api")
+    m = re.fullmatch(r"artifacts/(\d+)\.zip", path.strip("/"))
+    hosts = {urlparse(a).hostname for a in sys.argv[1:] if a.startswith("https://")}
+    if m and method == "GET" and hosts and hosts != {"api.github.com"}:
+        return _g09_serve(w, m[1], "address")
+    return _route_before_g09b(w, method, path, qs, body)
+
+
+def out(data, q):  # noqa: F811
+    if isinstance(data, Bin):
+        sys.stdout.flush()
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+        return
+    return _out_before_g09b(data, q)
+
+
 main()

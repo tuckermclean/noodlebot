@@ -327,3 +327,70 @@ def ci_attempt_job(w, job_id):
 
 def job_path(w, run, job_id):
     return _g09_read(w, "ci_job_urls", {}).get(str(int(job_id))) or "actions/runs/%d/job/%d" % (int(run), int(job_id))
+
+
+# --- G09 (slice 2): artifacts of a run (added; the rules above are unchanged) ---
+# ci_artifacts.json {"<run id>": [{"id", "name", "expired": bool, "entries": [entry]}]}: the artifacts of a run (live and
+#                   expired). An entry is {"name": the archive entry's path as stored (may be absolute or hold ".."), and one of
+#                   "text": str (stored as UTF-8), "b64": base64 of the bytes (any bytes, not only UTF-8), "link": str (a
+#                   symbolic link entry with that target)}. artifact_zip(art) builds the zip archive of an artifact at the time
+#                   it is served (zipfile, entries in order, a link entry marked by ZipInfo.external_attr S_IFLNK).
+# forge.json may also hold "refuse_artifacts": true (the artifact listing is refused: the fake gh answers 403, the fake forge
+# raises CapabilityOff `ci_artifact`), "list" (the same, only the listing), "download" (the fake gh answers 403 on the archive,
+# the fake forge raises CapabilityOff `ci_artifact`).
+def artifacts(w, run):
+    """The artifacts of run `run` (a list, empty when it has none), None when the run is unknown."""
+    if not any(r["id"] == int(run) for r in w.ci_runs):
+        return None
+    return list(_g09_read(w, "ci_artifacts", {}).get(str(int(run)), []))
+
+
+def artifact_by_id(w, art_id):
+    for lst in _g09_read(w, "ci_artifacts", {}).values():
+        for a in lst:
+            if a["id"] == int(art_id):
+                return a
+    return None
+
+
+def artifact_zip(art):
+    import base64
+    import io
+    import stat
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for e in art.get("entries", []):
+            zi = zipfile.ZipInfo(e["name"], (2026, 5, 3, 9, 0, 0))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.create_system = 3
+            if "link" in e:
+                zi.external_attr = (stat.S_IFLNK | 0o777) << 16
+                z.writestr(zi, e["link"])
+            else:
+                zi.external_attr = (stat.S_IFREG | 0o644) << 16
+                z.writestr(zi, base64.b64decode(e["b64"]) if "b64" in e else e["text"].encode("utf-8"))
+    return buf.getvalue()
+
+
+def entry_bytes(e):
+    import base64
+    return base64.b64decode(e["b64"]) if "b64" in e else e["text"].encode("utf-8")
+
+
+def entry_problem(e):
+    """Why an archive entry may not be unpacked (an absolute path, a '..' component, a link), else None."""
+    n = e["name"]
+    if "link" in e:
+        return "the entry %r is a link" % n
+    if n.startswith("/") or n.startswith("\\") or (len(n) > 1 and n[1] == ":"):
+        return "the entry %r is an absolute path" % n
+    if ".." in n.replace("\\", "/").split("/"):
+        return "the entry %r holds '..'" % n
+    return None
+
+
+def artifact_refusal(w):
+    """None, "list" (the listing is refused) or "download" (the archive is refused)."""
+    v = w.forge.get("refuse_artifacts")
+    return "list" if v is True else (v if v in ("list", "download") else None)

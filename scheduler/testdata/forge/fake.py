@@ -393,3 +393,50 @@ def _g09_ci_logs(self, run, job=None, attempt=None):
 
 
 Backend.ci_dispatch, Backend.ci_logs = _g09_ci_dispatch, _g09_ci_logs
+
+
+# --- G09 (slice 2): ci artifact (added) ---
+# ci_artifact(run, name, dir): the world's artifacts of the run (ci_artifacts.json) by name; none of that name, or an expired
+# one, is a ForgeError naming the artifact and the run ("expired" for an expired one); forge.json "refuse_artifacts" (true,
+# "list" or "download") is the forge refusing: CapabilityOff `ci_artifact`. A non-empty existing `dir` is a ForgeError before
+# anything is written; an entry that is absolute, holds ".." or is a link is a ForgeError and nothing is written. The files
+# are written under `dir` (created when missing; removed again on a failure when the call created it) with the exact bytes,
+# and the result is {"id", "name", "dir", "files"} (files: paths relative to dir, in archive order).
+def _g09_ci_artifact(self, run, name, dir):
+    w = self._w("ci_artifact")
+    if _world.artifact_refusal(w):
+        raise forge.CapabilityOff("fake", "ci_artifact")
+    lst = _world.artifacts(w, run)
+    if lst is None:
+        raise forge.ForgeError("fake forge: run %s not found" % run)
+    got = [a for a in lst if a["name"] == name]
+    if not got:
+        raise forge.ForgeError("fake forge: run %s has no artifact named %r" % (run, name))
+    art = got[0]
+    if art.get("expired"):
+        raise forge.ForgeError("fake forge: the artifact %r of run %s has expired" % (name, run))
+    if os.path.isdir(dir) and os.listdir(dir):
+        raise forge.ForgeError("fake forge: %s exists and is not empty" % dir)
+    for e in art.get("entries", []):
+        why = _world.entry_problem(e)
+        if why:
+            raise forge.ForgeError("fake forge: the artifact %r of run %s is refused: %s" % (name, run, why))
+    made = not os.path.exists(dir)
+    try:
+        os.makedirs(dir, exist_ok=True)
+        files = []
+        for e in art.get("entries", []):
+            p = os.path.join(dir, *e["name"].split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(_world.entry_bytes(e))
+            files.append(e["name"])
+    except BaseException:
+        if made:
+            import shutil
+            shutil.rmtree(dir, ignore_errors=True)
+        raise
+    return {"id": art["id"], "name": name, "dir": dir, "files": files}
+
+
+Backend.ci_artifact = _g09_ci_artifact
