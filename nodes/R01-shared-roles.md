@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | A01, V02 | M |
+| now | none | A01, R03, V02 | M |
 
 **Owns:** `plugin/agents/` (tester, implementer, reviewer), `plugin/hooks/` (the role guard and its test), the role section of `plugin/skills/node/SKILL.md`.
 

@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | A03, A04 | L |
+| now | none | A03, A04, R03 | L |
 
 **Owns:** `plugin/skills/node/owns.py` (new: the one glob matcher and the list of the regime's own files that every ownership
 tool uses), its shared spec-file rule `in_spec` in `plugin/skills/node/check-spec-diff.py` (behaviour unchanged),
