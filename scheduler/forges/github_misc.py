@@ -1,5 +1,5 @@
 """Part of the GitHub backend (forges/github.py): a workflow's runs for a commit, the site's publishing, a branch's
-push.
+push, a throwaway branch's deletion.
 
 Not a module of its own: github.py compiles this file into its own namespace the first time a call needs one of these
 operations (so a process compiles only the families it uses), and the functions named in _register at the end become
@@ -85,4 +85,52 @@ def branch_push(self, path, branch):
     return {}
 
 
-_register(ci_runs, ci_rerun, ci_logs, site_publish, branch_push)
+def branch_delete(self, branch):
+    def refuse(why):
+        return forge.ForgeError("branch %s is not deleted: %s" % (branch, why))
+
+    def lookup(path):
+        try:
+            return self._api("GET", path), False
+        except forge.ForgeError as e:
+            if e.status == 404:
+                return None, True
+            raise
+
+    if branch == self.repo_default_branch():
+        raise refuse("it is the default branch")
+    got, gone = lookup(self._r("/branches/" + branch))
+    if gone:
+        return {"branch": branch, "result": "gone"}
+    if not isinstance(got, dict):
+        raise forge.ForgeError("gh api GET branches: no object in the answer")
+    if got.get("protected"):
+        raise refuse("it is protected")
+    rules, no_rules = lookup(self._r("/rules/branches/" + branch))
+    if not no_rules and not isinstance(rules, list):
+        raise forge.ForgeError("gh api GET rules: no list in the answer")
+    if any(isinstance(r, dict) and r.get("type") == "deletion" for r in rules or []):
+        raise refuse("a rule forbids deleting it (deletion)")
+    owner = self.repo.split("/")[0]
+    for key, val in (("head", owner + ":" + branch), ("base", branch)):
+        prs = self._api("GET", self._r("/pulls"), None, ["-f", "state=open", "-f", key + "=" + val])
+        if not isinstance(prs, list):
+            raise forge.ForgeError("gh api GET pulls: no list in the answer")
+        if prs:
+            raise refuse("an open pull request has it as its %s (#%s)" % (key, prs[0].get("number") if isinstance(prs[0], dict) else "?"))
+    try:
+        self._api("DELETE", self._r("/git/refs/heads/" + branch))
+    except forge.ForgeError as e:
+        if e.status == 403:
+            raise forge.CapabilityOff("github", "branch_delete")
+        if e.status == 404:
+            return {"branch": branch, "result": "gone"}
+        if e.status == 422:
+            _, gone = lookup(self._r("/branches/" + branch))
+            if gone:
+                return {"branch": branch, "result": "gone"}
+        raise
+    return {"branch": branch, "result": "deleted"}
+
+
+_register(ci_runs, ci_rerun, ci_logs, site_publish, branch_push, branch_delete)
