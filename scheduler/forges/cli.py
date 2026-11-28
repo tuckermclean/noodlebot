@@ -77,7 +77,10 @@ def _cli_main(argv, out=None, err=None):
             return _fail(2, "--repo needs a value", err)
         repo, argv = argv[1], argv[2:]
     if len(argv) == 3 and argv[0] == "remote-commit-link":  # remote-commit-link URL SHA: version.sh's signature link
-        link = commit_link(argv[1], argv[2])
+        try:
+            link = commit_link(argv[1], argv[2])
+        except BadValue as e:
+            return _fail(2, e, err)
         if link is None:
             return _fail(1, "no commit link for %s" % argv[1], err)
         print(json.dumps(link), file=out)
@@ -120,7 +123,7 @@ def _cli_main(argv, out=None, err=None):
         kw = _kwargs(op, argv[2:])
         result = getattr(open(repo), op.replace(" ", "_").replace("-", "_"))(**kw)
         text = json.dumps(result)
-    except _Usage as e:
+    except (_Usage, BadValue) as e:
         return _fail(2, e, err)
     except UnknownForge as e:
         return _fail(2, e, err)
