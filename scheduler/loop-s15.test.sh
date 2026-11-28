@@ -159,6 +159,32 @@ s15_cleanup() {
 extra_cleanup() { s15_cleanup; }
 fails0=$fails
 
+# N08: a node's feedback session already running when the loop starts (picked up by its pid file, as after a restart)
+mkdir -p "$st15/node/N08" "$tmp/bin15n8" "$tmp/wt15n8"
+printf '%s\n' '#!/bin/sh' 'd=$S15; echo 1 >"$d/runs.8"; i=0' 'while [ ! -e "$d/go.N08" ]; do i=$((i + 1)); [ "$i" -le 1500 ] || exit 9; sleep 0.2; done' 'exit 0' >"$tmp/bin15n8/claude"
+chmod +x "$tmp/bin15n8/claude"
+# a wrapper in front of the fake forge: each open list call first writes snap8.<call number>, N08's end lines and its files as that call began
+mv "$tmp/bin15/gh" "$tmp/bin15/gh.real"
+cat >"$tmp/bin15/gh" <<'EOF8'
+#!/bin/sh
+d=$S15 st=$S15_STATE
+case " $* " in
+*" --state open "*)
+	n=$(( $(cat "$d/n.open" 2>/dev/null || echo 0) + 1 ))
+	{ echo "$(grep -c 'feedback session of N08 ended' "$st/status.log" 2>/dev/null)"
+	  ls "$st"/node/N08/answered/*-FEEDBACK.md 2>/dev/null | wc -l
+	  [ -e "$st/node/N08/FEEDBACK.md" ] && echo 1 || echo 0; } | tr '\n' ' ' >"$d/new8.$n"
+	mv "$d/new8.$n" "$d/snap8.$n" ;;
+esac
+exec "$(dirname "$0")/gh.real" "$@"
+EOF8
+chmod +x "$tmp/bin15/gh"
+printf 'url: https://example.test/pull/8#c1\nkind: conversation\nplease fix\n' >"$st15/node/N08/FEEDBACK.md"
+echo feedback >"$st15/node/N08/session.kind"; echo 1 >"$st15/node/N08/starts"
+PATH=$tmp/bin15n8:$PATH S15=$S15 setsid "$src/run-session.sh" "$tmp/wt15n8" "$st15/node/N08" "/noodlebot:node --feedback 8" \
+	</dev/null >"$st15/node/N08/session.jsonl" 2>"$st15/node/N08/session.stderr" &
+echo $! >"$st15/node/N08/session.pid"; pids+=("$!")
+
 NOODLEBOT_DATA=$data15 PATH=$tmp/bin15:$PATH SCHED_REPORT=0 SCHED_THROTTLE=0 SCHED_TICK=1 SCHED_POLL=0.2 \
 	bash "$tmp/nb15/scheduler/loop.sh" o/sf >>"$tmp/s15-loop.out" 2>&1 &
 pids+=("$!"); lp15=$!
@@ -172,10 +198,12 @@ w15 "S15: a tick is held in its triage step (after its check of its sessions)" 3
 no=$(cat "$S15/n.open") nm=$(cat "$S15/n.merged")
 K=$(( (no > nm ? no : nm) + 1 ))
 printf '%s\n' "$st15/node/N01/session.rc" "$st15/node/N02/session.rc" "$st15/node/N03/session.rc" "$st15/node/N07/session.rc" >"$S15/arm.paths"
+echo "$st15/node/N08/session.rc" >>"$S15/arm.paths"
 echo "$K" >"$S15/arm.k.tmp" && mv "$S15/arm.k.tmp" "$S15/arm.k"
 touch "$S15/go.N04" "$S15/go.N05"
 w15 "S15: the stale tick's fetch began and the fake forge read its open list" 40 test -e "$S15/open.in"
 touch "$S15/go.N01" "$S15/go.N02" "$S15/go.N03" "$S15/go.N07"
+touch "$S15/go.N08"
 w15 "S15: the four sessions ended while the fake forge held the lists (their session.rc exist)" 40 test -e "$S15/released"
 w15 "S15: the tick after the stale tick began its fetch" 40 test -e "$S15/snap.$((K + 1))"
 c15 "S15: (setup) the stale list read had no PR of N01, N02, N03; it had N04's" sh -c "! grep -qE 'N01|N02|N03' '$S15/stale.$K' && grep -qx node/N04-n4 '$S15/stale.$K'"
@@ -205,6 +233,16 @@ c15 "S15-AC-3: N03's end is logged 'no PR, no QUESTION.md; may start again' at a
 c15 "S15-AC-3: N03 starts again at that tick, start 2 of 2" has15 'started N03 .*start 2 of 2'
 c15 "S15-AC-4: N07's end is judged at the next tick: 'with a PR'" eq15 "$(sn15 "$k2" N07 2)" 1
 c15 "S15-AC-4: N07: then its merged node's worktree goes, evidence archived, as before" sh -c "[ '$(sn15 "$k2" N07 7)' = 0 ] && [ '$(sn15 "$k2" N07 8)' = 1 ]"
+
+# ---- N08: a node's feedback session (session.kind feedback, its prompt "node --feedback 8" on node/N08) ends (rc 0) during the held
+# fetch of tick K too. A feedback session's end reads no PR list: it is judged in the tick that found it gone (K), as before. The
+# status log lists the files' nodes in order, so tick K's lines come before the end lines of N01 and N02, which are judged in K+1. ----
+# snap8 <call number>: "<N08 end lines> <answered/ FEEDBACK.md files> <FEEDBACK.md there>" as that open list call began
+s15_snap8() { cat "$S15/snap8.$1" 2>/dev/null; }
+c15 "S15-AC-3: N08 (a node's feedback session, ended during the held fetch): its end is logged by the tick that found it gone (once, as the next tick's fetch began)" sh -c "[ \"\$(cat '$S15/snap8.$k1' | cut -d' ' -f1)\" = 1 ]"
+c15 "S15-AC-3: N08: the end is logged once" cnt15 'feedback session of N08 ended' 1
+c15 "S15-AC-3: N08: FEEDBACK.md is moved to answered/ by then (as the next tick's fetch began: moved, one file in answered/)" sh -c "[ \"\$(cat '$S15/snap8.$k1')\" = '1 1 0 ' ]"
+c15 "S15-AC-3: N08: its pid file is gone and it ran once, not started again" sh -c "[ ! -e '$st15/node/N08/session.pid' ] && [ \"\$(cat '$S15/runs.8')\" = 1 ]"
 wn15 "S15: N03's second session has started (run 2)" 40 runs_ge15 N03 2
 wait_ticks 2 || { fail "S15: the loop's ticks pass"; d15=1; }
 for id in N01 N02; do
