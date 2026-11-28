@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | T01, M01, D01 | none | S |
+| now | T01, M01, D01 | T04 | S |
 
 **Owns:** the 7-day pace setting `USAGE_7D_PACE` in `scheduler/usage.py` (the hold it turns on, its docstring line, the `seven_day_pace` entry of `usage.json`'s `limits`) and its cases in `scheduler/usage.test.sh`; the settings `scheduler/loops.sh start` passes to each loop, their line in its header comment and the README's run instructions, and their case in `scheduler/loops.test.sh`; the `USAGE_*` variables cleared for `scheduler/deploy.sh`'s `make test` and their case in `scheduler/deploy.test.sh`; the environment check of the self-deploy run in `scheduler/loop.test.sh`.
 **Resolves:** #57
