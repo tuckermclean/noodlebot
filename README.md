@@ -131,12 +131,22 @@ other.
 |---|---|
 | Start every loop (and the API) | `scheduler/loops.sh start` |
 | See them | `scheduler/loops.sh status` |
+| Restart dead loops on a timer | `scheduler/loops.sh watch-unit` prints a systemd service and timer for `loops.sh watch` and the commands that install them; you run those once per machine |
 | Stop every loop | `scheduler/loops.sh stop`, or `touch ~/STOP` (sessions keep running) |
 | Stop one repository's loop | `touch ~/STOP-<name>` |
 | Let a FAILED node or issue start again | `rm` its `FAILED`, or the API's `DELETE .../failed` ([API](#api)) |
 | Start one node the throttle holds | `POST .../nodes/<ID>/release` ([API](#api)) |
 | Retry a rejected deploy, or roll back | `POST /v1/deploy/retry`, `POST /v1/deploy/rollback` ([API](#api)) |
 
+- **`loops.sh watch`** (run by that timer) restarts a dead loop and the API with the settings of the last `loops.sh start`,
+  never after `loops.sh stop` or while a STOP file exists. A loop that is running but whose heartbeat is older than
+  `LOOPS_STALE` seconds (default 1800) is not signalled: `watch` notes it in `state/watch.log` and comments once on the log
+  issue. `LOOPS_WATCH_EVERY` (default `5min`) is how often the printed timer runs `watch`.
+- With `~/.config/noodlebot/units` and `systemctl --user` answering, `start` also sets up a transient user timer
+  `noodlebot-watch` that runs `loops.sh watch` every `LOOPS_WATCH_EVERY`, with the `NOODLEBOT_DATA` and `PATH` of that
+  `start`, unless it is already active. `stop` stops it. `status` then has one more line naming the active watch timers
+  (system, user or none). The system timer from `watch-unit` also survives the end of the user manager.
+- After the deploy that brings this, run `loops.sh stop` and `loops.sh start` once so `state/loops.env` is recorded: a loop started by an older `start` left no settings, and `watch` restarts it without them.
 - **Stopping a loop never stops a session.** Sessions run detached; a restarted loop takes over the running ones.
 - `start` starts the loops that are not running and removes a stale `~/STOP-<name>`; it refuses while `~/STOP` exists.
 - Loops run in tmux sessions `sched-<name>` (the API in `sched-api`). Use `loops.sh`, not tmux, to start and stop them.

@@ -225,7 +225,7 @@ for m in yes fail empty; do
 	eq "M04-AC-2:$m-start:no-lingering-line" "$(lingerlines "$c/out.start")" 0
 	run status
 	eq "M04-AC-2:$m-status:no-lingering-line" "$(lingerlines "$c/out.status")" 0
-	eq "M04-AC-2:$m-status:three-lines" "$(wc -l <"$c/out.status" | tr -d ' ')" 3
+	eq "M04-AC-2:$m-status:three-lines" "$(wc -l <"$c/out.status" | tr -d ' ')" 4
 	nolingerchange M04-AC-2:$m
 	nosystemd M04-AC-2:$m
 	endcase
