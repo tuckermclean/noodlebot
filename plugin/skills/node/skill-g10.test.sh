@@ -80,5 +80,19 @@ g10_sen "G10-AC-3: the branch named ci-probe/<ID>-<topic> is one a criterion pus
 g10_sen "G10-AC-3: with --dry-run nothing is deleted and the branches it would delete go in result.md" "$d/skill.md" \
 	'--dry-run' '(deletes no|delete no|nothing is deleted|no branch is deleted|no branch delete|not delete|no deletion)' 'would delete' 'result[.]md' '!(with|under) --dry-run[^,:]* deletes (the|each|every|it)'
 
+# Round 3: mutants of the throwaway-branch paragraph the second review found still passing.
+g10_sen "G10-AC-3: the leftover ci-probe branches deleted are those its PR's evidence names" "$d/skill.md" \
+	'ci-probe/<id>-' 'pr.s evidence (names|lists)' 'delet' '!evidence (does not|doesn.t|never) (name|list)' '!(not|never) named'
+g10_sen "G10-AC-3: the dry-run rule applies with --dry-run, not without it or in a build session" "$d/skill.md" \
+	'(^| )with --dry-run the session' 'deletes no branch' '!(without|unless|even without) --dry-run' '!--dry-run (or|and) '
+g10_sen "G10-AC-3: the session that deletes the leftovers is a session of the node, not of another node" "$d/skill.md" \
+	'a session of the node' 'also delet' 'ci-probe/<id>-' '!(another|other) node'
+g10_sen "G10-AC-3: a refused deletion is recorded in the PR, not only in the log" "$d/skill.md" \
+	'refus' 'recorded in the pr' '!not in the pr' '!(in|to) the log' '!owner'
+g10_sen "G10-AC-3: the refusal does not stop the session, and nothing else stops it" "$d/skill.md" \
+	'refus' 'does not stop the session' '!refusal stops' '!though' '!owner'
+g10_sen "G10-AC-3: the leftovers are branches still on the forge, with no owner condition" "$d/skill.md" \
+	'still on the forge' 'ci-probe/<id>-' '!owner' '!(if|unless) '
+
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"
