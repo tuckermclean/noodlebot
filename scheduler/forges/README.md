@@ -10,7 +10,7 @@ is `testdata/forge/fake.py` (a folder of JSON files). A forge is named `owner/na
 Python: `f = forge.open(spec)`, then `f.<family>_<op>(**kwargs)`. CLI: `python3 -I scheduler/forge.py [--repo SPEC]
 <family> <op> [--opt value ...]` prints one JSON document (the CLI's code is `forges/cli.py`, compiled into forge.py when
 it runs: a process that uses only the Python interface does not compile it). Exit 1: the call failed (one line on stderr, nothing on
-stdout, never an empty result); 2: usage error or unknown forge; 3: the forge lacks a capability
+stdout, never an empty result); 2: usage error, unknown forge or a rejected value (`forge.BadValue`, see Accepted forms); 3: the forge lacks a capability
 (`forge <name> lacks <capability>`). Capabilities: `visibility` (repo visibility), `pin` (issue pin, issue unpin),
 `resolve_threads` (pr resolve-thread), `site` (site publish); every other operation is always available, and the core
 refuses an operation whose capability is off before the backend is called.
@@ -137,6 +137,24 @@ fields below are the arguments (not result keys: callers read the guaranteed key
   with a `merged_at`. The REST list has no `mergeable`, so `mergeable` is always `UNKNOWN` here (use `pr view`).
   `gh pr list` has no `authorAssociation` field, so it is never asked for.
 - `limit` omitted (`None`): no `--limit` for `gh pr list`, every page for REST.
+
+## Accepted forms
+
+A value that reaches a request path, a query, a web URL or a git argument has one accepted form, checked in the
+interface before the backend is called (so on every backend, and for `forge.web_url` and `forge.commit_link`, which do
+their own check). Any other value is `forge.BadValue`, a `forge.ForgeError`, and the CLI's exit 2 (one stderr line
+naming the option, nothing on stdout; `remote-commit-link URL SHA` too).
+
+- `ci runs` `--workflow`: a workflow file name (`[A-Za-z0-9._-]+` ending in `.yml` or `.yaml`) or a numeric id (digits only).
+- `commit checks` `--sha`: 4 to 64 hex digits (4 is git's shortest abbreviation); `commit_link(url, sha)` takes the same.
+- `issue comments` `--since`: a UTC timestamp `YYYY-MM-DDTHH:MM:SSZ` with optional fractional seconds.
+- `site publish` `--target`: a gist id, one or more letters and digits.
+- `label remove` `--name`: not empty, not `.` and not `..`; any other name is percent-encoded as one path segment.
+- `repo url` `--ref`: a number (an int or a digit string) for `issue`, `pr` and `run`; 4 to 64 hex digits for `commit`; `web_url(spec, kind, ref)` takes the same.
+- `branch push` `--branch`: only `[A-Za-z0-9._/-]`, accepted by git's check-ref-format --branch rules (checked in Python, no git runs) and no leading `-`; so no `+`, `:`, `@`, `#` or `%`.
+
+An argument that names a local file or folder (`site publish --input`, `branch push --path`) has the kind `path` in the
+operation table (`forge.py`'s `_OPS`); the CLI parses it as a string and it is not checked as a value.
 
 ## Operations
 
