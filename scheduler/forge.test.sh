@@ -281,6 +281,7 @@ for g10f in gh fake readme; do
 	sed '/^DONE$/d' "$G10/$g10f.out"
 	fails=$((fails + $(grep -c '^FAIL: ' "$G10/$g10f.out")))
 	grep -q '^DONE$' "$G10/$g10f.out" || { echo "FAIL: G10-AC-1: the G10 cases ($g10f) did not run to their end: $(tail -n 3 "$G10/$g10f.err" | tr '\n' ' ')"; fails=$((fails + 1)); }
+	[ "$g10f" = readme ] || grep -q '^DONE2$' "$G10/$g10f.out" || { echo "FAIL: G10-AC-1: the G10 round-2 cases ($g10f) did not run to their end: $(tail -n 3 "$G10/$g10f.err" | tr '\n' ' ')"; fails=$((fails + 1)); }
 done
 
 if [ "$fails" -ne 0 ]; then

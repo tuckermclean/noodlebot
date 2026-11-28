@@ -94,5 +94,9 @@ g10_sen "G10-AC-3: the refusal does not stop the session, and nothing else stops
 g10_sen "G10-AC-3: the leftovers are branches still on the forge, with no owner condition" "$d/skill.md" \
 	'still on the forge' 'ci-probe/<id>-' '!owner' '!(if|unless) '
 
+# Strengthening: an added condition on the probe-deletion sentence ("unless ...", "after the PR merges") must fail.
+g10_sen "G10-AC-3: the probe deletion after its run is recorded has no added condition (no if/unless, no merge)" "$d/skill.md" \
+	'branch delete --branch' 'recorded' '!(if|unless) ' '!(merge|merged|merges)'
+
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

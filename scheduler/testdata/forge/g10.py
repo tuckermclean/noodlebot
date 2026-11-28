@@ -522,4 +522,5 @@ try:
     cases_round2()
 except BaseException as e:  # noqa: BLE001
     line(False, "G10-AC-5: the G10 round-2 cases ran to their end [%s]" % NAME, ["%s: %s" % (type(e).__name__, e)])
+print("DONE2")
 sys.exit(0)
