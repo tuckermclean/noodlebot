@@ -322,13 +322,59 @@ pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
 before=$(snap)
 ask a "$base" $G; ra=$rc oa=$out
 ask b "$base" $G
-if [ $ra = 0 ] && [ -z "$oa" ] && [ $rc = 0 ] && [ -z "$out" ] && [ "$(snap)" = "$before" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 N=2 sessions idle at the limit (their units resumed), a new triage unit first: ask grants nothing, records nothing"; else fail "new unit vs idle sessions: a rc=$ra out='$oa' / b rc=$rc out='$out' rec=$(rec)"; fi
+if [ $ra = 0 ] && [ "$(printf '%s' "$oa" | cut -f1)" = R1 ] && [ $rc = 0 ] && [ -z "$out" ] && [ "$(rec)" = "a/R1@$base" ]; then pass "S13-AC-1 N=2 sessions idle at the limit, a new triage unit first: N1 is not granted, a's ask grants R1 (its own session is live), b's ask grants nothing"; else fail "new unit first vs idle sessions: a rc=$ra out='$oa' / b rc=$rc out='$out' rec=$(rec)"; fi
 reset; max 2; hb a "$base"; hb b "$base"
 { echo "F1 fresh S $(w 900)"; echo "R1 resumed - $(w 50)"; } | list a 10
 echo "R2 resumed - $(w 60)" | list b 10
 pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
 ask a "$base" --gap 10 --starve 100
 if [ $rc = 0 ] && [ -z "$out" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 N=2 idle sessions and a new fresh unit first (by the starvation limit): ask grants nothing"; else fail "new fresh unit vs idle sessions: rc=$rc out='$out' rec=$(rec)"; fi
+
+# --- (held first) the first unit is held by the budget: the first resumed unit with its own live session takes the turn, the held unit keeps first place
+# the held unit keeps first place for the next free slot: once one of the other sessions ends, N1 is granted, not another resumed unit
+reset; max 2; hb a "$base"; hb b "$base"
+{ echo "N1 triage - $(w 900)"; echo "R1 resumed - $(w 100)"; } | list a 10
+echo "R2 resumed - $(w 100)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
+ask a "$base" $G; g1=$key
+pidfile b node R2 "$dead"
+ask b $((base + 10)) $G; rb=$rc ob=$out
+ask a $((base + 10)) $G
+if [ "$g1" = R1 ] && [ $rb = 0 ] && [ -z "$ob" ] && [ $rc = 0 ] && [ "$key" = N1 ] && [ "$(rec)" = "a/N1@$((base + 10))" ]; then pass "S13-AC-1 after the held-first grant of R1 and a slot freed, the next ask grants N1 (the held unit kept first place), not another resumed unit"; else fail "held unit after a slot frees: first='$g1', b rc=$rb out='$ob' / a rc=$rc out='$out' rec=$(rec)"; fi
+# no new unit starts while N run: the new unit first in b's list is not granted; a's resumed own-session unit is
+reset; max 2; hb a "$base"; hb b "$base"
+echo "R1 resumed - $(w 100)" | list a 10
+echo "N1 triage - $(w 900)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node B1 "$s2"
+ask b "$base" $G; rb=$rc ob=$out
+ask a "$base" $G; ra=$rc oa=$out k1=$key
+ask b $((base + 10)) $G
+if [ $rb = 0 ] && [ -z "$ob" ] && [ $ra = 0 ] && [ "$k1" = R1 ] && [ $rc = 0 ] && [ -z "$out" ] && [ "$(rec)" = "a/R1@$base" ]; then pass "S13-AC-1 a new unit first in b's list is not granted while N=2 run; a's ask grants the resumed own-session unit R1, and b's later ask still grants nothing"; else fail "new unit in b vs resumed in a: b rc=$rb out='$ob' / a rc=$ra key='$k1' / b again rc=$rc out='$out' rec=$(rec)"; fi
+# starved-first variant of the F1 case: the first resumed unit with its own live session (R2 in b, waited longest of the two) takes the turn
+reset; max 2; hb a "$base"; hb b "$base"
+{ echo "F1 fresh S $(w 900)"; echo "R1 resumed - $(w 50)"; } | list a 10
+echo "R2 resumed - $(w 60)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
+ask a "$base" --gap 10 --starve 100; ra=$rc oa=$out
+ask b "$base" --gap 10 --starve 100
+if [ $ra = 0 ] && [ -z "$oa" ] && [ $rc = 0 ] && [ "$key" = R2 ] && [ "$(rec)" = "b/R2@$base" ]; then pass "S13-AC-1 N=2 idle sessions and a starved fresh unit first: b's ask grants R2 (the first resumed unit with its own live session), a's grants nothing"; else fail "starved first, held: a rc=$ra out='$oa' / b rc=$rc out='$out' rec=$(rec)"; fi
+# a resumed unit without a live session of its own, ahead of one that has: the turn goes to the one that has
+reset; max 2; hb a "$base"; hb b "$base"
+{ echo "N1 triage - $(w 900)"; echo "R1 resumed - $(w 500)"; echo "R2 resumed - $(w 100)"; } | list a 10
+pidfile a node R1 "$dead"; pidfile a node R2 "$s1"; pidfile b node B1 "$s2"
+ask a "$base" $G
+if [ $rc = 0 ] && [ "$key" = R2 ] && [ "$(rec)" = "a/R2@$base" ]; then pass "S13-AC-1 a resumed unit without a live session of its own ahead of one with: the turn goes to the one with (R2), not to R1"; else fail "resumed without own session ahead: rc=$rc out='$out' rec=$(rec)"; fi
+# two loops, each with a resumed own-session unit behind the held unit: after the first grant and past the gap the second gets its turn
+reset; max 2; hb a "$base"; hb b "$base"
+{ echo "N1 triage - $(w 900)"; echo "R1 resumed - $(w 100)"; } | list a 10
+echo "R2 resumed - $(w 50)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
+ask b "$base" $G; rb=$rc ob=$out
+ask a "$base" $G; g1=$key
+{ echo "N1 triage - $(w 900)"; } | list a 10
+ask a $((base + 10)) $G; ra=$rc oa=$out
+ask b $((base + 10)) $G
+if [ $rb = 0 ] && [ -z "$ob" ] && [ "$g1" = R1 ] && [ $ra = 0 ] && [ -z "$oa" ] && [ $rc = 0 ] && [ "$key" = R2 ] && [ "$(rec)" = "b/R2@$((base + 10))" ]; then pass "S13-AC-1 two loops with a resumed own-session unit each behind the held N1: R1 first, then past the gap R2 (b), a's ask grants nothing, N1 still held"; else fail "two resumed behind a held unit: b rc=$rb out='$ob' / first='$g1' / a rc=$ra out='$oa' / b rc=$rc out='$out' rec=$(rec)"; fi
 
 # --- only its own session is excused: a resumed unit with no live session of its own is held at N
 reset; max 2; hb a "$base"; hb b "$base"
