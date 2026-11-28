@@ -876,6 +876,118 @@ def redirect_model():
            "%s; %r" % (res.brief(), leaked))
 
 
+# ---- G09-AC-1, review findings (GitHub backend): the answer's run id, a fresh token per poll, a failed poll, a full ref -------
+DRIVER = ("import sys, json\nsys.path.insert(0, %r)\nimport forge\ntry:\n"
+          "    r = forge.open(%r).ci_dispatch(**json.loads(sys.argv[1]))\n    print(json.dumps({'ok': r}))\n"
+          "except BaseException as e:\n    print(json.dumps({'exc': type(e).__name__, 'msg': str(e)}))\n")
+
+
+def fresh_dispatch(kw, env):
+    """ci_dispatch through the Python interface in one fresh process (the token script's once-per-process memory is its own);
+    (answer dict, the calls the fake gh recorded)."""
+    e = dict(os.environ)
+    e.update(env)
+    r = subprocess.run([sys.executable, "-I", "-c", DRIVER % (SCHED, SPEC["github"]), json.dumps(kw)], capture_output=True, text=True,
+                       timeout=120, stdin=subprocess.DEVNULL, env=e)
+    try:
+        ans = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        ans = {"exc": "NoAnswer", "msg": (r.stderr or r.stdout)[-150:]}
+    return ans, calls("github")
+
+
+def listings(cs, after_post):
+    out, seen = [], not after_post
+    for c in cs:
+        if c.get("method") == "POST" and (c.get("path") or "").endswith("/dispatches"):
+            seen = True
+        elif seen and c.get("method") == "GET" and (c.get("path") or "").endswith("/actions/workflows/ci.yml/runs"):
+            out.append(c)
+    return out
+
+
+def ac1_review_id():
+    setup("github", edit={"dispatch": "id-only"})
+    res = call("github", "py", "ci dispatch", {"workflow": "ci.yml", "ref": "feat/x"}, {"FORGE_DISPATCH_WAIT": "1", "FORGE_DISPATCH_POLL": "0.1"})
+    ps = posts(res)
+    body = ps[0]["body"] if len(ps) == 1 and isinstance(ps[0]["body"], dict) else {}
+    report(len(ps) == 1 and body.get("return_run_details") is True,
+           "G09-AC-1: the dispatch body carries \"return_run_details\": true (GitHub answers 204 without it), github",
+           "%d POSTs, body %r" % (len(ps), ps[0]["body"] if ps else None))
+    report(res.rc == 0 and res.value == {"id": 777001},
+           "G09-AC-1: the run id the dispatch's answer names is the result although the runs listing does not show it, github",
+           res.brief() + " value=%r" % (res.value,))
+
+
+def ac1_review_token():
+    for label, env, want_script in (("script", {"NOODLEBOT_FORGE_TOKEN_SCRIPT": TS}, True), ("GH_TOKEN", {"GH_TOKEN": "ghp_given0token"}, False)):
+        setup("github", edit={"dispatch": "never" if want_script else "none"})
+        cnt = os.path.join(WORK, "token-count-poll")
+        if os.path.exists(cnt):
+            os.remove(cnt)
+        e = {"TOKEN_COUNT_FILE": cnt, "FORGE_DISPATCH_WAIT": "1", "FORGE_DISPATCH_POLL": "0.05"}
+        e.update(env)
+        ans, cs = fresh_dispatch({"workflow": "ci.yml", "ref": "feat/x"}, e)
+        runs = len(open(cnt).read().split("\n")) - 1 if os.path.exists(cnt) else 0
+        after = listings(cs, True)
+        toks = {c["gh_token"] for c in cs}
+        why = []
+        if want_script:
+            if len(after) < 3:
+                why.append("only %d listings after the dispatch (answer %r)" % (len(after), ans))
+            if runs < len(after):
+                why.append("the token script ran %d times for %d listings after the dispatch" % (runs, len(after)))
+            if toks != {TOK}:
+                why.append("gh saw the tokens %r" % (toks,))
+        else:
+            if ans.get("ok") is None:
+                why.append("did not succeed: %r" % (ans,))
+            if runs:
+                why.append("the token script ran %d times with GH_TOKEN given" % runs)
+            if toks != {"ghp_given0token"}:
+                why.append("gh saw the tokens %r, want the given one" % (toks,))
+        report(not why, "G09-AC-1: py ci dispatch %s: %s" % (
+            "polling runs the token script once per listing (a token fetched on each poll, an App token lasts an hour)" if want_script
+            else "a GH_TOKEN of the caller stays as given, no script run", "github"), "; ".join(why))
+
+
+def ac1_review_listing_failed():
+    for mode, st, how in (("list500", "500", "py"), ("list500", "500", "cli"), ("list403", "403", "py")):
+        setup("github", edit={"dispatch": mode})
+        res = call("github", how, "ci dispatch", {"workflow": "ci.yml", "ref": "feat/x"},
+                   {"FORGE_DISPATCH_WAIT": "1", "FORGE_DISPATCH_POLL": "0.1"})
+        why = problems_fail(res, how, 1)
+        txt = res.text
+        if len(posts(res)) != 1:
+            why.append("%d POSTs, want 1" % len(posts(res)))
+        if "accepted" not in txt or "ci runs" not in txt:
+            why.append("the message does not say the dispatch was accepted and name `ci runs`: %r" % txt[:160])
+        if txt.startswith("gh api GET"):
+            why.append("a bare gh failure: %r" % txt[:80])
+        report(not why, "G09-AC-1: %s ci dispatch accepted, then the runs listing answers %s: a failed call that says accepted and names `ci runs`, github" % (how, st),
+               "; ".join(why))
+
+
+def ac1_review_full_ref():
+    for ref, short in (("refs/heads/feat/x", "feat/x"), ("refs/tags/v1", "v1")):
+        setup("github", edit={"dispatch": "none"})
+        res = call("github", "py", "ci dispatch", {"workflow": "ci.yml", "ref": ref}, {"FORGE_DISPATCH_WAIT": "1", "FORGE_DISPATCH_POLL": "0.1"})
+        log = W.dispatches(W.World(STATE["github"]))
+        new = log[-1]["runs"][0] if log and log[-1]["runs"] else None
+        ps = posts(res)
+        why = []
+        if res.rc != 0 or res.value != {"id": new} or new in (None, 9100):
+            why.append("%s, the new run is %r" % (res.brief(), new))
+        if len(ps) != 1 or not isinstance(ps[0]["body"], dict) or ps[0]["body"].get("ref") != ref:
+            why.append("the body is not sent with the ref as given: %r" % (ps and ps[0]["body"],))
+        lst = listings(res.calls, False)
+        brs = [a for c in lst for a in c["argv"] if a.startswith("branch=")]
+        if not brs or set(brs) != {"branch=" + short}:
+            why.append("the listings' branch filters %r, want only branch=%s" % (brs, short))
+        report(not why, "G09-AC-1: py ci dispatch --ref %s is sent as given and its run is found by the listing with the branch %s, github" % (ref, short),
+               "; ".join(why))
+
+
 def main():
     work = os.path.join(WORK, "cwd")
     os.makedirs(work, exist_ok=True)
@@ -885,6 +997,10 @@ def main():
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
     for fn in (ac3, ac4, redirect_model):
+        t = time.time()
+        section(fn)
+        print("# %s %.1fs" % (fn.__name__, time.time() - t))
+    for fn in (ac1_review_id, ac1_review_token, ac1_review_listing_failed, ac1_review_full_ref):
         t = time.time()
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))

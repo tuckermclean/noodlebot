@@ -686,4 +686,44 @@ def out(data, q):  # noqa: F811
     return _out_before_g09b(data, q)
 
 
+# --- G09 review (added; the forms above are unchanged) ---
+# forge.json "dispatch" has three more values. "id-only": the dispatch is accepted and adds a run, but the run is not in the runs
+# listing; the answer is 200 {"workflow_run_id": 777001} when the body has "return_run_details": true and 204 with no body
+# otherwise (as GitHub answers). "list500" and "list403": 204 and the run is added, but every runs listing of a workflow after
+# an accepted dispatch answers 500 or 403 (the listing before it is fine). A run of any mode is stored with the short branch
+# name of a full ref (refs/heads/X -> X, refs/tags/T -> T), as GitHub's head_branch is; dispatches.json keeps the ref as given.
+_route_before_g09r = route
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s" % (w.forge["owner"], w.forge["name"])
+    rest = path[len(own):].strip("/") if path == own or path.startswith(own + "/") else None
+    mode = w.forge.get("dispatch", "none")
+    if method == "POST" and re.fullmatch(r"actions/workflows/([\w.-]+)/dispatches", rest or ""):
+        if mode in ("id-only", "list500", "list403"):
+            w.forge["dispatch"] = "none"
+        try:
+            ans = _route_before_g09r(w, method, path, qs, body)
+        finally:
+            w.forge["dispatch"] = mode
+        last = W.dispatches(w)[-1]
+        ref = last["ref"]
+        short = ref.split("/", 2)[2] if ref.startswith(("refs/heads/", "refs/tags/")) else ref
+        for r in w.ci_runs:
+            if r["id"] in last["runs"]:
+                r["branch"] = short
+        if mode == "id-only":
+            w.ci_runs[:] = [r for r in w.ci_runs if r["id"] not in last["runs"]]
+        w.save("ci_runs")
+        if mode == "id-only":
+            return {"workflow_run_id": 777001} if isinstance(body, dict) and body.get("return_run_details") is True else Raw("")
+        return ans
+    if (method == "GET" and mode in ("list500", "list403") and W.dispatches(w)
+            and re.fullmatch(r"actions/workflows/([\w.-]+)/runs", rest or "")):
+        st = int(mode[4:])
+        msg = "Server Error" if st == 500 else "Resource not accessible by integration"
+        raise Fail(st, msg, {"message": msg})
+    return _route_before_g09r(w, method, path, qs, body)
+
+
 main()
