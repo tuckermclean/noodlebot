@@ -20,7 +20,7 @@
 # started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
-# A node session (fresh or follow-up) found gone whose end is not older than the start of the tick's PR-list fetch is left for the next
+# A node session (fresh or follow-up, not a node's feedback session, which reads no PR list) found gone whose end is not older than the start of the tick's PR-list fetch is left for the next
 # tick (session.pid stays): its end is judged (with a PR, or not) only from lists fetched after it ended. The start is the mtime of
 # $state/fetch.began, touched before the fetch.
 # The start queue (SCHED_RAMP, default 1; 0 = off, every ready unit starts in the same tick and turn.py is
@@ -1798,8 +1798,8 @@ tick_run() {
 			live+=("$p $id")
 			{ [[ $f == */issue/* ]] || [[ $f == */adopt/* ]] || { [[ $f == */pr/* ]] && [ ! -e "$(dirname "$f")/node" ]; }; } && triaging=$id
 		else
-			if [[ $f == "$state"/node/* ]]; then
-				# gone, and its end not older than the fetch's start (equal counts as not older): left for the next tick
+			if [[ $f == "$state"/node/* ]] && [ "$(cat "$(dirname "$f")/session.kind" 2>/dev/null)" != feedback ]; then
+				# a fresh or follow-up node session (a feedback session's end reads no PR list: judged at once), gone, and its end not older than the fetch's start (equal counts as not older): left for the next tick
 				rc=$(dirname "$f")/session.rc
 				if [ -z "$mark" ]; then :
 				elif [ -e "$rc" ]; then [ "$rc" -ot "$mark" ] || continue
