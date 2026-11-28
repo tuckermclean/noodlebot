@@ -66,12 +66,13 @@ _OPS = [
     ("ci logs", "ci_logs", {"run": "int!", "job": "str"}),
     ("site publish", "site", {"target": "str!", "input": "path!"}),
     ("branch push", None, {"path": "path!", "branch": "str!"}),
+    ("branch delete", "branch_delete", {"branch": "str!"}),
 ]
 OPERATIONS = [o[0] for o in _OPS]
 _CAP = {o[0]: o[1] for o in _OPS}
 _ARGS = {o[0]: o[2] for o in _OPS}
 _METHODS = {o.replace(" ", "_").replace("-", "_"): o for o in OPERATIONS}
-CAPABILITIES = ("visibility", "pin", "resolve_threads", "site", "ci_logs")
+CAPABILITIES = ("visibility", "pin", "resolve_threads", "site", "ci_logs", "branch_delete")
 BACKENDS = {"github": os.path.join(HERE, "forges", "github.py"),
             "fake": os.path.join(HERE, "testdata", "forge", "fake.py")}
 
@@ -154,6 +155,16 @@ def _branch(v):
     return all(c and not c.startswith(".") and not c.endswith(".lock") and ".." not in c for c in v.split("/")) and not v.endswith(".")
 
 
+THROWAWAY_PREFIXES = ("ci-probe/",)  # `branch delete` deletes only branches under these
+
+
+def _ref_name(v):
+    """The shape of a branch name `branch delete` takes: `/`-separated segments of [A-Za-z0-9._-], none empty, none starting with
+    a dot, containing `..` or ending in .lock; the name does not end in a dot."""
+    return isinstance(v, str) and all(re.fullmatch(r"[A-Za-z0-9._-]+", c) and not c.startswith(".") and not c.endswith(".lock")
+                                      and ".." not in c for c in v.split("/")) and not v.endswith(".")
+
+
 def _str_ok(pattern):
     return lambda v: isinstance(v, str) and re.fullmatch(pattern, v) is not None
 
@@ -165,6 +176,7 @@ _CHECKS = {
     ("site publish", "target"): _str_ok(r"[A-Za-z0-9]+"),
     ("label remove", "name"): lambda v: isinstance(v, str) and v not in ("", ".", ".."),
     ("branch push", "branch"): _branch,
+    ("branch delete", "branch"): _ref_name,
 }
 
 
@@ -208,6 +220,12 @@ class Forge:
             if cap and cap not in self.capabilities:
                 raise CapabilityOff(self.name, cap)
             _check(op, args, kwargs)
+            if op == "branch delete":
+                name = dict(zip(_ARGS[op], args), **kwargs).get("branch")
+                if not isinstance(name, str) or not _ref_name(name):
+                    raise _bad("branch", name)
+                if not name.startswith(THROWAWAY_PREFIXES):
+                    raise ForgeError("branch %s is outside the throwaway prefix (%s), not deleted" % (name, ", ".join(THROWAWAY_PREFIXES)))
             try:
                 return fn(*args, **kwargs)
             except ForgeError:

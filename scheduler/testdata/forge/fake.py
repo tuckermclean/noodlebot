@@ -345,3 +345,44 @@ def _g11_getattribute(self, name):
 
 
 Backend.__getattribute__ = _g11_getattribute
+
+
+# --- G10: branch delete (added) ---
+# A branch is a head of repo.git. The checks, in order: a branch repo.git does not have is `gone`; the default branch, a
+# protected branch (forge.json "protected_branches"), a branch whose rules (forge.json "branch_rules") list `deletion` and
+# a branch that is the head or base of an open PR are refused with a ForgeError naming the branch and the reason; a deletion
+# the world refuses (forge.json "refuse_branch_delete") is CapabilityOff `branch_delete`; else the head is removed.
+def _g10_heads(self):
+    r = subprocess.run(["git", "--git-dir", os.path.join(self.path, "repo.git"), "for-each-ref", "--format=%(refname:short)",
+                        "refs/heads/"], capture_output=True, text=True)
+    if r.returncode:
+        raise forge.ForgeError("fake forge: cannot read the branches: %s" % r.stderr.strip()[:200])
+    return r.stdout.split("\n")
+
+
+def _g10_branch_delete(self, branch):
+    w = self._w()
+    if branch not in _g10_heads(self):
+        return {"branch": branch, "result": "gone"}
+
+    def refuse(why):
+        raise forge.ForgeError("fake forge: branch %s is not deleted: %s" % (branch, why))
+    if branch == w.forge["default_branch"]:
+        refuse("it is the default branch")
+    if branch in w.forge.get("protected_branches", []):
+        refuse("it is a protected branch")
+    if "deletion" in w.forge.get("branch_rules", {}).get(branch, []):
+        refuse("a rule protects it from deletion")
+    for p in w.prs:
+        if p["state"] == "open" and branch in (p["head"], p["base"]):
+            refuse("it is the head or base of the open pull request #%d" % p["number"])
+    if _world.g10_flag(w, "refuse_branch_delete", branch):
+        raise forge.CapabilityOff("fake", "branch_delete")
+    r = subprocess.run(["git", "--git-dir", os.path.join(self.path, "repo.git"), "update-ref", "-d", "refs/heads/" + branch],
+                       capture_output=True, text=True)
+    if r.returncode:
+        raise forge.ForgeError("fake forge: the deletion of %s failed: %s" % (branch, r.stderr.strip()[:200]))
+    return {"branch": branch, "result": "deleted"}
+
+
+Backend.branch_delete = _g10_branch_delete
