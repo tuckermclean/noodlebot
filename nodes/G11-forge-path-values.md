@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | G04, G08 | none | M |
+| now | G04, G08 | G09 | M |
 
 **Owns:** in `scheduler/forge.py`, the check of the values that reach a request path, a query string, a web URL or a
 git argument (run before the backend is called, for the Python interface, `forge.web_url`, `forge.commit_link` and the
@@ -43,7 +43,11 @@ checked before any call, and anything else is a usage error: `forge.BadValue` in
   - The README names the accepted form of each checked value.
 - The existing `scheduler/forge.test.sh` and every other test pass unchanged (the callers' values, such as
   `deploy.sh`'s workflow, `report.py`'s `since`, the issue numbers `site.py` and `api.py` give `forge.web_url` as ints,
-  and the six-digit commit ref of `scheduler/testdata/forge/iface.py`, already have the accepted forms).
+  and the six-digit commit ref of `scheduler/testdata/forge/iface.py`, already have the accepted forms), except the
+  fake head SHAs of `scheduler/report-prs.test.sh` and `scheduler/testdata/lib/report-rollover.sh`, which become hex:
+  `s1`, `s2`, `s3`, `s9` and `x3sha` are not 4 to 64 hex digits, so `report.py`'s `commit_checks(sha=...)` would
+  raise `forge.BadValue` on them. They become `5111`, `5222`, `5333`, `5999` and `3a5a`, a change of the value only
+  (no assertion names the old values), made test-first on the node branch with the owner's approval (issue #239).
 
 ## Changes
 1. **The workflow and the error.** `ci runs --workflow` accepts a workflow file name (`[A-Za-z0-9._-]+` ending in
@@ -84,7 +88,7 @@ checked before any call, and anything else is a usage error: `forge.BadValue` in
 - **G11-AC-1** — `ci runs --workflow` with a workflow file name (`[A-Za-z0-9._-]+` ending in `.yml` or `.yaml`) or a numeric id makes the same call as before, and any other value (among them `../pulls/1?x=`, `a/b.yml`, `ci.yml?x=1`, `ci.yml#x`, `%2e%2e.yml`, `ci.yml/` and an empty value) exits 2 with one stderr line naming `--workflow`, nothing on stdout and no call made, on the GitHub backend over the fake `gh` and on the fake forge, through the CLI and the Python interface (which raises `forge.BadValue`, a subclass of `forge.ForgeError`, before the backend is called). *Verify:* `sh scheduler/forge-g11.test.sh`.
 - **G11-AC-2** — `commit checks --sha` (4 to 64 hex digits), `issue comments --since` (`YYYY-MM-DDTHH:MM:SSZ`, optional fractional seconds), `site publish --target` (one or more letters and digits), `label remove --name` (not empty, `.` or `..`), `repo url --ref` (a number, int or digit string, for issue, pr and run; 4 to 64 hex digits for commit) and `branch push --branch` (only `[A-Za-z0-9._/-]`, accepted by `git check-ref-format --branch`, no leading `-`; `:main`, `+main`, `@`, `x#y` and `%2e%2e` rejected) each accept their form as before and reject anything else with exit 2 (`forge.BadValue` in Python), naming the option, before any call or git command, on both backends, through the CLI and the Python interface; `forge.web_url` and `forge.commit_link` check the same ref and SHA forms (`remote-commit-link` exits 2 on a bad SHA). *Verify:* `sh scheduler/forge-g11.test.sh`.
 - **G11-AC-3** — For every operation of `forge.py ops`, each of its `str` arguments and each `list` argument (given as a one-item list), other than those the operation table marks with the kind `path` (`site publish --input`, `branch push --path`), each of the hostile values `../x`, `a/b`, `x?y=1`, `x#y`, `x&y=1`, `%2e%2e`, `.` and `..` either exits 2 with no call, or reaches the GitHub backend's recorded calls only in a request body, a `-f` field or a GraphQL variable, as one percent-encoded path segment or query value, or not at all; the sweep reads the operation table, so an added operation is swept and an added `path` argument skipped. *Verify:* `sh scheduler/forge-g11.test.sh`.
-- **G11-AC-4** — `scheduler/forges/README.md` names the accepted form of each value of G11-AC-1 and G11-AC-2, `forge.BadValue` and the `path` kind, and every existing case of `scheduler/forge.test.sh` and the other tests passes unchanged. *Verify:* `sh scheduler/forge-g11.test.sh` (the README check), and `make test` in CI.
+- **G11-AC-4** — `scheduler/forges/README.md` names the accepted form of each value of G11-AC-1 and G11-AC-2, `forge.BadValue` and the `path` kind, and every existing case of `scheduler/forge.test.sh` and the other tests passes unchanged, except the fake head SHAs of `scheduler/report-prs.test.sh` and `scheduler/testdata/lib/report-rollover.sh`, which become hex (`s1`, `s2`, `s3`, `s9` and `x3sha` become `5111`, `5222`, `5333`, `5999` and `3a5a`, the value only). *Verify:* `sh scheduler/forge-g11.test.sh` (the README check), and `make test` in CI.
 
 ## Risks
 - G09 (planned, open spec PR #235) gives `ci dispatch --workflow` the same rule and adds `ci artifact --dir`, a local

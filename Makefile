@@ -167,6 +167,7 @@ TESTS = \
 	scheduler/loops-api.test.sh \
 	scheduler/loops-pidns.test.sh \
 	scheduler/loops-m04.test.sh \
+	scheduler/loops-m05.test.sh \
 	scheduler/api.test.sh \
 	scheduler/api-sessions.test.sh \
 	scheduler/api-events.test.sh \
@@ -184,6 +185,7 @@ TESTS = \
 	plugin/skills/node/skill-u05.test.sh \
 	plugin/skills/node/skill-a10.test.sh \
 	plugin/skills/node/skill-g08.test.sh \
+	plugin/skills/node/skill-g10.test.sh \
 	plugin/skills/node/bounded-tests.test.sh \
 	plugin/skills/node/check-spec-diff.test.sh \
 	scheduler/site.test.sh \
@@ -197,6 +199,7 @@ TESTS = \
 	scheduler/pickup-window.test.sh \
 	scheduler/pickup-s10.test.sh \
 	scheduler/forge.test.sh \
+	scheduler/forge-g11.test.sh \
 	scheduler/quick-gate.test.sh \
 	scheduler/quiet-reads.test.sh \
 	site/site.test.sh \
