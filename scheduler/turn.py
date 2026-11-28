@@ -30,11 +30,12 @@ under the same lock as the start record, count the sessions running on the machi
 DATA/state/*/{node,issue,pr,adopt}/*/session.pid whose pid is a live process with run-session.sh in its command line
 (any repository); the last start in starts.json counts as one more while it is within the gap and its unit has no
 session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the
-gap (so a granted start counts as pending only with SCHED_START_GAP above 0; with a gap of 0 it never does).
-A resumed unit first in the order whose own folder holds a live session does not count that session. With a budget set, the prev chain kept in starts.json is pruned to the gap, so that a
-giveback restores the previous record with its chain; with none, starts.json keeps one previous start, as before. With the count at or over the budget, ask prints nothing
-and records nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the machine" on
-stderr and exits 3.
+gap (so a granted start counts as pending only with a gap above 0; a --gap or SCHED_START_GAP of 0 turns it off).
+A resumed unit first in the order whose own folder holds a live session does not count that session. With a budget
+set, the prev chain kept in starts.json is pruned to the gap, so that a giveback restores the previous record with
+its chain; with none, starts.json keeps one previous start, as before. With the count at or over the budget, ask
+prints nothing and records nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the
+machine" on stderr and exits 3.
 
   place     read-only: how far KEY is from a turn. KEY is looked up in this loop's list (--repo may be
             OWNER/NAME; the part after the last "/" is the folder). Prints
