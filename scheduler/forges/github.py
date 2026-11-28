@@ -220,6 +220,20 @@ class Backend:
             raise e
         return r.stdout
 
+    def _gh_to_file(self, args, fh, label, timeout=TIMEOUT):
+        """gh's stdout goes straight to the open binary file `fh` (the bytes as served); a failure is a ForgeError."""
+        import subprocess
+        env, tok = self._env()
+        try:
+            r = subprocess.run(["gh"] + list(args), stdout=fh, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                               timeout=timeout, env=env)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise forge.ForgeError("%s failed: %s" % (label, type(e).__name__))
+        if r.returncode != 0:
+            full = self._scrub(r.stderr.decode("utf-8", errors="replace"), tok)
+            m = re.findall(r"\bHTTP (\d{3})\b", full)
+            raise forge.ForgeError("%s failed (exit %d): %s" % (label, r.returncode, full[:300]), int(m[-1]) if m else None)
+
     def _gh(self, args, body=None, label=None, timeout=TIMEOUT):
         label = label or "gh " + " ".join(a for a in args if not a.startswith("--") or a == "--paginate")[:80]
         return self._run(["gh"] + args, label, json.dumps(body) if body is not None else None, timeout)

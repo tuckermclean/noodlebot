@@ -5,10 +5,8 @@ functions named in _register at the end become methods of its Backend. Everythin
 """
 import shutil
 import stat
-import subprocess
 import tempfile
 import zipfile
-import zlib
 
 ARTIFACT_TIMEOUT = 300  # the archive's download (a log read's 60 s is too short for a large one)
 
@@ -29,7 +27,7 @@ def _artifact_entries(zf, name, run):
             why = "a '..' component"
         else:
             mode = info.external_attr >> 16
-            if mode and stat.S_IFMT(mode) not in (stat.S_IFREG, stat.S_IFDIR):
+            if stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR):
                 why = "a link or another special file"
         if why:
             raise forge.ForgeError("the artifact %r of run %d is refused, nothing was written: the entry %r is %s" % (name, run, n, why))
@@ -41,6 +39,8 @@ def _artifact_entries(zf, name, run):
 
 def ci_artifact(self, run, name, dir):
     run = int(run)
+    if os.path.exists(dir) and not os.path.isdir(dir):
+        raise forge.ForgeError("ci artifact: %s exists and is not a folder, the artifact %r of run %d was not downloaded" % (dir, name, run))
     if os.path.isdir(dir) and os.listdir(dir):
         raise forge.ForgeError("ci artifact: %s exists and is not empty, the artifact %r of run %d was not downloaded" % (dir, name, run))
     where = "the artifact %r of run %d" % (name, run)
@@ -63,26 +63,20 @@ def ci_artifact(self, run, name, dir):
         raise forge.ForgeError("%s has expired" % where)
     art = live[0]
     # the archive: gh's stdout goes straight to a temporary file (bytes as served; gh follows the redirect without the token)
-    env, tok = self._env()
     path = self._r("/actions/artifacts/%d/zip" % art["id"])
     fd, tmp = tempfile.mkstemp(prefix="artifact-", suffix=".zip")
     created = None
+    files = []
     try:
         try:
             with os.fdopen(fd, "wb") as fh:
-                r = subprocess.run(["gh", "api", "-X", "GET", path], stdout=fh, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                                   timeout=ARTIFACT_TIMEOUT, env=env)
-        except (OSError, subprocess.SubprocessError) as e:
-            raise forge.ForgeError("gh api GET actions/artifacts zip failed: %s" % type(e).__name__)
-        if r.returncode != 0:
-            full = self._scrub(r.stderr.decode("utf-8", errors="replace"), tok)
-            m = re.findall(r"\bHTTP (\d{3})\b", full)
-            status = int(m[-1]) if m else None
-            if status == 403:
+                self._gh_to_file(["api", "-X", "GET", path], fh, "gh api GET actions/artifacts zip", ARTIFACT_TIMEOUT)
+        except forge.ForgeError as e:
+            if e.status == 403:
                 raise forge.CapabilityOff("github", "ci_artifact")
-            if status == 410:
+            if e.status == 410:
                 raise forge.ForgeError("%s has expired" % where)
-            raise forge.ForgeError("gh api GET actions/artifacts zip failed (exit %d): %s" % (r.returncode, full[:300]), status)
+            raise
         try:
             zf = zipfile.ZipFile(tmp)
         except (OSError, zipfile.BadZipFile) as e:
@@ -93,7 +87,6 @@ def ci_artifact(self, run, name, dir):
             while not os.path.exists(os.path.dirname(top)) and os.path.dirname(top) != top:
                 top = os.path.dirname(top)
             created = None if os.path.exists(dir) else top
-            files = []
             try:
                 os.makedirs(dir, exist_ok=True)
                 for info, parts, rel in entries:
@@ -105,14 +98,15 @@ def ci_artifact(self, run, name, dir):
                     with zf.open(info) as src, open(target, "xb") as dst:
                         shutil.copyfileobj(src, dst)
                     files.append("/".join(parts))
-            except (OSError, zipfile.BadZipFile, zlib.error) as e:
+            except Exception as e:
                 if created:
                     shutil.rmtree(created, ignore_errors=True)
                 else:
                     for n in os.listdir(dir):
                         p = os.path.join(dir, n)
                         shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) and not os.path.islink(p) else os.path.lexists(p) and os.remove(p)
-                raise forge.ForgeError("%s could not be unpacked into %s: %s" % (where, dir, type(e).__name__))
+                why = " ".join(str(e).split())[:200]
+                raise forge.ForgeError("%s could not be unpacked into %s: %s%s" % (where, dir, type(e).__name__, ": " + why if why else ""))
     finally:
         try:
             os.remove(tmp)
