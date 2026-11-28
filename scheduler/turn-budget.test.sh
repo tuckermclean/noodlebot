@@ -361,5 +361,15 @@ for kind in triage fresh; do
 done
 unset SCHED_MACHINE_MAX
 
+# --- the resumed unit's own session is left out of the count, not the whole budget: own + two others = three, MAX=2 holds it
+spawn run-session.sh; s4=$sp
+reset; max 2; hb a "$base"; hb b "$base"
+echo "R1 resumed - $(w 600)" | list a 10
+pidfile a node R1 "$s1"; pidfile b node B1 "$s2"; pidfile c issue 7 "$s4"
+before=$(snap)
+ask a "$base" $G
+if [ $rc = 0 ] && [ -z "$out" ] && [ "$(snap)" = "$before" ] && [ ! -e "$d/state/starts.json" ]; then pass "S13-AC-1 MAX=2, a resumed unit's own live session and two other live sessions: ask grants nothing, records nothing"; else fail "resumed, own session plus two others: rc=$rc out='$out' rec=$(rec)"; fi
+unset SCHED_MACHINE_MAX
+
 [ "$fails" = 0 ] || { echo "$fails failure(s)"; exit 1; }
 echo "all passed"
