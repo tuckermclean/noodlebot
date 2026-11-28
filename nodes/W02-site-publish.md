@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | W01 | W03 | M |
+| now | W01 | L02, W03 | M |
 
 **Owns:** the `publish` command of `scheduler/site.py` and its cases in `scheduler/site.test.sh`; the visibility record and the publish step in `scheduler/loop.sh` and their cases in `scheduler/loop.test.sh`; the gist and token part of the README's status-site section.
 **Resolves:** #47
