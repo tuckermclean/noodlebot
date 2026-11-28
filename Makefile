@@ -28,6 +28,9 @@ TESTS = \
 	scheduler/issues.test.sh \
 	scheduler/labels.test.sh \
 	scheduler/usage.test.sh \
+	scheduler/loop-t04.test.sh \
+	scheduler/report-t04.test.sh \
+	scheduler/status-t04.test.sh \
 	scheduler/api-s08.test.sh \
 	scheduler/turn.test.sh \
 	scheduler/turn-gap.test.sh \
