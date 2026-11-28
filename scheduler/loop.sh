@@ -21,7 +21,8 @@
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
 # A node session (fresh or follow-up) found gone whose end is not older than the start of the tick's PR-list fetch is left for the next
-# tick (session.pid stays): its end is judged (with a PR, or not) only from lists fetched after it ended.
+# tick (session.pid stays): its end is judged (with a PR, or not) only from lists fetched after it ended. The start is the mtime of
+# $state/fetch.began, touched before the fetch.
 # The start queue (SCHED_RAMP, default 1; 0 = off, every ready unit starts in the same tick and turn.py is
 # never run): new sessions start one per SCHED_START_GAP seconds (default: the largest SCHED_TICK among the
 # live loops) across every loop of the machine, in the order turn.py gives (triages, PR updates,
@@ -1760,9 +1761,11 @@ tick_run() {
 	if [ "$(cat "$state/visibility" 2>/dev/null)" = unknown ]; then forge_has visibility && vis=1 || vis_ask; fi
 	# When the lists' fetch begins, and which node sessions are running then: a node session found gone later whose end
 	# is not older than this is judged at the next tick, from lists fetched after it (see the running-sessions pass).
-	local fetch_s fetch_ns fid fpid
+	# The marker's mtime is on the files' clock, which `date` is not on (a file written just after reads earlier than `date`).
+	# A marker that cannot be written leaves no marker: ends are then judged at once, as before this check.
+	local mark=$state/fetch.began fid fpid rc
 	local -A prealive=()
-	fetch_ns=$(date +%s%N); fetch_s=${fetch_ns%?????????}
+	rm -f "$mark" 2>/dev/null; : >"$mark" 2>/dev/null || mark=''
 	for f in "$state"/node/*/session.pid; do
 		[ -e "$f" ] || continue
 		fid=$(basename "$(dirname "$f")"); fpid=$(cat "$f" 2>/dev/null)
@@ -1797,11 +1800,9 @@ tick_run() {
 		else
 			if [[ $f == "$state"/node/* ]]; then
 				# gone, and its end not older than the fetch's start (equal counts as not older): left for the next tick
-				local rcm
-				rcm=$(stat -c %.9Y "$(dirname "$f")/session.rc" 2>/dev/null) || rcm=''
-				if [ -n "$rcm" ]; then
-					if [ "${rcm#*.}" = 000000000 ]; then [ "${rcm%.*}" -lt "$fetch_s" ] || continue   # coarse mtime: whole seconds
-					else [ "$(( ${rcm%.*} * 1000000000 + 10#${rcm#*.} ))" -lt "$fetch_ns" ] || continue; fi
+				rc=$(dirname "$f")/session.rc
+				if [ -z "$mark" ]; then :
+				elif [ -e "$rc" ]; then [ "$rc" -ot "$mark" ] || continue
 				elif [ -n "${prealive[$id]:-}" ]; then continue; fi
 			fi
 			ended "$(dirname "$f")" "$saw"
