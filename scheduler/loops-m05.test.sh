@@ -859,14 +859,17 @@ st_check status-system active inactive system
 st_check status-user inactive active user
 st_check status-none inactive inactive none
 echo "# M05-AC-4: units off: no timer call, status exactly as today, stop calls no systemctl"
+# Note on the file header (lines 6-7, frozen): the AC-4 cases below do write and remove the units file ($HOME/.config/noodlebot/units).
 rm -f "$HOME/.config/noodlebot/units"
 echo inactive >"$c/user.state"; : >"$SDRLOG"; : >"$SCTLLOG"
 run start
 eq "M05-AC-4:off:start-makes-no-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 0
 eq "M05-AC-4:off:start-makes-no-systemd-run-call-at-all" "$(cnt "$SDRLOG" '')" 0
+: >"$SCTLLOG"
 run status
 eq "M05-AC-4:off:status-prints-exactly-what-it-prints-today" "$(cat "$c/out.status")" "$(cat "$c/exp.status")"
 eq "M05-AC-4:off:status-has-no-watch-line" "$(cnt "$c/out.status" -i watch)" 0
+eq "M05-AC-4:off:status-changes-no-unit-only-reads-is-active" "$(cnt "$SCTLLOG" -vE '^(--user )?is-active ')" 0
 : >"$SCTLLOG"
 run stop
 eq "M05-AC-4:off:stop-makes-no-systemctl-call-for-the-timer" "$(cnt "$SCTLLOG" -i noodlebot-watch)" 0
