@@ -102,10 +102,14 @@ def branch_delete(self, branch):
     got, gone = lookup(self._r("/branches/" + branch))
     if gone:
         return {"branch": branch, "result": "gone"}
-    if isinstance(got, dict) and got.get("protected"):
+    if not isinstance(got, dict):
+        raise forge.ForgeError("gh api GET branches: no object in the answer")
+    if got.get("protected"):
         raise refuse("it is protected")
-    rules, _ = lookup(self._r("/rules/branches/" + branch))
-    if isinstance(rules, list) and any(isinstance(r, dict) and r.get("type") == "deletion" for r in rules):
+    rules, no_rules = lookup(self._r("/rules/branches/" + branch))
+    if not no_rules and not isinstance(rules, list):
+        raise forge.ForgeError("gh api GET rules: no list in the answer")
+    if any(isinstance(r, dict) and r.get("type") == "deletion" for r in rules or []):
         raise refuse("a rule forbids deleting it (deletion)")
     owner = self.repo.split("/")[0]
     for key, val in (("head", owner + ":" + branch), ("base", branch)):

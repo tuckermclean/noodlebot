@@ -221,7 +221,9 @@ class Forge:
                 raise CapabilityOff(self.name, cap)
             _check(op, args, kwargs)
             if op == "branch delete":
-                name = dict(zip(_ARGS[op], args), **kwargs)["branch"]
+                name = dict(zip(_ARGS[op], args), **kwargs).get("branch")
+                if not isinstance(name, str) or not _ref_name(name):
+                    raise _bad("branch", name)
                 if not name.startswith(THROWAWAY_PREFIXES):
                     raise ForgeError("branch %s is outside the throwaway prefix (%s), not deleted" % (name, ", ".join(THROWAWAY_PREFIXES)))
             try:
