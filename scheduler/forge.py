@@ -168,6 +168,7 @@ _CHECKS = {
     ("site publish", "target"): _str_ok(r"[A-Za-z0-9]+"),
     ("label remove", "name"): lambda v: isinstance(v, str) and v not in ("", ".", ".."),
     ("branch push", "branch"): _branch,
+    ("ci artifact", "dir"): lambda v: isinstance(v, str) and v != "",
 }
 _CHECKS[("ci dispatch", "workflow")] = _CHECKS[("ci runs", "workflow")]  # the same form: a file name or a numeric id
 _CHECKS[("ci dispatch", "input")] = lambda v: (isinstance(v, list) and all(isinstance(s, str) and "=" in s and not s.startswith("=") for s in v)

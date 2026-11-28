@@ -39,6 +39,8 @@ def _artifact_entries(zf, name, run):
 
 def ci_artifact(self, run, name, dir):
     run = int(run)
+    given = dir
+    dir = os.path.abspath(dir)   # normalised once, before any check
     if os.path.exists(dir) and not os.path.isdir(dir):
         raise forge.ForgeError("ci artifact: %s exists and is not a folder, the artifact %r of run %d was not downloaded" % (dir, name, run))
     if os.path.isdir(dir) and os.listdir(dir):
@@ -83,18 +85,28 @@ def ci_artifact(self, run, name, dir):
             raise forge.ForgeError("%s: the archive is not a zip file (%s)" % (where, type(e).__name__))
         with zf:
             entries = _artifact_entries(zf, name, run)
-            top = os.path.abspath(dir)   # the first folder the call has to create
-            while not os.path.exists(os.path.dirname(top)) and os.path.dirname(top) != top:
+            top = dir   # the first folder the call has to create
+            while not os.path.lexists(os.path.dirname(top)) and os.path.dirname(top) != top:
                 top = os.path.dirname(top)
-            created = None if os.path.exists(dir) else top
+            created = None if os.path.lexists(dir) else top
+            wrote = []
             try:
                 os.makedirs(dir, exist_ok=True)
                 for info, parts, rel in entries:
                     target = os.path.join(dir, *rel)
                     if parts is None:
+                        if not os.path.lexists(target):
+                            wrote.append(target)
                         os.makedirs(target, exist_ok=True)
                         continue
+                    d = os.path.dirname(target)
+                    miss = []
+                    while not os.path.lexists(d):
+                        miss.append(d)
+                        d = os.path.dirname(d)
+                    wrote.extend(reversed(miss))
                     os.makedirs(os.path.dirname(target), exist_ok=True)
+                    wrote.append(target)
                     with zf.open(info) as src, open(target, "xb") as dst:
                         shutil.copyfileobj(src, dst)
                     files.append("/".join(parts))
@@ -102,9 +114,11 @@ def ci_artifact(self, run, name, dir):
                 if created:
                     shutil.rmtree(created, ignore_errors=True)
                 else:
-                    for n in os.listdir(dir):
-                        p = os.path.join(dir, n)
-                        shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) and not os.path.islink(p) else os.path.lexists(p) and os.remove(p)
+                    for p in reversed(wrote):
+                        if os.path.isdir(p) and not os.path.islink(p):
+                            shutil.rmtree(p, ignore_errors=True)
+                        elif os.path.lexists(p):
+                            os.remove(p)
                 why = " ".join(str(e).split())[:200]
                 raise forge.ForgeError("%s could not be unpacked into %s: %s%s" % (where, dir, type(e).__name__, ": " + why if why else ""))
     finally:
@@ -112,7 +126,7 @@ def ci_artifact(self, run, name, dir):
             os.remove(tmp)
         except OSError:
             pass
-    return {"id": art["id"], "name": name, "dir": dir, "files": sorted(files)}
+    return {"id": art["id"], "name": name, "dir": given, "files": sorted(files)}
 
 
 _register(ci_artifact)
