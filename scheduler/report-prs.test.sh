@@ -61,9 +61,9 @@ ok "U01-AC-3: (precondition) W01's start is the one comment on its home issue (5
 ok "U01-AC-3: (precondition) W03's start is the one comment on its home issue (56)" test "$(unum 56)" = 1
 
 # the PR opened, with its link, once; no CI result while a check run is still running
-usetchecks s1 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "build", "status": "in_progress", "conclusion": null}]'
-usetpulls "[$(upull 312 node/W01-pr-one s1), $(upull 314 node/W03-closer s3)]"
-usetchecks s3 '[{"name": "test", "status": "completed", "conclusion": "success"}]'
+usetchecks 5111 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "build", "status": "in_progress", "conclusion": null}]'
+usetpulls "[$(upull 312 node/W01-pr-one 5111), $(upull 314 node/W03-closer 5333)]"
+usetchecks 5333 '[{"name": "test", "status": "completed", "conclusion": "success"}]'
 ur3
 ok "U01-AC-3: the PR opened is one comment on the home issue, over three runs (CI still running adds none)" test "$(unum 55)" = 2
 ok "U01-AC-3: the PR-opened comment has the PR's link" test "$(ucount 55 'github\.com/owner/repo/pull/312\b')" = 1
@@ -71,18 +71,18 @@ ok "U01-AC-3: the PR-opened comment begins with a Stage line" test "$(ucount 55 
 ok "U01-AC-3: the other node's PR opened is on its own home issue (56), with its CI result (all check runs complete)" test "$(ucount 56 'pull/314\b')" = 1 -a "$(unum 56)" = 3
 
 # the CI result once all check runs are complete: passed
-usetchecks s1 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "build", "status": "completed", "conclusion": "success"}]'
+usetchecks 5111 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "build", "status": "completed", "conclusion": "success"}]'
 ur3
 ok "U01-AC-3: the CI result is posted once all check runs are complete, once over three runs" test "$(unum 55)" = 3
 ok "U01-AC-3: it says the checks passed and begins with a Stage line" umatch '(?is)\A\*\*Stage:\*\*.*(pass|success|green)' "$(ulast 55)"
 ok "U01-AC-3: the other node's CI result says passed" test "$(ucount 56 '(?is)\A\*\*Stage:\*\*.*(pass|success|green)')" = 1
 
 # a new head commit: one more CI result, with the failing checks' names, after all its check runs complete
-usetchecks s2 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "lint", "status": "completed", "conclusion": "failure"}, {"name": "unit", "status": "queued", "conclusion": null}]'
-usetpulls "[$(upull 312 node/W01-pr-one s2), $(upull 314 node/W03-closer s3)]"
+usetchecks 5222 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "lint", "status": "completed", "conclusion": "failure"}, {"name": "unit", "status": "queued", "conclusion": null}]'
+usetpulls "[$(upull 312 node/W01-pr-one 5222), $(upull 314 node/W03-closer 5333)]"
 ur3
 ok "U01-AC-3: a new head commit with a check run still queued adds no CI result" test "$(unum 55)" = 3
-usetchecks s2 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "lint", "status": "completed", "conclusion": "failure"}, {"name": "unit", "status": "completed", "conclusion": "failure"}]'
+usetchecks 5222 '[{"name": "test", "status": "completed", "conclusion": "success"}, {"name": "lint", "status": "completed", "conclusion": "failure"}, {"name": "unit", "status": "completed", "conclusion": "failure"}]'
 ur3
 ok "U01-AC-3: once the new head's check runs are complete its CI result is posted once (a CI result per head commit)" test "$(unum 55)" = 4
 ok "U01-AC-3: the failed CI result names the failing checks (lint, unit)" sh -c "printf '%s\n' \"\$1\" | grep -q 'lint' && printf '%s\n' \"\$1\" | grep -q 'unit' && printf '%s\n' \"\$1\" | head -n 1 | grep -q '^\*\*Stage:\*\*'" _ "$(ulast 55)"
@@ -102,7 +102,7 @@ ok "U01-AC-3: every milestone comment on W01's home issue begins with a Stage li
 ok "U01-AC-3: every milestone comment on W03's home issue begins with a Stage line" ustage_all 56
 
 # merged once (the issue is also on W02's Resolves line, so it stays open: no closing comment mixes in)
-usetpulls "[$(upull 314 node/W03-closer s3)]"
+usetpulls "[$(upull 314 node/W03-closer 5333)]"
 echo "312 node/W01-pr-one" >"$ustate5/merged-prs.tsv"
 echo "312 node/W01-pr-one 2026-02-04T00:00:00Z true" >"$ustate5/closed-prs.tsv"
 ur3
@@ -124,7 +124,7 @@ ok "U01-AC-6: a PR closed without merging does not close its home issue" test "$
 ev "started triage of #57 in /wt, pid 9, start 1 of 2" "$ustate5"
 ev "started triage of #69 in /wt, pid 10, start 1 of 2" "$ustate5"
 ur3
-usetpulls "[$(upull 320 spec/triage-57-foo s9)]"
+usetpulls "[$(upull 320 spec/triage-57-foo 5999)]"
 ev "triage of #57 done (rc 0); its label is now noodlebot-triaged" "$ustate5"
 ev "triage of #69 done (rc 0); its label is now noodlebot-triaged" "$ustate5"
 ur3
