@@ -988,6 +988,108 @@ def ac1_review_full_ref():
                "; ".join(why))
 
 
+# ---- G09-AC-3, review findings (GitHub backend): an unreadable later entry, entries without type bits, a --dir that is a file ----
+# The archives are built here (a world artifact's "zip_b64" is served as given, world.py); the fake forge has no archive, so
+# these cases are the GitHub backend's.
+def raw_zip(items):
+    """items: [(name, data bytes, external_attr, flag_bits, compress method)] -> a zip archive's bytes. Entries are stored;
+    a flag or a method other than 0 is patched into the local and the central header after (the data stays as stored)."""
+    import io
+    import struct
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        for name, data, attr, flag, method in items:
+            zi = zipfile.ZipInfo(name, (2026, 5, 3, 9, 0, 0))
+            zi.compress_type = zipfile.ZIP_STORED
+            zi.create_system = 3
+            zi.external_attr = attr
+            zi.flag_bits = flag
+            z.writestr(zi, data)
+    raw = bytearray(buf.getvalue())
+    with zipfile.ZipFile(io.BytesIO(bytes(raw))) as z:
+        offs = [i.header_offset for i in z.infolist()]
+    pos = 0
+    for k, (name, data, attr, flag, method) in enumerate(items):
+        pos = raw.index(b"PK\x01\x02", pos)
+        if flag:   # writestr resets the flag bits: patch them in, bit 0 is "encrypted"
+            struct.pack_into("<H", raw, offs[k] + 6, flag)
+            struct.pack_into("<H", raw, pos + 8, flag)
+        if method:
+            struct.pack_into("<H", raw, offs[k] + 8, method)
+            struct.pack_into("<H", raw, pos + 10, method)
+        pos += 4
+    return bytes(raw)
+
+
+def rev_arts():
+    import base64
+    good = ("ok.txt", b"ok\n", (0o100644) << 16, 0, 0)
+    ent = [{"name": "ok.txt", "text": "ok\n"}, {"name": "d/bad.txt", "text": "bad\n"}]
+    def art(i, name, items, entries):
+        return {"id": i, "name": name, "expired": False, "entries": entries, "zip_b64": base64.b64encode(raw_zip(items)).decode()}
+    return {"9001": [
+        art(5020, "enc", [good, ("d/bad.txt", b"bad\n", (0o100644) << 16, 1, 0)], ent),
+        art(5021, "enc-first", [("d/bad.txt", b"bad\n", (0o100644) << 16, 1, 0), good], ent[::-1]),
+        art(5022, "method99", [good, ("d/bad.txt", b"bad\n", (0o100644) << 16, 0, 99)], ent),
+        art(5023, "plain-bits", [("plain.txt", b"plain\n", 0o600 << 16, 0, 0), ("d/p2.txt", b"p2\n", 0o644 << 16, 0, 0)],
+            [{"name": "plain.txt", "text": "plain\n"}, {"name": "d/p2.txt", "text": "p2\n"}]),
+        art(5024, "zero-attr", [("z.txt", b"zero\n", 0, 0, 0), ("d/z2.txt", b"z2\n", 0, 0, 0)],
+            [{"name": "z.txt", "text": "zero\n"}, {"name": "d/z2.txt", "text": "z2\n"}]),
+        art(5025, "link-after-plain", [("plain.txt", b"plain\n", 0o600 << 16, 0, 0), ("lnk", b"plain.txt", 0o120777 << 16, 0, 0)],
+            [{"name": "plain.txt", "text": "plain\n"}, {"name": "lnk", "link": "plain.txt"}])]}
+
+
+def ac3_review_unreadable():
+    ac = "G09-AC-3"
+    for name, why in (("enc", "an encrypted entry after a good one"), ("enc-first", "an encrypted first entry"),
+                      ("method99", "an entry of an unsupported compression method (99) after a good one")):
+        for mode in ("py", "cli"):
+            d = os.path.join(OUT, "sub", "deeper")
+            art_fail(ac, "github", mode, 1, "of %s exits 1 naming the artifact and the run, nothing written, no folder created (--dir a missing nested path)" % why,
+                     {"run": 9001, "name": name, "dir": d}, arts=rev_arts(), need=(name, "9001"))
+            art_reset()
+            res = art_call("github", mode, {"run": 9001, "name": name, "dir": d})
+            txt = res.text
+            report(res.rc == 1 and not re.search(r"\w*(Error|Exception)\s*$", txt.strip()),
+                   "%s: %s ci artifact %s: the message is a sentence, not a bare exception class name, github" % (ac, mode, why),
+                   "rc %s %r" % (res.rc, txt[:160]))
+
+
+def ac3_review_typebits():
+    ac = "G09-AC-3"
+    for name in ("plain-bits", "zero-attr"):
+        for mode in ("py", "cli"):
+            art_ok("github", mode, os.path.join(OUT, "sub", "t-" + name), name=name, arts=rev_arts(),
+                   label="--name %s (regular-file entries whose external_attr has no file-type bits) " % name)
+    art_fail(ac, "github", "py", 1, "of an archive with a regular file without type bits and a link entry is refused naming the artifact and the run, nothing written",
+             {"run": 9001, "name": "link-after-plain", "dir": os.path.join(OUT, "sub", "l")}, arts=rev_arts(), need=("link-after-plain", "9001"))
+
+
+def ac3_review_dir_is_file():
+    ac = "G09-AC-3"
+    for mode in ("py", "cli"):
+        art_reset()
+        setup("github", seed=False)
+        f = os.path.join(OUT, "afile")
+        open(f, "w").write("mine\n")
+        before = snap()
+        res = art_call("github", mode, {"run": 9001, "name": "report", "dir": f})
+        after = snap()
+        why = problems_fail(res, mode, 1)
+        for n in ("report", "9001"):
+            if n not in res.text:
+                why.append("the message does not say %r: %r" % (n, res.text[:160]))
+        if downloads():
+            why.append("an archive was downloaded: %r" % (downloads(),))
+        if after != before or open(f).read() != "mine\n":
+            why.append("the file was changed or something was left")
+        if os.listdir(TMPD):
+            why.append("a temporary file is left in $TMPDIR: %s" % os.listdir(TMPD))
+        report(not why, "%s: %s ci artifact with --dir an existing regular file exits 1 with a message, no download, the file untouched, github" % (ac, mode),
+               "; ".join(why))
+
+
 def main():
     work = os.path.join(WORK, "cwd")
     os.makedirs(work, exist_ok=True)
@@ -1001,6 +1103,10 @@ def main():
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
     for fn in (ac1_review_id, ac1_review_token, ac1_review_listing_failed, ac1_review_full_ref):
+        t = time.time()
+        section(fn)
+        print("# %s %.1fs" % (fn.__name__, time.time() - t))
+    for fn in (ac3_review_unreadable, ac3_review_typebits, ac3_review_dir_is_file):
         t = time.time()
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))

@@ -394,3 +394,16 @@ def artifact_refusal(w):
     """None, "list" (the listing is refused) or "download" (the archive is refused)."""
     v = w.forge.get("refuse_artifacts")
     return "list" if v is True else (v if v in ("list", "download") else None)
+
+
+# --- G09 (slice 2, review round): an artifact that holds "zip_b64" (base64 of a whole archive) is served as those bytes ---
+# (a crafted archive: an encrypted entry, an unsupported compression method, entries without file-type bits; its "entries"
+# still list what a good unpack writes, the cases read them). Added; artifact_zip above is unchanged.
+_artifact_zip_before_review = artifact_zip
+
+
+def artifact_zip(art):  # noqa: F811
+    if "zip_b64" in art:
+        import base64
+        return base64.b64decode(art["zip_b64"])
+    return _artifact_zip_before_review(art)
