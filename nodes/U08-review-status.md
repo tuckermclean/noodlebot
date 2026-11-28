@@ -5,7 +5,7 @@
 | now | G13, S17, U04 | none | M |
 
 **Owns:** in `scheduler/report.py`: the review state of each open PR (read from `state/<name>/review/`,
-`review.log` and G13's `feedback/<N>.held`), its line in the status table, the "no reviewer App token" line, and the reviewer's items under "Waiting
+`review.log` and G13's `feedback/<N>.held`), its line in the status table, the "no reviewer App token" and "no reviewer App login" lines, and the reviewer's items under "Waiting
 on you" (a PR the reviewer left to the owner for its frozen-line approval or the owner's decision, a head with a
 no-verdict note, a PR whose reviewer rework rounds reached the cap); the review fields in `report.json`; the new test `scheduler/report-u08.test.sh`, its line in the
 `Makefile`'s `TESTS`, and any fixtures it adds under `scheduler/testdata/u08/`.
@@ -28,7 +28,8 @@ listed under "Waiting on you", and so is a PR whose reviewer-started rework roun
     sha>`. A PR with `feedback/<N>.held` at its current head is listed as `PR #N: changes requested at <short sha>
     after <count> rework rounds; your comment or review starts the next`, and once the hold is gone it is not.
   - With `review.log`'s last loop start saying `no reviewer App token; nothing reviewed`, the status issue says
-    `Reviewer: no reviewer App token; nothing reviewed` and gives no PR a review state. With `review.stop`, it says
+    `Reviewer: no reviewer App token; nothing reviewed` and gives no PR a review state, and the same for `no reviewer
+    App login; nothing reviewed`. With `review.stop`, it says
     `Reviewer: paused`.
   - A repository with no `review/` folder and no `review.log` gives the status issue it gives today (the existing
     `report*.test.sh` cases pass unchanged).
@@ -43,7 +44,7 @@ listed under "Waiting on you", and so is a PR whose reviewer-started rework roun
 ## Gate
 - **U08-AC-1** — The status issue gives each open PR's review state: reviewed at which head and the verdict, or waiting for a review of its new head with the reason (`settling`, `CI running`, `session live`, `queued`), and `report.json` holds it. *Verify:* `sh scheduler/report-u08.test.sh`.
 - **U08-AC-2** — A PR whose last review at its current head is a frozen-line or owner-decision `COMMENT` or a no-verdict note, or whose `feedback/<N>.held` names its current head (the rework rounds cap), is listed under "Waiting on you" with what it waits for, and a PR whose hold is gone is not. *Verify:* `sh scheduler/report-u08.test.sh`.
-- **U08-AC-3** — With no reviewer App token the status issue says `Reviewer: no reviewer App token; nothing reviewed` and gives no PR a review state, with `review.stop` it says `Reviewer: paused`, and with no review records at all it is as today. *Verify:* `sh scheduler/report-u08.test.sh`.
+- **U08-AC-3** — With no reviewer App token the status issue says `Reviewer: no reviewer App token; nothing reviewed` and gives no PR a review state, with no reviewer App login the same with `Reviewer: no reviewer App login; nothing reviewed`, with `review.stop` it says `Reviewer: paused`, and with no review records at all it is as today. *Verify:* `sh scheduler/report-u08.test.sh`.
 
 ## Risks
 - The status issue's body grows by a line per open PR. With many PRs open, the table may need folding, which is a

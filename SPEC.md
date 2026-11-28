@@ -68,7 +68,8 @@ way.
   changes is superseded by its own criteria. A graph with none of
   these fields means what it always has.
 - **The reviewer** (nodes G12, S16, S17, G13, U08). A second GitHub App, separate from `n00dl3b0t` and with its own
-  token script, reviews every open PR at each new head once the head has settled and its CI has finished. A read-only
+  token script, reviews every open PR of the owner's or the bot's from a branch of the repository itself (never a
+  fork's or a stranger's) at each new head once the head has settled and its CI has finished. A read-only
   session with no forge credential writes a JSON review that `scheduler/reviewer.py draft` checks (the verdict
   follows the findings), and the loop posts it as one review at that head through a forge profile that allows only
   reviews and the reviewer's own threads. Its `request_changes` at a PR's current head is feedback like the owner's.

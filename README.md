@@ -117,6 +117,7 @@ the node starts again on the new spec at its next turn (the log says so when it 
   sets, once the auto-gate holds at its head (the reviewer App's approval at that head is one of its points); the loop
   only turns auto-merge on. Spec and adoption PRs, and approvals of frozen-test changes, stay the owner's alone. Every
   result reaches the owner as a PR, a comment or a question.
+- **Until the auto-gate is built** (issue #175), you merge node PRs too (squash), as you merge spec and adoption PRs.
 - **Comment or review on a bot PR** to have it changed: the loop collects your comments and reviews and starts a feedback
   session for that PR, which pushes the change and replies.
 - A node PR that conflicts with `main` gets an update session by itself.

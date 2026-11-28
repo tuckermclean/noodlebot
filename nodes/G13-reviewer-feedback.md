@@ -73,5 +73,8 @@ the PR waits for the owner, whose own comment or review starts the rework again.
   on as they are, a short comment saying so is enough; U08 tells the owner the PR waits on them.
 - A session that pushes a new head before the reviewer's review is read would make that review stale, and so not
   feedback. The next review at the new head carries any finding still outstanding.
+- The feedback session resolves the line threads it fixed, the reviewer's among them (G03's prompt). The reviewer
+  still checks them, because S16's `prior.json` takes every thread it started that it has not marked addressed,
+  resolved or not.
 - The login file is the owner's setup step. A wrong login means the reviewer's reviews are not feedback: the PR waits,
   nothing is acted on wrongly.

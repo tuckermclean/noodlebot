@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | U05 | none | S |
+| now | U05 | S16 | S |
 
 **Owns:** in `scheduler/report.py`, the reading of the last `Fresh review`'s `Frozen test lines changed:` lines into the merge record's `frozen` (the value `"unreadable"`) and the frozen-line wording of a ready PR's "Waiting on you" item for that value; in `scheduler/site.py`, the frozen-line note in a ready node's `merge_why` for that value; lines 260 and 261 of U05's frozen `scheduler/report-u05.test.sh` (cases 32 and 33, their expected `frozen` and the label words that name it); the new tests `scheduler/report-u07.test.sh` and `scheduler/site-u07.test.sh`, their lines in the `Makefile`'s `TESTS`, and any fixtures they add under `scheduler/testdata/u07/`.
 **Resolves:** #230
