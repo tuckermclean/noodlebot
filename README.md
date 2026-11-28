@@ -111,7 +111,13 @@ the node starts again on the new spec at its next turn (the log says so when it 
 
 ## Reviewing and merging PRs
 
-- **The bot never merges, approves or pushes to `main`.** You merge (squash).
+- **The owner sets the rules and merges the plan.** Bots never push to `main`, change branch protection or repository
+  settings, or merge a spec or adoption PR. Only the reviewer App may approve or request changes on a PR, and only for
+  the exact head it reviewed. A node PR is merged by the forge's own auto-merge, under the branch protection the owner
+  sets, once the auto-gate holds at its head (the reviewer App's approval at that head is one of its points); the loop
+  only turns auto-merge on. Spec and adoption PRs, and approvals of frozen-test changes, stay the owner's alone. Every
+  result reaches the owner as a PR, a comment or a question.
+- **Until the auto-gate is built** (issue #175), you merge node PRs too (squash), as you merge spec and adoption PRs.
 - **Comment or review on a bot PR** to have it changed: the loop collects your comments and reviews and starts a feedback
   session for that PR, which pushes the change and replies.
 - A node PR that conflicts with `main` gets an update session by itself.
