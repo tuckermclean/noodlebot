@@ -72,7 +72,7 @@ def _artifact_mkdirs(dir, rel, made, top):
 def ci_artifact(self, run, name, dir):
     run = int(run)
     given = dir
-    dir = os.path.abspath(dir)   # normalised once, before any check
+    dir = os.path.realpath(dir)   # resolved once, before any check, links followed as the OS follows them
     if os.path.exists(dir) and not os.path.isdir(dir):
         raise forge.ForgeError("ci artifact: %s exists and is not a folder, the artifact %r of run %d was not downloaded" % (dir, name, run))
     if os.path.isdir(dir) and os.listdir(dir):
