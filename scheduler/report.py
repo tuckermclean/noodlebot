@@ -2,6 +2,8 @@
 """Mirror one repository's scheduler state to a GitHub status issue, and take the owner's answers from it.
 
   report.py --repo OWNER/NAME --state DIR [--worktrees DIR] [--clone DIR] [--owner LOGIN] [--site URL] [--pickup]
+  report.py --repo OWNER/NAME --state DIR --stale SECONDS    (loops.sh watch: one comment on the open log issue that the
+                                                             loop's heartbeat is that old; nothing else, report.json untouched)
 
 Run by loop.sh after each tick; exits 3 when it wrote an ANSWER.md; PyYAML is used when present (the graph is optional), all forge access through forge.py (the token script, or a GH_TOKEN in the environment).
 Each run:
@@ -628,7 +630,7 @@ def merge_state(a, rs, pr, node=None):
     failed = has(a.state, task, "FAILED") or bool(node) and has(a.state, node, "FAILED")
     if (not failed and not unread and not has(a.state, task, "QUESTION.md") and same and verdict == "approve" and ci == "passed" and mg != "CONFLICTING"):
         fz, ap = rec.get("frozen"), rec.get("approved")
-        num = isinstance(fz, int) and not isinstance(fz, bool)
+        num = fz == "unreadable" or isinstance(fz, int) and not isinstance(fz, bool)
         ok = isinstance(ap, str) and bool(ap) and cur.lower().startswith(ap.lower())
         return "%s (%sreviewed at %s, CI passed)%s" % (
             "changes frozen test lines: needs your approval" if num and not ok else "is ready to merge", "frozen test line changes approved; " if num and ok else "",
@@ -1943,8 +1945,12 @@ def post_prs(a, rs, pulls):
             v = verdict(c)
             if v:
                 m = re.match(r"[^\w>]*Fresh review \(\w+\) at ([0-9a-fA-F]{7,40})\b", (c["body"].splitlines() or [""])[0])
-                f = re.search(r"^[^\w>\n]*Frozen test lines changed:[*_` \t]*(none|[1-9][0-9]*)[*_` \t\r]*$", c["body"], re.M)
-                reviews[str(pr["number"])] = (m and m.group(1), v, c["id"], f and (f.group(1) if f.group(1) == "none" else int(f.group(1))))
+                vals = set()  # the value of each line holding the text, "unreadable" for a line U05's reading does not parse
+                for ln in re.findall(r"^.*Frozen test lines changed:.*$", c["body"] or "", re.M | re.I):
+                    f = re.fullmatch(r"[^\w>\n]*Frozen test lines changed:[*_` \t]*(none|[1-9][0-9]*)[*_` \t\r]*", ln)
+                    vals.add(("none" if f.group(1) == "none" else int(f.group(1))) if f else "unreadable")
+                fz = None if not vals else vals.pop() if len(vals) == 1 else "unreadable"
+                reviews[str(pr["number"])] = (m and m.group(1), v, c["id"], fz)
             m = re.fullmatch(r"Frozen lines approved at ([0-9a-fA-F]{7,40})", ((c["body"] or "").strip().splitlines() or [""])[0].strip())  # as feedback.py approval()
             if m and from_owner(a, c):
                 approvals[str(pr["number"])] = m.group(1)
@@ -1971,7 +1977,7 @@ def post_prs(a, rs, pulls):
 
     def merge_records():
         """report.json "merge": per open node PR its head, the head and verdict of its last Fresh review and the CI result on
-        the head, the id of that review's comment ("id"), the review's frozen-line count ("frozen": "none" or a number) and the head the owner approved
+        the head, the id of that review's comment ("id"), the review's frozen-line count ("frozen": "none", a number or "unreadable") and the head the owner approved
         the frozen lines at ("approved"), each left out when null; kept while no new review is read (only a review with an id not lower than the kept one
         replaces the record's review; an older comment read again, edited, does not), the CI result taken again for a new head and while not passed."""
         old, new = rs.get("merge") or {}, {}
@@ -2097,6 +2103,7 @@ def main():
     p.add_argument("--signature", default="")
     p.add_argument("--site", default="")
     p.add_argument("--pickup", action="store_true", help="leave the owner comments it cannot place to pickup.py (S09)")
+    p.add_argument("--stale", type=int, metavar="SECONDS", help="comment on the open log issue that this repository's loop's heartbeat is that old (loops.sh watch) and exit")
     p.add_argument("--clause", metavar="KEY", help="print the clause for the answered unit KEY (read-only; status.sh) and exit")
     a = p.parse_args()
     if a.clause:
@@ -2139,6 +2146,12 @@ def main():
     global forge
     import forge
     a.forge = forge.open(a.repo)
+    if a.stale is not None:
+        logs = log_issues(a, "open")
+        if not logs:
+            raise RuntimeError("no open log issue for the stale loop")
+        comment(a, logs[0][1], "The loop of `%s` looks hung (heartbeat %d s old). The watch has not signalled it." % (os.path.basename(os.path.normpath(a.state)), a.stale))
+        return
     try:
         a.pulls = a.forge.pr_list(state="open")
     except Exception as e:  # raised after the work below, as before

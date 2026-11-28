@@ -339,7 +339,7 @@ def merge_state(state, num, head, mergeable, rec, node=None):
     if not failed and not busy and not fb and not unread and not asks and same and verdict == "approve" and ci == "passed" and mergeable != "CONFLICTING":
         fz, ap = rec.get("frozen"), field("approved")
         note = None if mergeable in ("MERGEABLE", "CONFLICTING") else "the forge has not said whether it merges cleanly"
-        if isinstance(fz, int) and not isinstance(fz, bool):
+        if fz == "unreadable" or isinstance(fz, int) and not isinstance(fz, bool):
             what = ("frozen test line changes approved" if ap and head.lower().startswith(ap.lower()) else
                     "changes frozen test lines: needs your approval")
             return True, what + ("; " + note if note else "")
