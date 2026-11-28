@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | D05, G02, D11 | D20 | S |
+| now | D05, G02, D11 | D20, D22 | S |
 
 **Owns:** in the end-to-end loop tests `scheduler/loop-s07-failed.test.sh` (Phase F) and
 `scheduler/loop-g02-review3.test.sh` (review1d #5 with 254): how each case waits, the order of and the waits between its
