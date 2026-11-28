@@ -47,6 +47,9 @@
 # state/<name>/stale.posted stays until a watch sees the heartbeat fresh; a failed post says so on stderr and is retried).
 #   scheduler/loops.sh watch-unit   print the system service and timer for a watch every LOOPS_WATCH_EVERY (default 5min)
 # and the commands that install them (the owner runs them once); it calls no systemctl, systemd-run or sudo and writes nothing.
+# M05: with the units file and `systemctl --user` answering, start also sets up a transient user timer noodlebot-watch that runs
+# `loops.sh watch` every LOOPS_WATCH_EVERY, with start's NOODLEBOT_DATA and PATH, unless it is already active; stop stops it;
+# status adds one line naming the active watch timers (system, user or none). The system timer from watch-unit outlives the user manager.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -u
 nb=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
