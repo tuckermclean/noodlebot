@@ -142,6 +142,7 @@ other.
   never after `loops.sh stop` or while a STOP file exists. A loop that is running but whose heartbeat is older than
   `LOOPS_STALE` seconds (default 1800) is not signalled: `watch` notes it in `state/watch.log` and comments once on the log
   issue. `LOOPS_WATCH_EVERY` (default `5min`) is how often the printed timer runs `watch`.
+- After the deploy that brings this, run `loops.sh stop` and `loops.sh start` once so `state/loops.env` is recorded: a loop started by an older `start` left no settings, and `watch` restarts it without them.
 - **Stopping a loop never stops a session.** Sessions run detached; a restarted loop takes over the running ones.
 - `start` starts the loops that are not running and removes a stale `~/STOP-<name>`; it refuses while `~/STOP` exists.
 - Loops run in tmux sessions `sched-<name>` (the API in `sched-api`). Use `loops.sh`, not tmux, to start and stop them.

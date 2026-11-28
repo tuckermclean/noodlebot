@@ -68,8 +68,10 @@ if [ "$cmd" = watch-unit ]; then
 	wroot=$(cd "$wroot" 2>/dev/null && pwd -P || echo "$wroot")
 	# systemd quoting: Environment="K=V" escapes \ and " and doubles %; ExecStart doubles % and $ and quotes the path when needed
 	q() { local v=${1//\\/\\\\}; v=${v//\"/\\\"}; echo "${v//%/%%}"; }
-	ex=${nb//%/%%}; ex=${ex//\$/\$\$}
-	case $ex in *[[:space:]\"\'\\]*) ex=${ex//\\/\\\\}; ex=\"${ex//\"/\\\"}/scheduler/loops.sh\" ;; *) ex=$ex/scheduler/loops.sh ;; esac
+	# a checkout path with a quote, a backslash or a control character is refused; "$" stays single in ExecStart (only arguments are substituted)
+	case $nb in *[\"\'\\]* | *[[:cntrl:]]*) echo "loops.sh watch-unit: the checkout path holds a quote, a backslash or a control character; move the checkout" >&2; exit 1 ;; esac
+	ex=${nb//%/%%}
+	case $ex in *[[:space:]]*) ex=\"$ex/scheduler/loops.sh\" ;; *) ex=$ex/scheduler/loops.sh ;; esac
 	svc="[Unit]
 Description=noodlebot watch: start the loops and the API that are not running
 
@@ -208,6 +210,22 @@ linger_line() {
 	esac
 	return 0
 }
+# user_timer_state: the state `systemctl --user is-active noodlebot-watch.timer` prints (empty when systemctl --user does not answer)
+user_timer_state() {
+	command -v systemctl >/dev/null 2>&1 || return 0
+	systemctl --user is-active noodlebot-watch.timer 2>/dev/null </dev/null
+	return 0
+}
+# watch_line: one line naming the active watch timers (units file only; read only).
+watch_line() {
+	[ $units = 1 ] || return 0
+	local w=
+	command -v systemctl >/dev/null 2>&1 || { echo "loops.sh: watch timers active: none"; return 0; }
+	[ "$(systemctl is-active noodlebot-watch.timer 2>/dev/null </dev/null)" = active ] && w=system
+	[ "$(systemctl --user is-active noodlebot-watch.timer 2>/dev/null </dev/null)" = active ] && w=${w:+$w and }user
+	echo "loops.sh: watch timers active: ${w:-none}"
+	return 0
+}
 # server_pid: the pid of the running tmux server (empty when none).
 server_pid() {
 	local p
@@ -255,7 +273,7 @@ resolved() { (cd "$1" 2>/dev/null && pwd -P) || echo "$1"; }
 
 # stale_check <repo> <name>: a held loop whose heartbeat is older than LOOPS_STALE is noted in watch.log and reported once per episode
 stale_check() {
-	local hb age mark=$root/state/$2/stale.posted
+	local hb age sig mark=$root/state/$2/stale.posted
 	hb=$(cat "$root/state/$2/heartbeat" 2>/dev/null)
 	case $hb in '' | *[!0-9]*) rm -f "$mark"; return 0 ;; esac
 	age=$(( $(date +%s) - hb ))
@@ -264,7 +282,7 @@ stale_check() {
 	sig=$(sh "$nb/scheduler/version.sh" --signature "$nb" 2>/dev/null) || sig=
 	[ -n "$sig" ] || sig="— n00dl3b0t unknown"
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) loops.sh watch: $1: loop is stale (heartbeat $age s old)" >>"$root/state/watch.log"
-	if NOODLEBOT_FORGE_REPO=$1 NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 120 python3 -I "$nb/scheduler/report.py" --repo "$1" --state "$root/state/$2" --stale "$age" --signature "$sig" 8>&- >/dev/null; then
+	if NOODLEBOT_FORGE_REPO=$1 NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noodlebot/token timeout 120 python3 -I "$nb/scheduler/report.py" --repo "$1" --state "$root/state/$2" --stale "$age" --signature "$sig" 8>&- >/dev/null 2>&1; then
 		: >"$mark"
 	else
 		echo "loops.sh watch: $1: the stale-loop comment was not posted; the next watch tries again" >&2
@@ -329,6 +347,9 @@ start)
 			echo "api: could not start tmux session sched-api" >&2
 			rc=1
 		fi
+	fi
+	if [ $units = 1 ] && [ -n "$(user_timer_state)" ] && [ "$(user_timer_state)" != active ]; then
+		systemd-run --user --unit noodlebot-watch "--on-active=${LOOPS_WATCH_EVERY:-5min}" "--on-unit-active=${LOOPS_WATCH_EVERY:-5min}" --property=KillMode=process "$nb/scheduler/loops.sh" watch >/dev/null 2>&1 </dev/null
 	fi
 	deadline=$((SECONDS + start_wait))
 	if [ $api_launched = 1 ]; then
@@ -398,6 +419,7 @@ watch)
 		running "$name" || { echo "$repo: loop did not take its lock within ${start_wait}s; see $root/state/$name/status.log" >&2; rc=1; }
 	done ;;
 stop)
+	if [ $units = 1 ] && [ -n "$(user_timer_state)" ]; then systemctl --user stop noodlebot-watch.timer >/dev/null 2>&1 </dev/null; fi
 	mkdir -p "$root/state" 2>/dev/null && : >"$root/state/loops.stopped"
 	# a watch already past its checks is starting loops: let it finish, then stop what it started
 	if [ -d "$root/state" ]; then
@@ -486,6 +508,7 @@ status)
 		if held "$root/api.lock"; then echo "api: server running; socket $root/api.sock"
 		else echo "api: server not running; socket $root/api.sock"; fi
 	fi
-	linger_line ;;
+	linger_line
+	watch_line ;;
 esac
 exit $rc
