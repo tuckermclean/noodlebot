@@ -6,6 +6,10 @@ operations (so a process compiles only the families it uses), and the functions 
 methods of its Backend. Everything github.py defines is in scope here; `gh` itself is run only by github.py's _run.
 """
 import subprocess
+import time
+
+DISPATCH_WAIT = 60  # seconds to look for the run a dispatch started ($FORGE_DISPATCH_WAIT overrides it, read at each call)
+DISPATCH_POLL = 2   # seconds between two listings ($FORGE_DISPATCH_POLL)
 
 
 def ci_runs(self, workflow=None, sha=None, branch=None, event=None):
@@ -29,10 +33,56 @@ def ci_rerun(self, run):
     return {}
 
 
-def ci_logs(self, run, job=None):
+def _dispatch_ids(self, workflow, ref):
+    """The ids of the workflow's workflow_dispatch runs on the ref (one listing, newest page)."""
+    got = self._api("GET", self._r("/actions/workflows/%s/runs" % workflow), None,
+                    ["-f", "event=workflow_dispatch", "-f", "branch=" + ref, "-f", "per_page=100"])
+    if not isinstance(got, dict) or not isinstance(got.get("workflow_runs"), list):
+        raise forge.ForgeError("the answer for the runs of %s does not parse: no workflow_runs list" % workflow)
+    return {o["id"] for o in got["workflow_runs"] if isinstance(o, dict) and "id" in o}
+
+
+def ci_dispatch(self, workflow, ref, input=None):
+    inputs = {}
+    for s in input or []:
+        k, _, v = s.partition("=")
+        inputs[k] = v
+    try:
+        wait, poll = float(os.environ.get("FORGE_DISPATCH_WAIT", DISPATCH_WAIT)), float(os.environ.get("FORGE_DISPATCH_POLL", DISPATCH_POLL))
+    except ValueError:
+        wait, poll = float(DISPATCH_WAIT), float(DISPATCH_POLL)
+    before = _dispatch_ids(self, workflow, ref)
+    try:
+        got = self._api("POST", self._r("/actions/workflows/%s/dispatches" % workflow), {"ref": ref, "inputs": inputs})
+    except forge.ForgeError as e:
+        if e.status == 403:
+            raise forge.CapabilityOff("github", "ci_dispatch")
+        raise
+    if isinstance(got, dict) and isinstance(got.get("workflow_run_id"), int):
+        return {"id": got["workflow_run_id"]}
+    deadline = time.monotonic() + wait
+    while True:
+        new = sorted(_dispatch_ids(self, workflow, ref) - before)
+        if len(new) == 1:
+            return {"id": new[0]}
+        if len(new) > 1:
+            raise forge.ForgeError("the dispatch of %s on %s found %d new runs (%s): look with `ci runs`, the run is not guessed" % (
+                workflow, ref, len(new), ", ".join(str(i) for i in new)))
+        if time.monotonic() >= deadline:
+            raise forge.ForgeError("the dispatch of %s on %s was accepted but its run was not found within %g seconds: "
+                                   "look with `ci runs` before dispatching again" % (workflow, ref, wait))
+        time.sleep(max(0.0, min(poll, deadline - time.monotonic())))
+
+
+def ci_logs(self, run, job=None, attempt=None):
     jobs, dec = [], json.JSONDecoder()
-    out = self._gh(["api", "--paginate", self._r("/actions/runs/%d/jobs?per_page=100" % int(run))], None,
-                   "gh api GET actions/runs jobs")
+    tail = "/actions/runs/%d/attempts/%d/jobs" % (int(run), int(attempt)) if attempt is not None else "/actions/runs/%d/jobs" % int(run)
+    try:
+        out = self._gh(["api", "--paginate", self._r(tail + "?per_page=100")], None, "gh api GET actions/runs jobs")
+    except forge.ForgeError as e:
+        if attempt is not None and e.status == 403:
+            raise forge.CapabilityOff("github", "ci_logs")
+        raise
     pos = 0
     while pos < len(out):
         while pos < len(out) and out[pos].isspace():
@@ -53,7 +103,8 @@ def ci_logs(self, run, job=None):
             if e.status == 403:
                 raise forge.CapabilityOff("github", "ci_logs")
             raise
-        res.append({"id": j["id"], "name": j.get("name"), "conclusion": j.get("conclusion"), "log": log})
+        res.append({"id": j["id"], "name": j.get("name"), "conclusion": j.get("conclusion"), "log": log,
+                    "html_url": j.get("html_url")})
     return res
 
 
@@ -85,4 +136,4 @@ def branch_push(self, path, branch):
     return {}
 
 
-_register(ci_runs, ci_rerun, ci_logs, site_publish, branch_push)
+_register(ci_runs, ci_rerun, ci_dispatch, ci_logs, site_publish, branch_push)
