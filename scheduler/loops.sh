@@ -355,8 +355,8 @@ start)
 	[ $units = 1 ] && tstate=$(user_timer_state)
 	if [ -n "$tstate" ] && [ "$tstate" != active ]; then
 		systemctl --user reset-failed noodlebot-watch.timer noodlebot-watch.service >/dev/null 2>&1 </dev/null
-		systemd-run --user --unit noodlebot-watch "--on-active=${LOOPS_WATCH_EVERY:-5min}" "--on-unit-active=${LOOPS_WATCH_EVERY:-5min}" --property=KillMode=process "$nb/scheduler/loops.sh" watch >/dev/null 2>&1 </dev/null || {
-			echo "the watch timer noodlebot-watch could not be set up" >&2
+		systemd-run --user --unit noodlebot-watch "--on-active=${LOOPS_WATCH_EVERY:-5min}" "--on-unit-active=${LOOPS_WATCH_EVERY:-5min}" --property=KillMode=process "--setenv=NOODLEBOT_DATA=$(resolved "$root")" "--setenv=PATH=$PATH" "$nb/scheduler/loops.sh" watch >/dev/null 2>&1 </dev/null || {
+			echo "loops.sh: the watch timer noodlebot-watch could not be set up" >&2
 			rc=1
 		}
 	fi
