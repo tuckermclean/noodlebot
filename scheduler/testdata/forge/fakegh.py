@@ -556,4 +556,87 @@ def out(data, q):  # noqa: F811
     return _out_before_g08b(data, q)
 
 
+# --- G10: branch delete (added; the forms above are unchanged) ---
+# GET repos/R/branches/NAME     {"name", "protected"}, 404 when branches.json has no such branch
+# GET repos/R/rules/branches/NAME  [{"type": T, ...}] the active rules of the branch (an empty list for an unknown branch)
+# GET repos/R/pulls with -f head=OWNER:REF and/or -f base=REF: the PRs of the state (-f state, default open) whose head
+#   (the filter must be OWNER:REF with OWNER the repository's owner, as GitHub reads it; a bare REF matches nothing) and
+#   base match
+# DELETE repos/R/git/refs/heads/NAME   removes the branch and prints nothing (404 when it is not there); forge.json
+#   "delete_answer" 403 | 422 | "422-gone" | 404, and "fail_endpoint" (see world.py) make it answer otherwise
+# Every record gets "fields": {k: v} of its -f/-F arguments.
+_route_before_g10, _log_before_g10 = route, log
+
+
+def log(rec):  # noqa: F811
+    argv, fields = rec.get("argv") or [], {}
+    for i, a in enumerate(argv[:-1]):
+        if a in ("-f", "-F", "--field", "--raw-field"):
+            k, _, v = argv[i + 1].partition("=")
+            fields[k] = v
+    rec["fields"] = fields
+    _log_before_g10(rec)
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s" % (w.forge["owner"], w.forge["name"])
+    rest = path[len(own):].strip("/") if path == own or path.startswith(own + "/") else None
+    if rest is None:
+        return _route_before_g10(w, method, path, qs, body)
+    kind = None
+    if method == "GET":
+        kind = ("repo" if rest == "" else "rules" if rest.startswith("rules/branches/") else
+                "branch" if rest.startswith("branches/") else "pulls" if rest == "pulls" else None)
+    if kind and w.forge.get("fail_endpoint") == kind:
+        raise Fail(500, "fake gh: the %s endpoint failed" % kind, {"message": "Server Error"})
+    m = re.fullmatch(r"branches/(.+)", rest)
+    if m and method == "GET":
+        b = W.g10_branch(w, m[1])
+        return None if b is None else {"name": b["name"], "protected": bool(b.get("protected"))}
+    m = re.fullmatch(r"rules/branches/(.+)", rest)
+    if m and method == "GET":
+        b = W.g10_branch(w, m[1])
+        return [{"type": t, "ruleset_source_type": "Repository", "ruleset_id": 1} for t in (b or {}).get("rules", [])]
+    if rest == "pulls" and method == "GET" and ("head" in qs or "base" in qs):
+        res = _route_before_g10(w, method, path, qs, body)
+        data, per, page = res
+        if "head" in qs:
+            owner, sep, ref = qs["head"].partition(":")
+            data = [p for p in data if sep and owner == w.forge["owner"] and p["head"]["ref"] == ref]
+        if "base" in qs:
+            data = [p for p in data if p["base"]["ref"] == qs["base"]]
+        return (data, per, page)
+    m = re.fullmatch(r"git/refs/heads/(.+)", rest)
+    if m and method == "DELETE":
+        if W.g10_branch(w, m[1]) is None or w.forge.get("delete_answer") == 404:
+            return None
+        ans = w.forge.get("delete_answer")
+        if ans == 403:
+            raise Fail(403, "Resource not accessible by integration", {"message": "Resource not accessible by integration"})
+        if ans in (422, "422-gone"):
+            if ans == "422-gone":
+                W.g10_remove(w, m[1])
+            raise Fail(422, "Repository rule violations found G10-rule-block", {"message": "Repository rule violations found G10-rule-block"})
+        W.g10_remove(w, m[1])
+        return Raw("")
+    return _route_before_g10(w, method, path, qs, body)
+
+
+# --- G10 (round 2): forge.json "malformed": {"branch"|"rules": JSON} makes that GET answer 200 with the given JSON (a list or a
+# string for branches/NAME, an object for rules/branches/NAME), whatever the state holds ---
+_route_before_g10m = route
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s/" % (w.forge["owner"], w.forge["name"])
+    mal = w.forge.get("malformed") or {}
+    if method == "GET" and path.startswith(own):
+        rest = path[len(own):]
+        if rest.startswith("rules/branches/") and "rules" in mal:
+            return mal["rules"]
+        if rest.startswith("branches/") and "branch" in mal:
+            return mal["branch"]
+    return _route_before_g10m(w, method, path, qs, body)
+
+
 main()

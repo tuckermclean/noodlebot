@@ -257,8 +257,8 @@ ok "U05-AC-2: (28) the line in bold with the colon inside: frozen is 3" rc 28 fr
 ok "U05-AC-2: (29) the whole line in bold: frozen is 3" rc 29 frozen 3
 ok "U05-AC-2: (30) the line in backticks, none: frozen is \"none\"" rc 30 frozen '"none"'
 ok "U05-AC-2: (31) CRLF line endings: frozen is 4" rc 31 frozen 4
-ok "U05-AC-2: (32) the line quoted is not read: frozen is null" rc 32 frozen null
-ok "U05-AC-2: (33) more text after the count is not read: frozen is null" rc 33 frozen null
+ok "U05-AC-2: (32) the line quoted is not read: frozen is \"unreadable\"" rc 32 frozen '"unreadable"'
+ok "U05-AC-2: (33) more text after the count is not read: frozen is \"unreadable\"" rc 33 frozen '"unreadable"'
 ok "U05-AC-3: (27) a list-item line with a count: the item says the PR needs the owner's approval" needs 27
 ok "U05-AC-3: (31) a CRLF line with a count: the item says the PR needs the owner's approval" needs 31
 
