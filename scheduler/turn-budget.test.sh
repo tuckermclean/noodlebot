@@ -24,6 +24,9 @@
 #                       turn: with MAX=N and N live sessions `ask` grants it. Only that: any other unit, a `resumed` unit
 #                       whose own folder has no live session (a same-named folder of another repository is not its own),
 #                       is held as before, and the other sessions idle at the limit still hold a new unit.
+#   (held first)    when the first unit (not given back) is held by the budget, the first resumed unit in the merged order
+#                       whose own folder holds a live session takes the turn instead (the held unit keeps first place for
+#                       the next free slot); a unit given back (until the next list) gets no turn, even on this path.
 # The helpers are in testdata/lib/turn-common.sh; the live "sessions" are scratch processes of $tmp/S13/run-session.sh.
 set -u
 src=$(cd "$(dirname "$0")" && pwd -P)
@@ -407,6 +410,15 @@ for kind in triage fresh; do
 done
 unset SCHED_MACHINE_MAX
 
+# a given-back resumed unit gets no turn even on the held-first path: R1 (first resumed with a live session) is given back, so b's R2 takes the turn, a gets nothing
+reset; max 2; hb a "$base"; hb b "$base"
+{ echo "N1 triage - $(w 900)"; echo "R1 resumed - $(w 500)"; } | list a 10
+echo "R2 resumed - $(w 100)" | list b 10
+pidfile a node R1 "$s1"; pidfile b node R2 "$s2"
+T giveback --root "$d" --repo a --now "$base" R1 >/dev/null 2>&1
+ask a "$base" $G; ra=$rc oa=$out
+ask b "$base" $G
+if [ $ra = 0 ] && [ -z "$oa" ] && [ $rc = 0 ] && [ "$key" = R2 ] && [ "$(rec)" = "b/R2@$base" ]; then pass "S13-AC-1 held first, R1 given back: a's ask grants nothing (a given-back unit gets no turn), b's ask grants R2"; else fail "held first, given back: a rc=$ra out='$oa' / b rc=$rc out='$out' rec=$(rec)"; fi
 # --- the resumed unit's own session is left out of the count, not the whole budget: own + two others = three, MAX=2 holds it
 spawn run-session.sh; s4=$sp
 reset; max 2; hb a "$base"; hb b "$base"
