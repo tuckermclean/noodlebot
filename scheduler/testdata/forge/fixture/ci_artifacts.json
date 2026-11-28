@@ -1,0 +1,51 @@
+{
+ "9001": [
+  {
+   "id": 5001,
+   "name": "report",
+   "expired": false,
+   "entries": [
+    {
+     "name": "summary.txt",
+     "text": "report summary\n"
+    },
+    {
+     "name": "bin/blob.dat",
+     "b64": "//4AgGJpbmFyecMoCg=="
+    },
+    {
+     "name": "crlf.txt",
+     "text": "a\r\nb\r\n"
+    },
+    {
+     "name": "nested/deep/er/note.txt",
+     "text": "deep \u00e9\n"
+    }
+   ]
+  },
+  {
+   "id": 5002,
+   "name": "old-report",
+   "expired": true,
+   "entries": [
+    {
+     "name": "gone.txt",
+     "text": "expired content\n"
+    }
+   ]
+  }
+ ],
+ "9002": [
+  {
+   "id": 5101,
+   "name": "report",
+   "expired": false,
+   "entries": [
+    {
+     "name": "other.txt",
+     "text": "run 9002's report\n"
+    }
+   ]
+  }
+ ]
+}

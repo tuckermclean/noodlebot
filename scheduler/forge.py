@@ -63,7 +63,9 @@ _OPS = [
     ("commit checks", None, {"sha": "str!"}),
     ("ci runs", None, {"workflow": "str", "sha": "str", "branch": "str", "event": "str"}),
     ("ci rerun", None, {"run": "int!"}),
-    ("ci logs", "ci_logs", {"run": "int!", "job": "str"}),
+    ("ci dispatch", "ci_dispatch", {"workflow": "str!", "ref": "str!", "input": "list"}),
+    ("ci logs", "ci_logs", {"run": "int!", "job": "str", "attempt": "int"}),
+    ("ci artifact", "ci_artifact", {"run": "int!", "name": "str!", "dir": "path!"}),
     ("site publish", "site", {"target": "str!", "input": "path!"}),
     ("branch push", None, {"path": "path!", "branch": "str!"}),
     ("branch delete", "branch_delete", {"branch": "str!"}),
@@ -72,7 +74,7 @@ OPERATIONS = [o[0] for o in _OPS]
 _CAP = {o[0]: o[1] for o in _OPS}
 _ARGS = {o[0]: o[2] for o in _OPS}
 _METHODS = {o.replace(" ", "_").replace("-", "_"): o for o in OPERATIONS}
-CAPABILITIES = ("visibility", "pin", "resolve_threads", "site", "ci_logs", "branch_delete")
+CAPABILITIES = ("visibility", "pin", "resolve_threads", "site", "ci_logs", "ci_dispatch", "ci_artifact", "branch_delete")
 BACKENDS = {"github": os.path.join(HERE, "forges", "github.py"),
             "fake": os.path.join(HERE, "testdata", "forge", "fake.py")}
 
@@ -171,13 +173,18 @@ def _str_ok(pattern):
 
 _CHECKS = {
     ("ci runs", "workflow"): lambda v: isinstance(v, str) and (re.fullmatch(r"[A-Za-z0-9._-]+\.ya?ml|[0-9]+", v) is not None),
+    ("ci logs", "attempt"): lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 1,
     ("commit checks", "sha"): _sha,
     ("issue comments", "since"): _str_ok(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z"),
     ("site publish", "target"): _str_ok(r"[A-Za-z0-9]+"),
     ("label remove", "name"): lambda v: isinstance(v, str) and v not in ("", ".", ".."),
     ("branch push", "branch"): _branch,
+    ("ci artifact", "dir"): lambda v: isinstance(v, str) and v != "",
     ("branch delete", "branch"): _ref_name,
 }
+_CHECKS[("ci dispatch", "workflow")] = _CHECKS[("ci runs", "workflow")]  # the same form: a file name or a numeric id
+_CHECKS[("ci dispatch", "input")] = lambda v: (isinstance(v, list) and all(isinstance(s, str) and "=" in s and not s.startswith("=") for s in v)
+                                               and len({s.partition("=")[0] for s in v}) == len(v))
 
 
 def _bad(option, value):

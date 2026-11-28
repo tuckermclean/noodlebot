@@ -347,6 +347,101 @@ def _g11_getattribute(self, name):
 Backend.__getattribute__ = _g11_getattribute
 
 
+# --- G09: ci dispatch, and ci logs with an attempt and each job's web page (added) ---
+# ci_dispatch(workflow, ref, input=None): input is a list of "name=value" strings (split at the first "=") or a dict; the
+# world records the dispatch (ref and inputs) and adds a run, the result is {"id": <the run>}. forge.json "dispatch" "403"
+# is the forge refusing (CapabilityOff ci_dispatch), "404" and "422" a rejected dispatch (ForgeError). ci_logs(run, job=None,
+# attempt=None): attempt n gives that attempt's jobs (ForgeError when the run has no such attempt, CapabilityOff ci_logs
+# when forge.json has "refuse_attempts"); every job has "html_url", fake://<owner>/<name>/<ci_job_urls.json path>.
+def _g09_inputs(input):
+    if isinstance(input, dict):
+        return {str(k): str(v) for k, v in input.items()}
+    out = {}
+    for s in input or []:
+        k, _, v = s.partition("=")
+        out[k] = v
+    return out
+
+
+def _g09_ci_dispatch(self, workflow, ref, input=None):
+    w = self._w("ci_dispatch")
+    mode = w.forge.get("dispatch")
+    if mode == "403":
+        raise forge.CapabilityOff("fake", "ci_dispatch")
+    if mode in ("404", "422"):
+        raise forge.ForgeError("fake forge: the dispatch was rejected (HTTP %s)" % mode)
+    return {"id": _world.dispatch(w, workflow, ref, _g09_inputs(input), 1)[0]}
+
+
+_g09_ci_logs_before = Backend.ci_logs
+
+
+def _g09_ci_logs(self, run, job=None, attempt=None):
+    w = self._w("ci_logs")
+    if attempt is None:
+        out = _g09_ci_logs_before(self, run, job)
+    else:
+        if w.forge.get("refuse_attempts"):
+            raise forge.CapabilityOff("fake", "ci_logs")
+        jobs = _world.ci_attempt_jobs(w, run, attempt)
+        if jobs is None:
+            raise forge.ForgeError("fake forge: run %s has no attempt %s" % (run, attempt))
+        out = [{"id": j["id"], "name": j["name"], "conclusion": j["conclusion"], "log": j["log"]}
+               for j in jobs if job is None or j["name"] == job]
+    base = "fake://%s/%s/" % (w.forge["owner"], w.forge["name"])
+    return [dict(j, html_url=base + _world.job_path(w, run, j["id"])) for j in out]
+
+
+Backend.ci_dispatch, Backend.ci_logs = _g09_ci_dispatch, _g09_ci_logs
+
+
+# --- G09 (slice 2): ci artifact (added) ---
+# ci_artifact(run, name, dir): the world's artifacts of the run (ci_artifacts.json) by name; none of that name, or an expired
+# one, is a ForgeError naming the artifact and the run ("expired" for an expired one); forge.json "refuse_artifacts" (true,
+# "list" or "download") is the forge refusing: CapabilityOff `ci_artifact`. A non-empty existing `dir` is a ForgeError before
+# anything is written; an entry that is absolute, holds ".." or is a link is a ForgeError and nothing is written. The files
+# are written under `dir` (created when missing; removed again on a failure when the call created it) with the exact bytes,
+# and the result is {"id", "name", "dir", "files"} (files: paths relative to dir, in archive order).
+def _g09_ci_artifact(self, run, name, dir):
+    w = self._w("ci_artifact")
+    if _world.artifact_refusal(w):
+        raise forge.CapabilityOff("fake", "ci_artifact")
+    lst = _world.artifacts(w, run)
+    if lst is None:
+        raise forge.ForgeError("fake forge: run %s not found" % run)
+    got = [a for a in lst if a["name"] == name]
+    if not got:
+        raise forge.ForgeError("fake forge: run %s has no artifact named %r" % (run, name))
+    art = got[0]
+    if art.get("expired"):
+        raise forge.ForgeError("fake forge: the artifact %r of run %s has expired" % (name, run))
+    if os.path.isdir(dir) and os.listdir(dir):
+        raise forge.ForgeError("fake forge: %s exists and is not empty" % dir)
+    for e in art.get("entries", []):
+        why = _world.entry_problem(e)
+        if why:
+            raise forge.ForgeError("fake forge: the artifact %r of run %s is refused: %s" % (name, run, why))
+    made = not os.path.exists(dir)
+    try:
+        os.makedirs(dir, exist_ok=True)
+        files = []
+        for e in art.get("entries", []):
+            p = os.path.join(dir, *e["name"].split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(_world.entry_bytes(e))
+            files.append(e["name"])
+    except BaseException:
+        if made:
+            import shutil
+            shutil.rmtree(dir, ignore_errors=True)
+        raise
+    return {"id": art["id"], "name": name, "dir": dir, "files": files}
+
+
+Backend.ci_artifact = _g09_ci_artifact
+
+
 # --- G10: branch delete (added) ---
 # A branch is a head of repo.git. The checks, in order: a branch repo.git does not have is `gone`; the default branch, a
 # protected branch (forge.json "protected_branches"), a branch whose rules (forge.json "branch_rules") list `deletion` and

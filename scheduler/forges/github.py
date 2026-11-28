@@ -138,7 +138,8 @@ _PARTS = {
     "issue": ("issue_list", "issue_view", "issue_comments", "issue_create", "issue_edit", "issue_comment", "issue_close",
               "issue_reopen", "issue_pin", "issue_unpin", "issue_events", "issue_react", "_pin", "_seen", "label_list",
               "label_ensure", "label_add", "label_remove", "_labels", "commit_checks"),
-    "misc": ("ci_runs", "ci_rerun", "ci_logs", "site_publish", "branch_push", "branch_delete"),
+    "artifact": ("ci_artifact",),
+    "misc": ("ci_runs", "ci_rerun", "ci_dispatch", "ci_logs", "site_publish", "branch_push", "branch_delete"),
 }
 _PART_OF = {m: p for p, ms in _PARTS.items() for m in ms}
 _LOADED = set()
@@ -218,6 +219,20 @@ class Backend:
             e.raw_stdout = r.stdout
             raise e
         return r.stdout
+
+    def _gh_to_file(self, args, fh, label, timeout=TIMEOUT):
+        """gh's stdout goes straight to the open binary file `fh` (the bytes as served); a failure is a ForgeError."""
+        import subprocess
+        env, tok = self._env()
+        try:
+            r = subprocess.run(["gh"] + list(args), stdout=fh, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                               timeout=timeout, env=env)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise forge.ForgeError("%s failed: %s" % (label, type(e).__name__))
+        if r.returncode != 0:
+            full = self._scrub(r.stderr.decode("utf-8", errors="replace"), tok)
+            m = re.findall(r"\bHTTP (\d{3})\b", full)
+            raise forge.ForgeError("%s failed (exit %d): %s" % (label, r.returncode, full[:300]), int(m[-1]) if m else None)
 
     def _gh(self, args, body=None, label=None, timeout=TIMEOUT):
         label = label or "gh " + " ".join(a for a in args if not a.startswith("--") or a == "--paginate")[:80]

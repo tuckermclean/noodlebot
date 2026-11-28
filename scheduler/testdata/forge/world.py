@@ -268,6 +268,147 @@ def log_flag(w, key, job_id):
     return v is True or (isinstance(v, list) and int(job_id) in v)
 
 
+# --- G09: dispatched runs, the jobs of each attempt and the jobs' web pages (added; the rules above are unchanged) ---
+# dispatches.json   [{"workflow", "ref", "inputs": {name: str}, "runs": [run id]}]: each dispatch the forge took, in order
+#                   (written by dispatch(); "runs" is empty when the dispatch was accepted and no run appears).
+# ci_attempts.json  {"<run id>": {"<attempt>": [{"id", "name", "conclusion", "log"}]}}: the jobs of each attempt of a run
+#                   (the latest attempt's jobs are also the run's ci_jobs.json entry; a run with no entry has no attempts).
+# ci_job_urls.json  {"<job id>": "<path>"}: a job's web page below the repository's web URL (a job with no entry has
+#                   actions/runs/<run id>/job/<job id>).
+# forge.json may also hold "dispatch": "id" | "none" (GitHub's answer names the run or does not; the run is added),
+# "never" (accepted, no run appears), "two" (two runs appear), "403" | "404" | "422" (the forge refuses or rejects; a 403 is
+# the capability off); "refuse_attempts": true (an attempt's job listing is refused, as a 403).
+def _g09_read(w, name, empty):
+    p = os.path.join(w.path, name + ".json")
+    if not os.path.exists(p):
+        return empty
+    with open(p) as f:
+        return json.load(f)
+
+
+def dispatch(w, workflow, ref, inputs, runs=1):
+    """Record one dispatch and add `runs` runs of the workflow on the ref (event workflow_dispatch); the new run ids."""
+    ids = []
+    for _ in range(runs):
+        rid = max([r["id"] for r in w.ci_runs] + [0]) + 1
+        w.ci_runs.append({"workflow": workflow, "branch": ref, "event": "workflow_dispatch", "id": rid, "status": "queued",
+                          "conclusion": None, "head_sha": "d" * 40, "created_at": NOW})
+        ids.append(rid)
+    w.save("ci_runs")
+    log = _g09_read(w, "dispatches", [])
+    log.append({"workflow": workflow, "ref": ref, "inputs": dict(inputs), "runs": ids})
+    p = os.path.join(w.path, "dispatches.json")
+    with open(p + ".tmp", "w") as f:
+        json.dump(log, f, indent=1)
+    os.replace(p + ".tmp", p)
+    return ids
+
+
+def dispatches(w):
+    return _g09_read(w, "dispatches", [])
+
+
+def ci_attempt_jobs(w, run, attempt):
+    """The jobs of attempt `attempt` of run `run`, None when the run is unknown or has no such attempt."""
+    if not any(r["id"] == int(run) for r in w.ci_runs):
+        return None
+    got = _g09_read(w, "ci_attempts", {}).get(str(int(run)), {}).get(str(int(attempt)))
+    return None if got is None else list(got)
+
+
+def ci_attempt_job(w, job_id):
+    for atts in _g09_read(w, "ci_attempts", {}).values():
+        for lst in atts.values():
+            for j in lst:
+                if j["id"] == int(job_id):
+                    return j
+    return None
+
+
+def job_path(w, run, job_id):
+    return _g09_read(w, "ci_job_urls", {}).get(str(int(job_id))) or "actions/runs/%d/job/%d" % (int(run), int(job_id))
+
+
+# --- G09 (slice 2): artifacts of a run (added; the rules above are unchanged) ---
+# ci_artifacts.json {"<run id>": [{"id", "name", "expired": bool, "entries": [entry]}]}: the artifacts of a run (live and
+#                   expired). An entry is {"name": the archive entry's path as stored (may be absolute or hold ".."), and one of
+#                   "text": str (stored as UTF-8), "b64": base64 of the bytes (any bytes, not only UTF-8), "link": str (a
+#                   symbolic link entry with that target)}. artifact_zip(art) builds the zip archive of an artifact at the time
+#                   it is served (zipfile, entries in order, a link entry marked by ZipInfo.external_attr S_IFLNK).
+# forge.json may also hold "refuse_artifacts": true (the artifact listing is refused: the fake gh answers 403, the fake forge
+# raises CapabilityOff `ci_artifact`), "list" (the same, only the listing), "download" (the fake gh answers 403 on the archive,
+# the fake forge raises CapabilityOff `ci_artifact`).
+def artifacts(w, run):
+    """The artifacts of run `run` (a list, empty when it has none), None when the run is unknown."""
+    if not any(r["id"] == int(run) for r in w.ci_runs):
+        return None
+    return list(_g09_read(w, "ci_artifacts", {}).get(str(int(run)), []))
+
+
+def artifact_by_id(w, art_id):
+    for lst in _g09_read(w, "ci_artifacts", {}).values():
+        for a in lst:
+            if a["id"] == int(art_id):
+                return a
+    return None
+
+
+def artifact_zip(art):
+    import base64
+    import io
+    import stat
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for e in art.get("entries", []):
+            zi = zipfile.ZipInfo(e["name"], (2026, 5, 3, 9, 0, 0))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.create_system = 3
+            if "link" in e:
+                zi.external_attr = (stat.S_IFLNK | 0o777) << 16
+                z.writestr(zi, e["link"])
+            else:
+                zi.external_attr = (stat.S_IFREG | 0o644) << 16
+                z.writestr(zi, base64.b64decode(e["b64"]) if "b64" in e else e["text"].encode("utf-8"))
+    return buf.getvalue()
+
+
+def entry_bytes(e):
+    import base64
+    return base64.b64decode(e["b64"]) if "b64" in e else e["text"].encode("utf-8")
+
+
+def entry_problem(e):
+    """Why an archive entry may not be unpacked (an absolute path, a '..' component, a link), else None."""
+    n = e["name"]
+    if "link" in e:
+        return "the entry %r is a link" % n
+    if n.startswith("/") or n.startswith("\\") or (len(n) > 1 and n[1] == ":"):
+        return "the entry %r is an absolute path" % n
+    if ".." in n.replace("\\", "/").split("/"):
+        return "the entry %r holds '..'" % n
+    return None
+
+
+def artifact_refusal(w):
+    """None, "list" (the listing is refused) or "download" (the archive is refused)."""
+    v = w.forge.get("refuse_artifacts")
+    return "list" if v is True else (v if v in ("list", "download") else None)
+
+
+# --- G09 (slice 2, review round): an artifact that holds "zip_b64" (base64 of a whole archive) is served as those bytes ---
+# (a crafted archive: an encrypted entry, an unsupported compression method, entries without file-type bits; its "entries"
+# still list what a good unpack writes, the cases read them). Added; artifact_zip above is unchanged.
+_artifact_zip_before_review = artifact_zip
+
+
+def artifact_zip(art):  # noqa: F811
+    if "zip_b64" in art:
+        import base64
+        return base64.b64decode(art["zip_b64"])
+    return _artifact_zip_before_review(art)
+
+
 # --- G10: branches for `branch delete` (added; the rules above are unchanged) ---
 # branches.json  [{"name", "protected", "rules"}]: the branches the gh emulator serves (rules: the types of the active rules
 #                of the branch, e.g. ["deletion"]); a deletion removes the entry. The fake forge keeps its branches in repo.git.
