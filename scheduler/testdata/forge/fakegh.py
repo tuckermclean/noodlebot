@@ -556,4 +556,63 @@ def out(data, q):  # noqa: F811
     return _out_before_g08b(data, q)
 
 
+# --- G09: a workflow dispatch, and the jobs of one attempt of a run (added; the forms above are unchanged) ---
+# POST repos/R/actions/workflows/WF/dispatches with a JSON body {"ref", "inputs"} (read from stdin with --input -; the body
+# is recorded in calls.jsonl as the other bodies are). The answer is set by forge.json "dispatch": "id" 200 with
+# {"workflow_run_id", "run_url", "html_url"} (GitHub's return_run_details), "none" (the default) 204 with no body; both add
+# one run of WF on the ref (event workflow_dispatch, listed by actions/workflows/WF/runs), and a dispatch whose body is
+# not {"ref": str, "inputs": {str: str}} is a 422; "never" answers 204 and adds no run; "two" answers 204 and adds two;
+# "403", "404" and "422" answer with that status and add nothing. Every accepted dispatch is also appended to
+# $FAKE_GH_DIR/dispatches.json (world.py's dispatch()).
+# GET repos/R/actions/runs/ID/attempts/N/jobs answers like .../runs/ID/jobs with the jobs of attempt N from ci_attempts.json
+# (404 for a run or an attempt that does not exist; 403 when forge.json has "refuse_attempts"); each job's html_url is the
+# repository's web URL and its path in ci_job_urls.json. A job of an attempt that is not in ci_jobs.json has its log read
+# through actions/jobs/ID/logs from ci_attempts.json.
+_route_before_g09 = route
+
+
+def _g09_dispatch(w, wf, body):
+    mode = w.forge.get("dispatch", "none")
+    if mode in ("403", "404", "422"):
+        msg = {"403": "Resource not accessible by integration", "404": "Not Found", "422": "Validation Failed"}[mode]
+        raise Fail(int(mode), msg, {"message": msg})
+    inputs = (body or {}).get("inputs", {}) if isinstance(body, dict) else None
+    if (not isinstance(body, dict) or not isinstance(body.get("ref"), str) or not isinstance(inputs, dict)
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in inputs.items())):
+        raise Fail(422, "Validation Failed", {"message": "Validation Failed"})
+    ids = W.dispatch(w, wf, body["ref"], inputs, {"never": 0, "two": 2}.get(mode, 1))
+    if mode == "id":
+        return {"workflow_run_id": ids[0], "run_url": "https://api.github.com/repos/%s/%s/actions/runs/%d" % (
+            w.forge["owner"], w.forge["name"], ids[0]), "html_url": "%s/actions/runs/%d" % (base_url(w), ids[0])}
+    return Raw("")
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s" % (w.forge["owner"], w.forge["name"])
+    rest = path[len(own):].strip("/") if path == own or path.startswith(own + "/") else None
+    m = re.fullmatch(r"actions/workflows/([\w.-]+)/dispatches", rest or "")
+    if m and method == "POST":
+        return _g09_dispatch(w, m[1], body)
+    m = re.fullmatch(r"actions/runs/(\d+)/attempts/(\d+)/jobs", rest or "")
+    if m and method == "GET":
+        if w.forge.get("refuse_attempts"):
+            raise Fail(403, "Resource not accessible by integration", {"message": "Resource not accessible by integration"})
+        lst = W.ci_attempt_jobs(w, m[1], m[2])
+        if lst is None:
+            return None
+        gj = Jobs({"id": j["id"], "run_id": int(m[1]), "run_attempt": int(m[2]), "name": j["name"], "status": "completed",
+                   "conclusion": j["conclusion"], "html_url": "%s/%s" % (base_url(w), W.job_path(w, m[1], j["id"]))} for j in lst)
+        gj.total = len(lst)
+        if "per_page" not in qs:
+            qs = dict(qs, per_page=os.environ.get("FAKE_GH_JOBS_PER_PAGE", "30"))
+        return page_of(qs, gj)
+    res = _route_before_g09(w, method, path, qs, body)
+    m = re.fullmatch(r"actions/jobs/(\d+)/logs", rest or "")
+    if res is None and m and method == "GET":
+        j = W.ci_attempt_job(w, m[1])
+        if j is not None:
+            return Raw(j["log"])
+    return res
+
+
 main()

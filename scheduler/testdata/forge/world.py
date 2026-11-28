@@ -266,3 +266,64 @@ def ci_job(w, job_id):
 def log_flag(w, key, job_id):
     v = w.forge.get(key)
     return v is True or (isinstance(v, list) and int(job_id) in v)
+
+
+# --- G09: dispatched runs, the jobs of each attempt and the jobs' web pages (added; the rules above are unchanged) ---
+# dispatches.json   [{"workflow", "ref", "inputs": {name: str}, "runs": [run id]}]: each dispatch the forge took, in order
+#                   (written by dispatch(); "runs" is empty when the dispatch was accepted and no run appears).
+# ci_attempts.json  {"<run id>": {"<attempt>": [{"id", "name", "conclusion", "log"}]}}: the jobs of each attempt of a run
+#                   (the latest attempt's jobs are also the run's ci_jobs.json entry; a run with no entry has no attempts).
+# ci_job_urls.json  {"<job id>": "<path>"}: a job's web page below the repository's web URL (a job with no entry has
+#                   actions/runs/<run id>/job/<job id>).
+# forge.json may also hold "dispatch": "id" | "none" (GitHub's answer names the run or does not; the run is added),
+# "never" (accepted, no run appears), "two" (two runs appear), "403" | "404" | "422" (the forge refuses or rejects; a 403 is
+# the capability off); "refuse_attempts": true (an attempt's job listing is refused, as a 403).
+def _g09_read(w, name, empty):
+    p = os.path.join(w.path, name + ".json")
+    if not os.path.exists(p):
+        return empty
+    with open(p) as f:
+        return json.load(f)
+
+
+def dispatch(w, workflow, ref, inputs, runs=1):
+    """Record one dispatch and add `runs` runs of the workflow on the ref (event workflow_dispatch); the new run ids."""
+    ids = []
+    for _ in range(runs):
+        rid = max([r["id"] for r in w.ci_runs] + [0]) + 1
+        w.ci_runs.append({"workflow": workflow, "branch": ref, "event": "workflow_dispatch", "id": rid, "status": "queued",
+                          "conclusion": None, "head_sha": "d" * 40, "created_at": NOW})
+        ids.append(rid)
+    w.save("ci_runs")
+    log = _g09_read(w, "dispatches", [])
+    log.append({"workflow": workflow, "ref": ref, "inputs": dict(inputs), "runs": ids})
+    p = os.path.join(w.path, "dispatches.json")
+    with open(p + ".tmp", "w") as f:
+        json.dump(log, f, indent=1)
+    os.replace(p + ".tmp", p)
+    return ids
+
+
+def dispatches(w):
+    return _g09_read(w, "dispatches", [])
+
+
+def ci_attempt_jobs(w, run, attempt):
+    """The jobs of attempt `attempt` of run `run`, None when the run is unknown or has no such attempt."""
+    if not any(r["id"] == int(run) for r in w.ci_runs):
+        return None
+    got = _g09_read(w, "ci_attempts", {}).get(str(int(run)), {}).get(str(int(attempt)))
+    return None if got is None else list(got)
+
+
+def ci_attempt_job(w, job_id):
+    for atts in _g09_read(w, "ci_attempts", {}).values():
+        for lst in atts.values():
+            for j in lst:
+                if j["id"] == int(job_id):
+                    return j
+    return None
+
+
+def job_path(w, run, job_id):
+    return _g09_read(w, "ci_job_urls", {}).get(str(int(job_id))) or "actions/runs/%d/job/%d" % (int(run), int(job_id))
