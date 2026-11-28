@@ -64,7 +64,7 @@ xinit() {
 import json
 mk = lambda n, t: {'number': n, 'title': t, 'body': '', 'labels': [], 'state': 'open', 'node_id': 'I_%d' % n}
 issues = {str(n): mk(n, 'Unit X0%d' % (n - 60)) for n in range(61, 65)}
-pr = {'number': 502, 'head': {'ref': 'node/X03-three', 'sha': 'x3sha'}, 'created_at': '2026-04-10T10:00:00Z', 'html_url': 'https://github.com/owner/repo/pull/502'}
+pr = {'number': 502, 'head': {'ref': 'node/X03-three', 'sha': '3a5a'}, 'created_at': '2026-04-10T10:00:00Z', 'html_url': 'https://github.com/owner/repo/pull/502'}
 json.dump({'issues': issues, 'comments': [], 'labels': ['noodlebot-status'], 'pulls': [pr], 'checks': {}, 'reactions': [], 'next': 200}, open('$xdb', 'w'))"
 	r 2.5 3 >"$xs/node/X01/session.jsonl"
 	r 1.25 2 >"$xs/node/X02/session.jsonl"
@@ -74,7 +74,7 @@ json.dump({'issues': issues, 'comments': [], 'labels': ['noodlebot-status'], 'pu
 	printf '499 node/X00-old\n501 node/X01-one\n' >"$xs/merged-prs.tsv"
 	printf '499\n501\n' >"$xs/merged-prs.txt"
 	printf '499 node/X00-old 2026-04-09T12:00:00Z true\n501 node/X01-one 2026-04-10T12:00:00Z true\n' >"$xs/closed-prs.tsv"
-	printf '502 node/X03-three x3sha false MERGEABLE\n' >"$xs/open-prs.tsv"
+	printf '502 node/X03-three 3a5a false MERGEABLE\n' >"$xs/open-prs.tsv"
 	{
 		echo "2026-04-09T22:00:00Z open=[] merged-prs=[X00]; session X04 ended (rc 0)"
 		echo "2026-04-10T10:00:00Z open=[X03] merged-prs=[X00]; started X03 (three) in /wt, pid 3, start 1 of 2"
