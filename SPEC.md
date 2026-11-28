@@ -10,8 +10,13 @@ way.
 
 ## 1. Principles
 
-1. **The owner merges.** Bots never merge, approve, push to `main`, or change branch protection or
-   repository settings. Every result reaches the owner as a PR, a comment or a question.
+1. **The owner sets the rules and merges the plan.** Bots never push to `main`, change branch protection
+   or repository settings, or merge a spec or adoption PR. Only the reviewer App may approve or request
+   changes on a PR, and only for the exact head it reviewed. A node PR is merged by the forge's own
+   auto-merge, under the branch protection the owner sets, once the auto-gate holds at its head (the
+   reviewer App's approval at that head is one of its points); the loop only turns auto-merge on. Spec
+   and adoption PRs, and approvals of frozen-test changes, stay the owner's alone. Every result reaches
+   the owner as a PR, a comment or a question.
 2. **Not precious.** Every piece can be thrown away and rebuilt from Git and GitHub: a closed status
    issue is replaced, a lost worktree recreated, a restarted loop takes over running sessions. A failing
    part logs its failure and the rest carries on.
@@ -67,6 +72,14 @@ way.
   only makes sense for one backend (the GitHub App token script, gist publishing and the Pages
   workflow, Claude Code's plugin manifest and hook wiring, the parsing of stream-json) lives in that
   backend, and core turns a capability off, with one logged line, when the loop's backend lacks it.
+- **The auto-gate** (nodes G14, G15, U09). A node PR of the bot's merges by the forge's own squash auto-merge once
+  five points hold at its head: the reviewer App's approval of that head, every check there passed (never re-run), no
+  unapproved frozen-line change, a clean ownership check and no spec-file change, no protected path (the repository's
+  `.noodlebot/protected-paths` at the base branch's tip, plus `.noodlebot/**`, `.github/**`, `AGENTS.md` and
+  `CLAUDE.md`), and a 30-minute window after the approval with no owner comment or changes-requested review and no
+  `hold` label. The loop then turns auto-merge on and marks that head with the `noodlebot/auto-gate` commit status,
+  which the base branch's rules require from the bot's App; it does nothing while they do not. Spec and adoption PRs
+  are never gated.
 
 ## 3. Node spec template
 

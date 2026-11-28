@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | none | none | S |
+| now | none | G15 | S |
 
 **Owns:** `scheduler/labels.py`, `scheduler/labels.test.sh`, its line in the `Makefile`'s `test` target, the label step at the start of `scheduler/loop.sh`, its cases in `scheduler/loop.test.sh`.
 **Resolves:** #5
