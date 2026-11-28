@@ -63,6 +63,16 @@ p1=$!
 python3 "$td/conf.py" run fake "$G/fake" "$G/fake.json" >"$G/fake.out" 2>"$G/fake.err" &
 p2=$!
 
+# --- G10: `branch delete` over both backends (testdata/forge/g10.py), in the background with the conformance runs; scratch under $tmp/G10 ---
+G10=$tmp/G10
+mkdir -p "$G10/gh/bin" "$G10/fake"
+printf '#!/bin/sh\nexec python3 -W ignore "%s/fakegh.py" "$@"\n' "$td" >"$G10/gh/bin/gh"
+chmod +x "$G10/gh/bin/gh"
+python3 -I "$td/g10.py" github "$G10/gh" >"$G10/gh.out" 2>"$G10/gh.err" &
+q1=$!
+python3 -I "$td/g10.py" fake "$G10/fake" >"$G10/fake.out" 2>"$G10/fake.err" &
+q2=$!
+
 # --- the interface: operations list, forge arguments, unknown forge (while the runs go) -----------------------------
 cp -r "$td/fixture" "$G/iface-state"
 python3 "$td/iface.py" "$G/iface-state" >"$G/iface.out" 2>"$G/iface.err"
@@ -263,6 +273,15 @@ cp "$src/forge.py" "$G/np/cli2/forge.py"
 ( cd "$G/np/repo" && env -u NOODLEBOT_FORGE_REPO NOODLEBOT_FORGE="$G/np/cli2/forge-cli.sh" G04_CLI_LOG="$G/np/origin.log" \
 	G04_PRS="$G/np/prs.json" python3 -I "$src/../plugin/skills/triage/nodes.py" >"$G/np/origin.out" 2>"$G/np/origin.err" )
 ok "G04-AC-4: nodes.py with no NOODLEBOT_FORGE_REPO passes origin's repository: argv has --repo someone/thing and pr list" sh -c 'test -f "$1" && grep -q -e "--repo someone/thing" "$1" && grep -q "pr list" "$1"' sh "$G/np/origin.log"
+
+# --- G10 (G10-AC-1, G10-AC-2, G10-AC-5): the results of the background runs, and the README's row ---
+wait "$q1" "$q2" 2>/dev/null
+python3 -I "$td/g10.py" readme "$src/forges/README.md" >"$G10/readme.out" 2>"$G10/readme.err"
+for g10f in gh fake readme; do
+	sed '/^DONE$/d' "$G10/$g10f.out"
+	fails=$((fails + $(grep -c '^FAIL: ' "$G10/$g10f.out")))
+	grep -q '^DONE$' "$G10/$g10f.out" || { echo "FAIL: G10-AC-1: the G10 cases ($g10f) did not run to their end: $(tail -n 3 "$G10/$g10f.err" | tr '\n' ' ')"; fails=$((fails + 1)); }
+done
 
 if [ "$fails" -ne 0 ]; then
 	echo "forge tests: $fails failed"
