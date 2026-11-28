@@ -5,6 +5,7 @@ Not a module of its own: github.py compiles this file into its own namespace the
 operations (so a process compiles only the families it uses), and the functions named in _register at the end become
 methods of its Backend. Everything github.py defines is in scope here; `gh` itself is run only by github.py's _run.
 """
+import math
 import subprocess
 import time
 
@@ -34,12 +35,23 @@ def ci_rerun(self, run):
 
 
 def _dispatch_ids(self, workflow, ref):
-    """The ids of the workflow's workflow_dispatch runs on the ref (one listing, newest page)."""
+    """The ids of the workflow's workflow_dispatch runs on the ref (one listing, newest page; a full ref is filtered by its
+    short branch or tag name, as a run's head_branch is)."""
+    short = re.sub(r"^refs/(?:heads|tags)/", "", ref)
     got = self._api("GET", self._r("/actions/workflows/%s/runs" % workflow), None,
-                    ["-f", "event=workflow_dispatch", "-f", "branch=" + ref, "-f", "per_page=100"])
+                    ["-f", "event=workflow_dispatch", "-f", "branch=" + short, "-f", "per_page=100"])
     if not isinstance(got, dict) or not isinstance(got.get("workflow_runs"), list):
         raise forge.ForgeError("the answer for the runs of %s does not parse: no workflow_runs list" % workflow)
     return {o["id"] for o in got["workflow_runs"] if isinstance(o, dict) and "id" in o}
+
+
+def _positive(var, default):
+    """The float in $var when it is finite and above 0, else the default."""
+    try:
+        v = float(os.environ.get(var, default))
+    except ValueError:
+        return float(default)
+    return v if math.isfinite(v) and v > 0 else float(default)
 
 
 def ci_dispatch(self, workflow, ref, input=None):
@@ -47,13 +59,10 @@ def ci_dispatch(self, workflow, ref, input=None):
     for s in input or []:
         k, _, v = s.partition("=")
         inputs[k] = v
-    try:
-        wait, poll = float(os.environ.get("FORGE_DISPATCH_WAIT", DISPATCH_WAIT)), float(os.environ.get("FORGE_DISPATCH_POLL", DISPATCH_POLL))
-    except ValueError:
-        wait, poll = float(DISPATCH_WAIT), float(DISPATCH_POLL)
+    wait, poll = (_positive("FORGE_DISPATCH_WAIT", DISPATCH_WAIT), max(_positive("FORGE_DISPATCH_POLL", DISPATCH_POLL), 0.05))
     before = _dispatch_ids(self, workflow, ref)
     try:
-        got = self._api("POST", self._r("/actions/workflows/%s/dispatches" % workflow), {"ref": ref, "inputs": inputs})
+        got = self._api("POST", self._r("/actions/workflows/%s/dispatches" % workflow), {"ref": ref, "inputs": inputs, "return_run_details": True})
     except forge.ForgeError as e:
         if e.status == 403:
             raise forge.CapabilityOff("github", "ci_dispatch")
@@ -62,7 +71,13 @@ def ci_dispatch(self, workflow, ref, input=None):
         return {"id": got["workflow_run_id"]}
     deadline = time.monotonic() + wait
     while True:
-        new = sorted(_dispatch_ids(self, workflow, ref) - before)
+        with _TOKEN_LOCK:
+            _TOKENS.pop(self.repo, None)   # a token from the script is fetched afresh for each listing (not a caller's GH_TOKEN)
+        try:
+            new = sorted(_dispatch_ids(self, workflow, ref) - before)
+        except forge.ForgeError as e:
+            raise forge.ForgeError("the dispatch of %s on %s was accepted but the runs listing failed (%s): "
+                                   "look with `ci runs` before dispatching again" % (workflow, ref, e))
         if len(new) == 1:
             return {"id": new[0]}
         if len(new) > 1:

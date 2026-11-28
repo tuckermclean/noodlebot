@@ -65,6 +65,7 @@ _OPS = [
     ("ci rerun", None, {"run": "int!"}),
     ("ci dispatch", "ci_dispatch", {"workflow": "str!", "ref": "str!", "input": "list"}),
     ("ci logs", "ci_logs", {"run": "int!", "job": "str", "attempt": "int"}),
+    ("ci artifact", "ci_artifact", {"run": "int!", "name": "str!", "dir": "path!"}),
     ("site publish", "site", {"target": "str!", "input": "path!"}),
     ("branch push", None, {"path": "path!", "branch": "str!"}),
 ]
@@ -72,7 +73,7 @@ OPERATIONS = [o[0] for o in _OPS]
 _CAP = {o[0]: o[1] for o in _OPS}
 _ARGS = {o[0]: o[2] for o in _OPS}
 _METHODS = {o.replace(" ", "_").replace("-", "_"): o for o in OPERATIONS}
-CAPABILITIES = ("visibility", "pin", "resolve_threads", "site", "ci_logs", "ci_dispatch")
+CAPABILITIES = ("visibility", "pin", "resolve_threads", "site", "ci_logs", "ci_dispatch", "ci_artifact")
 BACKENDS = {"github": os.path.join(HERE, "forges", "github.py"),
             "fake": os.path.join(HERE, "testdata", "forge", "fake.py")}
 
