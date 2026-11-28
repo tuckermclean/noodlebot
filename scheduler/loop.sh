@@ -26,7 +26,9 @@
 # follow-ups and resumes, then fresh nodes by their spec's Size; a unit that waited over SCHED_STARVE
 # seconds, default 21600, goes first). Each tick the loop lists its waiting units (waiting records
 # state/<name>/{node,issue,pr}/<key>/waiting) and, with the throttle open, asks for a turn. SCHED_START_GAP
-# and SCHED_STARVE are read by turn.py from the environment.
+# and SCHED_STARVE are read by turn.py from the environment. SCHED_MACHINE_MAX (unset or 0 = no budget) caps the sessions
+# running on the whole machine, any repository: turn.py ask gives no turn at the budget, and the loop that has a waiting unit
+# writes one line naming the machine budget (not again until a start of its goes through). It needs the start queue.
 # Self-deploy: each tick runs deploy.sh on this checkout (a passing origin/main is fast-forwarded in,
 # a failing one is one status line); when the checkout's HEAD moved and deploy.sh --runtime-changed says
 # a runtime path changed (or the check failed), the loop execs the new loop.sh (same pid, same arguments) and takes over
@@ -72,6 +74,9 @@
 # consumed at the next tick: a ready node the throttle holds starts despite the hold (SCHED_MAX still applies; with the
 # start queue on, SCHED_RAMP=1, it takes no turn but its start is recorded, turn.py took, and a failed start is given back;
 # with the throttle open it waits for its turn like any node), otherwise nothing extra starts and the reason is logged; every RELEASE is removed at that tick.
+# With SCHED_MACHINE_MAX full, turn.py took refuses (exit 3): the node is not started, that is no failed took, one line says it waits, and the
+# RELEASE marker is put back, so the next tick takes it again and the node starts, released, once a session ends.
+# That kept release is dropped like every RELEASE when a tick ends before the ready list (a fetch, forge or graph failure).
 # At start, once, it makes sure the labels noodlebot, noodlebot-triaged, noodlebot-status and noodlebot-unit exist (labels.py).
 # After each tick's report it publishes the status site (site.py publish) when ~/.config/noodlebot/gist and
 # ~/.config/noodlebot/gist-token exist and SCHED_SITE is not 0; the gist token goes only to that one command.
@@ -115,7 +120,9 @@ export NOODLEBOT_FORGE_REPO=$repo NOODLEBOT_FORGE_TOKEN_SCRIPT=$HOME/.config/noo
 # given to run-session.sh only (deploy.sh's tests and the other children never see it)
 unset SCHED_UNITS; units=; [ -e "$HOME/.config/noodlebot/units" ] && units=1
 log=$state/status.log
-tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note=''
+tick_s=${SCHED_TICK:-60} poll_s=${SCHED_POLL:-2} quiet_s=600 ramp=${SCHED_RAMP:-1} turn_note='' mhold=0
+declare -A relheld=()   # released nodes the machine budget holds (their line is written once)
+mmax=0   # 1 when turn.py count says a machine budget is set (read once at the start; the loop does not parse SCHED_MACHINE_MAX)
 # The runtime root must not lie inside a Git working tree (sessions would load its CLAUDE.md and
 # AGENTS.md). The root may not exist yet: ask from its nearest existing ancestor.
 probe=$root
@@ -170,6 +177,11 @@ signature=$(sh "$here/version.sh" --signature "$nb" 2>/dev/null) || signature=
 [ -n "$signature" ] || signature="— n00dl3b0t unknown"
 { echo "$version" >"$state/version.tmp" && mv "$state/version.tmp" "$state/version"; } 2>/dev/null || say "could not write $state/version"
 say "loop started for $spec, version $version"
+if [ -n "${SCHED_MACHINE_MAX:-}" ] && mc=$(python3 -I "$here/turn.py" count --root "$root" --repo "$rtname" 2>/dev/null); then
+	mc=${mc#* of }   # "<n> of <N> sessions ...": N is 0 without a budget
+	awk -v m="${mc%% *}" 'BEGIN { exit !(m + 0 > 0) }' && mmax=1
+fi
+[ "$mmax" = 1 ] && [ "$ramp" != 1 ] && say "SCHED_MACHINE_MAX=$SCHED_MACHINE_MAX is set, but the start queue is off (SCHED_RAMP=0): the machine budget is off"
 [ "$caps_failed" = 0 ] || say "could not read the harness's capabilities; assuming all"
 has_cap usage || say "harness $hname lacks usage: throttle off"
 # The forge's capabilities, once per start: each one core uses and the forge lacks is one status line, and its feature is off.
@@ -1631,6 +1643,15 @@ start_turn() {
 	esac
 }
 
+# machine_hold <saw>: an ask gave no turn; with the machine budget set and the loop having a waiting unit, one line (until a start goes through)
+machine_hold() {
+	[ "$mmax" = 1 ] && [ "$mhold" = 0 ] && [ "${#wlist[@]}" -gt 0 ] || return 0
+	local c rest
+	c=$(python3 -I "$here/turn.py" count --root "$root" --repo "$rtname" 2>/dev/null) || return 0
+	rest=${c#* of }; awk -v n="${c%% of *}" -v m="${rest%% *}" 'BEGIN { exit !(n + 0 >= m + 0) }' || return 0
+	mhold=1; say "$1; machine budget: $c; the waiting units are held"
+}
+
 # queue_round <saw>: list the waiting units for turn.py (also while the throttle holds); with the throttle
 # open, ask for a turn and start that unit; a failed start gives the turn back and the next unit is asked for.
 # A failing turn.py is logged and starts nothing.
@@ -1649,10 +1670,10 @@ queue_round() {
 	while [ $((tries += 1)) -le $((${#wlist[@]} + 1)) ]; do
 		out=$(python3 -I "$here/turn.py" ask "${targs[@]}" --tick "$tick_s" 2>&1) ||
 			{ note "$saw; turn.py ask failed ($(echo "$out" | tr '\n' ' ')); nothing started"; return; }
-		[ -n "$out" ] || return
+		[ -n "$out" ] || { machine_hold "$saw"; return; }
 		key=${out%%$'\t'*} turn_note=${out#*$'\t'}
 		if start_turn "$key" "$saw"; then
-			turn_note=''; rm -f "${wdir[$key]}/waiting"; return
+			mhold=0; turn_note=''; rm -f "${wdir[$key]}/waiting"; return
 		fi
 		turn_note=''
 		python3 -I "$here/turn.py" giveback "$key" "${targs[@]}" >/dev/null 2>&1 || { note "$saw; turn.py giveback failed; nothing more started"; return; }
@@ -1907,8 +1928,9 @@ tick_run() {
 		{ note "$saw; ready.py failed; nothing started"; return; }
 	requests   # a request's event is logged before any node starts (a record that came in during ready.py too)
 	local -A isrel=() handled=() isready=() started=()
-	local out took_failed=0
+	local out took_failed=0 trc=0
 	for id in "${rels[@]}"; do isrel[$id]=1; done
+	for id in "${!relheld[@]}"; do [ -n "${isrel[$id]:-}" ] || unset "relheld[$id]"; done   # a release that ended another way: its next hold is a new line
 	while read -r id name kind; do [ -z "$id" ] || isready[$id]=1; done <<<"$ready"   # all of them, also past a break below
 	while read -r id name kind; do
 		[ -n "$id" ] || continue
@@ -1940,11 +1962,16 @@ tick_run() {
 			if [ "$took_failed" = 1 ]; then
 				want_node "$id" "$name" "$kind"
 				say "$saw; $id: RELEASE found, but an earlier turn.py took failed; nothing more started, it keeps waiting"
-			elif ! out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "$rtname" 2>&1); then
+			elif out=$(python3 -I "$here/turn.py" took "$id" --root "$root" --repo "$rtname" 2>&1); trc=$?; [ "$trc" = 3 ]; then
+				# the machine budget is full: no failed took; the release is kept (put back, taken again next tick)
+				want_node "$id" "$name" "$kind"; touch "$state/node/$id/RELEASE"
+				[ -n "${relheld[$id]:-}" ] || say "$saw; $id: RELEASE found, but $(echo "$out" | tr '\n' ' ' | sed 's/ *$//') (machine budget); it waits"
+				relheld[$id]=1   # one line per hold, however many ticks it lasts
+			elif [ "$trc" != 0 ]; then
 				took_failed=1; want_node "$id" "$name" "$kind"
 				say "$saw; $id: RELEASE found, but turn.py took failed ($(echo "$out" | tr '\n' ' ')); not started, it keeps waiting"
 			elif start_node "$id" "$name" "$saw" "$kind"; then
-				say "$saw; $id: released past the throttle"; rm -f "$state/node/$id/waiting"
+				say "$saw; $id: released past the throttle"; rm -f "$state/node/$id/waiting"; mhold=0; unset "relheld[$id]"
 			else
 				python3 -I "$here/turn.py" giveback "$id" --root "$root" --repo "$rtname" >/dev/null 2>&1 || { took_failed=1; note "$saw; turn.py giveback failed; nothing more started"; }
 				want_node "$id" "$name" "$kind"

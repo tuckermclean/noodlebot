@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The machine-wide queue of session starts: one start per gap, in a fixed order (S07).
 
-  turn.py list|ask|giveback|took|place --root DATA --repo NAME [--tick S] [--gap S] [--starve S] [--now EPOCH] [KEY]
+  turn.py list|ask|giveback|took|place|count --root DATA --repo NAME [--tick S] [--gap S] [--starve S] [--now EPOCH] [KEY]
 
 Every loop of the machine keeps its waiting units in DATA/state/NAME/waiting.json and shares the start
 record DATA/state/starts.json. All reads and writes happen under an exclusive flock on
@@ -22,6 +22,22 @@ DATA/state/starts.lock, and files are replaced atomically, so two loops asking a
   took      KEY was started without a turn (a released node): record its start like a granted ask, whatever the
             gap and the order, so a giveback of KEY restores the previous record. No KEY is an error.
             A previous record more than the gap in the future is dropped, as ask does.
+  count     read-only: prints "<n> of <N> sessions running on the machine" (N is SCHED_MACHINE_MAX, 0 when it is
+            not set), as ask and took count them. It creates nothing and writes nothing, as place.
+
+The machine budget SCHED_MACHINE_MAX (a positive number; unset, empty, 0 or anything else: no budget): ask and took,
+under the same lock as the start record, count the sessions running on the machine. A session is a
+DATA/state/*/{node,issue,pr,adopt}/*/session.pid whose pid is a live process with run-session.sh in its command line
+(any repository); the last start in starts.json counts as one more while it is within the gap and its unit has no
+session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the
+gap (so a granted start counts as pending only with a gap above 0; a --gap or SCHED_START_GAP of 0 turns it off).
+A resumed unit whose own folder holds a live session does not count that session. While the first unit is held
+by the budget, the first resumed unit in the order with such a session takes the turn (its loop's ask grants it,
+every other loop's ask grants nothing); the held unit keeps first place for the next free slot. With a budget
+set, the prev chain kept in starts.json is pruned to the gap, so that a giveback restores the previous record with
+its chain; with none, starts.json keeps one previous start, as before. With the count at or over the budget, ask
+prints nothing and records nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the
+machine" on stderr and exits 3.
 
   place     read-only: how far KEY is from a turn. KEY is looked up in this loop's list (--repo may be
             OWNER/NAME; the part after the last "/" is the folder). Prints
@@ -41,6 +57,7 @@ Exits 1 with a message on stderr on an error.
 """
 import argparse
 import fcntl
+import glob
 import json
 import math
 import os
@@ -175,9 +192,21 @@ def ask(state, repo, now, args):
         return None
     everyone = order(lists, now, starve)
     queue = [r for r in everyone if not r[3]]  # given-back units wait but get no turn
-    if not queue or queue[0][1] != repo:
+    if not queue:
         return None
-    u, _, starved, _ = queue[0]
+    pick = queue[0]
+    own = own_session(state, pick)
+    if full(state, now, gap, own):
+        # the first unit is held by the budget: the first resumed unit holding its own live session takes the turn
+        pick = next((r for r in queue if own_session(state, r)), None)
+        if pick is None:
+            return None
+        own = own_session(state, pick)
+        if full(state, now, gap, own):
+            return None
+    if pick[1] != repo:
+        return None
+    u, _, starved, _ = pick
     wait = now - u["since"]
     ahead = ["%s" % x["key"] if r == repo else "%s/%s" % (r, x["key"])
              for x, r, _, _ in everyone if x is not u and now - x["since"] > wait]
@@ -186,9 +215,7 @@ def ask(state, repo, now, args):
         text += ", first by the starvation limit"
     if ahead:
         text += ", ahead of " + ", ".join(ahead[:3]) + (", +%d more" % (len(ahead) - 3) if len(ahead) > 3 else "")
-    prev = None
-    if last is not None:
-        prev = {k: v for k, v in last.items() if k != "prev"}
+    prev = prev_record(last, now, gap)
     write_json(spath, {"time": now, "repo": repo, "unit": u["key"], "prev": prev})
     return "%s\t%s" % (u["key"], text)
 
@@ -225,13 +252,108 @@ def place(state, repo, now, key, args, kind=None, size="-"):
     return "%d ahead, waited %s, gap %s" % (ahead, hm(wait), "passed" if passed else "not passed")
 
 
+def machine_max():
+    """SCHED_MACHINE_MAX as a positive finite number, else None (no budget)."""
+    v = env_num("SCHED_MACHINE_MAX", None)
+    return v if v is not None and math.isfinite(v) and v > 0 else None
+
+
+def prev_record(last, now, gap):
+    """LAST as the prev of a new start: with a machine budget its pruned chain, without one only LAST itself."""
+    if machine_max() is None:
+        return {k: v for k, v in last.items() if k != "prev"} if valid_start(last) else None
+    return keep_chain(last, now, gap)
+
+
+def keep_chain(last, now, gap):
+    """LAST as a previous record: its own prev is kept while it is a start within the gap (they may still be pending)."""
+    if not valid_start(last):
+        return None
+    rec = {k: v for k, v in last.items() if k != "prev"}
+    p = last.get("prev")
+    if valid_start(p) and p["time"] <= now + gap and now - p["time"] < gap:
+        rec["prev"] = keep_chain(p, now, gap)
+    return rec
+
+
+def fmt_n(x):
+    return "%d" % x if x == int(x) else "%g" % x
+
+
+def unit_dir(key):
+    """KEY -> (kind folder, name): ID node/ID, #N issue/N, PR#N pr/N, adopt-K adopt/K."""
+    if key.startswith("PR#"):
+        return ("pr", key[3:])
+    if key.startswith("#"):
+        return ("issue", key[1:])
+    if key.startswith("adopt-"):
+        return ("adopt", key[6:])
+    return ("node", key)
+
+
+def live_session(path):
+    """True when the session.pid at PATH names a live process with run-session.sh in its command line."""
+    try:
+        with open(path) as f:
+            pid = int(f.read().strip())
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return pid > 0 and b"run-session.sh" in f.read()
+    except (OSError, ValueError, OverflowError):
+        return False  # junk, a dead process, an unreadable entry: not a session
+
+
+def own_session(state, row):
+    """The session.pid path of a resumed unit ROW (from order) when its own folder holds a live session, else None.
+    That session is the one a turn replaces, so it is not counted at the budget."""
+    u, repo = row[0], row[1]
+    if u.get("kind") != "resumed":
+        return None
+    sub = unit_dir(u["key"])
+    path = os.path.join(state, repo.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")
+    return path if live_session(path) else None
+
+
+def running(state, now, gap, own=None):
+    """The number of sessions running on the machine, plus every start of the starts.json prev chain
+    within the gap whose unit has no session.pid yet (see keep_chain). OWN, a session.pid path, is not counted."""
+    n = 0
+    for kind in ("node", "issue", "pr", "adopt"):
+        for path in glob.glob(os.path.join(glob.escape(state), "*", kind, "*", "session.pid")):
+            if live_session(path) and path != own:
+                n += 1
+    rec = read_json(os.path.join(state, "starts.json"))
+    while valid_start(rec):  # every start recorded within the gap, the last and its prev chain, each by the same rule
+        if rec["time"] <= now + gap and now - rec["time"] < gap:
+            u, r = rec.get("unit"), rec.get("repo")
+            if isinstance(u, str) and isinstance(r, str) and u:
+                sub = unit_dir(u)
+                if sub[1] and not os.path.exists(os.path.join(state, r.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")):
+                    n += 1
+        rec = rec.get("prev")
+    return n
+
+
+def full(state, now, gap, own=None):
+    """"<n> of <N> sessions running on the machine" when the machine budget is full, else None."""
+    budget = machine_max()
+    if budget is None:
+        return None
+    n = running(state, now, gap, own)
+    return "%d of %s sessions running on the machine" % (n, fmt_n(budget)) if n >= budget else None
+
+
 def took(state, repo, now, key, args):
     spath = os.path.join(state, "starts.json")
     last = read_json(spath)
     # as ask: a start far in the future (more than the gap) is a bad record, not a previous start
     if valid_start(last) and last["time"] > now + start_gap(live_lists(state, now), args):
         last = None
-    prev = {k: v for k, v in last.items() if k != "prev"} if valid_start(last) else None
+    gap = start_gap(live_lists(state, now), args)
+    if machine_max() is not None:
+        msg = full(state, now, gap)
+        if msg:
+            return msg
+    prev = prev_record(last, now, gap)
     write_json(spath, {"time": now, "repo": repo, "unit": key, "prev": prev})
     # a later giveback of KEY must restore this record, not be taken for an undone grant
     wpath = os.path.join(state, repo, "waiting.json")
@@ -260,7 +382,7 @@ def giveback(state, repo, key):
 
 def main():
     p = argparse.ArgumentParser(prog="turn.py")
-    p.add_argument("command", choices=("list", "ask", "giveback", "took", "place"))
+    p.add_argument("command", choices=("list", "ask", "giveback", "took", "place", "count"))
     p.add_argument("key", nargs="?")
     p.add_argument("--root", required=True)
     p.add_argument("--repo", required=True)
@@ -276,8 +398,8 @@ def main():
     if args.now is not None and not math.isfinite(args.now):
         p.error("--now must be finite")
     state = os.path.join(args.root, "state")
-    if args.command == "place":
-        if not args.key:
+    if args.command in ("place", "count"):
+        if args.command == "place" and not args.key:
             p.error("place needs a KEY")
         lpath = os.path.join(state, "starts.lock")
         try:
@@ -288,7 +410,15 @@ def main():
             if lock:
                 fcntl.flock(lock, fcntl.LOCK_SH)
             now = time.time() if args.now is None else args.now
-            print(place(state, args.repo.rsplit("/", 1)[-1], now, args.key, args, args.kind, args.size))
+            if args.command == "place":
+                print(place(state, args.repo.rsplit("/", 1)[-1], now, args.key, args, args.kind, args.size))
+            else:
+                try:
+                    gap = start_gap(live_lists(state, now), args)
+                except OSError:
+                    gap = 0.0
+                budget = machine_max()
+                print("%d of %s sessions running on the machine" % (running(state, now, gap), fmt_n(budget or 0)))
         finally:
             if lock:
                 lock.close()
@@ -318,7 +448,10 @@ def main():
         elif args.command == "took":
             if not args.key:
                 p.error("took needs a KEY")
-            took(state, args.repo, now, args.key, args)
+            msg = took(state, args.repo, now, args.key, args)
+            if msg:
+                print(msg, file=sys.stderr)
+                sys.exit(3)
         else:
             if not args.key:
                 p.error("giveback needs a KEY")

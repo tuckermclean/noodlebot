@@ -36,6 +36,7 @@ TESTS = \
 	scheduler/turn-lock.test.sh \
 	scheduler/turn-took.test.sh \
 	scheduler/turn-place.test.sh \
+	scheduler/turn-budget.test.sh \
 	plugin/skills/node/check-regime.test.sh \
 	plugin/skills/node/check-coverage.test.sh \
 	plugin/skills/node/check-owns-diff.test.sh \
@@ -76,6 +77,8 @@ TESTS = \
 	scheduler/loop-s06-update.test.sh \
 	scheduler/loop-s07-failed.test.sh \
 	scheduler/loop-s07-turnpy.test.sh \
+	scheduler/loop-s13.test.sh \
+	scheduler/loop-s13-again.test.sh \
 	scheduler/loop-w02-fail.test.sh \
 	scheduler/loop-w02-off.test.sh \
 	scheduler/loop-w05.test.sh \
