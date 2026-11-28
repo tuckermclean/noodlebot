@@ -1795,7 +1795,7 @@ tick_run() {
 			live+=("$p $id")
 			{ [[ $f == */issue/* ]] || [[ $f == */adopt/* ]] || { [[ $f == */pr/* ]] && [ ! -e "$(dirname "$f")/node" ]; }; } && triaging=$id
 		else
-			if [[ $f == */node/* ]]; then
+			if [[ $f == "$state"/node/* ]]; then
 				# gone, and its end not older than the fetch's start (equal counts as not older): left for the next tick
 				local rcm
 				rcm=$(stat -c %.9Y "$(dirname "$f")/session.rc" 2>/dev/null) || rcm=''
