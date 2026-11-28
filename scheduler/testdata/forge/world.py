@@ -407,3 +407,35 @@ def artifact_zip(art):  # noqa: F811
         import base64
         return base64.b64decode(art["zip_b64"])
     return _artifact_zip_before_review(art)
+
+
+# --- G10: branches for `branch delete` (added; the rules above are unchanged) ---
+# branches.json  [{"name", "protected", "rules"}]: the branches the gh emulator serves (rules: the types of the active rules
+#                of the branch, e.g. ["deletion"]); a deletion removes the entry. The fake forge keeps its branches in repo.git.
+# forge.json may also hold, for the fake forge: "protected_branches" [name], "branch_rules" {name: [rule type]} and
+# "refuse_branch_delete" (true, or a list of names: the forge refuses the deletion); for the gh emulator: "delete_answer"
+# (403: the delete answers 403; 422: it answers 422 and the branch stays; "422-gone": it answers 422 and the branch is gone;
+# 404) and "fail_endpoint" ("repo", "branch", "rules" or "pulls": GET of that endpoint answers 500).
+def g10_branches(w):
+    p = os.path.join(w.path, "branches.json")
+    if not os.path.exists(p):
+        return []
+    with open(p) as f:
+        return json.load(f)
+
+
+def g10_branch(w, name):
+    return next((b for b in g10_branches(w) if b["name"] == name), None)
+
+
+def g10_remove(w, name):
+    lst = [b for b in g10_branches(w) if b["name"] != name]
+    p = os.path.join(w.path, "branches.json")
+    with open(p + ".tmp", "w") as f:
+        json.dump(lst, f)
+    os.replace(p + ".tmp", p)
+
+
+def g10_flag(w, key, name):
+    v = w.forge.get(key)
+    return v is True or (isinstance(v, list) and name in v)
