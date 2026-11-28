@@ -1230,6 +1230,71 @@ def ac3_foreign_file_survives():
                "; ".join(why))
 
 
+# ---- G09-AC-3, fix round 2: a foreign file of an entry's name is kept, the parents of a folder entry are removed ----
+def fold_arts():
+    import base64
+    good = ("ok.txt", b"ok\n", (0o100644) << 16, 0, 0)
+    fold = ("x/y/", b"", (0o040755 << 16) | 0x10, 0, 0)
+    ent = [{"name": "x/y/", "dir": True}, {"name": "ok.txt", "text": "ok\n"}, {"name": "d/bad.txt", "text": "bad\n"}]
+    items = [fold, good, ("d/bad.txt", b"bad\n", (0o100644) << 16, 1, 0)]
+    return {"9001": [{"id": 5030, "name": "fold-enc", "expired": False, "entries": ent,
+                      "zip_b64": base64.b64encode(raw_zip(items)).decode()}]}
+
+
+def ac3_foreign_entry_name():
+    ac = "G09-AC-3"
+    for mode in ("py", "cli"):
+        drop = os.path.join(DCWD, "emptyd", "ok.txt")
+        art_reset()
+        setup("github", edit={"g09_drop": drop}, seed=False)
+        put("github", "ci_artifacts", rev_arts())
+        dir_world(True)
+        os.makedirs(os.path.join(DCWD, "emptyd"))
+        os.chdir(DCWD)
+        try:
+            res = art_call("github", mode, {"run": 9001, "name": "enc", "dir": "emptyd"})
+        finally:
+            os.chdir(WORK)
+        why = problems_fail(res, mode, 1)
+        if res.rc == 1:
+            for n in ("enc", "9001"):
+                if n not in res.text:
+                    why.append("the message does not say %r: %r" % (n, res.text[:120]))
+        left = sorted(os.listdir(os.path.join(DCWD, "emptyd"))) if os.path.isdir(os.path.join(DCWD, "emptyd")) else None
+        if left != ["ok.txt"]:
+            why.append("the folder holds %r, want only the file another process put there" % (left,))
+        elif open(drop).read() != "foreign\n":
+            why.append("the foreign file was changed: %r" % open(drop).read())
+        if sorted(os.listdir(DCWD)) != ["canary.txt", "emptyd", "keep"]:
+            why.append("the working folder holds %r" % sorted(os.listdir(DCWD)))
+        if os.listdir(TMPD):
+            why.append("a temporary file is left in $TMPDIR: %s" % os.listdir(TMPD))
+        report(not why, "%s: %s ci artifact into an existing empty folder where another process puts a file of an entry's name during the download exits 1 naming the artifact and the run, keeps that file unchanged, the folder exists, github" % (ac, mode),
+               "; ".join(why))
+
+
+def ac3_folder_entry_parents():
+    ac = "G09-AC-3"
+    for mode in ("py", "cli"):
+        res, why = dir_call("github", mode, {"dir": "emptyd"}, False, arts=fold_arts(), pre=["emptyd"], name="fold-enc")
+        why += problems_fail(res, mode, 1)
+        if res.rc == 1:
+            for n in ("fold-enc", "9001"):
+                if n not in res.text:
+                    why.append("the message does not say %r: %r" % (n, res.text[:120]))
+        if os.path.isdir(os.path.join(DCWD, "emptyd")):
+            if os.listdir(os.path.join(DCWD, "emptyd")):
+                why.append("the folder holds %r, want it empty" % sorted(os.listdir(os.path.join(DCWD, "emptyd"))))
+        else:
+            why.append("the existing folder is gone")
+        report(not why, "%s: %s ci artifact of an archive with a folder entry x/y/ (no x/ entry) and a later failing entry into an existing empty folder exits 1, leaves the folder empty (no x/), github" % (ac, mode),
+               "; ".join(why))
+        res, why = dir_call("github", mode, {"dir": os.path.join("new", "deeper")}, False, arts=fold_arts(), name="fold-enc")
+        why += problems_fail(res, mode, 1)
+        report(not why, "%s: %s ci artifact of the same archive into a --dir the call creates (a missing nested path) exits 1, nothing left, github" % (ac, mode),
+               "; ".join(why))
+
+
 def main():
     work = os.path.join(WORK, "cwd")
     os.makedirs(work, exist_ok=True)
@@ -1251,6 +1316,10 @@ def main():
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
     for fn in (ac3_dir_empty, ac3_dir_dotdot_nonempty, ac3_unpack_fails_keeps_folder, ac3_foreign_file_survives):
+        t = time.time()
+        section(fn)
+        print("# %s %.1fs" % (fn.__name__, time.time() - t))
+    for fn in (ac3_foreign_entry_name, ac3_folder_entry_parents):
         t = time.time()
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
