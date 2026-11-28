@@ -726,4 +726,18 @@ def route(w, method, path, qs, body):  # noqa: F811
     return _route_before_g09r(w, method, path, qs, body)
 
 
+# --- G09 (slice 2, fix round): forge.json "g09_drop": an absolute path; the emulator writes a file there (content "foreign\n")
+# while it serves an artifact archive, as a file another process puts into the folder during the download. Added. ---
+_route_before_g09c = route
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    ans = _route_before_g09c(w, method, path, qs, body)
+    drop = w.forge.get("g09_drop")
+    if drop and isinstance(ans, Bin):
+        with open(drop, "w") as f:
+            f.write("foreign\n")
+    return ans
+
+
 main()

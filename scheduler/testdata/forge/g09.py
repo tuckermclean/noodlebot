@@ -1090,6 +1090,146 @@ def ac3_review_dir_is_file():
                "; ".join(why))
 
 
+# ---- G09-AC-3, fix round: --dir is used as given, an empty --dir, a path through .., an existing folder is kept ----
+# Each case runs with its working folder set to a scratch folder (WORK/dircase/top/cwd) with canary files around it; the
+# folder, its content and the canaries must be as before after the call. Nothing outside WORK is touched by the cases.
+DC = os.path.join(WORK, "dircase")
+DTOP = os.path.join(DC, "top")
+DCWD = os.path.join(DTOP, "cwd")
+
+
+def tree(root):
+    got = {}
+    if not os.path.lexists(root):
+        return got
+    got[root] = ("root", None)
+    for dp, dn, fn in os.walk(root):
+        for n in dn + fn:
+            p = os.path.join(dp, n)
+            if os.path.islink(p):
+                got[p] = ("link", os.readlink(p))
+            elif os.path.isdir(p):
+                got[p] = ("dir", None)
+            else:
+                got[p] = ("file", open(p, "rb").read())
+    return got
+
+
+def dir_world(full):
+    """A fresh scratch world: top/canary.txt, top/cwd (the working folder) holding canary files when `full`, else empty."""
+    shutil.rmtree(DC, ignore_errors=True)
+    os.makedirs(DCWD)
+    open(os.path.join(DTOP, "canary.txt"), "w").write("top canary\n")
+    if full:
+        open(os.path.join(DCWD, "canary.txt"), "w").write("cwd canary\n")
+        os.makedirs(os.path.join(DCWD, "keep"))
+        open(os.path.join(DCWD, "keep", "inner.txt"), "w").write("inner canary\n")
+
+
+def dir_call(b, mode, kw, full, arts=None, edit=None, pre=None, name="report"):
+    """Run ci artifact with the working folder DCWD; (res, why): why lists what changed in the scratch world, a temporary
+    file left, an archive served. `pre`: folders to create (relative to DCWD) before the call."""
+    art_reset()
+    setup(b, edit=edit, seed=False)
+    if arts is not None:
+        put(b, "ci_artifacts", arts)
+    dir_world(full)
+    for p in pre or ():
+        os.makedirs(os.path.join(DCWD, p))
+    before = tree(DTOP)
+    home = WORK
+    os.chdir(DCWD)
+    try:
+        res = art_call(b, mode, dict(kw, run=9001, name=name))
+    finally:
+        os.chdir(home)
+    after = tree(DTOP)
+    why = []
+    if not os.path.isdir(DCWD):
+        why.append("the working folder is gone")
+    if after != before:
+        diff = sorted(set(after) ^ set(before)) or sorted(q for q in before if after.get(q) != before.get(q))
+        why.append("the scratch world changed: %s" % [os.path.relpath(q, DC) for q in diff][:5])
+    if os.listdir(TMPD):
+        why.append("a temporary file is left in $TMPDIR: %s" % os.listdir(TMPD))
+    return res, why
+
+
+def ac3_dir_empty():
+    ac = "G09-AC-3"
+    for b in ("github", "fake"):
+        for mode in ("py", "cli"):
+            for full in (True, False):
+                res, why = dir_call(b, mode, {"dir": ""}, full)
+                why += problems_fail(res, mode, 2)
+                if res.rc == 2 and "dir" not in res.text:
+                    why.append("the message does not name dir: %r" % res.text[:120])
+                if res.calls:
+                    why.append("a call was made (%d)" % len(res.calls))
+                report(not why, "%s: %s ci artifact --dir \"\" is refused as a bad value (exit 2 / BadValue naming dir), no call, the working folder %s untouched, %s" % (
+                    ac, mode, "with canaries" if full else "empty", b), "; ".join(why))
+
+
+def ac3_dir_dotdot_nonempty():
+    ac = "G09-AC-3"
+    for d in ("missing/..", "missing/../", "a/b/../.."):
+        for mode in ("py", "cli"):
+            res, why = dir_call("github", mode, {"dir": d}, True)
+            why += problems_fail(res, mode, 1)
+            if res.rc == 1 and "not empty" not in res.text:
+                why.append("the message does not say the folder is not empty: %r" % res.text[:140])
+            if downloads():
+                why.append("an archive was downloaded: %r" % (downloads(),))
+            report(not why, "%s: %s ci artifact --dir %s (the non-empty working folder) exits 1 as a non-empty folder before any download, nothing written, no folder left, github" % (
+                ac, mode, d), "; ".join(why))
+
+
+def ac3_unpack_fails_keeps_folder():
+    ac = "G09-AC-3"
+    for d, full, pre, label in (("missing/..", False, None, "--dir missing/.. (the empty working folder)"),
+                                ("sub/../out", True, None, "--dir sub/../out (a path through a folder it must not leave)"),
+                                ("emptyd", True, ["emptyd"], "--dir an existing empty folder"),
+                                (".", False, None, "--dir . (the empty working folder)"),
+                                (os.path.join(DCWD, "emptyd"), True, ["emptyd"], "--dir an existing empty folder, absolute")):
+        for mode in ("py", "cli"):
+            res, why = dir_call("github", mode, {"dir": d}, full, arts=rev_arts(), pre=pre, name="enc")
+            why += problems_fail(res, mode, 1)
+            if res.rc == 1:
+                for n in ("enc", "9001"):
+                    if n not in res.text:
+                        why.append("the message does not say %r: %r" % (n, res.text[:120]))
+            report(not why, "%s: %s ci artifact of an archive that fails to unpack, %s: exits 1, the folder still exists, the working folder, canaries and every other path as before, nothing of the call left, github" % (
+                ac, mode, label), "; ".join(why))
+
+
+def ac3_foreign_file_survives():
+    ac = "G09-AC-3"
+    for mode in ("py", "cli"):
+        drop = os.path.join(DCWD, "emptyd", "foreign.txt")
+        art_reset()
+        setup("github", edit={"g09_drop": drop}, seed=False)
+        put("github", "ci_artifacts", rev_arts())
+        dir_world(True)
+        os.makedirs(os.path.join(DCWD, "emptyd"))
+        os.chdir(DCWD)
+        try:
+            res = art_call("github", mode, {"run": 9001, "name": "enc", "dir": "emptyd"})
+        finally:
+            os.chdir(WORK)
+        why = problems_fail(res, mode, 1)
+        left = sorted(os.listdir(os.path.join(DCWD, "emptyd"))) if os.path.isdir(os.path.join(DCWD, "emptyd")) else None
+        if left != ["foreign.txt"]:
+            why.append("the folder holds %r, want only the file another process put there" % (left,))
+        elif open(drop).read() != "foreign\n":
+            why.append("the foreign file was changed")
+        if sorted(os.listdir(DCWD)) != ["canary.txt", "emptyd", "keep"]:
+            why.append("the working folder holds %r" % sorted(os.listdir(DCWD)))
+        if os.listdir(TMPD):
+            why.append("a temporary file is left in $TMPDIR: %s" % os.listdir(TMPD))
+        report(not why, "G09-AC-3: %s ci artifact of an archive that fails to unpack into an existing empty folder keeps a file another process put there during the download (removes only what it wrote), github" % mode,
+               "; ".join(why))
+
+
 def main():
     work = os.path.join(WORK, "cwd")
     os.makedirs(work, exist_ok=True)
@@ -1107,6 +1247,10 @@ def main():
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
     for fn in (ac3_review_unreadable, ac3_review_typebits, ac3_review_dir_is_file):
+        t = time.time()
+        section(fn)
+        print("# %s %.1fs" % (fn.__name__, time.time() - t))
+    for fn in (ac3_dir_empty, ac3_dir_dotdot_nonempty, ac3_unpack_fails_keeps_folder, ac3_foreign_file_survives):
         t = time.time()
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
