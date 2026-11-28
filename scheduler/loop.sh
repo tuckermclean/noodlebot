@@ -20,6 +20,8 @@
 # started (and no open PR), is stopped (its process group), and a closed PR holds the node with FAILED; after each tick it updates the GitHub status issue (report.py). Only one loop runs at a time ($NOODLEBOT_DATA/state/<name>/loop.lock). Sessions run under setsid and
 # are recorded in node/<ID>/session.pid, so a restarted loop picks up a running session instead of
 # starting a second one.
+# A node session (fresh or follow-up) found gone whose end is not older than the start of the tick's PR-list fetch is left for the next
+# tick (session.pid stays): its end is judged (with a PR, or not) only from lists fetched after it ended.
 # The start queue (SCHED_RAMP, default 1; 0 = off, every ready unit starts in the same tick and turn.py is
 # never run): new sessions start one per SCHED_START_GAP seconds (default: the largest SCHED_TICK among the
 # live loops) across every loop of the machine, in the order turn.py gives (triages, PR updates,
@@ -1756,6 +1758,16 @@ tick_run() {
 	local ferr=$state/forge.err vis=0
 	# an unknown visibility is asked again, by the lists' process when the forge has the capability (one process fewer)
 	if [ "$(cat "$state/visibility" 2>/dev/null)" = unknown ]; then forge_has visibility && vis=1 || vis_ask; fi
+	# When the lists' fetch begins, and which node sessions are running then: a node session found gone later whose end
+	# is not older than this is judged at the next tick, from lists fetched after it (see the running-sessions pass).
+	local fetch_s fetch_ns fid fpid
+	local -A prealive=()
+	fetch_ns=$(date +%s%N); fetch_s=${fetch_ns%?????????}
+	for f in "$state"/node/*/session.pid; do
+		[ -e "$f" ] || continue
+		fid=$(basename "$(dirname "$f")"); fpid=$(cat "$f" 2>/dev/null)
+		alive "$fpid" "$fid" && prealive[$fid]=1
+	done
 	# pipefail: a failed list must stop the tick, never read as "no PRs". The lists' process also finds out whether the token script works.
 	if ! pr_tsvs "$open_limit" "$vis" 2>"$ferr"; then
 		if grep -q 'token script' "$ferr" 2>/dev/null; then
@@ -1782,7 +1794,18 @@ tick_run() {
 			[[ $f == */node/* ]] && stop_done "$(dirname "$f")" "$p" "$saw" && continue
 			live+=("$p $id")
 			{ [[ $f == */issue/* ]] || [[ $f == */adopt/* ]] || { [[ $f == */pr/* ]] && [ ! -e "$(dirname "$f")/node" ]; }; } && triaging=$id
-		else ended "$(dirname "$f")" "$saw"; fi
+		else
+			if [[ $f == */node/* ]]; then
+				# gone, and its end not older than the fetch's start (equal counts as not older): left for the next tick
+				local rcm
+				rcm=$(stat -c %.9Y "$(dirname "$f")/session.rc" 2>/dev/null) || rcm=''
+				if [ -n "$rcm" ]; then
+					if [ "${rcm#*.}" = 000000000 ]; then [ "${rcm%.*}" -lt "$fetch_s" ] || continue   # coarse mtime: whole seconds
+					else [ "$(( ${rcm%.*} * 1000000000 + 10#${rcm#*.} ))" -lt "$fetch_ns" ] || continue; fi
+				elif [ -n "${prealive[$id]:-}" ]; then continue; fi
+			fi
+			ended "$(dirname "$f")" "$saw"
+		fi
 	done
 	followup_done "$saw"
 	pr_gone "$saw"
