@@ -31,7 +31,9 @@ DATA/state/*/{node,issue,pr,adopt}/*/session.pid whose pid is a live process wit
 (any repository); the last start in starts.json counts as one more while it is within the gap and its unit has no
 session.pid yet (the session is about to start); so does every earlier start of the prev chain still within the
 gap (so a granted start counts as pending only with a gap above 0; a --gap or SCHED_START_GAP of 0 turns it off).
-A resumed unit first in the order whose own folder holds a live session does not count that session. With a budget
+A resumed unit whose own folder holds a live session does not count that session. While the first unit is held
+by the budget, the first resumed unit in the order with such a session takes the turn (its loop's ask grants it,
+every other loop's ask grants nothing); the held unit keeps first place for the next free slot. With a budget
 set, the prev chain kept in starts.json is pruned to the gap, so that a giveback restores the previous record with
 its chain; with none, starts.json keeps one previous start, as before. With the count at or over the budget, ask
 prints nothing and records nothing (exit 0); took records nothing, prints "<n> of <N> sessions running on the
@@ -190,16 +192,21 @@ def ask(state, repo, now, args):
         return None
     everyone = order(lists, now, starve)
     queue = [r for r in everyone if not r[3]]  # given-back units wait but get no turn
-    if not queue or queue[0][1] != repo:
+    if not queue:
         return None
-    u, _, starved, _ = queue[0]
-    own = None
-    if u.get("kind") == "resumed":  # its own live session is the one this turn replaces: not held at the budget
-        sub = unit_dir(u["key"])
-        own = os.path.join(state, repo.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")
-        own = own if live_session(own) else None
+    pick = queue[0]
+    own = own_session(state, pick)
     if full(state, now, gap, own):
+        # the first unit is held by the budget: the first resumed unit holding its own live session takes the turn
+        pick = next((r for r in queue if own_session(state, r)), None)
+        if pick is None:
+            return None
+        own = own_session(state, pick)
+        if full(state, now, gap, own):
+            return None
+    if pick[1] != repo:
         return None
+    u, _, starved, _ = pick
     wait = now - u["since"]
     ahead = ["%s" % x["key"] if r == repo else "%s/%s" % (r, x["key"])
              for x, r, _, _ in everyone if x is not u and now - x["since"] > wait]
@@ -293,6 +300,17 @@ def live_session(path):
             return pid > 0 and b"run-session.sh" in f.read()
     except (OSError, ValueError, OverflowError):
         return False  # junk, a dead process, an unreadable entry: not a session
+
+
+def own_session(state, row):
+    """The session.pid path of a resumed unit ROW (from order) when its own folder holds a live session, else None.
+    That session is the one a turn replaces, so it is not counted at the budget."""
+    u, repo = row[0], row[1]
+    if u.get("kind") != "resumed":
+        return None
+    sub = unit_dir(u["key"])
+    path = os.path.join(state, repo.rsplit("/", 1)[-1], sub[0], sub[1], "session.pid")
+    return path if live_session(path) else None
 
 
 def running(state, now, gap, own=None):
