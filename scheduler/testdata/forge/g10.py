@@ -517,10 +517,45 @@ def cases_round2():
                      ("failed", None), edits={"malformed": {ep: ans}})
 
 
+def cases_round3():
+    """G10-AC-5: the --branch shape is a subset of what `git check-ref-format --branch` accepts; a `..` inside a segment and a
+    trailing dot are refused by git, so they are usage errors here (BadValue / exit 2 naming --branch), with no call."""
+    AC = "G10-AC-5"
+    setup([MAIN, ("ci-probe/G10-x", False, []), KEEP])
+    for v in ("ci-probe/x..y", "ci-probe/x.", "ci-probe/a/x.", "ci-probe/x../y"):
+        why = []
+        try:
+            chk = subprocess.run(["git", "check-ref-format", "--branch", v], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if chk.returncode == 0:
+                why.append("premise: git check-ref-format --branch accepts %r" % v)
+            before = present()
+            res = run_py(v)
+            if not res.bad:
+                why.append("py: expected forge.BadValue, got %s" % res.brief())
+            elif "branch" not in (res.msg or "").lower():
+                why.append("py: the message does not name --branch: %r" % res.msg)
+            res = run_cli(v)
+            if res.rc != 2 or res.out:
+                why.append("cli: expected exit 2 and nothing on stdout, got %s" % res.brief())
+            elif not one_line(res.err) or "--branch" not in res.err:
+                why.append("cli: expected one stderr line naming --branch, got %r" % res.err)
+            if calls():
+                why.append("a call was made to the backend (%d)" % len(calls()))
+            if present() != before:
+                why.append("branches changed to %s" % present())
+        except Exception as e:  # noqa: BLE001
+            why.append("harness error %s: %s" % (type(e).__name__, e))
+        line(not why, "%s: [%s] `branch delete --branch %r` (refused by git check-ref-format --branch) is a usage error (BadValue / exit 2 naming --branch, nothing on stdout), no call" % (AC, NAME, v), why)
+
+
 main()
 try:
     cases_round2()
 except BaseException as e:  # noqa: BLE001
     line(False, "G10-AC-5: the G10 round-2 cases ran to their end [%s]" % NAME, ["%s: %s" % (type(e).__name__, e)])
+try:
+    cases_round3()
+except BaseException as e:  # noqa: BLE001
+    line(False, "G10-AC-5: the G10 round-3 cases ran to their end [%s]" % NAME, ["%s: %s" % (type(e).__name__, e)])
 print("DONE2")
 sys.exit(0)
