@@ -477,5 +477,49 @@ def main():
     print("DONE")
 
 
+def cases_round2():
+    """G10-AC-5: a missing, None or non-str `branch` is a BadValue (naming branch) and no call; G10-AC-1: a check answer of the
+    wrong JSON type is a failed call (ForgeError), never `not protected`, and no delete."""
+    AC = "G10-AC-5"
+    setup([MAIN, (X, False, []), KEEP])
+    before = present()
+    variants = (("branch=None", lambda f: f.branch_delete(branch=None)), ("positional None", lambda f: f.branch_delete(None)),
+                ("no branch argument", lambda f: f.branch_delete()), ("branch=123", lambda f: f.branch_delete(branch=123)),
+                ("branch=['ci-probe/x']", lambda f: f.branch_delete(branch=["ci-probe/x"])))
+    for label, fn in variants:
+        why = []
+        try:
+            setup([MAIN, (X, False, []), KEEP])
+            try:
+                f = forge.open(SPEC)
+                res = Res(ok=fn(f))
+            except BaseException as e:  # noqa: BLE001
+                res = Res(exc=type(e).__name__, msg=str(e), bad=BV is not None and isinstance(e, BV), forgeerr=isinstance(e, forge.ForgeError))
+            if not res.bad:
+                why.append("py: expected forge.BadValue, got %s" % res.brief())
+            elif not res.forgeerr or "branch" not in (res.msg or "").lower():
+                why.append("py: BadValue must be a ForgeError naming branch: %r" % res.msg)
+            if calls():
+                why.append("a call was made to the backend (%d)" % len(calls()))
+            if present() != before:
+                why.append("branches changed to %s" % present())
+        except Exception as e:  # noqa: BLE001
+            why.append("harness error %s: %s" % (type(e).__name__, e))
+        line(not why, "%s: [%s] the Python interface with %s raises BadValue naming branch (not a raw exception), no call" % (AC, NAME, label), why)
+    if GH:
+        AC = "G10-AC-1"
+        base = [MAIN, (X, False, []), KEEP]
+        for ep, ans, what in (("branch", [], "a list"), ("branch", "protected", "a string"), ("branch", None, "null"),
+                              ("rules", {"type": "deletion"}, "an object"), ("rules", "deletion", "a string")):
+            if ans is None:
+                continue  # null is the fake's 404 form; not served here
+            scenario(AC, "a check call answered with %s for the %s endpoint is a failed call (exit 1, no result), nothing deleted" % (what, ep), base, X,
+                     ("failed", None), edits={"malformed": {ep: ans}})
+
+
 main()
+try:
+    cases_round2()
+except BaseException as e:  # noqa: BLE001
+    line(False, "G10-AC-5: the G10 round-2 cases ran to their end [%s]" % NAME, ["%s: %s" % (type(e).__name__, e)])
 sys.exit(0)

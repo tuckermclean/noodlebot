@@ -622,4 +622,21 @@ def route(w, method, path, qs, body):  # noqa: F811
     return _route_before_g10(w, method, path, qs, body)
 
 
+# --- G10 (round 2): forge.json "malformed": {"branch"|"rules": JSON} makes that GET answer 200 with the given JSON (a list or a
+# string for branches/NAME, an object for rules/branches/NAME), whatever the state holds ---
+_route_before_g10m = route
+
+
+def route(w, method, path, qs, body):  # noqa: F811
+    own = "repos/%s/%s/" % (w.forge["owner"], w.forge["name"])
+    mal = w.forge.get("malformed") or {}
+    if method == "GET" and path.startswith(own):
+        rest = path[len(own):]
+        if rest.startswith("rules/branches/") and "rules" in mal:
+            return mal["rules"]
+        if rest.startswith("branches/") and "branch" in mal:
+            return mal["branch"]
+    return _route_before_g10m(w, method, path, qs, body)
+
+
 main()
