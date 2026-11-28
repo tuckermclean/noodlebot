@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | U02, S07 | S09 | M |
+| now | U02, S07 | M06, S09 | M |
 
 **Owns:** in `scheduler/turn.py`, the read-only `place` command (a unit's place in the machine's start order, taking no turn); in `scheduler/report.py`: the queued milestone of a labelled issue whose triage has not started, the start clause (the throttle and the units ahead) of the answer-received milestone, of the "Waiting on you" item of an answered unit and of the reply to a prefixed answer, a node's spec-PR-merged milestone, and leaving a unit whose spec PR is merged out of "Waiting on you"; the state of a node whose spec PR is merged in `scheduler/site.py`; the answered and spec-PR lines of `scheduler/status.sh`; in `scheduler/loop.sh`, listing the labelled issues every tick while the throttle holds; the new tests `scheduler/turn-place.test.sh`, `scheduler/report-queue.test.sh`, `scheduler/loop-u03.test.sh`, `scheduler/loop-u03-busy.test.sh` and `scheduler/report-queue-answers.test.sh` and their lines in the `Makefile`'s `TESTS`; their cases in `scheduler/site.test.sh`.
 **Resolves:** #87

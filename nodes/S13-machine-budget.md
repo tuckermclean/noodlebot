@@ -2,7 +2,7 @@
 
 | Track | Deps | Unlocks | Size |
 |---|---|---|---|
-| now | S07 | none | S |
+| now | S07 | M06 | S |
 
 **Owns:** in `scheduler/turn.py`: the machine budget (`SCHED_MACHINE_MAX`) of `ask` and `took`, the count of running sessions under the runtime root, and its lines in the docstring; in `scheduler/loop.sh`: the status-log line for a start the machine budget holds (a turn and a released node), and its line in the header comment; `scheduler/turn-budget.test.sh` (new), `scheduler/loop-s13.test.sh` (new), `scheduler/loop-s13-again.test.sh` (new), their lines in the `Makefile`'s `TESTS`.
 **Resolves:** #218
