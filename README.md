@@ -185,14 +185,14 @@ At its first start in a repository the loop creates the labels `noodlebot`, `noo
 ### Tuning
 
 Set these in the environment of `scheduler/loops.sh start`; it passes them to each loop (`USAGE_*`, `SCHED_*`, `PICKUP*`
-and `NOODLEBOT_DATA`), for example `USAGE_7D_PACE=1 scheduler/loops.sh start`. Only loops that `start` launches get
+and `NOODLEBOT_DATA`), for example `USAGE_7D_PACE=0 scheduler/loops.sh start`. Only loops that `start` launches get
 them: a running loop keeps its settings, so `scheduler/loops.sh stop` first, then start with the new ones.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `NOODLEBOT_DATA` | `~/.local/share/noodlebot` | The runtime root ([Where things are](#where-things-are)). Every loop and tool must see the same one. |
 | `USAGE_5H_LIMIT` | `0.90` | **The throttle:** no new session starts while the 5-hour usage window is projected to pass this by its reset. Running sessions are never stopped. |
-| `USAGE_7D_PACE`, `USAGE_7D_MARGIN` | off, `0.10` | `USAGE_7D_PACE=1` also holds while the 7-day window is more than the margin ahead of pace. |
+| `USAGE_7D_PACE`, `USAGE_7D_MARGIN` | `1` (on), `0.10` | The throttle also holds while the 7-day window is more than the margin ahead of pace; `USAGE_7D_PACE=0` turns that weekly pace hold off. |
 | `SCHED_MAX` | `0` (no cap) | The most sessions a loop runs at once. |
 | `SCHED_RAMP`, `SCHED_START_GAP` | `1`, the tick | The start queue: new sessions start one per gap across all loops (triages, updates and resumes first). `SCHED_RAMP=0` starts every ready unit at once. |
 | `SCHED_STARVE` | `21600` | A unit waiting longer than this (seconds) goes first. |
@@ -225,7 +225,7 @@ the [API](#api); `deploy.sh` carries them out at its next run. Its log is `state
 | You see | It means | Do |
 |---|---|---|
 | `FAILED` in a unit's folder (`node/<ID>/`, `issue/<N>/`, `pr/<N>/`) | It gave up: for example its session exited twice without a PR or question, or its PR was closed without merging. The file says why and what to do. | Do what the file says (look at the folder's `session.stderr` for a session that failed), then delete `FAILED` (2 fresh starts). |
-| `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is rejected, or (with `USAGE_7D_PACE=1`) the week is ahead of pace. New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
+| `HOLDING: ...` in `nbctl.py status`, `throttle engaged` in the status log | The throttle: the 5-hour window is projected past the limit, a usage window is rejected, or the week is ahead of pace (unless `USAGE_7D_PACE=0`). New sessions wait; running ones go on. | Wait for the window to reset, or release one node. |
 | A session that hit the usage limit | It's resumed by itself after the reset. | Nothing. |
 | `not deployed: ... fails CI` / `make test` | A new noodlebot commit failed its check; the old code still runs. | Fix `main`, or re-run its CI and retry the deploy. |
 | `loop not running` in `loops.sh status` | It stopped (a STOP file, or it crashed). | Remove `~/STOP` if it exists, then `scheduler/loops.sh start` (it removes a stale `~/STOP-<name>` itself). |

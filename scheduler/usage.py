@@ -13,7 +13,7 @@ It holds new sessions (running ones are never stopped) when:
   decision: the weekly warning does not hold new sessions; a rejected 7-day window still holds);
 - the 5-hour window is projected to pass USAGE_5H_LIMIT (default 0.90) by its reset, at the burn rate
   of the last 30 minutes (or of the whole window so far, with too few samples);
-- only with USAGE_7D_PACE=1 (off by default): the 7-day window is more than USAGE_7D_MARGIN (default 0.10)
+- only with USAGE_7D_PACE=1 (the loop passes 1 unless its environment sets it; a run by hand without it keeps the hold off): the 7-day window is more than USAGE_7D_MARGIN (default 0.10)
   ahead of an even pace for the week. The reading is kept in usage.json either way.
 Prints one line: "open: ..." or "hold: <reason>"; exits 0 either way (1 only on an error).
 """
