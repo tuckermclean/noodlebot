@@ -62,6 +62,7 @@ TESTS = \
 	scheduler/loop-s09-off.test.sh \
 	scheduler/loop-s09-budget.test.sh \
 	scheduler/loop-s03.test.sh \
+	scheduler/loop-s15.test.sh \
 	scheduler/loop-s01.test.sh \
 	scheduler/loop-s01-closed.test.sh \
 	scheduler/loop-s01-fail.test.sh \
