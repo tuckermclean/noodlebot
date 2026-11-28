@@ -325,3 +325,23 @@ def _g08_ci_logs(self, run, job=None):
 
 
 Backend.ci_logs = _g08_ci_logs
+
+
+# --- G11: a record of the calls (added) ---
+# With $FAKE_FORGE_CALLS set to a file, each call of a public method is appended to it as {"op", "args", "kwargs"}
+# before the method runs, so a test can read whether the backend was called at all (fakegh.py's calls.jsonl, for the
+# GitHub backend). Without the variable nothing is recorded and nothing changes.
+def _g11_getattribute(self, name):
+    attr = object.__getattribute__(self, name)
+    rec = os.environ.get("FAKE_FORGE_CALLS")
+    if not rec or name.startswith("_") or not callable(attr):
+        return attr
+
+    def logged(*args, **kwargs):
+        with open(rec, "a") as f:
+            f.write(json.dumps({"op": name, "args": list(args), "kwargs": kwargs}, default=str) + "\n")
+        return attr(*args, **kwargs)
+    return logged
+
+
+Backend.__getattribute__ = _g11_getattribute
