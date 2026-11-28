@@ -845,12 +845,12 @@ run start
 eq "M05-AC-4:start-exits-0" "$(cat "$c/rc.start")" 0
 eq "M05-AC-4:inactive:start-makes-one-systemd-run-call-for-the-timer" "$(cnt "$SDRLOG" noodlebot-watch)" 1
 tl=$(grep noodlebot-watch "$SDRLOG" | head -1)
-eq "M05-AC-4:inactive:the-timer-call-is-the-exact-one-with-the-default-5min" "$tl" "--user --unit noodlebot-watch --on-active=5min --on-unit-active=5min --property=KillMode=process $nbp/scheduler/loops.sh watch"
+eq "M05-AC-4:inactive:the-timer-call-is-the-exact-one-with-the-default-5min" "$tl" "--user --unit noodlebot-watch --on-active=5min --on-unit-active=5min --property=KillMode=process --setenv=NOODLEBOT_DATA=$root --setenv=PATH=$bin:$tools $nbp/scheduler/loops.sh watch"
 : >"$SDRLOG"
 run start LOOPS_WATCH_EVERY=2min
 eq "M05-AC-4:every:start-makes-one-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 1
 tl=$(grep noodlebot-watch "$SDRLOG" | head -1)
-eq "M05-AC-4:every:the-timer-call-has-LOOPS_WATCH_EVERY-twice" "$tl" "--user --unit noodlebot-watch --on-active=2min --on-unit-active=2min --property=KillMode=process $nbp/scheduler/loops.sh watch"
+eq "M05-AC-4:every:the-timer-call-has-LOOPS_WATCH_EVERY-twice" "$tl" "--user --unit noodlebot-watch --on-active=2min --on-unit-active=2min --property=KillMode=process --setenv=NOODLEBOT_DATA=$root --setenv=PATH=$bin:$tools $nbp/scheduler/loops.sh watch"
 echo active >"$c/user.state"; : >"$SDRLOG"
 run start
 eq "M05-AC-4:active:start-makes-no-timer-call-when-the-timer-is-active" "$(cnt "$SDRLOG" noodlebot-watch)" 0
@@ -878,6 +878,19 @@ eq "M05-AC-4:stop:exits-0" "$(cat "$c/rc.stop")" 0
 eq "M05-AC-4:stop:calls-systemctl-user-stop-noodlebot-watch.timer-once" "$(cnt "$SCTLLOG" -Fx -- '--user stop noodlebot-watch.timer')" 1
 endcase
 
+echo "# M05-AC-4: the timer's service gets the resolved runtime root and exactly the calling PATH"
+newcase ac4-env alpha
+ac4_fakes yes
+echo inactive >"$c/user.state"; echo inactive >"$c/sys.state"
+ln -s data "$c/dlink"
+callpath="$bin:$tools:$c/extra-bin"
+run start NOODLEBOT_DATA="$c/dlink" PATH="$callpath"
+eq "M05-AC-4:env:start-exits-0" "$(cat "$c/rc.start")" 0
+tl=$(grep noodlebot-watch "$SDRLOG" | head -1)
+eq "M05-AC-4:env:the-timer-call-sets-NOODLEBOT_DATA-to-the-resolved-root" "$(printf '%s\n' "$tl" | tr ' ' '\n' | grep -c -Fx -e "--setenv=NOODLEBOT_DATA=$(cd "$c/dlink" && pwd -P)")" 1
+eq "M05-AC-4:env:the-timer-call-sets-PATH-to-the-calling-PATH" "$(printf '%s\n' "$tl" | tr ' ' '\n' | grep -c -Fx -e "--setenv=PATH=$callpath")" 1
+eq "M05-AC-4:env:the-timer-call-has-no-other-setenv" "$(printf '%s\n' "$tl" | grep -o -e '--setenv=' | wc -l | tr -d ' ')" 2
+endcase
 echo "# M05-AC-4: units on, no systemctl on PATH: no timer call, nothing new printed, status says none"
 newcase ac4-noctl alpha
 ac4_fakes no
