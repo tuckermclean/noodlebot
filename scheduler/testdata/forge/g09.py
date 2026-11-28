@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -619,7 +620,7 @@ def snap():
             for n in dn + fn:
                 p = os.path.join(dp, n)
                 st = os.lstat(p)
-                got[p] = ("link" if os.path.islink(p) else ("dir" if os.path.isdir(p) else "file"), st.st_size)
+                got[p] = ("link" if os.path.islink(p) else ("dir" if os.path.isdir(p) else "file"), st.st_size if not stat.S_ISDIR(st.st_mode) else 0)
     return got
 
 
@@ -1295,6 +1296,49 @@ def ac3_folder_entry_parents():
                "; ".join(why))
 
 
+# ---- G09-AC-3, fix round 5: --dir through a link is the path the OS reaches, not its text-normalised form ----
+def ac3_dir_through_link():
+    import base64
+    ac = "G09-AC-3"
+    sc = os.path.join(WORK, "g09-linkcase")
+    for b in ("github", "fake"):
+        for mode in ("py", "cli"):
+            art_reset()
+            setup(b, seed=False)
+            shutil.rmtree(sc, ignore_errors=True)
+            cwd = os.path.join(sc, "cwd")
+            os.makedirs(os.path.join(sc, "elsewhere", "deep"))
+            os.makedirs(cwd)
+            os.symlink(os.path.join("..", "elsewhere", "deep"), os.path.join(cwd, "lnk"))
+            spec = [a for a in get(b, "ci_artifacts")["9001"] if a["name"] == "report"][0]
+            want = {e["name"]: (base64.b64decode(e["b64"]) if "b64" in e else e["text"].encode("utf-8")) for e in spec["entries"]}
+            real = os.path.join(sc, "elsewhere", "sub")
+            os.chdir(cwd)
+            try:
+                res = art_call(b, mode, {"run": 9001, "name": "report", "dir": os.path.join("lnk", "..", "sub")})
+            finally:
+                os.chdir(WORK)
+            why = []
+            if res.rc != 0:
+                why.append("did not succeed: %s" % res.brief())
+            else:
+                got = sorted(os.path.relpath(os.path.join(dp, f), real).replace(os.sep, "/") for dp, _, fs in os.walk(real) for f in fs) if os.path.isdir(real) else None
+                if got != sorted(want):
+                    why.append("the files are not under elsewhere/sub (the path the OS reaches): it holds %r, want %r" % (got, sorted(want)))
+                v = res.value
+                if not isinstance(v, dict) or not isinstance(v.get("dir"), str):
+                    why.append("no dir in the result: %r" % (v,))
+                else:
+                    pd = os.path.join(cwd, v["dir"])
+                    if not os.path.isdir(pd) or sorted(f for f in os.listdir(pd) if os.path.isfile(os.path.join(pd, f))) != sorted(f for f in want if "/" not in f):
+                        why.append("the printed dir %r does not name a folder holding the files" % (v["dir"],))
+            if os.path.lexists(os.path.join(cwd, "sub")):
+                why.append("./sub (the text-normalised path) was created")
+            report(not why, "%s: %s ci artifact --dir lnk/../sub, lnk a link to elsewhere/deep, writes under elsewhere/sub (the path the OS reaches), the printed dir holds the files, no ./sub, %s" % (ac, mode, b),
+                   "; ".join(why))
+    shutil.rmtree(sc, ignore_errors=True)
+
+
 def main():
     work = os.path.join(WORK, "cwd")
     os.makedirs(work, exist_ok=True)
@@ -1320,6 +1364,10 @@ def main():
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
     for fn in (ac3_foreign_entry_name, ac3_folder_entry_parents):
+        t = time.time()
+        section(fn)
+        print("# %s %.1fs" % (fn.__name__, time.time() - t))
+    for fn in (ac3_dir_through_link,):
         t = time.time()
         section(fn)
         print("# %s %.1fs" % (fn.__name__, time.time() - t))
