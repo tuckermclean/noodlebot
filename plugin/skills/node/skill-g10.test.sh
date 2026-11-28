@@ -66,5 +66,19 @@ g10_sen "G10-AC-3: a deletion the forge refuses is recorded in the PR next to th
 g10_sen "G10-AC-3: a refused deletion does not stop the session" "$d/skill.md" \
 	'refus' 'delet' 'session' '(does|do) not (stop|block|halt|abort)|not stop|never stop|without stopping|not block' '!(and|which|so|then) stops? the session'
 
+# Round 2: the reversals the slice review found must fail too.
+g10_sen "G10-AC-3: it is the session that deletes the recorded ci-probe branch with branch delete --branch, not the owner, not 'may'" "$d/skill.md" \
+	'session (deletes|will delete|must delete)' 'branch delete --branch' 'recorded' '!(owner|asked to|may delete|can delete|might delete)'
+g10_sen "G10-AC-3: the sessions that also delete a node's leftover ci-probe branches are a build, an update and a feedback session" "$d/skill.md" \
+	'a build, an update,? (or|and) a feedback session' 'also delet' 'ci-probe/<id>-' '!not an? (update|feedback)' '!only' '!(not|never|without) delet' '!(does|do|did) not delet'
+g10_sen "G10-AC-3: the leftover branches deleted are those still on the forge" "$d/skill.md" \
+	'still on the forge' 'ci-probe/<id>-' 'evidence' 'delet' '!(no longer|not) on the forge'
+g10_sen "G10-AC-3: the forge is the one that refuses the deletion" "$d/skill.md" \
+	'(the forge refuses|refused by the forge|forge refuses)' 'delet' 'recorded' '!owner refuses' '!owner refused'
+g10_sen "G10-AC-3: the branch named ci-probe/<ID>-<topic> is one a criterion pushes" "$d/skill.md" \
+	'(a|the) criterion pushes' 'ci-probe/<id>-<topic>' '!owner pushes'
+g10_sen "G10-AC-3: with --dry-run nothing is deleted and the branches it would delete go in result.md" "$d/skill.md" \
+	'--dry-run' '(deletes no|delete no|nothing is deleted|no branch is deleted|no branch delete|not delete|no deletion)' 'would delete' 'result[.]md' '!(with|under) --dry-run[^,:]* deletes (the|each|every|it)'
+
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"
