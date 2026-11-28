@@ -325,3 +325,64 @@ def _g08_ci_logs(self, run, job=None):
 
 
 Backend.ci_logs = _g08_ci_logs
+
+
+# --- G11: a record of the calls (added) ---
+# With $FAKE_FORGE_CALLS set to a file, each call of a public method is appended to it as {"op", "args", "kwargs"}
+# before the method runs, so a test can read whether the backend was called at all (fakegh.py's calls.jsonl, for the
+# GitHub backend). Without the variable nothing is recorded and nothing changes.
+def _g11_getattribute(self, name):
+    attr = object.__getattribute__(self, name)
+    rec = os.environ.get("FAKE_FORGE_CALLS")
+    if not rec or name.startswith("_") or not callable(attr):
+        return attr
+
+    def logged(*args, **kwargs):
+        with open(rec, "a") as f:
+            f.write(json.dumps({"op": name, "args": list(args), "kwargs": kwargs}, default=str) + "\n")
+        return attr(*args, **kwargs)
+    return logged
+
+
+Backend.__getattribute__ = _g11_getattribute
+
+
+# --- G10: branch delete (added) ---
+# A branch is a head of repo.git. The checks, in order: a branch repo.git does not have is `gone`; the default branch, a
+# protected branch (forge.json "protected_branches"), a branch whose rules (forge.json "branch_rules") list `deletion` and
+# a branch that is the head or base of an open PR are refused with a ForgeError naming the branch and the reason; a deletion
+# the world refuses (forge.json "refuse_branch_delete") is CapabilityOff `branch_delete`; else the head is removed.
+def _g10_heads(self):
+    r = subprocess.run(["git", "--git-dir", os.path.join(self.path, "repo.git"), "for-each-ref", "--format=%(refname:short)",
+                        "refs/heads/"], capture_output=True, text=True)
+    if r.returncode:
+        raise forge.ForgeError("fake forge: cannot read the branches: %s" % r.stderr.strip()[:200])
+    return r.stdout.split("\n")
+
+
+def _g10_branch_delete(self, branch):
+    w = self._w()
+    if branch not in _g10_heads(self):
+        return {"branch": branch, "result": "gone"}
+
+    def refuse(why):
+        raise forge.ForgeError("fake forge: branch %s is not deleted: %s" % (branch, why))
+    if branch == w.forge["default_branch"]:
+        refuse("it is the default branch")
+    if branch in w.forge.get("protected_branches", []):
+        refuse("it is a protected branch")
+    if "deletion" in w.forge.get("branch_rules", {}).get(branch, []):
+        refuse("a rule protects it from deletion")
+    for p in w.prs:
+        if p["state"] == "open" and branch in (p["head"], p["base"]):
+            refuse("it is the head or base of the open pull request #%d" % p["number"])
+    if _world.g10_flag(w, "refuse_branch_delete", branch):
+        raise forge.CapabilityOff("fake", "branch_delete")
+    r = subprocess.run(["git", "--git-dir", os.path.join(self.path, "repo.git"), "update-ref", "-d", "refs/heads/" + branch],
+                       capture_output=True, text=True)
+    if r.returncode:
+        raise forge.ForgeError("fake forge: the deletion of %s failed: %s" % (branch, r.stderr.strip()[:200]))
+    return {"branch": branch, "result": "deleted"}
+
+
+Backend.branch_delete = _g10_branch_delete
