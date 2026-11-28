@@ -37,6 +37,38 @@ def _artifact_entries(zf, name, run):
     return out
 
 
+def _artifact_mkdir(path, made, link_ok):
+    """Create one folder; record it in made only when this call's own mkdir made it. An existing folder is fine and not
+    recorded (below the --dir, a link to one is not); anything else existing there is a failure."""
+    try:
+        os.mkdir(path)
+    except FileExistsError:
+        if os.path.isdir(path) and (link_ok or not os.path.islink(path)):
+            return
+        raise
+    made.append((path, True))
+
+
+def _artifact_mkdirs(dir, rel, made, top):
+    """Create the --dir (top: with its missing ancestors) or the folders rel below it, one level at a time."""
+    if top:
+        chain = []
+        d = dir
+        while not os.path.isdir(d):
+            chain.append(d)
+            up = os.path.dirname(d)
+            if up == d:
+                break
+            d = up
+        for d in reversed(chain):
+            _artifact_mkdir(d, made, True)
+        return
+    d = dir
+    for p in rel:
+        d = os.path.join(d, p)
+        _artifact_mkdir(d, made, False)
+
+
 def ci_artifact(self, run, name, dir):
     run = int(run)
     given = dir
@@ -67,7 +99,6 @@ def ci_artifact(self, run, name, dir):
     # the archive: gh's stdout goes straight to a temporary file (bytes as served; gh follows the redirect without the token)
     path = self._r("/actions/artifacts/%d/zip" % art["id"])
     fd, tmp = tempfile.mkstemp(prefix="artifact-", suffix=".zip")
-    created = None
     files = []
     try:
         try:
@@ -85,40 +116,28 @@ def ci_artifact(self, run, name, dir):
             raise forge.ForgeError("%s: the archive is not a zip file (%s)" % (where, type(e).__name__))
         with zf:
             entries = _artifact_entries(zf, name, run)
-            top = dir   # the first folder the call has to create
-            while not os.path.lexists(os.path.dirname(top)) and os.path.dirname(top) != top:
-                top = os.path.dirname(top)
-            created = None if os.path.lexists(dir) else top
-            wrote = []
+            made = []   # [(path, is a folder)] this call itself created, in order: the only paths a failure removes
             try:
-                os.makedirs(dir, exist_ok=True)
+                _artifact_mkdirs(dir, [], made, True)
                 for info, parts, rel in entries:
                     target = os.path.join(dir, *rel)
                     if parts is None:
-                        if not os.path.lexists(target):
-                            wrote.append(target)
-                        os.makedirs(target, exist_ok=True)
+                        _artifact_mkdirs(dir, rel, made, False)
                         continue
-                    d = os.path.dirname(target)
-                    miss = []
-                    while not os.path.lexists(d):
-                        miss.append(d)
-                        d = os.path.dirname(d)
-                    wrote.extend(reversed(miss))
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    wrote.append(target)
+                    _artifact_mkdirs(dir, rel[:-1], made, False)
                     with zf.open(info) as src, open(target, "xb") as dst:
+                        made.append((target, False))   # recorded only once this call's own exclusive create succeeded
                         shutil.copyfileobj(src, dst)
                     files.append("/".join(parts))
             except Exception as e:
-                if created:
-                    shutil.rmtree(created, ignore_errors=True)
-                else:
-                    for p in reversed(wrote):
-                        if os.path.isdir(p) and not os.path.islink(p):
-                            shutil.rmtree(p, ignore_errors=True)
-                        elif os.path.lexists(p):
-                            os.remove(p)
+                for p, folder in reversed(made):
+                    try:
+                        if folder:
+                            os.rmdir(p)    # a folder now holding something of another process's stays
+                        else:
+                            os.remove(p)   # a link in its place is removed, never followed
+                    except OSError:
+                        pass
                 why = " ".join(str(e).split())[:200]
                 raise forge.ForgeError("%s could not be unpacked into %s: %s%s" % (where, dir, type(e).__name__, ": " + why if why else ""))
     finally:
