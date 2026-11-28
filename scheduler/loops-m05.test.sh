@@ -971,6 +971,8 @@ eq "M05-AC-2:no-log-issue:the-output-is-one-line" "$(wc -l <"$c/out.watch1" | tr
 ok "M05-AC-2:no-log-issue:the-line-names-the-loop" grep -q alpha "$c/out.watch1"
 eq "M05-AC-2:no-log-issue:the-watch.log-line-is-there" "$(cnt "$root/state/watch.log" alpha)" 1
 eq "M05-AC-2:no-log-issue:the-loop-is-not-signalled" "$(cat "$root/signals" 2>/dev/null | tr '\n' ' ')" ""
+ok "M05-AC-2:no-log-issue:the-line-says-why-it-was-not-posted-report.py-s-reason" grep -qi 'log issue' "$c/out.watch1"
+eq "M05-AC-2:no-log-issue:the-reason-keeps-the-output-one-line-and-without-traceback" "$(wc -l <"$c/out.watch1" | tr -d ' ')$(cnt "$c/out.watch1" Traceback)" 10
 : >"$root/state/alpha/status.log"
 urun "$root/state/alpha"
 lognum=$(uq "[i['number'] for i in db['issues'].values() if i['title'].startswith('noodlebot log') and i['state'] == 'open'][0]")
@@ -978,6 +980,70 @@ re_a="(?s)(?=.*alpha)(?=.*$hbre)"
 base_c=$(sc "$re_a")
 watch 2
 eq "M05-AC-2:no-log-issue:the-next-watch-posts-the-comment-once-an-issue-is-open" "$(( $(sc "$re_a") - base_c ))" 1
+endcase
+
+echo "# M05-AC-4 (follow-ups): start clears a failed watch unit before the systemd-run call and says when the call fails; stop reads is-active and stops once"
+newcase ac4-fail alpha
+ac4_fakes yes
+# a systemd-run that fails for the timer call while $c/sdr.fail exists, and notes how many systemctl lines were logged by then
+cat >"$bin/systemd-run" <<'EOT'
+#!/bin/sh
+echo "$*" >>"$SDRLOG"
+case " $* " in *noodlebot-watch*)
+	grep -c '' "$SCTLLOG" >"$SCTLDIR/sdr.at"
+	[ -e "$SCTLDIR/sdr.fail" ] && exit 1
+	exit 0 ;;
+esac
+while [ $# -gt 0 ]; do
+	case $1 in
+	--unit | -u | --description | --slice | -p | --property) shift 2 ;;
+	-*) shift ;;
+	*) break ;;
+	esac
+done
+exec "$@"
+EOT
+chmod +x "$bin/systemd-run"
+rf='--user reset-failed noodlebot-watch.timer noodlebot-watch.service'
+echo inactive >"$c/user.state"; : >"$c/sdr.fail"
+run start
+eq "M05-AC-4:failed:start-exits-1-when-the-timer-call-fails" "$(cat "$c/rc.start")" 1
+eq "M05-AC-4:failed:start-calls-reset-failed-once-for-the-timer-and-the-service" "$(cnt "$SCTLLOG" -Fx -- "$rf")" 1
+eq "M05-AC-4:failed:the-reset-failed-call-comes-before-the-systemd-run-call" "$(head -n "$(cat "$c/sdr.at" 2>/dev/null || echo 0)" "$SCTLLOG" | grep -cFx -- "$rf")" 1
+eq "M05-AC-4:failed:one-line-names-noodlebot-watch" "$(cnt "$c/out.start" noodlebot-watch)" 1
+ok "M05-AC-4:failed:the-line-says-the-timer-could-not-be-set-up" sh -c "grep noodlebot-watch \"\$1\" | grep -qi timer && grep noodlebot-watch \"\$1\" | grep -qiE 'could not|cannot|can.t|failed|unable|not set up'" sh "$c/out.start"
+eq "M05-AC-4:failed:the-rest-of-the-output-is-what-it-is-without-a-timer" "$(grep -v noodlebot-watch "$c/out.start" | sort)" "$(cat "$base/ac4-noctl.start")"
+ok "M05-AC-4:failed:the-loop-still-starts" waitheld "$root/state/alpha/loop.lock"
+ok "M05-AC-4:failed:the-api-still-starts" waitheld "$root/api.lock"
+echo "# M05-AC-4 (follow-ups): a good timer call is also preceded by reset-failed; none when active, silent or units off"
+rm -f "$c/sdr.fail"; : >"$SCTLLOG"; : >"$SDRLOG"
+run start
+eq "M05-AC-4:failed:a-good-timer-call-exits-0" "$(cat "$c/rc.start")" 0
+eq "M05-AC-4:reset:inactive-start-calls-reset-failed-once" "$(cnt "$SCTLLOG" -Fx -- "$rf")" 1
+eq "M05-AC-4:reset:inactive-start-makes-one-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 1
+echo active >"$c/user.state"; : >"$SCTLLOG"; : >"$SDRLOG"
+run start
+eq "M05-AC-4:reset:active-start-calls-no-reset-failed" "$(cnt "$SCTLLOG" reset-failed)" 0
+eq "M05-AC-4:reset:active-start-makes-no-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 0
+rm -f "$c/user.state"; : >"$SCTLLOG"; : >"$SDRLOG"; : >"$c/sdr.fail"
+run start
+eq "M05-AC-4:reset:no-state-start-calls-no-reset-failed" "$(cnt "$SCTLLOG" reset-failed)" 0
+eq "M05-AC-4:reset:no-state-start-makes-no-timer-call" "$(cnt "$SDRLOG" noodlebot-watch)" 0
+eq "M05-AC-4:reset:no-state-start-exits-0" "$(cat "$c/rc.start")" 0
+echo inactive >"$c/user.state"; rm -f "$HOME/.config/noodlebot/units"; : >"$SCTLLOG"; : >"$SDRLOG"
+run start
+eq "M05-AC-4:reset:units-off-start-calls-no-reset-failed" "$(cnt "$SCTLLOG" reset-failed)" 0
+eq "M05-AC-4:reset:units-off-start-exits-0-and-says-nothing-of-a-timer" "$(cat "$c/rc.start")$(cnt "$c/out.start" -iE 'watch|timer')" 00
+: >"$SCTLLOG"
+run stop
+eq "M05-AC-4:stop-reads-only:units-off-stop-makes-no-systemctl-call" "$(cnt "$SCTLLOG" '')" 0
+: >"$HOME/.config/noodlebot/units"; rm -f "$c/user.state"; : >"$SCTLLOG"
+run stop
+eq "M05-AC-4:stop-reads-only:no-state-stop-calls-only-is-active" "$(cnt "$SCTLLOG" -v -e '^--user is-active ')" 0
+echo active >"$c/user.state"; : >"$SCTLLOG"
+run stop
+eq "M05-AC-4:stop-reads-only:answering-stop-calls-only-is-active-and-one-stop" "$(cnt "$SCTLLOG" -v -e '^--user is-active ' -e '^--user stop noodlebot-watch.timer$')" 0
+eq "M05-AC-4:stop-reads-only:answering-stop-stops-the-timer-exactly-once" "$(cnt "$SCTLLOG" -Fx -- '--user stop noodlebot-watch.timer')" 1
 endcase
 
 [ "$fails" = 0 ] || { echo "$fails failed"; exit 1; }
