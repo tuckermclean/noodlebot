@@ -583,6 +583,13 @@ def usage_lines(state):
         out.append(line)
     out.append("- **Throttle:** " + ("**holding new sessions**: " + u["reason"] if u.get("hold")
                                     else "open (new sessions start)"))
+    lim = u.get("limits") or {}
+    if "seven_day_pace" in lim:
+        if lim["seven_day_pace"]:
+            out.append("- **Weekly pace hold:** on (holds new sessions while the 7-day window is more than %.0f%% ahead of pace)"
+                       % (lim.get("seven_day_margin", 0.10) * 100))
+        else:
+            out.append("- **Weekly pace hold:** off (`USAGE_7D_PACE=0`)")
     return out + [""]
 
 

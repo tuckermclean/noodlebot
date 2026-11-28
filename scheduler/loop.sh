@@ -1789,9 +1789,12 @@ tick_run() {
 	cleanup_merged
 	local cap=${SCHED_MAX:-0} usage
 	# The throttle: usage.py reads the plan's windows from every repository's sessions (one account,
-	# one budget). While it says hold, no new session starts; running ones are never stopped.
+	# one budget). While it says hold, no new session starts; running ones are never stopped. The loop passes
+	# USAGE_7D_PACE=1 (the weekly pace hold on) unless its environment sets it; any value other than 1, 0
+	# included, keeps that hold off. Only this call gets the default; the loop's own environment and its
+	# children's are unchanged.
 	if [ "${SCHED_THROTTLE:-1}" = 1 ] && has_cap usage; then
-		usage=$(python3 -I "$here/usage.py" --state-root "$(dirname "$state")" 2>>"$state/report.log") || usage="open: usage unknown"
+		usage=$(USAGE_7D_PACE=${USAGE_7D_PACE:-1} python3 -I "$here/usage.py" --state-root "$(dirname "$state")" 2>>"$state/report.log") || usage="open: usage unknown"
 		site_usage=$usage
 		if [[ $usage == hold:* ]]; then
 			[ "$throttled" = 1 ] || say "$saw; throttle engaged, no new sessions: ${usage#hold: }"
