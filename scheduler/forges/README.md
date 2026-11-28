@@ -152,7 +152,7 @@ naming the option, nothing on stdout; `remote-commit-link URL SHA` too).
 - `label remove` `--name`: not empty, not `.` and not `..`; any other name is percent-encoded as one path segment.
 - `repo url` `--ref`: a number (an int or a digit string) for `issue`, `pr` and `run`; 4 to 64 hex digits for `commit`; `web_url(spec, kind, ref)` takes the same.
 - `branch push` `--branch`: only `[A-Za-z0-9._/-]`, accepted by git's check-ref-format --branch rules (checked in Python, no git runs) and no leading `-`; so no `+`, `:`, `@`, `#` or `%`.
-- `branch delete` `--branch`: `/`-separated segments of `[A-Za-z0-9._-]`, none empty, none starting with `.` or ending in `.lock`; a well-formed name outside the throwaway prefix (`ci-probe/`) is refused (exit 1) before any call.
+- `branch delete` `--branch`: `/`-separated segments of `[A-Za-z0-9._-]`, none empty, none starting with `.`, containing `..` or ending in `.lock`, and the name not ending in `.`; a well-formed name outside the throwaway prefix (`ci-probe/`) is refused (exit 1) before any call.
 
 An argument that names a local file or folder (`site publish --input`, `branch push --path`) has the kind `path` in the
 operation table (`forge.py`'s `_OPS`); the CLI parses it as a string and it is not checked as a value.

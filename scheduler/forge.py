@@ -159,10 +159,10 @@ THROWAWAY_PREFIXES = ("ci-probe/",)  # `branch delete` deletes only branches und
 
 
 def _ref_name(v):
-    """The shape of a branch name `branch delete` takes: `/`-separated segments of [A-Za-z0-9._-], none empty, starting with
-    a dot or ending in .lock."""
+    """The shape of a branch name `branch delete` takes: `/`-separated segments of [A-Za-z0-9._-], none empty, none starting with
+    a dot, containing `..` or ending in .lock; the name does not end in a dot."""
     return isinstance(v, str) and all(re.fullmatch(r"[A-Za-z0-9._-]+", c) and not c.startswith(".") and not c.endswith(".lock")
-                                      for c in v.split("/"))
+                                      and ".." not in c for c in v.split("/")) and not v.endswith(".")
 
 
 def _str_ok(pattern):
